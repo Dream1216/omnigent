@@ -18,3 +18,9 @@ source-intrusion evidence. `p2-upstream-sync-ci-30884588165.json` records the
 following sync to `15dd7bec` and expands the gate to cover the changed CLI and
 managed-host tests. Two sync records prove repeatability but do not, by
 themselves, close the combined P6 commercial gate.
+
+`p1-oidc-ci-30887476782.json` records the complete OIDC Authorization Code +
+S256 PKCE, replica-independent browser transaction, strict ID Token, JWKS
+rotation, explicit same-email conflict, and PostgreSQL RLS acceptance on the
+exact implementation revision. The remaining P1 Context Shell, multi-replica
+revocation, and dependency-degradation gate stays pending.

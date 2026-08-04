@@ -66,8 +66,16 @@
         },
         {
           "id": "p1-real-oauth-oidc-callback-verification",
-          "status": "pending",
-          "evidence": []
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/oidc.py",
+            "saas/control_plane/identity.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/migrations/versions/p2a000000005_oidc_identity_conflicts.py",
+            "tests/saas/test_oidc_http_auth.py",
+            "tests/saas/test_postgresql_rls.py",
+            "saas/acceptance/p1-oidc-ci-30887476782.json"
+          ]
         },
         {
           "id": "p1-context-shell-multi-replica-revocation-and-failure-degradation-e2e",
@@ -115,6 +123,7 @@
           "evidence": [
             "saas/runtime_rls/installer.py",
             "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
+            "saas/control_plane/migrations/versions/p2a000000005_oidc_identity_conflicts.py",
             "tests/saas/test_postgresql_rls.py",
             "tests/saas/test_runtime_postgresql_rls.py",
             "saas/acceptance/p2-ci-30883002639.json",
