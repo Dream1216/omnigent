@@ -204,6 +204,8 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
 
     async def exercise():
         environment = await prepared.start()
+        assert prepared.secret_directory.exists()
+        assert all(path.is_file() for path in staged_files)
         try:
             return (
                 await environment.shell('printf "%s" "$GH_TOKEN"'),

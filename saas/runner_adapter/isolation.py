@@ -174,7 +174,7 @@ def _official_runtime_read_paths() -> tuple[Path, ...]:
 
 @dataclass(slots=True)
 class PreparedRunnerIsolation:
-    """Prepared official spec whose short-lived secret files are parent-only."""
+    """Prepared official spec whose lifetime-bound secret files are parent-only."""
 
     launch_grant: TrustedRunnerLaunchGrant
     os_env_spec: OSEnvSpec
@@ -183,7 +183,13 @@ class PreparedRunnerIsolation:
     _closed: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> OSEnvironment:
-        """Fail loud, eagerly boot the helper, then remove broker material from disk."""
+        """Fail loud and eagerly boot the helper before returning it to the Runner.
+
+        Credential source files remain until :meth:`close` because the official
+        environment may transparently restart a failed helper and must rebuild
+        its parent-side credential proxy. They remain outside the Worktree in a
+        0700 directory as 0600 files and are never mounted into the sandbox.
+        """
 
         if self._closed:
             raise RunnerIsolationAdapterError(
@@ -217,7 +223,6 @@ class PreparedRunnerIsolation:
             environment.close()
             self.close()
             raise
-        self._remove_secret_files()
         return environment
 
     def close(self) -> None:
