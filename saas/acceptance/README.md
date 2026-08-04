@@ -19,6 +19,11 @@ following sync to `15dd7bec` and expands the gate to cover the changed CLI and
 managed-host tests. Two sync records prove repeatability but do not, by
 themselves, close the combined P6 commercial gate.
 
+`p3-upstream-sync-ci-30897083447.json` records a third conflict-free sync to
+`b8fd1952`, after P3 completion. It revalidates the permanent adapter and two
+patches against ten new upstream commits, including host/runner recovery,
+worktree-isolating repro tooling, and stricter Web TypeScript checks.
+
 `p1-oidc-ci-30887476782.json` records the complete OIDC Authorization Code +
 S256 PKCE, replica-independent browser transaction, strict ID Token, JWKS
 rotation, explicit same-email conflict, and PostgreSQL RLS acceptance on the
@@ -29,8 +34,9 @@ selection, opaque session-bound 60-second Context Snapshots, two independent
 API instances sharing PostgreSQL authority, immediate healthy-control-plane
 revocation, Outbox invalidation, strict low-risk read degradation, and
 fail-closed login/scope/Mutation/WebSocket/new-Run/sensitive-read behavior.
-Together with the OIDC record, it closes P1; the overall release remains
-`NO-GO` because P0 and P3-P6 still contain pending gates.
+Together with the OIDC record, it closes P1. P3's durable execution authority
+is recorded by `p3-ci-30895599094.json`; the overall release remains `NO-GO`
+because P0 and P4-P6 still contain pending gates.
 
 P0's three pending gates now list concrete policy, validator, Runbook, build,
 and test evidence. `check_production_baseline` distinguishes complete baseline

@@ -16,6 +16,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
     "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
     "saas/acceptance/p3-ci-30895599094.json",
+    "saas/acceptance/p3-upstream-sync-ci-30897083447.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",
     "saas/admin_ui/project_admin.js",
