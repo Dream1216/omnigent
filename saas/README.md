@@ -75,11 +75,40 @@ boundary without changing the official server application:
   re-collects every fact before execution. It fails closed when the impact
   provider is absent, the member is an Owner, blockers exist, or facts changed.
   Tenant removal also logically removes active Space memberships;
-- all 21 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
+- all 23 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
   SECURITY` with transaction-local server-chosen Actor/Tenant/Space values.
   The packaged role bootstrap separates `saas_app`,
   `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
   `saas_platform`; none has `BYPASSRLS`.
+
+The fourth P1 slice closes the Context Shell and bounded control-plane
+degradation implementation:
+
+- `GET /saas/context/scopes` enumerates only the authenticated actor's active
+  logical Tenant/Space memberships. PostgreSQL SELECT-only actor policies make
+  this work without a client-chosen Tenant RLS context and do not broaden any
+  write policy. The API and browser never return Placement, physical workspace,
+  Runtime Alias, or database routing facts;
+- `POST /saas/context/snapshots` re-resolves current membership and allocation
+  state, then issues an opaque AES-GCM-encrypted and HMAC-signed snapshot bound
+  to the raw Auth Session digest. It includes security/membership/policy,
+  resource, Partition, Placement, Binding Generation, source revision, and
+  adapter contract facts and can never live longer than 60 seconds;
+- replicas share a rotatable key ring rather than process memory. While the
+  control plane is healthy, every snapshot-backed request revalidates the Auth
+  Session, Membership versions, Placement, Partition, Binding Generation, and
+  runtime lineage, so revocation is immediate;
+- dependency degradation is opt-in per exact GET/HEAD path. Only those
+  low-risk reads may consume an unexpired snapshot. New login, scope selection,
+  Mutation, WebSocket, new Run, Secret, export, member, billing, support, and
+  unlisted reads fail closed with a stable unavailable result;
+- Context Shell changed from free-form Tenant/Space IDs to a server-populated
+  selector. The resulting snapshot is held only in page memory and exposes no
+  physical runtime selectors;
+- forced RLS now includes a separate Platform-only Runtime Placement mutation
+  policy. This fixes provisioning after `FORCE ROW LEVEL SECURITY` without
+  granting Placement writes to application, authentication, governance, or
+  dispatch roles.
 
 The P2 implementation adds a Project-isolated authorization and runtime-data
 boundary:
@@ -137,10 +166,13 @@ This remains a validated implementation slice, not complete production SaaS
 proof. P2's current implementation gate passes the local and GitHub PostgreSQL
 16 matrices for control-plane/Runtime RLS, concurrent Identity/Outbox/Owner
 operations, Binding Saga fault injection, patch replay, and real Chromium
-Project Admin tests. P0 and P1 remain in progress: OAuth/OIDC provider callback verification,
-the multi-replica Context Shell/revocation degradation matrix, approved
-production ADRs, reproducible signed images, and Service Catalog/SLO/RPO/RTO
-evidence are also pending. P3 durable Run authority, P4 multi-failure-domain
+Project Admin tests. OIDC callback verification has an immutable passing CI
+record; P0 remains in progress because approved production ADRs, reproducible
+signed images, and Service Catalog/SLO/RPO/RTO evidence are pending. The P1
+Context Shell/multi-replica/degradation code
+passes the local PostgreSQL role, HTTP, fault-injection, and Chromium matrices,
+but its gate remains pending until an immutable exact-revision GitHub CI record
+is committed. P3 durable Run authority, P4 multi-failure-domain
 execution and Worktree isolation, P5 production recovery, and P6 commercial
 governance have not started and must not be inferred from these foundations.
 
@@ -173,5 +205,6 @@ postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 uv sync --frozen --extra dev --extra saas
 uv run pytest \
   tests/saas/test_postgresql_rls.py \
-  tests/saas/test_runtime_postgresql_rls.py
+  tests/saas/test_runtime_postgresql_rls.py \
+  tests/saas/test_context_snapshot_postgresql.py
 ```

@@ -7,6 +7,8 @@
     actorId: "",
     tenantId: "",
     spaceId: "",
+    contextSnapshot: "",
+    scopes: [],
     projects: [],
     selectedProject: null,
   };
@@ -65,12 +67,15 @@
   function setLoggedOut() {
     state.actorId = "";
     state.csrf = "";
+    state.contextSnapshot = "";
+    state.scopes = [];
     sessionStorage.removeItem("omnigent.saas.csrf");
     loginDeck.hidden = false;
     workspace.hidden = true;
     $("#logout-button").hidden = true;
     document.querySelector(".system-state").classList.remove("connected");
     $("#context-state").textContent = "NO CONTEXT";
+    $("#snapshot-state").textContent = "UNBOUND";
   }
 
   function scopePath(suffix = "") {
@@ -122,6 +127,28 @@
     $("#permission-count").textContent = `${catalog.permissions.length} / ${catalog.policy_version}`;
   }
 
+  async function loadScopes() {
+    state.scopes = await api("/context/scopes");
+    const selector = $("#scope-select");
+    selector.replaceChildren();
+    if (!state.scopes.length) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "没有可用的 Tenant / Space";
+      selector.append(empty);
+      $("#scope-connect").disabled = true;
+      return;
+    }
+    state.scopes.forEach((scope, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `${scope.tenant_name} / ${scope.space_name} · ${scope.tenant_role}:${scope.space_role}`;
+      selector.append(option);
+    });
+    $("#scope-connect").disabled = false;
+    log(`Resolved ${state.scopes.length} authorized scope(s)`, "success");
+  }
+
   async function loadProjects() {
     state.projects = await api(scopePath("/projects"));
     if (state.selectedProject) {
@@ -151,7 +178,7 @@
       sessionStorage.setItem("omnigent.saas.csrf", state.csrf);
       message.textContent = "";
       setAuthenticated(result.user_id);
-      await loadCatalog();
+      await Promise.all([loadCatalog(), loadScopes()]);
     } catch (error) {
       showFailure(message, error);
     }
@@ -169,17 +196,24 @@
 
   $("#scope-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    state.tenantId = $("#tenant-id").value.trim();
-    state.spaceId = $("#space-id").value.trim();
+    const selected = state.scopes[Number($("#scope-select").value)];
+    if (!selected) return log("scope_not_authorized: select an available scope", "error");
+    state.tenantId = selected.tenant_id;
+    state.spaceId = selected.space_id;
     try {
+      const context = await api("/context/snapshots", {
+        method: "POST",
+        body: JSON.stringify({ tenant_id: state.tenantId, space_id: state.spaceId }),
+      });
+      state.contextSnapshot = context.context_snapshot;
+      $("#snapshot-state").textContent = `SIGNED / ${context.max_age_seconds}s`;
       await loadProjects();
       document.querySelector(".system-state").classList.add("connected");
       $("#context-state").textContent = `SPACE / ${state.spaceId.slice(0, 8)}`;
-      const url = new URL(window.location.href);
-      url.searchParams.set("tenant", state.tenantId);
-      url.searchParams.set("space", state.spaceId);
-      history.replaceState({}, "", url);
+      log(`Signed Context Snapshot issued for ${selected.tenant_name} / ${selected.space_name}`, "success");
     } catch (error) {
+      state.contextSnapshot = "";
+      $("#snapshot-state").textContent = "REJECTED";
       showFailure($("#context-state"), error);
     }
   });
@@ -273,14 +307,11 @@
   });
 
   async function boot() {
-    const params = new URLSearchParams(window.location.search);
-    $("#tenant-id").value = params.get("tenant") || "";
-    $("#space-id").value = params.get("space") || "";
     try {
       const current = await api("/auth/status");
       if (current.authenticated) {
         setAuthenticated(current.user_id);
-        await loadCatalog();
+        await Promise.all([loadCatalog(), loadScopes()]);
         return;
       }
     } catch (error) {

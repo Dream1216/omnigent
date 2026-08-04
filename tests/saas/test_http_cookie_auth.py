@@ -12,6 +12,8 @@ from saas.compatibility import current_runtime_context
 from saas.control_plane import (
     PERMISSION_CATALOG,
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
+    ContextSnapshotPolicy,
+    ContextSnapshotService,
     IdentityManagementService,
     MembershipGovernanceService,
     MembershipLifecycleService,
@@ -206,6 +208,15 @@ def _build_fastapi_app(
         project_admin=project_admin,
         project_authorizer=project_authorizer,
         runtime_bindings=runtime_bindings,
+        context_snapshots=ContextSnapshotService(
+            ContextSnapshotPolicy(
+                active_key_id="fixture-v1",
+                keys={"fixture-v1": b"context-shell-fixture-key-material-v1"},
+                issuer="omnigent-saas-browser-fixture",
+                audience="omnigent-api",
+            )
+        ),
+        degraded_read_paths=frozenset({"/v1/protected"}),
     )
     auth = integration.auth_provider
     app = FastAPI()
@@ -265,6 +276,42 @@ def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
         "user_id": scope["user_id"],
     }
     assert client.get("/saas/auth/me").json()["user_id"] == scope["user_id"]
+    available_scopes = client.get("/saas/context/scopes")
+    assert available_scopes.status_code == 200
+    assert available_scopes.json() == [
+        {
+            "tenant_id": scope["tenant_id"],
+            "tenant_slug": "http-tenant",
+            "tenant_name": "HTTP Tenant",
+            "tenant_role": "owner",
+            "tenant_membership_version": 1,
+            "space_id": scope["space_id"],
+            "space_slug": "engineering",
+            "space_name": "Engineering",
+            "space_role": "owner",
+            "space_membership_version": 1,
+            "user_security_version": 2,
+        }
+    ]
+    snapshot_response = client.post(
+        "/saas/context/snapshots",
+        json={"tenant_id": scope["tenant_id"], "space_id": scope["space_id"]},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+    )
+    assert snapshot_response.status_code == 201
+    assert snapshot_response.json()["max_age_seconds"] <= 60
+    assert snapshot_response.json()["context_snapshot"].count(".") == 2
+    assert "placement_id" not in snapshot_response.json()
+    assert "physical_workspace_id" not in snapshot_response.json()
+
+    snapshot_bound = client.get(
+        "/v1/protected",
+        headers={
+            "X-SaaS-Context-Snapshot": snapshot_response.json()["context_snapshot"]
+        },
+    )
+    assert snapshot_bound.status_code == 200
+    assert snapshot_bound.json()["workspace_id"] == 41
 
     missing_scope = client.get("/v1/protected")
     assert missing_scope.status_code == 403

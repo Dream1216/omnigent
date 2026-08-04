@@ -53,21 +53,20 @@
           <p>服务端将当前用户、Tenant Membership 与 Space Membership 重新绑定为版本化上下文。</p>
           <form id="scope-form" class="stack-form">
             <label>
-              <span>Tenant ID</span>
-              <input data-testid="tenant-id" id="tenant-id" name="tenant" spellcheck="false" required>
-            </label>
-            <label>
-              <span>Space ID</span>
-              <input data-testid="space-id" id="space-id" name="space" spellcheck="false" required>
+              <span>可用 Tenant / Space</span>
+              <select data-testid="scope-select" id="scope-select" name="scope" required>
+                <option value="">等待服务端解析作用域…</option>
+              </select>
             </label>
             <button class="scope-button" data-testid="scope-connect" type="submit">
-              CONNECT SCOPE
+              ISSUE SIGNED CONTEXT
             </button>
           </form>
           <dl class="scope-facts">
             <div><dt>ACTOR</dt><dd id="actor-id">—</dd></div>
             <div><dt>CATALOG</dt><dd id="permission-count">—</dd></div>
             <div><dt>CSRF</dt><dd id="csrf-state">UNBOUND</dd></div>
+            <div><dt>SNAPSHOT</dt><dd id="snapshot-state">UNBOUND</dd></div>
           </dl>
         </aside>
 

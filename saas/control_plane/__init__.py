@@ -14,6 +14,15 @@ from saas.control_plane.binding_saga import (
     RuntimeResourceProvisioner,
 )
 from saas.control_plane.bindings import RuntimeBindingChanged, RuntimeBindingService
+from saas.control_plane.context_snapshot import (
+    ContextSnapshotError,
+    ContextSnapshotPolicy,
+    ContextSnapshotService,
+    ControlPlaneAvailabilityGate,
+    ControlPlaneDependencyUnavailable,
+    IssuedContextSnapshot,
+    VerifiedContextSnapshot,
+)
 from saas.control_plane.db_models import (
     AuthorizationDecisionRecord,
     AuthSessionRecord,
@@ -108,6 +117,7 @@ from saas.control_plane.projects import (
 )
 from saas.control_plane.removal_impact import ProjectRemovalImpactProvider
 from saas.control_plane.resolver import (
+    AvailableScope,
     ControlPlaneResolutionError,
     RuntimeCompatibilityPolicy,
     SqlAlchemyContextResolver,
@@ -127,6 +137,12 @@ __all__ = [
     "AuthorizationDecision",
     "AuthorizationDecisionRecord",
     "AuthorizationSource",
+    "AvailableScope",
+    "ContextSnapshotError",
+    "ContextSnapshotPolicy",
+    "ContextSnapshotService",
+    "ControlPlaneAvailabilityGate",
+    "ControlPlaneDependencyUnavailable",
     "ControlPlaneOutboxEvent",
     "ControlPlaneResolutionError",
     "DispatchResult",
@@ -139,6 +155,7 @@ __all__ = [
     "InvitationAccepted",
     "InvitationCreated",
     "IssuedAuthSession",
+    "IssuedContextSnapshot",
     "LifecycleError",
     "MemberRemovalPreflightRecord",
     "MemberRemoved",
@@ -201,6 +218,7 @@ __all__ = [
     "TenantMembership",
     "UnavailableRemovalImpactProvider",
     "ValidatedAuthSession",
+    "VerifiedContextSnapshot",
     "VerifiedIdentityAssertion",
     "apply_rls_context",
     "create_project_admin_router",

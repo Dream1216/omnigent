@@ -58,6 +58,23 @@ class _ScopeFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class AvailableScope:
+    """Logical Context Shell option; physical runtime facts are intentionally absent."""
+
+    tenant_id: UUID
+    tenant_slug: str
+    tenant_name: str
+    tenant_role: str
+    tenant_membership_version: int
+    space_id: UUID
+    space_slug: str
+    space_name: str
+    space_role: str
+    space_membership_version: int
+    user_security_version: int
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeCompatibilityPolicy:
     """Revisions that this deployment may route to official runtimes."""
 
@@ -111,6 +128,79 @@ class SqlAlchemyContextResolver:
         self._session_factory = session_factory
         self._compatibility_policy = compatibility_policy
         self._project_authorizer = project_authorizer
+
+    def list_available_scopes(self, *, actor_id: UUID) -> tuple[AvailableScope, ...]:
+        """List only the actor's active logical Tenant/Space memberships."""
+
+        with self._session_factory() as session, session.begin():
+            apply_rls_context(session, RlsContext(actor_id=actor_id))
+            user = session.get(GlobalUser, actor_id)
+            if user is None or user.status != "active" or user.security_version < 1:
+                self._deny("user_not_active", "global user is not active")
+            rows = session.execute(
+                sa.select(
+                    Tenant.id,
+                    Tenant.slug,
+                    Tenant.name,
+                    TenantMembership.role,
+                    TenantMembership.version,
+                    Space.id,
+                    Space.slug,
+                    Space.name,
+                    SpaceMembership.role,
+                    SpaceMembership.version,
+                )
+                .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
+                .join(
+                    SpaceMembership,
+                    sa.and_(
+                        SpaceMembership.tenant_id == Tenant.id,
+                        SpaceMembership.user_id == TenantMembership.user_id,
+                    ),
+                )
+                .join(
+                    Space,
+                    sa.and_(
+                        Space.tenant_id == SpaceMembership.tenant_id,
+                        Space.id == SpaceMembership.space_id,
+                    ),
+                )
+                .where(
+                    TenantMembership.user_id == actor_id,
+                    TenantMembership.status == "active",
+                    Tenant.status.in_(("trial", "active")),
+                    SpaceMembership.status == "active",
+                    Space.status == "active",
+                )
+                .order_by(Tenant.name, Tenant.id, Space.name, Space.id)
+            ).all()
+            return tuple(
+                AvailableScope(
+                    tenant_id=tenant_id,
+                    tenant_slug=tenant_slug,
+                    tenant_name=tenant_name,
+                    tenant_role=tenant_role,
+                    tenant_membership_version=tenant_version,
+                    space_id=space_id,
+                    space_slug=space_slug,
+                    space_name=space_name,
+                    space_role=space_role,
+                    space_membership_version=space_version,
+                    user_security_version=user.security_version,
+                )
+                for (
+                    tenant_id,
+                    tenant_slug,
+                    tenant_name,
+                    tenant_role,
+                    tenant_version,
+                    space_id,
+                    space_slug,
+                    space_name,
+                    space_role,
+                    space_version,
+                ) in rows
+            )
 
     def resolve_request_context(
         self,

@@ -11,11 +11,20 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.requests import HTTPConnection
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent.server.auth import AuthProvider
 from saas.compatibility import RuntimeContext, bind_runtime_context
+from saas.control_plane.context_snapshot import (
+    ContextSnapshotError,
+    ContextSnapshotService,
+    ControlPlaneAvailabilityGate,
+    ControlPlaneDependencyUnavailable,
+    VerifiedContextSnapshot,
+)
 from saas.control_plane.governance import MembershipGovernanceService
 from saas.control_plane.identity import IdentityManagementService, PasswordCredentialService
 from saas.control_plane.lifecycle import (
@@ -81,6 +90,9 @@ class SaasHttpIntegration:
     router: APIRouter
     context_resolver: SqlAlchemyContextResolver
     cookie_config: SaasCookieConfig
+    context_snapshots: ContextSnapshotService | None = None
+    availability_gate: ControlPlaneAvailabilityGate | None = None
+    degraded_read_paths: frozenset[str] = frozenset()
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -96,6 +108,9 @@ class SaasHttpIntegration:
             auth_provider=self.auth_provider,
             context_resolver=self.context_resolver,
             cookie_config=self.cookie_config,
+            context_snapshots=self.context_snapshots,
+            availability_gate=self.availability_gate,
+            degraded_read_paths=self.degraded_read_paths,
         )
 
 
@@ -129,6 +144,11 @@ class RemovalExecutionRequest(BaseModel):
 class IdentityConflictResolutionRequest(BaseModel):
     decision: Literal["approve", "reject"]
     reason: str = Field(min_length=1, max_length=1024)
+
+
+class ContextSnapshotRequest(BaseModel):
+    tenant_id: UUID
+    space_id: UUID
 
 
 class SaasAuthProvider(AuthProvider):
@@ -210,6 +230,9 @@ class SaasAuthContextMiddleware:
         runtime_prefixes: tuple[str, ...] = ("/v1/",),
         runtime_exclusions: frozenset[str] = frozenset({"/v1/info", "/v1/me"}),
         public_paths: frozenset[str] = frozenset({"/saas/auth/login"}),
+        context_snapshots: ContextSnapshotService | None = None,
+        availability_gate: ControlPlaneAvailabilityGate | None = None,
+        degraded_read_paths: frozenset[str] = frozenset(),
     ) -> None:
         self._app = app
         self._auth = auth_provider
@@ -218,6 +241,11 @@ class SaasAuthContextMiddleware:
         self._runtime_prefixes = runtime_prefixes
         self._runtime_exclusions = runtime_exclusions
         self._public_paths = public_paths
+        self._context_snapshots = context_snapshots
+        self._availability = availability_gate or ControlPlaneAvailabilityGate()
+        self._degraded_read_paths = degraded_read_paths
+        if degraded_read_paths and context_snapshots is None:
+            raise ValueError("degraded read paths require a Context Snapshot service")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -228,29 +256,40 @@ class SaasAuthContextMiddleware:
         if self._is_public_request(connection.url.path, cast(str, scope.get("method", "GET"))):
             try:
                 self._enforce_public_browser_origin(connection, scope)
+                self._availability.require_available()
+                await self._app(scope, receive, send)
             except LifecycleError as error:
-                await JSONResponse(
-                    status_code=403,
-                    content={"error": {"code": error.code, "message": str(error)}},
-                )(scope, receive, send)
-                return
-            await self._app(scope, receive, send)
+                await self._reject(scope, receive, send, status=403, error=error)
+            except (ControlPlaneDependencyUnavailable, OperationalError, SqlAlchemyTimeoutError):
+                await self._reject_dependency(scope, receive, send)
             return
         if token is None:
             await self._app(scope, receive, send)
             return
         try:
+            self._availability.require_available()
             session = self._auth.validate_token(token)
             if token_source == "cookie":
                 self._enforce_browser_request(connection, token, scope)
-            runtime_context = self._resolve_runtime_context(connection, session)
-        except (LifecycleError, ControlPlaneResolutionError, ValueError) as error:
+            runtime_context = self._resolve_runtime_context(connection, token, session)
+        except (ControlPlaneDependencyUnavailable, OperationalError, SqlAlchemyTimeoutError):
+            await self._degraded_or_reject(
+                connection=connection,
+                token=token,
+                scope=scope,
+                receive=receive,
+                send=send,
+            )
+            return
+        except (
+            LifecycleError,
+            ControlPlaneResolutionError,
+            ContextSnapshotError,
+            ValueError,
+        ) as error:
             code = getattr(error, "code", "request_context_invalid")
             status = 401 if code in {"invalid_session", "csrf_invalid"} else 403
-            await JSONResponse(
-                status_code=status,
-                content={"error": {"code": code, "message": str(error)}},
-            )(scope, receive, send)
+            await self._reject(scope, receive, send, status=status, error=error)
             return
 
         state = scope.setdefault("state", {})
@@ -259,10 +298,74 @@ class SaasAuthContextMiddleware:
             runtime_context=runtime_context,
         )
         if runtime_context is None:
-            await self._app(scope, receive, send)
+            response_started = False
+
+            async def guarded_send(message: Message) -> None:
+                nonlocal response_started
+                if message.get("type") == "http.response.start":
+                    response_started = True
+                await send(message)
+
+            try:
+                await self._app(scope, receive, guarded_send)
+            except (
+                ControlPlaneDependencyUnavailable,
+                OperationalError,
+                SqlAlchemyTimeoutError,
+            ):
+                if response_started:
+                    raise
+                await self._reject_dependency(scope, receive, send)
             return
         with bind_runtime_context(runtime_context):
             await self._app(scope, receive, send)
+
+    async def _degraded_or_reject(
+        self,
+        *,
+        connection: HTTPConnection,
+        token: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        path = connection.url.path
+        method = cast(str, scope.get("method", "GET"))
+        if (
+            scope["type"] != "http"
+            or method not in {"GET", "HEAD"}
+            or path not in self._degraded_read_paths
+            or not self._is_runtime_path(path)
+            or self._context_snapshots is None
+        ):
+            await self._reject_dependency(scope, receive, send)
+            return
+        snapshot_token = connection.headers.get("x-saas-context-snapshot", "")
+        try:
+            verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
+            self._validate_selector_headers(connection, verified.runtime_context)
+        except (ContextSnapshotError, ValueError):
+            await self._reject_dependency(scope, receive, send)
+            return
+
+        state = scope.setdefault("state", {})
+        state["saas_principal"] = SaasPrincipal(
+            session=verified.session,
+            runtime_context=verified.runtime_context,
+        )
+        state["saas_degraded_authorization"] = True
+        state["saas_context_snapshot_id"] = verified.snapshot_id
+
+        async def degraded_send(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(cast(list[tuple[bytes, bytes]], message.get("headers", [])))
+                headers.append((b"x-saas-degraded-authorization", b"snapshot"))
+                headers.append((b"cache-control", b"private, no-store"))
+                message["headers"] = headers
+            await send(message)
+
+        with bind_runtime_context(verified.runtime_context):
+            await self._app(scope, receive, degraded_send)
 
     def _enforce_browser_request(
         self, connection: HTTPConnection, token: str, scope: Scope
@@ -301,30 +404,145 @@ class SaasAuthContextMiddleware:
         )
 
     def _resolve_runtime_context(
-        self, connection: HTTPConnection, session: ValidatedAuthSession
+        self,
+        connection: HTTPConnection,
+        token: str,
+        session: ValidatedAuthSession,
     ) -> RuntimeContext | None:
         path = connection.url.path
-        if path in self._runtime_exclusions or not any(
-            path.startswith(prefix) for prefix in self._runtime_prefixes
-        ):
+        if not self._is_runtime_path(path):
             return None
         tenant_raw = connection.headers.get("x-saas-tenant-id")
         space_raw = connection.headers.get("x-saas-space-id")
-        if not tenant_raw or not space_raw:
+        verified: VerifiedContextSnapshot | None = None
+        snapshot_token = connection.headers.get("x-saas-context-snapshot")
+        if snapshot_token:
+            if self._context_snapshots is None:
+                raise LifecycleError(
+                    "context_snapshot_unsupported", "context snapshots are not configured"
+                )
+            verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
+            self._validate_live_snapshot_session(verified, session)
+            self._validate_selector_headers(connection, verified.runtime_context)
+            tenant_id = verified.runtime_context.tenant_id
+            space_id = verified.runtime_context.space_id
+        elif tenant_raw and space_raw:
+            tenant_id = UUID(tenant_raw)
+            space_id = UUID(space_raw)
+        else:
             raise LifecycleError(
-                "runtime_context_required", "Tenant and Space headers are required"
+                "runtime_context_required",
+                "a Context Snapshot or Tenant and Space selectors are required",
             )
         request_context = self._resolver.resolve_request_context(
             actor_id=session.user_id,
-            tenant_id=UUID(tenant_raw),
-            space_id=UUID(space_raw),
+            tenant_id=tenant_id,
+            space_id=space_id,
             trace_id=connection.headers.get("x-request-id") or uuid4().hex,
         )
         if request_context.user_security_version != session.security_version:
             raise LifecycleError(
                 "authorization_snapshot_stale", "session security version is stale"
             )
-        return self._resolver.resolve_space_allocation(request_context)
+        runtime_context = self._resolver.resolve_space_allocation(request_context)
+        if verified is not None:
+            self._validate_live_snapshot_runtime(verified.runtime_context, runtime_context)
+        return runtime_context
+
+    def _is_runtime_path(self, path: str) -> bool:
+        return path not in self._runtime_exclusions and any(
+            path.startswith(prefix) for prefix in self._runtime_prefixes
+        )
+
+    @staticmethod
+    def _validate_live_snapshot_session(
+        verified: VerifiedContextSnapshot,
+        session: ValidatedAuthSession,
+    ) -> None:
+        snapshot_session = verified.session
+        if (
+            snapshot_session.session_id != session.session_id
+            or snapshot_session.user_id != session.user_id
+            or snapshot_session.security_version != session.security_version
+        ):
+            raise LifecycleError(
+                "authorization_snapshot_stale", "snapshot session facts are stale"
+            )
+
+    @staticmethod
+    def _validate_live_snapshot_runtime(
+        snapshot: RuntimeContext,
+        current: RuntimeContext,
+    ) -> None:
+        fields = (
+            "actor_id",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "user_security_version",
+            "tenant_membership_version",
+            "space_membership_version",
+            "runtime_partition_id",
+            "placement_id",
+            "placement_generation",
+            "binding_generation",
+            "data_region",
+            "physical_workspace_id",
+            "runtime_user_key",
+            "runtime_type",
+            "source_revision",
+            "adapter_contract_version",
+        )
+        if any(getattr(snapshot, field) != getattr(current, field) for field in fields):
+            raise LifecycleError(
+                "authorization_snapshot_stale",
+                "membership, policy, placement, or binding facts changed",
+            )
+
+    @staticmethod
+    def _validate_selector_headers(
+        connection: HTTPConnection,
+        runtime_context: RuntimeContext,
+    ) -> None:
+        expected = {
+            "x-saas-tenant-id": runtime_context.tenant_id,
+            "x-saas-space-id": runtime_context.space_id,
+        }
+        for header, expected_id in expected.items():
+            supplied = connection.headers.get(header)
+            if supplied is not None and UUID(supplied) != expected_id:
+                raise LifecycleError(
+                    "context_selector_conflict", "selector conflicts with signed context"
+                )
+
+    @staticmethod
+    async def _reject(
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        *,
+        status: int,
+        error: object,
+    ) -> None:
+        code = str(getattr(error, "code", "request_context_invalid"))
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008, "reason": code})
+            return
+        await JSONResponse(
+            status_code=status,
+            content={"error": {"code": code, "message": str(error)}},
+            headers={"Cache-Control": "no-store"},
+        )(scope, receive, send)
+
+    @classmethod
+    async def _reject_dependency(cls, scope: Scope, receive: Receive, send: Send) -> None:
+        await cls._reject(
+            scope,
+            receive,
+            send,
+            status=503,
+            error=ControlPlaneDependencyUnavailable("control plane is unavailable"),
+        )
 
 
 def create_saas_auth_router(
@@ -333,9 +551,11 @@ def create_saas_auth_router(
     lifecycle: MembershipLifecycleService,
     identities: IdentityManagementService,
     passwords: PasswordCredentialService,
+    context_resolver: SqlAlchemyContextResolver,
     cookie_config: SaasCookieConfig,
     governance: MembershipGovernanceService | None = None,
     oidc: OidcAuthorizationService | None = None,
+    context_snapshots: ContextSnapshotService | None = None,
 ) -> APIRouter:
     """Build login/logout/self-service identity routes for downstream app wiring."""
 
@@ -390,6 +610,77 @@ def create_saas_auth_router(
             "authenticated": True,
             "user_id": str(principal.session.user_id),
         }
+
+    @router.get("/context/scopes")
+    def list_context_scopes(
+        request: Request,
+        response: Response,
+    ) -> list[dict[str, object]]:
+        principal = _require_principal(auth_provider, request)
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            scopes = context_resolver.list_available_scopes(actor_id=principal.session.user_id)
+        except ControlPlaneResolutionError as error:
+            raise _control_plane_http_error(error, 403) from error
+        return [
+            {
+                "tenant_id": str(scope.tenant_id),
+                "tenant_slug": scope.tenant_slug,
+                "tenant_name": scope.tenant_name,
+                "tenant_role": scope.tenant_role,
+                "tenant_membership_version": scope.tenant_membership_version,
+                "space_id": str(scope.space_id),
+                "space_slug": scope.space_slug,
+                "space_name": scope.space_name,
+                "space_role": scope.space_role,
+                "space_membership_version": scope.space_membership_version,
+                "user_security_version": scope.user_security_version,
+            }
+            for scope in scopes
+        ]
+
+    if context_snapshots is not None:
+
+        @router.post("/context/snapshots", status_code=201)
+        def issue_context_snapshot(
+            body: ContextSnapshotRequest,
+            request: Request,
+            response: Response,
+        ) -> dict[str, object]:
+            principal = _require_principal(auth_provider, request)
+            response.headers["Cache-Control"] = "private, no-store"
+            auth_token, _source = auth_provider.extract_token(request)
+            if auth_token is None:
+                raise _http_error(LifecycleError("authentication_required", "login required"), 401)
+            try:
+                request_context = context_resolver.resolve_request_context(
+                    actor_id=principal.session.user_id,
+                    tenant_id=body.tenant_id,
+                    space_id=body.space_id,
+                    trace_id=request.headers.get("x-request-id") or uuid4().hex,
+                )
+                if request_context.user_security_version != principal.session.security_version:
+                    raise LifecycleError(
+                        "authorization_snapshot_stale", "session security version is stale"
+                    )
+                runtime_context = context_resolver.resolve_space_allocation(request_context)
+                issued = context_snapshots.issue(
+                    auth_token=auth_token,
+                    session=principal.session,
+                    runtime_context=runtime_context,
+                )
+            except ControlPlaneResolutionError as error:
+                raise _control_plane_http_error(error, 403) from error
+            except (LifecycleError, ContextSnapshotError) as error:
+                raise _http_error(error, 403) from error
+            return {
+                "context_snapshot": issued.token,
+                "tenant_id": issued.tenant_id,
+                "space_id": issued.space_id,
+                "issued_at": issued.issued_at.isoformat(),
+                "expires_at": issued.expires_at.isoformat(),
+                "max_age_seconds": int((issued.expires_at - issued.issued_at).total_seconds()),
+            }
 
     @router.get("/identities")
     def list_identities(request: Request) -> list[dict[str, object]]:
@@ -706,6 +997,9 @@ def create_saas_http_integration(
     project_authorizer: ProjectAuthorizer | None = None,
     runtime_bindings: RuntimeBindingService | None = None,
     oidc: OidcAuthorizationService | None = None,
+    context_snapshots: ContextSnapshotService | None = None,
+    availability_gate: ControlPlaneAvailabilityGate | None = None,
+    degraded_read_paths: frozenset[str] = frozenset(),
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -715,9 +1009,11 @@ def create_saas_http_integration(
         lifecycle=lifecycle,
         identities=identities,
         passwords=passwords,
+        context_resolver=context_resolver,
         cookie_config=cookie_config,
         governance=governance,
         oidc=oidc,
+        context_snapshots=context_snapshots,
     )
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
@@ -738,6 +1034,9 @@ def create_saas_http_integration(
         router=router,
         context_resolver=context_resolver,
         cookie_config=cookie_config,
+        context_snapshots=context_snapshots,
+        availability_gate=availability_gate,
+        degraded_read_paths=degraded_read_paths,
     )
 
 
@@ -798,10 +1097,17 @@ def _require_principal(auth_provider: SaasAuthProvider, request: Request) -> Saa
     return principal
 
 
-def _http_error(error: LifecycleError, status_code: int) -> Exception:
+def _http_error(error: object, status_code: int) -> Exception:
     from fastapi import HTTPException
 
     return HTTPException(
         status_code=status_code,
-        detail={"code": error.code, "message": str(error)},
+        detail={
+            "code": str(getattr(error, "code", "request_invalid")),
+            "message": str(error),
+        },
     )
+
+
+def _control_plane_http_error(error: ControlPlaneResolutionError, status_code: int) -> Exception:
+    return _http_error(error, status_code)
