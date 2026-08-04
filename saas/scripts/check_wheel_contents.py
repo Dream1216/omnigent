@@ -11,9 +11,11 @@ from pathlib import Path
 REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/alembic.ini",
     "saas/control_plane/db_models.py",
+    "saas/control_plane/lifecycle.py",
     "saas/control_plane/migrations/env.py",
     "saas/control_plane/migrations/script.py.mako",
     "saas/control_plane/migrations/versions/p1a000000001_identity_tenant_placement.py",
+    "saas/control_plane/migrations/versions/p1a000000002_identity_lifecycle.py",
     "saas/control_plane/resolver.py",
 )
 

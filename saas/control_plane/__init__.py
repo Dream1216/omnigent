@@ -1,7 +1,11 @@
 """SaaS-owned identity, tenancy, and runtime-placement control plane."""
 
 from saas.control_plane.db_models import (
+    AuthSessionRecord,
+    ControlPlaneOutboxEvent,
     GlobalUser,
+    IdentityConnection,
+    MembershipInvitation,
     RuntimeIdentityAliasRecord,
     RuntimePartitionRecord,
     RuntimePlacementRecord,
@@ -12,6 +16,16 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.lifecycle import (
+    InvitationAccepted,
+    InvitationCreated,
+    IssuedAuthSession,
+    LifecycleError,
+    MembershipChanged,
+    MembershipLifecycleService,
+    ValidatedAuthSession,
+    normalize_email,
+)
 from saas.control_plane.resolver import (
     ControlPlaneResolutionError,
     RuntimeCompatibilityPolicy,
@@ -20,8 +34,18 @@ from saas.control_plane.resolver import (
 )
 
 __all__ = [
+    "AuthSessionRecord",
+    "ControlPlaneOutboxEvent",
     "ControlPlaneResolutionError",
     "GlobalUser",
+    "IdentityConnection",
+    "InvitationAccepted",
+    "InvitationCreated",
+    "IssuedAuthSession",
+    "LifecycleError",
+    "MembershipChanged",
+    "MembershipInvitation",
+    "MembershipLifecycleService",
     "RuntimeCompatibilityPolicy",
     "RuntimeIdentityAliasRecord",
     "RuntimePartitionRecord",
@@ -33,5 +57,7 @@ __all__ = [
     "SqlAlchemyContextResolver",
     "Tenant",
     "TenantMembership",
+    "ValidatedAuthSession",
     "load_runtime_compatibility_policy",
+    "normalize_email",
 ]
