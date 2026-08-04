@@ -1,5 +1,5 @@
 {
-  "adapter_contract_version": "0.1.0",
+  "adapter_contract_version": "0.2.0",
   "audit_verified_at": "2026-08-04",
   "downstream_owned_prefixes": [
     "saas/",

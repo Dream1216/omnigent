@@ -364,13 +364,14 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-# Discovers the `omnigent` package (including `omnigent.inner.*` and
-# all omnigent subpackages absorbed during unification).
-include = ["omnigent*"]
+# Discovers the official runtime plus the isolated downstream SaaS boundary.
+include = ["omnigent*", "saas*"]
 
 [tool.setuptools.package-data]
 "omnigent.db" = ["alembic.ini"]
 "omnigent.db.migrations" = ["script.py.mako"]
+"saas.control_plane" = ["alembic.ini"]
+"saas.control_plane.migrations" = ["script.py.mako"]
 "omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "polly/**/*"]
 "omnigent.resources.pi_native" = ["*.js"]
 "omnigent.resources.scripts" = ["*.sh"]

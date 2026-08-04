@@ -31,9 +31,20 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --extra dev
       - name: Run SaaS compatibility tests
-        run: uv run pytest tests/saas
+        run: uv run pytest tests/db/test_workspace_scope.py tests/saas
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
+      - name: Verify SaaS migration CLI
+        env:
+          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
+        run: |
+          uv run alembic -c saas/control_plane/alembic.ini upgrade head
+          uv run alembic -c saas/control_plane/alembic.ini check
+          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+      - name: Verify SaaS wheel contents
+        run: |
+          uv build --wheel --out-dir artifacts/saas-wheel
+          uv run python -m saas.scripts.check_wheel_contents artifacts/saas-wheel
       - name: Enforce source-intrusion budget
         run: >-
           uv run python saas/scripts/check_upstream_delta.py

@@ -51,13 +51,21 @@ class RequestContext:
     tenant_id: UUID
     space_id: UUID
     project_id: UUID | None
+    user_security_version: int
     tenant_membership_version: int
     space_membership_version: int
     trace_id: str
 
     def __post_init__(self) -> None:
-        if self.tenant_membership_version < 1 or self.space_membership_version < 1:
-            raise ValueError("membership versions must be positive")
+        if (
+            min(
+                self.user_security_version,
+                self.tenant_membership_version,
+                self.space_membership_version,
+            )
+            < 1
+        ):
+            raise ValueError("security and membership versions must be positive")
         if not self.trace_id.strip():
             raise ValueError("trace_id must not be empty")
 
@@ -114,6 +122,9 @@ class RuntimeContext:
     tenant_id: UUID
     space_id: UUID
     project_id: UUID | None
+    user_security_version: int
+    tenant_membership_version: int
+    space_membership_version: int
     runtime_partition_id: UUID
     placement_id: UUID
     placement_generation: int
@@ -193,6 +204,9 @@ def resolve_runtime_context(
         tenant_id=request.tenant_id,
         space_id=request.space_id,
         project_id=request.project_id,
+        user_security_version=request.user_security_version,
+        tenant_membership_version=request.tenant_membership_version,
+        space_membership_version=request.space_membership_version,
         runtime_partition_id=partition.id,
         placement_id=partition.placement_id,
         placement_generation=partition.placement_generation,

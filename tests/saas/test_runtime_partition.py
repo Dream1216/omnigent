@@ -31,6 +31,7 @@ def _records():
         tenant_id=tenant_id,
         space_id=space_id,
         project_id=project_id,
+        user_security_version=2,
         tenant_membership_version=3,
         space_membership_version=7,
         trace_id="trace-runtime-p0",
@@ -45,7 +46,7 @@ def _records():
         runtime_type="omnigent",
         data_region="cn-east-1",
         source_revision="2ce9c60bf57e168bdd4d7e6236e68e18ebb4bb9f",
-        adapter_contract_version="0.1.0",
+        adapter_contract_version="0.2.0",
         status=PartitionStatus.ACTIVE,
     )
     alias = RuntimeIdentityAlias(

@@ -1,0 +1,58 @@
+"""Verify that the built wheel contains the deployable SaaS boundary."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import zipfile
+from collections.abc import Collection
+from pathlib import Path
+
+REQUIRED_WHEEL_PATHS = (
+    "saas/control_plane/alembic.ini",
+    "saas/control_plane/db_models.py",
+    "saas/control_plane/migrations/env.py",
+    "saas/control_plane/migrations/script.py.mako",
+    "saas/control_plane/migrations/versions/p1a000000001_identity_tenant_placement.py",
+    "saas/control_plane/resolver.py",
+)
+
+
+def find_missing_paths(names: Collection[str]) -> list[str]:
+    """Return required SaaS artifacts absent from a wheel member list."""
+
+    return sorted(path for path in REQUIRED_WHEEL_PATHS if path not in names)
+
+
+def _select_wheel(path: Path) -> Path:
+    if path.is_file() and path.suffix == ".whl":
+        return path
+    wheels = sorted(path.glob("omnigent-*.whl")) if path.is_dir() else []
+    if len(wheels) != 1:
+        raise ValueError("expected exactly one Omnigent wheel")
+    return wheels[0]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("wheel", help="wheel file or directory containing one wheel")
+    args = parser.parse_args()
+
+    try:
+        wheel = _select_wheel(Path(args.wheel))
+        with zipfile.ZipFile(wheel) as archive:
+            missing = find_missing_paths(set(archive.namelist()))
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        sys.stderr.write(f"wheel verification failed: {error}\n")
+        return 1
+
+    if missing:
+        sys.stderr.write("wheel is missing SaaS artifacts:\n")
+        sys.stderr.write("\n".join(missing) + "\n")
+        return 1
+    sys.stdout.write(f"wheel contains {len(REQUIRED_WHEEL_PATHS)} required SaaS artifacts\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

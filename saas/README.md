@@ -15,9 +15,21 @@ P0 establishes three executable controls:
    blocks forbidden Native Bridge/Harness changes, reverse dependencies, stale
    lineage, or an exceeded patch/LOC/file budget.
 
-This is foundation code, not production multi-tenancy proof. PostgreSQL control
-plane repositories, RLS, authorization, distributed Run/Runner control, billing,
-and administration are delivered in later gated phases.
+The first P1 slice adds an independent control-plane schema and migration for
+Global User, Tenant, Space, versioned Membership, Runtime Placement, Runtime
+Partition, Identity Alias, and Resource Binding records. Its server-side
+resolver:
+
+- re-reads active Tenant and Space memberships before entering the runtime;
+- rejects membership-version changes after a RequestContext is issued;
+- resolves Placement, physical partition, identity alias, and revision metadata
+  only from trusted database records;
+- rejects unapproved source/schema/adapter revisions and `workspace_id = 0`;
+- keeps project-scoped bindings closed until the P2 Project Authorizer exists.
+
+This is foundation code, not production multi-tenancy proof. Authentication,
+Project authorization, real PostgreSQL RLS, distributed Run/Runner control,
+billing, and administration remain behind later gated phases.
 
 Run the focused checks:
 
@@ -26,4 +38,12 @@ uv run pytest tests/saas
 uv run pyrefly check saas
 uv run python saas/scripts/check_upstream_delta.py \
   --output artifacts/upstream-delta-report.json
+```
+
+Exercise the independent migration against a disposable database:
+
+```bash
+export OMNIGENT_SAAS_DB_URL=sqlite:////tmp/omnigent-saas-control-plane.db
+uv run alembic -c saas/control_plane/alembic.ini upgrade head
+uv run alembic -c saas/control_plane/alembic.ini check
 ```
