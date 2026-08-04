@@ -407,7 +407,7 @@ def test_real_postgresql_context_shell_replica_revocation_and_degradation() -> N
     snapshot_headers = {**authorization, "X-SaaS-Context-Snapshot": snapshot}
 
     replica_b = client_b.get("/v1/low-risk", headers=snapshot_headers)
-    assert replica_b.status_code == 200
+    assert replica_b.status_code == 200, replica_b.text
     assert replica_b.json() == {
         "actor_id": str(user_id),
         "tenant_id": str(tenant_id),

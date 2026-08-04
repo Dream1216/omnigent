@@ -175,6 +175,7 @@ class MembershipLifecycleService:
                     authn_method=authn_method,
                     expires_at=expires_at,
                     last_seen_at=issued_at,
+                    created_at=issued_at,
                 )
             )
             security_version = user.security_version

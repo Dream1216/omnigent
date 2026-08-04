@@ -167,6 +167,9 @@ PostgreSQL role ownership is an operator concern. After migration, run
 and give each service login exactly one role. Run identity/session endpoints
 with `saas_authenticator`, governance workflows with `saas_governance`, runtime
 resolution with `saas_app`, and dispatch workers with `saas_dispatcher`.
+P3 admission/API transactions also use tenant-scoped `saas_app`; execution
+workers inherit only `saas_executor`, while event delivery remains isolated in
+`saas_dispatcher`.
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login
 only `omnigent_runtime_app`. The service login must not own protected tables
@@ -180,7 +183,35 @@ Project Admin tests. OIDC callback verification has an immutable passing CI
 record; P0 remains in progress because approved production ADRs, reproducible
 signed images, and Service Catalog/SLO/RPO/RTO evidence are pending. The P1
 Context Shell/multi-replica/degradation gate now has an immutable passing
-PostgreSQL 16 + Chromium CI record, so P1 is complete. P3 durable Run authority,
+PostgreSQL 16 + Chromium CI record, so P1 is complete.
+
+The P3 implementation now supplies a durable execution authority while its
+three acceptance gates remain pending exact-revision CI evidence:
+
+- Task stores durable intent but no duplicated status; Task state is derived
+  from authoritative Runs. Session has an independent active/closed lifetime,
+  and the append-only Session-Task link prevents either lifecycle from owning
+  the other;
+- admission locks a versioned project quota and atomically creates the Run,
+  quota reservation, `run.created`/`run.queued` events, and matching Outbox
+  push intents. Tenant-scoped idempotency rejects payload changes;
+- the queue is the `saas_runs` table. PostgreSQL workers claim with
+  `FOR UPDATE SKIP LOCKED`; every lease carries an opaque token plus monotonic
+  fence, and every heartbeat/transition rejects stale or expired workers;
+- cancellation, expiry recovery, bounded requeue/orphaning, and replay operate
+  only on persisted state. Each Run event increments a per-Run sequence while
+  its Outbox intent is inserted in the same transaction, so a push cannot
+  precede persistence;
+- model, tool, and external effects reserve an idempotency key before I/O.
+  Unknown results remain explicit; unsafe retry requires an approval or
+  compensation reference. Artifacts are content-addressed, revision-labelled,
+  and PostgreSQL triggers reject updates and deletes, including platform-role
+  attempts;
+- all ten P3 tables have tenant/space scope plus `ENABLE` and `FORCE RLS`.
+  Real PostgreSQL tests prove missing-context and cross-tenant denial,
+  non-bypass executor access, immutable artifacts, and one-winner concurrent
+  quota admission.
+
 P4 multi-failure-domain
 execution and Worktree isolation, P5 production recovery, and P6 commercial
 governance have not started and must not be inferred from these foundations.
@@ -230,6 +261,7 @@ postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 uv sync --frozen --extra dev --extra saas
 uv run pytest \
   tests/saas/test_postgresql_rls.py \
+  tests/saas/test_execution_postgresql.py \
   tests/saas/test_runtime_postgresql_rls.py \
   tests/saas/test_context_snapshot_postgresql.py
 ```

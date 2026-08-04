@@ -31,7 +31,7 @@ def _valid_evidence() -> dict[str, object]:
     labels = {
         "org.opencontainers.image.revision": product_revision,
         "ai.omnigent.upstream.revision": upstream["upstream_revision"],
-        "ai.omnigent.saas.schema-revision": "p2a000000007",
+        "ai.omnigent.saas.schema-revision": "p3a000000001",
         "ai.omnigent.saas.adapter-contract-version": upstream["adapter_contract_version"],
     }
     images = []
@@ -79,7 +79,7 @@ def _valid_evidence() -> dict[str, object]:
         "product_revision": product_revision,
         "upstream_revision": upstream["upstream_revision"],
         "adapter_contract_version": upstream["adapter_contract_version"],
-        "control_plane_schema_revision": "p2a000000007",
+        "control_plane_schema_revision": "p3a000000001",
         "workflow": {
             "repository": "example/repo",
             "workflow_ref": ".github/workflows/release.yml@refs/heads/main",
@@ -148,7 +148,7 @@ def test_image_evidence_rejects_floating_material_and_lock_drift() -> None:
     assert "image evidence lock hash drifted for uv.lock" in report["blockers"]
 
 
-def _write_oci(path: Path, *, revision: str) -> None:
+def _write_oci(path: Path, *, revision: str, nested: bool = False) -> None:
     root = path.parent / f"{path.stem}-layout"
     (root / "blobs/sha256").mkdir(parents=True, exist_ok=True)
     descriptors = []
@@ -181,6 +181,18 @@ def _write_oci(path: Path, *, revision: str) -> None:
             {"digest": _digest("f"), "platform": {"os": "unknown", "architecture": "unknown"}},
         ]
     )
+    if nested:
+        nested_index = json.dumps(
+            {"schemaVersion": 2, "manifests": descriptors}, sort_keys=True
+        ).encode()
+        nested_hex = hashlib.sha256(nested_index).hexdigest()
+        (root / "blobs/sha256" / nested_hex).write_bytes(nested_index)
+        descriptors = [
+            {
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "digest": f"sha256:{nested_hex}",
+            }
+        ]
     (root / "index.json").write_text(
         json.dumps({"schemaVersion": 2, "manifests": descriptors}), encoding="utf-8"
     )
@@ -202,3 +214,15 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
 
     _write_oci(second, revision="b" * 40)
     assert compare_archives(first, second)["matching_platform_manifest_and_config"] is False
+
+
+def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -> None:
+    first = tmp_path / "first-nested.tar"
+    second = tmp_path / "second-nested.tar"
+    _write_oci(first, revision="a" * 40, nested=True)
+    _write_oci(second, revision="a" * 40, nested=True)
+
+    comparison = compare_archives(first, second)
+
+    assert comparison["matching_platform_manifest_and_config"] is True
+    assert comparison["first"]["attestation_descriptor_count"] == 2

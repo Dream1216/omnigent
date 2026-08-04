@@ -46,6 +46,16 @@ _CONTROL_PLANE_RLS_TABLES = {
     "saas_ownership_transfers",
     "saas_member_removal_preflights",
     "saas_control_plane_outbox",
+    "saas_tasks",
+    "saas_execution_sessions",
+    "saas_session_tasks",
+    "saas_runs",
+    "saas_run_events",
+    "saas_admission_quotas",
+    "saas_quota_reservations",
+    "saas_effect_calls",
+    "saas_artifacts",
+    "saas_run_artifacts",
 }
 
 

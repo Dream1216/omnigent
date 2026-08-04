@@ -11,6 +11,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+_OCI_INDEX_MEDIA_TYPES = {
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+}
+
 
 def _blob(root: Path, digest: str) -> bytes:
     algorithm, value = digest.split(":", 1)
@@ -32,14 +37,21 @@ def inspect_oci_archive(path: Path) -> dict[str, Any]:
             archive.extractall(root, filter="data")
         index = json.loads((root / "index.json").read_text(encoding="utf-8"))
         platforms: dict[str, dict[str, Any]] = {}
-        attestation_descriptors = 0
-        for descriptor in index.get("manifests", []):
+
+        def inspect_descriptor(descriptor: dict[str, Any]) -> int:
             platform = descriptor.get("platform", {})
             key = f"{platform.get('os')}/{platform.get('architecture')}"
+            if key == "unknown/unknown":
+                return 1
+            document = json.loads(_blob(root, descriptor["digest"]))
+            media_type = descriptor.get("mediaType")
+            if media_type in _OCI_INDEX_MEDIA_TYPES or "manifests" in document:
+                return sum(inspect_descriptor(child) for child in document.get("manifests", []))
             if key not in {"linux/amd64", "linux/arm64"}:
-                attestation_descriptors += 1
-                continue
-            manifest = json.loads(_blob(root, descriptor["digest"]))
+                return 1
+            if key in platforms:
+                raise ValueError(f"OCI archive repeats production platform {key}: {path}")
+            manifest = document
             config_digest = manifest["config"]["digest"]
             config = json.loads(_blob(root, config_digest))
             platforms[key] = {
@@ -47,6 +59,11 @@ def inspect_oci_archive(path: Path) -> dict[str, Any]:
                 "config_digest": config_digest,
                 "labels": config.get("config", {}).get("Labels", {}),
             }
+            return 0
+
+        attestation_descriptors = sum(
+            inspect_descriptor(descriptor) for descriptor in index.get("manifests", [])
+        )
         if set(platforms) != {"linux/amd64", "linux/arm64"}:
             raise ValueError(f"OCI archive does not contain both production platforms: {path}")
         return {
