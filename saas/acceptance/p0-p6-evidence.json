@@ -281,7 +281,11 @@
         {
           "id": "p4-physical-worktree-runner-adapter",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/runner_adapter/worktrees.py",
+            "saas/control_plane/worktrees.py",
+            "tests/saas/test_worktree_control_plane.py"
+          ]
         },
         {
           "id": "p4-sandbox-secret-egress-preview",

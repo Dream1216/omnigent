@@ -112,7 +112,8 @@ def test_snapshot_rejects_tamper_other_session_and_expiry() -> None:
     assert token_error.value.code == "snapshot_token_binding_invalid"
 
     header, payload, signature = issued.token.split(".")
-    tampered = f"{header}.{payload[:-1]}A.{signature}"
+    replacement = "A" if payload[-1] != "A" else "B"
+    tampered = f"{header}.{payload[:-1]}{replacement}.{signature}"
     with pytest.raises(ContextSnapshotError) as tamper_error:
         service.verify(token=tampered, auth_token="opaque-session-token")
     assert tamper_error.value.code in {
@@ -124,6 +125,11 @@ def test_snapshot_rejects_tamper_other_session_and_expiry() -> None:
     with pytest.raises(ContextSnapshotError) as expiry_error:
         service.verify(token=issued.token, auth_token="opaque-session-token")
     assert expiry_error.value.code == "context_snapshot_expired"
+
+
+def test_snapshot_rejects_noncanonical_base64url() -> None:
+    with pytest.raises(ValueError, match="not canonical"):
+        ContextSnapshotService._unb64("AB")
 
 
 def test_snapshot_policy_refuses_lifetime_over_sixty_seconds() -> None:

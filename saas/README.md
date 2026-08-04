@@ -249,6 +249,23 @@ Runner Adapter, canonical-path/symlink/reparse-point and mount boundaries, and
 real filesystem deletion; Sandbox, Secret, Egress, Preview, two-failure-domain,
 and N-1 gates also remain pending.
 
+The next P4 candidate now includes an isolated POSIX Runner Adapter under
+`saas/runner_adapter`, without changing the official Host Worktree helper. It
+derives private checkout and state paths only from a server-generated opaque
+key; resolves credential-free bindings through a Runner-local bare-mirror
+registry; rejects executable Git configuration, embedded credentials, path
+escape, symlink escape, device changes, nested mounts, and quota overflow; and
+uses lease/run fences before materialization, checkpoint, and deletion. A
+content-addressed recovery bundle can restore a checkpoint into a clean mirror
+on another Runner. Materialize, checkpoint, and delete retries are idempotent
+under the same exact fence. Real Git integration tests exercise those paths and
+the wheel inventory now requires 72 SaaS artifacts. This candidate remains
+pending until its exact implementation revision passes GitHub PostgreSQL 16,
+Chromium, migration, wheel, patch-replay, and source-intrusion gates. Linux/POSIX
+filesystem enforcement in this adapter does not prove Windows reparse-point
+handling, external object-store durability, process Sandbox isolation, or a
+two-failure-domain recovery drill.
+
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login
 only `omnigent_runtime_app`. The service login must not own protected tables

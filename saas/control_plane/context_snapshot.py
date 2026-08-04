@@ -362,7 +362,16 @@ class ContextSnapshotService:
 
     @staticmethod
     def _unb64(value: str) -> bytes:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        if not value or "=" in value or len(value) % 4 == 1:
+            raise ValueError("base64url value is not canonical")
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+        if ContextSnapshotService._b64(decoded) != value:
+            raise ValueError("base64url value is not canonical")
+        return decoded
 
     @staticmethod
     def _mapping(value: object) -> dict[str, Any]:

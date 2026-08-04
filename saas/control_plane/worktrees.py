@@ -125,6 +125,39 @@ class WorktreeMutation:
     event_sequence: int
 
 
+@dataclass(frozen=True, slots=True)
+class WorktreeMaterializationGrant:
+    """Trusted logical checkout inputs resolved from one active fenced lease."""
+
+    worktree_id: UUID
+    change_set_id: UUID
+    run_id: UUID
+    runner_id: UUID
+    opaque_runtime_key: str
+    access_mode: str
+    lease_generation: int
+    run_fence_token: int
+    runner_connection_generation: int
+    reserved_bytes: int
+    repository_source_binding_key: str
+    base_revision: str
+    head_revision: str | None
+    branch_ref: str
+    recovery_artifact_ref: str | None
+    environment_snapshot_ref: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorktreeDeletionGrant:
+    """Exact GC fence and credential-free Repository binding for physical deletion."""
+
+    worktree_id: UUID
+    runner_id: UUID
+    opaque_runtime_key: str
+    lease_generation: int
+    repository_source_binding_key: str
+
+
 class WorktreeControlPlane:
     """Own Worktree facts while a downstream Runner Adapter owns physical Git I/O."""
 
@@ -506,7 +539,11 @@ class WorktreeControlPlane:
                         raise WorktreeControlPlaneError(
                             "changeset_writer_conflict", "ChangeSet already has an active writer"
                         )
-                recovery_ref: str | None = None
+                recovery_ref = (
+                    change_set.recovery_artifact_ref
+                    if change_set.status == "checkpointed"
+                    else None
+                )
                 environment_ref: str | None = None
                 event_type = "worktree.created"
                 if rebuild_from_id is not None:
@@ -625,7 +662,7 @@ class WorktreeControlPlane:
                 lease_token=lease_token,
                 now=changed_at,
             )
-            if record.status == "materializing":
+            if record.status in {"materializing", "ready"}:
                 return self._mutation(record)
             if record.status != "reserved":
                 raise WorktreeControlPlaneError(
@@ -670,7 +707,7 @@ class WorktreeControlPlane:
             )
             if record.status == "ready":
                 return self._mutation(record)
-            if record.status != "materializing":
+            if record.status not in {"materializing", "ready"}:
                 raise WorktreeControlPlaneError(
                     "worktree_transition_invalid", "Worktree is not materializing"
                 )
@@ -689,6 +726,73 @@ class WorktreeControlPlane:
                 trace_id=_text(trace_id, field="trace_id", maximum=128),
             )
             return self._mutation(record)
+
+    def materialization_grant(
+        self,
+        *,
+        worktree_id: UUID,
+        runner_id: UUID,
+        lease_generation: int,
+        run_fence_token: int,
+        lease_token: str,
+        now: datetime | None = None,
+    ) -> WorktreeMaterializationGrant:
+        """Resolve credential-free Git inputs only after materialization is fenced."""
+
+        resolved_at = now or _utcnow()
+        with self._session_factory.begin() as db:
+            record = self._require_active_lease(
+                db,
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                now=resolved_at,
+            )
+            if record.status not in {"materializing", "ready"}:
+                raise WorktreeControlPlaneError(
+                    "worktree_materialization_not_started",
+                    "Worktree materialization must be fenced before resolving Git inputs",
+                )
+            change_set = db.get(ChangeSetRecord, record.change_set_id)
+            repository = (
+                db.get(RepositoryRecord, change_set.repository_id)
+                if change_set is not None
+                else None
+            )
+            if (
+                change_set is None
+                or repository is None
+                or change_set.tenant_id != record.tenant_id
+                or change_set.space_id != record.space_id
+                or change_set.project_id != record.project_id
+                or repository.tenant_id != record.tenant_id
+                or repository.space_id != record.space_id
+                or repository.project_id != record.project_id
+            ):
+                raise WorktreeControlPlaneError(
+                    "worktree_materialization_scope_invalid",
+                    "Worktree Repository or ChangeSet scope is invalid",
+                )
+            return WorktreeMaterializationGrant(
+                worktree_id=record.id,
+                change_set_id=record.change_set_id,
+                run_id=record.run_id,
+                runner_id=record.runner_id,
+                opaque_runtime_key=record.opaque_runtime_key,
+                access_mode=record.access_mode,
+                lease_generation=record.lease_generation,
+                run_fence_token=record.run_fence_token,
+                runner_connection_generation=record.runner_connection_generation,
+                reserved_bytes=record.reserved_bytes,
+                repository_source_binding_key=repository.source_binding_key,
+                base_revision=change_set.base_revision,
+                head_revision=change_set.head_revision,
+                branch_ref=change_set.branch_ref,
+                recovery_artifact_ref=record.recovery_artifact_ref,
+                environment_snapshot_ref=record.environment_snapshot_ref,
+            )
 
     def heartbeat(
         self,
@@ -776,6 +880,16 @@ class WorktreeControlPlane:
                 raise WorktreeControlPlaneError(
                     "changeset_unavailable", "ChangeSet is unavailable for checkpoint"
                 )
+            if (
+                change_set.head_revision == head
+                and change_set.recovery_artifact_ref == recovery
+                and change_set.status == "checkpointed"
+                and record.recovery_artifact_ref == recovery
+                and record.environment_snapshot_ref == environment
+                and record.dirty == dirty_after
+            ):
+                record.heartbeat_at = checkpointed_at
+                return self._mutation(record)
             change_set.head_revision = head
             change_set.recovery_artifact_ref = recovery
             change_set.status = "checkpointed"
@@ -1033,13 +1147,15 @@ class WorktreeControlPlane:
             )
             if (
                 record is None
-                or record.status != "gc_eligible"
+                or record.status not in {"gc_eligible", "deleted"}
                 or record.lease_generation != expected_lease_generation
                 or not hmac.compare_digest(record.opaque_runtime_key, opaque_runtime_key)
             ):
                 raise WorktreeControlPlaneError(
                     "worktree_delete_fence_stale", "Worktree delete confirmation is stale"
                 )
+            if record.status == "deleted":
+                return self._mutation(record)
             self._apply_scope(
                 db,
                 actor_id=None,
@@ -1056,6 +1172,58 @@ class WorktreeControlPlane:
                 trace_id=_text(trace_id, field="trace_id", maximum=128),
             )
             return self._mutation(record)
+
+    def deletion_grant(
+        self,
+        *,
+        worktree_id: UUID,
+        expected_lease_generation: int,
+        opaque_runtime_key: str,
+    ) -> WorktreeDeletionGrant:
+        """Validate an exact GC candidate before the Runner performs physical deletion."""
+
+        with self._session_factory.begin() as db:
+            record = db.scalar(
+                sa.select(WorktreeInstanceRecord)
+                .where(WorktreeInstanceRecord.id == worktree_id)
+                .with_for_update()
+            )
+            if (
+                record is None
+                or record.status not in {"gc_eligible", "deleted"}
+                or record.lease_generation != expected_lease_generation
+                or not hmac.compare_digest(record.opaque_runtime_key, opaque_runtime_key)
+            ):
+                raise WorktreeControlPlaneError(
+                    "worktree_delete_fence_stale", "Worktree delete grant is stale"
+                )
+            change_set = db.get(ChangeSetRecord, record.change_set_id)
+            repository = (
+                db.get(RepositoryRecord, change_set.repository_id)
+                if change_set is not None
+                else None
+            )
+            if (
+                change_set is None
+                or repository is None
+                or change_set.tenant_id != record.tenant_id
+                or change_set.space_id != record.space_id
+                or change_set.project_id != record.project_id
+                or repository.tenant_id != record.tenant_id
+                or repository.space_id != record.space_id
+                or repository.project_id != record.project_id
+            ):
+                raise WorktreeControlPlaneError(
+                    "worktree_delete_scope_invalid",
+                    "Worktree Repository scope is invalid for deletion",
+                )
+            return WorktreeDeletionGrant(
+                worktree_id=record.id,
+                runner_id=record.runner_id,
+                opaque_runtime_key=record.opaque_runtime_key,
+                lease_generation=record.lease_generation,
+                repository_source_binding_key=repository.source_binding_key,
+            )
 
     def replay_events(
         self,

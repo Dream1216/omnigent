@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -38,6 +42,13 @@ from saas.control_plane import (
     WorktreeInstanceRecord,
     WorktreeQuotaRecord,
     WorktreeRemovalImpactProvider,
+)
+from saas.runner_adapter import (
+    CheckpointArtifact,
+    FilesystemRecoveryArtifactStore,
+    RunnerWorktreeAdapter,
+    RunnerWorktreeAdapterError,
+    StaticRepositoryMirrorResolver,
 )
 
 
@@ -400,6 +411,42 @@ def _finish_run(
         )
 
 
+def _git_fixture(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        check=True,
+        text=True,
+        env={
+            **os.environ,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        },
+    )
+    return result.stdout.strip()
+
+
+def _create_git_fixture(tmp_path: Path) -> tuple[Path, str]:
+    source = tmp_path / "source"
+    source.mkdir(mode=0o700)
+    _git_fixture(source, "init", "--initial-branch=main")
+    _git_fixture(source, "config", "user.name", "Runner test")
+    _git_fixture(source, "config", "user.email", "runner-test@invalid")
+    (source / "README.md").write_text("base\n", encoding="utf-8")
+    _git_fixture(source, "add", "README.md")
+    _git_fixture(source, "commit", "-m", "base")
+    return source, _git_fixture(source, "rev-parse", "HEAD")
+
+
+def _create_bare_mirror(source: Path, mirror_root: Path, name: str) -> Path:
+    mirror = mirror_root / name
+    _git_fixture(mirror_root, "clone", "--bare", str(source), str(mirror))
+    return mirror
+
+
 def test_changeset_writer_checkpoint_release_gc_and_opaque_storage(
     worktree_fixture: WorktreeFixture,
 ) -> None:
@@ -757,6 +804,358 @@ def test_dirty_expiry_without_recovery_material_is_quarantined(
         change_set = db.get(ChangeSetRecord, change_set_id)
         assert change_set is not None and change_set.status == "quarantined"
         assert quota is not None and quota.active_instances == 0
+
+
+def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
+    worktree_fixture: WorktreeFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    source, base_revision = _create_git_fixture(tmp_path)
+    binding = f"repo_physical_{uuid4().hex}"
+    repository_id = fixture.worktrees.register_repository(
+        fixture.request,
+        project_id=fixture.project_id,
+        provider="github-app",
+        source_binding_key=binding,
+        display_name="Physical Repository",
+        default_branch="main",
+    )
+    created = fixture.worktrees.create_change_set_group(
+        fixture.request,
+        project_id=fixture.project_id,
+        title="Physical Worktree",
+        specs=(
+            ChangeSetSpec(
+                repository_id=repository_id,
+                base_revision=base_revision,
+                branch_ref="refs/heads/codex/physical",
+            ),
+        ),
+    )
+    change_set_id = created.change_set_ids[0]
+    _configure_worktree_quota(fixture)
+
+    first = _lease_run(fixture, change_set_id=change_set_id, key="physical-one", now=now)
+    first_lease = _allocate(
+        fixture,
+        first,
+        change_set_id,
+        now=now + timedelta(seconds=2),
+    )
+    with pytest.raises(WorktreeControlPlaneError) as unfenced_grant:
+        fixture.worktrees.materialization_grant(
+            worktree_id=first_lease.worktree_id,
+            runner_id=first_lease.runner_id,
+            lease_generation=first_lease.lease_generation,
+            run_fence_token=first_lease.run_fence_token,
+            lease_token=first_lease.lease_token,
+        )
+    assert unfenced_grant.value.code == "worktree_materialization_not_started"
+
+    artifact_store = FilesystemRecoveryArtifactStore(tmp_path / "recovery-artifacts")
+    first_mirror_root = tmp_path / "runner-one-mirrors"
+    first_mirror_root.mkdir(mode=0o700)
+    first_mirror = _create_bare_mirror(source, first_mirror_root, "repository.git")
+    first_adapter = RunnerWorktreeAdapter(
+        managed_root=tmp_path / "runner-one-worktrees",
+        mirror_root=first_mirror_root,
+        state_root=tmp_path / "runner-one-state",
+        authority=fixture.worktrees,
+        mirrors=StaticRepositoryMirrorResolver({binding: first_mirror}),
+        recovery_artifacts=artifact_store,
+    )
+    _git_fixture(first_mirror, "config", "core.sshCommand", "/bin/false")
+    with pytest.raises(RunnerWorktreeAdapterError) as executable_config:
+        first_adapter.materialize(first_lease, trace_id="runner:unsafe-config")
+    assert executable_config.value.code == "repository_mirror_config_unsafe"
+    _git_fixture(first_mirror, "config", "--unset", "core.sshCommand")
+    _git_fixture(
+        first_mirror,
+        "config",
+        "remote.origin.url",
+        "https://runner:secret@example.test/repository.git",
+    )
+    with pytest.raises(RunnerWorktreeAdapterError) as embedded_credential:
+        first_adapter.materialize(first_lease, trace_id="runner:unsafe-credential")
+    assert embedded_credential.value.code == "repository_mirror_credentials_exposed"
+    _git_fixture(first_mirror, "config", "remote.origin.url", str(source))
+    first_physical = first_adapter.materialize(first_lease, trace_id="runner:physical-one")
+    assert first_physical.head_revision == base_revision
+    assert _git_fixture(first_physical.worktree_path, "rev-parse", "HEAD") == base_revision
+    assert first_lease.opaque_runtime_key not in str(first_physical.worktree_path)
+    assert binding not in str(first_physical.worktree_path)
+    retried_physical = first_adapter.materialize(
+        first_lease,
+        trace_id="runner:physical-one-retry",
+    )
+    assert retried_physical == first_physical
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    escape = first_physical.worktree_path / "escape"
+    escape.symlink_to(outside)
+    with pytest.raises(RunnerWorktreeAdapterError) as symlink_escape:
+        first_adapter.checkpoint(
+            first_lease,
+            environment_snapshot_ref="environment:physical-one",
+            trace_id="runner:unsafe-checkpoint",
+        )
+    assert symlink_escape.value.code == "worktree_symlink_escape"
+    escape.unlink()
+
+    changed_content = "base\ncheckpoint from runner one\n"
+    (first_physical.worktree_path / "README.md").write_text(
+        changed_content,
+        encoding="utf-8",
+    )
+    checkpoint = first_adapter.checkpoint(
+        first_lease,
+        environment_snapshot_ref="environment:physical-one",
+        trace_id="runner:checkpoint-one",
+    )
+    assert checkpoint.head_revision != base_revision
+    assert checkpoint.recovery_artifact_ref.startswith("wta_sha256_")
+    recovered_artifact = artifact_store.get(checkpoint.recovery_artifact_ref)
+    assert recovered_artifact.base_revision == base_revision
+    assert recovered_artifact.head_revision == checkpoint.head_revision
+    assert recovered_artifact.bundle
+    checkpoint_retry = first_adapter.checkpoint(
+        first_lease,
+        environment_snapshot_ref="environment:physical-one",
+        trace_id="runner:checkpoint-one-retry",
+    )
+    assert checkpoint_retry.recovery_artifact_ref == checkpoint.recovery_artifact_ref
+    first_events = fixture.worktrees.replay_events(
+        fixture.request,
+        project_id=fixture.project_id,
+        worktree_id=first_lease.worktree_id,
+    )
+    assert sum(event.event_type == "worktree.checkpointed" for event in first_events) == 1
+
+    state_payload = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / "runner-one-state").rglob("*.json")
+    )
+    assert first_lease.lease_token not in state_payload
+    assert first_lease.opaque_runtime_key not in state_payload
+    assert binding not in state_payload
+    with fixture.factory() as db:
+        stored = db.get(WorktreeInstanceRecord, first_lease.worktree_id)
+        assert stored is not None
+        assert str(first_physical.worktree_path) not in str(stored.__dict__)
+        assert first_lease.lease_token not in str(stored.__dict__)
+
+    _finish_run(fixture, first, now=now + timedelta(seconds=3))
+    first_release = fixture.worktrees.release(
+        worktree_id=first_lease.worktree_id,
+        runner_id=first_lease.runner_id,
+        lease_generation=first_lease.lease_generation,
+        run_fence_token=first_lease.run_fence_token,
+        lease_token=first_lease.lease_token,
+        final_change_set_status="checkpointed",
+        trace_id="runner:release-one",
+        now=now + timedelta(seconds=7),
+    )
+    assert first_release.lease_generation == first_lease.lease_generation + 1
+
+    second = _lease_run(
+        fixture,
+        change_set_id=change_set_id,
+        key="physical-two",
+        now=now + timedelta(seconds=8),
+    )
+    second_lease = _allocate(
+        fixture,
+        second,
+        change_set_id,
+        now=now + timedelta(seconds=10),
+    )
+    second_mirror_root = tmp_path / "runner-two-mirrors"
+    second_mirror_root.mkdir(mode=0o700)
+    second_mirror = _create_bare_mirror(source, second_mirror_root, "repository.git")
+    assert _git_fixture(second_mirror, "cat-file", "-t", base_revision) == "commit"
+    missing_head = subprocess.run(
+        ["git", "cat-file", "-e", f"{checkpoint.head_revision}^{{commit}}"],
+        cwd=second_mirror,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert missing_head.returncode != 0
+    second_adapter = RunnerWorktreeAdapter(
+        managed_root=tmp_path / "runner-two-worktrees",
+        mirror_root=second_mirror_root,
+        state_root=tmp_path / "runner-two-state",
+        authority=fixture.worktrees,
+        mirrors=StaticRepositoryMirrorResolver({binding: second_mirror}),
+        recovery_artifacts=artifact_store,
+    )
+    second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
+    assert second_physical.head_revision == checkpoint.head_revision
+    assert (second_physical.worktree_path / "README.md").read_text(
+        encoding="utf-8"
+    ) == changed_content
+
+    _finish_run(fixture, second, now=now + timedelta(seconds=11))
+    second_release = fixture.worktrees.release(
+        worktree_id=second_lease.worktree_id,
+        runner_id=second_lease.runner_id,
+        lease_generation=second_lease.lease_generation,
+        run_fence_token=second_lease.run_fence_token,
+        lease_token=second_lease.lease_token,
+        final_change_set_status="committed",
+        trace_id="runner:release-two",
+        now=now + timedelta(seconds=15),
+    )
+    deletion_escape = second_physical.worktree_path / "delete-escape"
+    deletion_escape.symlink_to(outside)
+    eligible = fixture.worktrees.mark_gc_eligible(now=now + timedelta(seconds=26))
+    assert {item.worktree_id for item in eligible} == {
+        first_lease.worktree_id,
+        second_lease.worktree_id,
+    }
+
+    first_deleted = first_adapter.delete(
+        worktree_id=first_lease.worktree_id,
+        expected_lease_generation=first_release.lease_generation,
+        opaque_runtime_key=first_lease.opaque_runtime_key,
+        trace_id="runner:delete-one",
+    )
+    second_deleted = second_adapter.delete(
+        worktree_id=second_lease.worktree_id,
+        expected_lease_generation=second_release.lease_generation,
+        opaque_runtime_key=second_lease.opaque_runtime_key,
+        trace_id="runner:delete-two",
+    )
+    assert first_deleted.status == second_deleted.status == "deleted"
+    assert not first_physical.worktree_path.exists()
+    assert not second_physical.worktree_path.exists()
+    first_delete_retry = first_adapter.delete(
+        worktree_id=first_lease.worktree_id,
+        expected_lease_generation=first_release.lease_generation,
+        opaque_runtime_key=first_lease.opaque_runtime_key,
+        trace_id="runner:delete-one-retry",
+    )
+    assert first_delete_retry.event_sequence == first_deleted.event_sequence
+
+
+def test_filesystem_recovery_artifact_store_rejects_tampering(tmp_path: Path) -> None:
+    store = FilesystemRecoveryArtifactStore(tmp_path / "artifacts")
+    artifact = CheckpointArtifact(
+        repository_binding_digest="a" * 64,
+        base_revision="b" * 40,
+        head_revision="c" * 40,
+        bundle=b"test bundle bytes",
+    )
+    artifact_ref = store.put(artifact)
+    digest = artifact_ref.removeprefix("wta_sha256_")
+    bundle_path = tmp_path / "artifacts" / digest[:2] / f"{digest}.bundle"
+    bundle_path.write_bytes(b"tampered bundle bytes")
+    bundle_path.chmod(0o600)
+    with pytest.raises(RunnerWorktreeAdapterError) as tampered:
+        store.get(artifact_ref)
+    assert tampered.value.code == "artifact_integrity_failed"
+
+
+def test_failed_materialization_is_recoverable_after_partial_state_loss(
+    worktree_fixture: WorktreeFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    source, _ = _create_git_fixture(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    (source / "unsafe-link").symlink_to(outside)
+    _git_fixture(source, "add", "unsafe-link")
+    _git_fixture(source, "commit", "-m", "add unsafe symlink")
+    unsafe_revision = _git_fixture(source, "rev-parse", "HEAD")
+    binding = f"repo_unsafe_{uuid4().hex}"
+    repository_id = fixture.worktrees.register_repository(
+        fixture.request,
+        project_id=fixture.project_id,
+        provider="github-app",
+        source_binding_key=binding,
+        display_name="Unsafe materialization fixture",
+        default_branch="main",
+    )
+    created = fixture.worktrees.create_change_set_group(
+        fixture.request,
+        project_id=fixture.project_id,
+        title="Unsafe physical tree",
+        specs=(
+            ChangeSetSpec(
+                repository_id=repository_id,
+                base_revision=unsafe_revision,
+                branch_ref="refs/heads/codex/unsafe-physical",
+            ),
+        ),
+    )
+    change_set_id = created.change_set_ids[0]
+    _configure_worktree_quota(fixture)
+    leased = _lease_run(fixture, change_set_id=change_set_id, key="unsafe-tree", now=now)
+    lease = _allocate(
+        fixture,
+        leased,
+        change_set_id,
+        now=now + timedelta(seconds=2),
+    )
+    mirror_root = tmp_path / "unsafe-runner-mirrors"
+    mirror_root.mkdir(mode=0o700)
+    mirror = _create_bare_mirror(source, mirror_root, "repository.git")
+    managed_root = tmp_path / "unsafe-runner-worktrees"
+    state_root = tmp_path / "unsafe-runner-state"
+    adapter = RunnerWorktreeAdapter(
+        managed_root=managed_root,
+        mirror_root=mirror_root,
+        state_root=state_root,
+        authority=fixture.worktrees,
+        mirrors=StaticRepositoryMirrorResolver({binding: mirror}),
+        recovery_artifacts=FilesystemRecoveryArtifactStore(tmp_path / "unsafe-artifacts"),
+    )
+    with pytest.raises(RunnerWorktreeAdapterError) as unsafe_tree:
+        adapter.materialize(lease, trace_id="runner:unsafe-tree")
+    assert unsafe_tree.value.code == "worktree_symlink_escape"
+    physical_paths = [
+        path for path in managed_root.glob("*/*") if path.is_dir() and (path / ".git").is_file()
+    ]
+    assert len(physical_paths) == 1
+
+    state_paths = list(state_root.glob("*/*.json"))
+    assert len(state_paths) == 1
+    partial_state = json.loads(state_paths[0].read_text(encoding="utf-8"))
+    partial_state["phase"] = "materializing"
+    partial_state["device"] = None
+    partial_state["inode"] = None
+    state_paths[0].write_text(
+        json.dumps(partial_state, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    state_paths[0].chmod(0o600)
+
+    _finish_run(fixture, leased, now=now + timedelta(seconds=3))
+    released = fixture.worktrees.release(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        final_change_set_status="abandoned",
+        trace_id="runner:release-unsafe-tree",
+        now=now + timedelta(seconds=7),
+    )
+    eligible = fixture.worktrees.mark_gc_eligible(now=now + timedelta(seconds=18))
+    assert [item.worktree_id for item in eligible] == [lease.worktree_id]
+    deleted = adapter.delete(
+        worktree_id=lease.worktree_id,
+        expected_lease_generation=released.lease_generation,
+        opaque_runtime_key=lease.opaque_runtime_key,
+        trace_id="runner:delete-unsafe-tree",
+    )
+    assert deleted.status == "deleted"
+    assert not physical_paths[0].exists()
 
 
 def test_worktree_event_scope_is_database_enforced(worktree_fixture: WorktreeFixture) -> None:

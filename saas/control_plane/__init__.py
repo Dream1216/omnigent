@@ -179,7 +179,9 @@ from saas.control_plane.worktrees import (
     CreatedChangeSetGroup,
     WorktreeControlPlane,
     WorktreeControlPlaneError,
+    WorktreeDeletionGrant,
     WorktreeLease,
+    WorktreeMaterializationGrant,
     WorktreeMutation,
 )
 
@@ -316,9 +318,11 @@ __all__ = [
     "VerifiedIdentityAssertion",
     "WorktreeControlPlane",
     "WorktreeControlPlaneError",
+    "WorktreeDeletionGrant",
     "WorktreeEventRecord",
     "WorktreeInstanceRecord",
     "WorktreeLease",
+    "WorktreeMaterializationGrant",
     "WorktreeMutation",
     "WorktreeQuotaRecord",
     "WorktreeRemovalImpactProvider",
