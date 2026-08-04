@@ -401,6 +401,36 @@ a 0.9904 isolated-code ratio. The evidence-successor wheel inventory requires
 88 artifacts. Eleven acceptance gates and the production decision remain
 `NO-GO`.
 
+The following Runner-local Preview slice adds
+`RunnerPreviewProcessSupervisor` around the route-bound UDS target. One
+supervisor instance is fixed to an exact Runner ID and connection generation;
+it rejects grants for another incarnation. A server-owned immutable process
+spec uses an absolute executable, a validated Runner-owned working directory,
+an exact non-inherited and secret-free environment, and bounded startup,
+health, request, and shutdown timeouts. Neither a Preview request nor route
+metadata can select the command, environment, TCP endpoint, UDS path, or log
+path. The process starts in a new session with closed file descriptors,
+standard input disabled, and stdout/stderr directed to a private `0600` log.
+The supervisor waits for the derived UDS, hardens it, pins its filesystem
+identity, performs a direct UDS health probe, and only then publishes the exact
+target binding. Stop, crash, and lease expiry revoke the binding before sending
+signals to the owned process group; termination is bounded and escalates to
+`SIGKILL`. Cleanup unlinks only the pinned socket identity and deliberately
+leaves a replacement object for quarantine/investigation. Contract tests use
+a real Uvicorn child and cover HTTP forwarding, ambient-secret exclusion,
+health failure, startup timeout, TERM resistance, crash detection, route
+expiry, Runner-generation mismatch, and pathname replacement. The wheel gate
+now requires this adapter as its 89th SaaS artifact.
+
+This closes only the local process-lifecycle implementation seam after an
+exact-revision CI record is captured. It does not prove a deployed service
+manager can reap children after the Runner itself crashes, nor dedicated
+Preview UID/mount/cgroup isolation, Placement reconciliation, deployed
+Gateway-to-Runner mutual authentication, request-frame streaming, WebSocket,
+custom-domain/certificate lifecycle, abuse controls, or two failure domains.
+The aggregate P4 production gate and release decision therefore remain
+pending and `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

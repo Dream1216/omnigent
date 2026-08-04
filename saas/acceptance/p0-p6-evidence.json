@@ -330,43 +330,45 @@
             "saas/acceptance/p4-preview-tunnel-ci-30923776172.json"
           ]
         },
-      {
-        "id": "p4-runner-local-preview-uds-target-adapter-contract",
+        {
+          "id": "p4-runner-local-preview-uds-target-adapter-contract",
           "status": "passed",
           "evidence": [
             "saas/preview_tunnel.py",
             "tests/saas/test_preview_tunnel.py",
-          "saas/acceptance/p4-preview-uds-ci-30926375395.json"
-        ]
-      },
-      {
-        "id": "p4-mtls-secret-broker-transport-adapter-contract",
-        "status": "passed",
-        "evidence": [
-          "saas/control_plane/isolation.py",
-          "saas/runner_adapter/isolation.py",
-          "saas/secret_broker_transport.py",
-          "tests/saas/test_secret_broker_transport.py",
-          "tests/saas/test_isolation_postgresql.py",
-          "tests/saas/test_runner_isolation_e2e.py",
-          "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json"
-        ]
-      },
-      {
-        "id": "p4-production-containment-egress-preview-tunnel",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json"
+          ]
+        },
+        {
+          "id": "p4-mtls-secret-broker-transport-adapter-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/isolation.py",
+            "saas/runner_adapter/isolation.py",
+            "saas/secret_broker_transport.py",
+            "tests/saas/test_secret_broker_transport.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json"
+          ]
+        },
+        {
+          "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
             "saas/preview_tunnel.py",
+            "saas/runner_adapter/preview_supervisor.py",
             "tests/saas/test_preview_tunnel.py",
+            "tests/saas/test_preview_supervisor.py",
             "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
-          "saas/acceptance/p4-containment-egress-ci-30921247156.json",
-          "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
-          "saas/acceptance/p4-preview-uds-ci-30926375395.json",
-          "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
-          "saas/runner_adapter/process_policy.py",
-          "tests/saas/test_managed_runner_process_policy.py",
-          "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
-        ]
+            "saas/acceptance/p4-containment-egress-ci-30921247156.json",
+            "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json",
+            "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
+            "saas/runner_adapter/process_policy.py",
+            "tests/saas/test_managed_runner_process_policy.py",
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
+          ]
         },
         {
           "id": "p4-two-failure-domain-and-n-minus-one-rollback",

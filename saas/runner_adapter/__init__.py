@@ -11,6 +11,13 @@ from saas.runner_adapter.isolation import (
     SecretRedemptionAuthority,
     reap_orphaned_secret_directories,
 )
+from saas.runner_adapter.preview_supervisor import (
+    PreviewProcessExit,
+    PreviewProcessSnapshot,
+    PreviewProcessSpec,
+    PreviewProcessSupervisorError,
+    RunnerPreviewProcessSupervisor,
+)
 from saas.runner_adapter.process_policy import (
     ManagedRunnerProcessPolicyError,
     activate_managed_host_environment,
@@ -41,9 +48,14 @@ __all__ = [
     "PhysicalCheckpoint",
     "PhysicalWorktree",
     "PreparedRunnerIsolation",
+    "PreviewProcessExit",
+    "PreviewProcessSnapshot",
+    "PreviewProcessSpec",
+    "PreviewProcessSupervisorError",
     "RepositoryMirrorResolver",
     "RunnerIsolationAdapter",
     "RunnerIsolationAdapterError",
+    "RunnerPreviewProcessSupervisor",
     "RunnerWorktreeAdapter",
     "RunnerWorktreeAdapterError",
     "SecretRedemptionAuthority",

@@ -85,6 +85,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/runner_adapter/__init__.py",
     "saas/runner_adapter/containment.py",
     "saas/runner_adapter/isolation.py",
+    "saas/runner_adapter/preview_supervisor.py",
     "saas/runner_adapter/process_policy.py",
     "saas/runner_adapter/worktrees.py",
     "saas/secret_broker_transport.py",
