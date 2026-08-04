@@ -280,11 +280,12 @@
         },
         {
           "id": "p4-physical-worktree-runner-adapter",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/runner_adapter/worktrees.py",
             "saas/control_plane/worktrees.py",
-            "tests/saas/test_worktree_control_plane.py"
+            "tests/saas/test_worktree_control_plane.py",
+            "saas/acceptance/p4-physical-worktree-ci-30910478415.json"
           ]
         },
         {

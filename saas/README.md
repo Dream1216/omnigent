@@ -249,7 +249,7 @@ Runner Adapter, canonical-path/symlink/reparse-point and mount boundaries, and
 real filesystem deletion; Sandbox, Secret, Egress, Preview, two-failure-domain,
 and N-1 gates also remain pending.
 
-The next P4 candidate now includes an isolated POSIX Runner Adapter under
+The P4 physical Worktree subgate now includes an isolated POSIX Runner Adapter under
 `saas/runner_adapter`, without changing the official Host Worktree helper. It
 derives private checkout and state paths only from a server-generated opaque
 key; resolves credential-free bindings through a Runner-local bare-mirror
@@ -258,13 +258,17 @@ escape, symlink escape, device changes, nested mounts, and quota overflow; and
 uses lease/run fences before materialization, checkpoint, and deletion. A
 content-addressed recovery bundle can restore a checkpoint into a clean mirror
 on another Runner. Materialize, checkpoint, and delete retries are idempotent
-under the same exact fence. Real Git integration tests exercise those paths and
-the wheel inventory now requires 72 SaaS artifacts. This candidate remains
-pending until its exact implementation revision passes GitHub PostgreSQL 16,
-Chromium, migration, wheel, patch-replay, and source-intrusion gates. Linux/POSIX
-filesystem enforcement in this adapter does not prove Windows reparse-point
-handling, external object-store durability, process Sandbox isolation, or a
-two-failure-domain recovery drill.
+under the same exact fence, including recovery after partial local state loss.
+Exact-revision GitHub Actions run `30910478415` verifies this implementation at
+`85f4927bed35ddb2e5ddc85c3802a4bc99a29633` against official revision
+`a47a9ee3bf7287f7e70fc0f599f241e43275ecfc`: 652 tests pass on PostgreSQL 16
+plus Chromium, Pyrefly reports zero errors, migrations upgrade/check/downgrade,
+the wheel contains 72 required artifacts, both patches replay, and source
+intrusion remains within budget. The evidence successor wheel inventory now
+requires 73 artifacts. Linux/POSIX filesystem enforcement in this adapter does
+not prove Windows reparse-point handling, external object-store durability,
+process Sandbox isolation during concurrent writes, or a two-failure-domain
+recovery drill; those remain explicit release blockers.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login
