@@ -331,12 +331,25 @@ has one request-body frame. The process-local binding resolver is an explicit
 composition seam, not multi-process placement proof. The evidence-successor
 wheel inventory now requires 83 artifacts.
 
+The next Runner-local slice adds `UnixSocketPreviewTarget`. It derives a short
+socket name from the complete server-authorized route beneath an absolute,
+private, Runner-owned root; no request or control-plane field can choose a TCP
+host, port, or host path. The target accepts only the internal Preview tunnel
+client, replaces the incoming Host with the fixed non-routable
+`preview.invalid`, disables environment proxy discovery and redirects, and
+uses only `httpx.AsyncHTTPTransport(uds=...)`. Activation requires a private
+Runner-owned socket and pins device, inode, owner, and ctime; root or socket
+replacement, symlinks, public modes, expiry, connection timeout, and stale
+lifecycle state fail closed. Contract tests launch a real child Uvicorn process
+on the derived UDS, stream an end-to-end response over the official Runner
+frames, and verify header stripping, bounded timeout, and replacement denial.
+
 The production gate therefore remains pending: no real Runner deployment has
 yet passed the cgroup verifier; the Secret Broker and Preview tunnel do not yet
 have deployed mutually authenticated cross-process/host transport; Preview
-WebSocket, custom-domain, abuse controls, and a real local-process/UDS target
-adapter remain incomplete; and two real failure domains, network partition,
-and N-1 rollback are unproven.
+WebSocket, custom-domain, and abuse controls remain incomplete; the UDS adapter
+has no deployed Supervisor lifecycle/crash-recovery evidence; and two real
+failure domains, network partition, and N-1 rollback are unproven.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

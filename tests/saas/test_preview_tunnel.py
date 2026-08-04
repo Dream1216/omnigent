@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+import multiprocessing
+import os
+import socket
+import stat
+import sys
+import tempfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
 
 import pytest
+import uvicorn
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from omnigent.runner.transports.ws_tunnel.frames import (
@@ -28,6 +38,7 @@ from saas.preview_tunnel import (
     OfficialRunnerPreviewTunnel,
     PreviewRunnerASGI,
     PreviewTunnelAdapterError,
+    UnixSocketPreviewTarget,
 )
 
 
@@ -81,6 +92,97 @@ async def _fallback(scope: Scope, receive: Receive, send: Send) -> None:
     await send({"type": "http.response.body", "body": b"fallback"})
 
 
+async def _uds_process_app(scope: Scope, receive: Receive, send: Send) -> None:
+    body = bytearray()
+    while True:
+        event = await receive()
+        if event["type"] == "http.disconnect":
+            return
+        assert event["type"] == "http.request"
+        body.extend(event.get("body", b""))
+        if not event.get("more_body", False):
+            break
+    if scope.get("path") == "/slow":
+        await asyncio.sleep(0.25)
+    headers = {
+        key.decode("latin-1").lower(): value.decode("latin-1")
+        for key, value in scope.get("headers", [])
+    }
+    payload = json.dumps(
+        {
+            "body": bytes(body).decode(),
+            "host": headers.get("host"),
+            "internal_headers": sorted(
+                key for key in headers if key.startswith("x-omnigent-saas-")
+            ),
+            "method": scope.get("method"),
+            "path": scope.get("path"),
+            "query": scope.get("query_string", b"").decode(),
+        },
+        sort_keys=True,
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    midpoint = max(1, len(payload) // 2)
+    await send(
+        {
+            "type": "http.response.body",
+            "body": payload[:midpoint],
+            "more_body": True,
+        }
+    )
+    await send({"type": "http.response.body", "body": payload[midpoint:]})
+
+
+def _serve_preview_uds(socket_path: str) -> None:
+    os.umask(0o077)
+    uvicorn.run(
+        _uds_process_app,
+        uds=socket_path,
+        lifespan="off",
+        access_log=False,
+        log_level="critical",
+    )
+
+
+async def _start_preview_process(socket_path: Path) -> multiprocessing.Process:
+    context = multiprocessing.get_context("spawn")
+    process = context.Process(target=_serve_preview_uds, args=(str(socket_path),))
+    process.start()
+    for _ in range(500):
+        if os.path.lexists(socket_path):
+            socket_stat = os.lstat(socket_path)
+            if stat.S_ISSOCK(socket_stat.st_mode):
+                # Uvicorn binds first and then applies its 0666 default. The
+                # Runner supervisor hardens the final ready socket to 0600.
+                await asyncio.sleep(0.05)
+                os.chmod(socket_path, 0o600)
+                return process
+        if not process.is_alive():
+            process.join(timeout=1)
+            raise RuntimeError("Preview UDS child exited before binding")
+        await asyncio.sleep(0.01)
+    process.terminate()
+    process.join(timeout=5)
+    raise TimeoutError("Preview UDS child did not bind in time")
+
+
+def _stop_preview_process(process: multiprocessing.Process, socket_path: Path) -> None:
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=5)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=5)
+    with contextlib.suppress(FileNotFoundError):
+        socket_path.unlink()
+
+
 class _PreviewApp:
     def __init__(self) -> None:
         self.requests: list[tuple[str, bytes, dict[str, str], tuple[str, int] | None]] = []
@@ -123,9 +225,7 @@ async def _dispatch_one(
     async def send_back(payload: str) -> None:
         response = decode_frame(payload)
         assert isinstance(response, ResponseHeadFrame | ResponseBodyFrame | ResponseEndFrame)
-        assert registry.route_response_frame(
-            session.runner_id, response, session=session
-        )
+        assert registry.route_response_frame(session.runner_id, response, session=session)
 
     await dispatch_via_asgi(app, frame, send_back)
     return frame
@@ -233,9 +333,7 @@ async def test_runner_preview_route_rejects_cross_scope_metadata_without_enumera
     forged = replace(route, run_id=uuid4())
 
     dispatch = asyncio.create_task(_dispatch_one(registry, session, runner_app))
-    response = await tunnel.forward(
-        PreviewTunnelRequest(forged, "GET", "/private", "", {}, b"")
-    )
+    response = await tunnel.forward(PreviewTunnelRequest(forged, "GET", "/private", "", {}, b""))
     assert not isinstance(response.body, bytes)
     body = b"".join([chunk async for chunk in response.body])
     await dispatch
@@ -302,3 +400,196 @@ async def test_preview_response_head_timeout_fails_closed_and_cleans_request() -
         await tunnel.forward(PreviewTunnelRequest(route, "GET", "/slow", "", {}, b""))
     assert timeout.value.code == "preview_response_timeout"
     assert not session.in_flight
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket target requires POSIX")
+@pytest.mark.asyncio
+async def test_preview_tunnel_reaches_real_runner_local_uds_process() -> None:
+    route = _route(opaque_key="pvr_real_uds")
+    with tempfile.TemporaryDirectory(prefix="omnigent-preview-", dir="/tmp") as root_text:
+        root = Path(root_text).resolve()
+        os.chmod(root, 0o700)
+        target = UnixSocketPreviewTarget(route, root)
+        process = await _start_preview_process(target.socket_path)
+        try:
+            identity = target.activate()
+            assert identity.owner_uid == os.geteuid()
+
+            registry = TunnelRegistry()
+            session = registry.register("official-runner-uds", _NoopWebSocket(), _hello())
+            bindings = LocalRunnerTunnelBindings(registry)
+            bindings.bind(
+                runner_id=route.runner_id,
+                connection_generation=route.runner_connection_generation,
+                official_runner_id=session.runner_id,
+            )
+            targets = LocalPreviewTargetRegistry()
+            targets.register(route, target)
+            runner_app = PreviewRunnerASGI(_fallback, targets)
+            tunnel = OfficialRunnerPreviewTunnel(registry, bindings)
+
+            dispatch = asyncio.create_task(_dispatch_one(registry, session, runner_app))
+            response = await tunnel.forward(
+                PreviewTunnelRequest(
+                    route=route,
+                    method="POST",
+                    path="/nested/echo",
+                    query="mode=uds",
+                    headers=route.upstream_request_headers,
+                    body=b'{"through":"uds"}',
+                )
+            )
+            assert not isinstance(response.body, bytes)
+            payload = json.loads(b"".join([chunk async for chunk in response.body]))
+            await dispatch
+
+            assert response.status_code == 200
+            assert payload == {
+                "body": '{"through":"uds"}',
+                "host": "preview.invalid",
+                "internal_headers": [],
+                "method": "POST",
+                "path": "/nested/echo",
+                "query": "mode=uds",
+            }
+            assert not session.in_flight
+        finally:
+            await target.aclose()
+            _stop_preview_process(process, target.socket_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket target requires POSIX")
+@pytest.mark.asyncio
+async def test_preview_uds_socket_replacement_without_lifecycle_fails_closed() -> None:
+    route = _route(opaque_key="pvr_stale_uds")
+    with tempfile.TemporaryDirectory(prefix="omnigent-preview-", dir="/tmp") as root_text:
+        root = Path(root_text).resolve()
+        os.chmod(root, 0o700)
+        target = UnixSocketPreviewTarget(route, root)
+        first_process = await _start_preview_process(target.socket_path)
+        replacement_process: multiprocessing.Process | None = None
+        try:
+            first_identity = target.activate()
+            _stop_preview_process(first_process, target.socket_path)
+            replacement_process = await _start_preview_process(target.socket_path)
+            with pytest.raises(PreviewTunnelAdapterError) as replacement:
+                target.activate()
+            assert replacement.value.code == "preview_uds_socket_replaced"
+            assert first_identity.inode > 0
+
+            registry = TunnelRegistry()
+            session = registry.register("official-runner-stale-uds", _NoopWebSocket(), _hello())
+            bindings = LocalRunnerTunnelBindings(registry)
+            bindings.bind(
+                runner_id=route.runner_id,
+                connection_generation=route.runner_connection_generation,
+                official_runner_id=session.runner_id,
+            )
+            targets = LocalPreviewTargetRegistry()
+            targets.register(route, target)
+            runner_app = PreviewRunnerASGI(_fallback, targets)
+            tunnel = OfficialRunnerPreviewTunnel(registry, bindings)
+
+            dispatch = asyncio.create_task(_dispatch_one(registry, session, runner_app))
+            response = await tunnel.forward(
+                PreviewTunnelRequest(route, "GET", "/private", "", {}, b"")
+            )
+            assert not isinstance(response.body, bytes)
+            body = b"".join([chunk async for chunk in response.body])
+            await dispatch
+
+            assert response.status_code == 502
+            assert body == b'{"detail":{"code":"preview_target_unavailable"}}'
+            assert not session.in_flight
+        finally:
+            await target.aclose()
+            if replacement_process is not None:
+                _stop_preview_process(replacement_process, target.socket_path)
+            else:
+                _stop_preview_process(first_process, target.socket_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket target requires POSIX")
+@pytest.mark.asyncio
+async def test_preview_uds_response_head_timeout_is_bounded() -> None:
+    route = _route(opaque_key="pvr_slow_uds")
+    with tempfile.TemporaryDirectory(prefix="omnigent-preview-", dir="/tmp") as root_text:
+        root = Path(root_text).resolve()
+        os.chmod(root, 0o700)
+        target = UnixSocketPreviewTarget(route, root, request_timeout_seconds=0.05)
+        process = await _start_preview_process(target.socket_path)
+        try:
+            target.activate()
+            registry = TunnelRegistry()
+            session = registry.register("official-runner-slow-uds", _NoopWebSocket(), _hello())
+            bindings = LocalRunnerTunnelBindings(registry)
+            bindings.bind(
+                runner_id=route.runner_id,
+                connection_generation=route.runner_connection_generation,
+                official_runner_id=session.runner_id,
+            )
+            targets = LocalPreviewTargetRegistry()
+            targets.register(route, target)
+            runner_app = PreviewRunnerASGI(_fallback, targets)
+            tunnel = OfficialRunnerPreviewTunnel(registry, bindings)
+
+            dispatch = asyncio.create_task(_dispatch_one(registry, session, runner_app))
+            response = await tunnel.forward(
+                PreviewTunnelRequest(route, "GET", "/slow", "", {}, b"")
+            )
+            assert not isinstance(response.body, bytes)
+            body = b"".join([chunk async for chunk in response.body])
+            await dispatch
+
+            assert response.status_code == 504
+            assert body == b'{"detail":{"code":"preview_target_timeout"}}'
+            assert not session.in_flight
+        finally:
+            await target.aclose()
+            _stop_preview_process(process, target.socket_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket target requires POSIX")
+@pytest.mark.asyncio
+async def test_preview_uds_activation_rejects_symlink_or_public_socket() -> None:
+    route = _route(opaque_key="pvr_bad_uds")
+    with tempfile.TemporaryDirectory(prefix="omnigent-preview-", dir="/tmp") as root_text:
+        root = Path(root_text).resolve()
+        os.chmod(root, 0o700)
+
+        symlink_target = UnixSocketPreviewTarget(route, root)
+        symlink_target.socket_path.symlink_to("/dev/null")
+        with pytest.raises(PreviewTunnelAdapterError) as symlink_error:
+            symlink_target.activate()
+        assert symlink_error.value.code == "preview_uds_socket_invalid"
+        symlink_target.socket_path.unlink()
+        await symlink_target.aclose()
+
+        public_target = UnixSocketPreviewTarget(route, root)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(public_target.socket_path))
+            os.chmod(public_target.socket_path, 0o666)
+            with pytest.raises(PreviewTunnelAdapterError) as public_error:
+                public_target.activate()
+            assert public_error.value.code == "preview_uds_socket_invalid"
+        finally:
+            listener.close()
+            with contextlib.suppress(FileNotFoundError):
+                public_target.socket_path.unlink()
+            await public_target.aclose()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket target requires POSIX")
+def test_preview_uds_rejects_non_private_or_client_shaped_root() -> None:
+    route = _route(opaque_key="pvr_bad_root")
+    with tempfile.TemporaryDirectory(prefix="omnigent-preview-", dir="/tmp") as root_text:
+        root = Path(root_text).resolve()
+        os.chmod(root, 0o755)
+        with pytest.raises(PreviewTunnelAdapterError) as public_root:
+            UnixSocketPreviewTarget(route, root)
+        assert public_root.value.code == "preview_uds_root_invalid"
+
+        with pytest.raises(PreviewTunnelAdapterError) as relative_root:
+            UnixSocketPreviewTarget(route, Path("client/selected/socket"))
+        assert relative_root.value.code == "preview_uds_root_invalid"
