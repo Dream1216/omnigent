@@ -192,7 +192,10 @@ with `saas_authenticator`, governance workflows with `saas_governance`, runtime
 resolution with `saas_app`, and dispatch workers with `saas_dispatcher`.
 P3 admission/API transactions also use tenant-scoped `saas_app`; execution
 workers inherit only `saas_executor`, while event delivery remains isolated in
-`saas_dispatcher`.
+`saas_dispatcher`. Secret redemption and Preview routing use the dedicated
+`saas_secret_broker` and `saas_preview_gateway` roles. Both are `NOLOGIN`,
+`NOSUPERUSER`, and `NOBYPASSRLS`; exact hashed-token RLS policies, rather than
+caller-selected Tenant settings, reveal only the matching lease dependencies.
 
 P4 is now `in_progress`. Its first implementation slice adds a durable weighted
 fair queue, shared Runner Pool/registration records, compatibility-checked
@@ -269,6 +272,41 @@ requires 73 artifacts. Linux/POSIX filesystem enforcement in this adapter does
 not prove Windows reparse-point handling, external object-store durability,
 process Sandbox isolation during concurrent writes, or a two-failure-domain
 recovery drill; those remain explicit release blockers.
+
+The next P4 slice closes only the isolation/Secret/Preview control-plane
+contract. Six new tables persist default-deny egress policies, server-selected
+hard-sandbox profiles, vault-reference-only Secret bindings, one-time fenced
+Run launch grants, one-time Secret access leases, and exact-host Preview
+leases. All six use `ENABLE + FORCE RLS`; dedicated Secret Broker and Preview
+Gateway roles can see a row and its Run/Runner/Worktree dependencies only with
+the exact hashed lease token. Monotonic PostgreSQL guards reject grant/Secret
+reactivation, Preview reactivation, and authority-binding mutation. The
+downstream Runner adapter rejects client sandbox overrides, requires an outer
+containment verifier, disables ambient environment and direct network access,
+masks `.git`, binds the exact physical Worktree/fences, and uses the official
+hard sandbox plus credential proxy. Parent-only credential source files stay
+outside the Worktree in a `0700` directory as `0600` files for the Prepared
+lifecycle because the official helper can transparently restart; failed start
+and `close()` delete them, and they are never mounted into the sandbox. The
+independent Preview application exchanges a body/Bearer capability for an
+exact-host `__Host-` Cookie, rejects ambient SaaS credentials and Host/path
+smuggling, bounds streamed bodies, strips forwarding/upstream Cookie headers,
+and enforces control-plane CSP/COOP/CORP/referrer/frame headers.
+
+Exact-revision GitHub Actions run `30918608868` verifies this contract at
+`0bf50f61258be8966e36746d285f307a955a3201` against official revision
+`a47a9ee3bf7287f7e70fc0f599f241e43275ecfc`: the PostgreSQL 16 + Chromium
+matrix passes 662 tests, the separate official Linux bubblewrap and
+credential-proxy acceptance passes 13 tests with 17 platform skips, Pyrefly
+reports zero errors, migration head `p4c000000001` upgrades/checks/downgrades,
+the wheel contains 78 required artifacts, both patches replay, and source
+intrusion remains at 8 direct upstream files, 403 net added lines, and a 0.9901
+isolated code ratio. The evidence-successor wheel inventory now requires 79
+artifacts. The production gate remains pending: this record does not
+provide the outer cgroup/container/microVM implementation, DNS rebinding and
+malicious exfiltration suite, deployed mutually authenticated Secret Broker or
+Preview Runner tunnel, crash-residual credential cleanup, Preview WebSocket /
+custom-domain / abuse controls, or two real failure domains and N-1 rollback.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

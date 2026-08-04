@@ -289,9 +289,28 @@
           ]
         },
         {
-          "id": "p4-sandbox-secret-egress-preview",
+          "id": "p4-isolation-secret-preview-control-plane-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/isolation_models.py",
+            "saas/control_plane/isolation.py",
+            "saas/control_plane/migrations/versions/p4c000000001_isolation_secret_preview.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/runner_adapter/isolation.py",
+            "saas/preview_gateway.py",
+            "tests/saas/test_isolation_control_plane.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "tests/saas/test_preview_gateway.py",
+            "saas/acceptance/p4-isolation-preview-ci-30918608868.json"
+          ]
+        },
+        {
+          "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/acceptance/p4-isolation-preview-ci-30918608868.json"
+          ]
         },
         {
           "id": "p4-two-failure-domain-and-n-minus-one-rollback",
