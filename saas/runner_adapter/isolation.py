@@ -13,7 +13,7 @@ from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 import omnigent
@@ -33,6 +33,7 @@ from saas.control_plane.isolation import (
     TrustedRunnerLaunchGrant,
 )
 from saas.runner_adapter.worktrees import PhysicalWorktree
+from saas.secret_broker_transport import SecretBrokerTransportError
 
 _SECRET_DIRECTORY = re.compile(r"^sec-(?P<nonce>[0-9a-f]{48})$")
 _CREATING_DIRECTORY = re.compile(r"^\.creating-(?P<nonce>[0-9a-f]{48})$")
@@ -42,8 +43,8 @@ _SECRET_LEASE_KIND = "omnigent-saas-secret-staging"
 _SECRET_LEASE_SCHEMA = 1
 
 
-class IsolationAuthority(Protocol):
-    """Narrow trusted control-plane surface consumed by one Runner."""
+class LaunchGrantAuthority(Protocol):
+    """Trusted launch-grant authority consumed by one Runner."""
 
     def redeem_launch_grant(
         self,
@@ -53,6 +54,10 @@ class IsolationAuthority(Protocol):
         run_id: UUID,
     ) -> TrustedRunnerLaunchGrant: ...
 
+
+class SecretRedemptionAuthority(Protocol):
+    """Trusted Secret Broker authority, commonly backed by an mTLS client."""
+
     def redeem_secret(
         self,
         *,
@@ -61,6 +66,10 @@ class IsolationAuthority(Protocol):
         run_id: UUID,
         provider: SecretValueProvider,
     ) -> SecretMaterial: ...
+
+
+class IsolationAuthority(LaunchGrantAuthority, SecretRedemptionAuthority, Protocol):
+    """Backward-compatible combined authority for in-process compositions."""
 
 
 class ContainmentVerifier(Protocol):
@@ -445,13 +454,19 @@ class RunnerIsolationAdapter:
         self,
         *,
         staging_root: Path | str,
-        authority: IsolationAuthority,
+        authority: LaunchGrantAuthority,
+        secret_authority: SecretRedemptionAuthority | None = None,
         secret_provider: SecretValueProvider,
         containment: ContainmentVerifier,
     ) -> None:
         self._staging_root = _private_root(staging_root)
         reap_orphaned_secret_directories(self._staging_root)
         self._authority = authority
+        if secret_authority is None:
+            if not callable(getattr(authority, "redeem_secret", None)):
+                raise ValueError("Runner isolation requires an explicit Secret Broker authority")
+            secret_authority = cast(SecretRedemptionAuthority, authority)
+        self._secret_authority = secret_authority
         self._secret_provider = secret_provider
         self._containment = containment
 
@@ -515,16 +530,22 @@ class RunnerIsolationAdapter:
         entries: list[CredentialProxyEntry] = []
         try:
             for reference in grant.secret_leases:
-                material = self._authority.redeem_secret(
-                    token=reference.token,
-                    runner_id=runner_id,
-                    run_id=run_id,
-                    provider=self._secret_provider,
-                )
+                try:
+                    material = self._secret_authority.redeem_secret(
+                        token=reference.token,
+                        runner_id=runner_id,
+                        run_id=run_id,
+                        provider=self._secret_provider,
+                    )
+                except (IsolationControlPlaneError, SecretBrokerTransportError) as exc:
+                    raise RunnerIsolationAdapterError(exc.code, str(exc)) from exc
                 if (
                     material.binding_id != reference.binding_id
                     or material.name != reference.name
                     or material.host != reference.host
+                    or material.credential_scheme != reference.credential_scheme
+                    or material.username != reference.username
+                    or material.inject_env != reference.inject_env
                 ):
                     raise RunnerIsolationAdapterError(
                         "secret_material_binding_mismatch",

@@ -4,9 +4,11 @@ from saas.runner_adapter.containment import LinuxCgroupV2ContainmentVerifier
 from saas.runner_adapter.isolation import (
     ContainmentVerifier,
     IsolationAuthority,
+    LaunchGrantAuthority,
     PreparedRunnerIsolation,
     RunnerIsolationAdapter,
     RunnerIsolationAdapterError,
+    SecretRedemptionAuthority,
     reap_orphaned_secret_directories,
 )
 from saas.runner_adapter.worktrees import (
@@ -26,6 +28,7 @@ __all__ = [
     "ContainmentVerifier",
     "FilesystemRecoveryArtifactStore",
     "IsolationAuthority",
+    "LaunchGrantAuthority",
     "LinuxCgroupV2ContainmentVerifier",
     "PhysicalCheckpoint",
     "PhysicalWorktree",
@@ -35,6 +38,7 @@ __all__ = [
     "RunnerIsolationAdapterError",
     "RunnerWorktreeAdapter",
     "RunnerWorktreeAdapterError",
+    "SecretRedemptionAuthority",
     "StaticRepositoryMirrorResolver",
     "WorktreeLifecycleAuthority",
     "reap_orphaned_secret_directories",

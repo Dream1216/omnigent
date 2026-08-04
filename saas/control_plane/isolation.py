@@ -247,6 +247,9 @@ class SecretLeaseReference:
     binding_id: UUID
     name: str
     host: str
+    credential_scheme: str
+    username: str | None
+    inject_env: tuple[str, ...]
     token: str = field(repr=False)
     expires_at: datetime
 
@@ -837,11 +840,14 @@ class IsolationControlPlane:
                 db.flush()
                 secret_leases.append(
                     SecretLeaseReference(
-                        binding.id,
-                        binding.name,
-                        binding.host,
-                        raw_secret_token,
-                        _aware(lease.expires_at),
+                        binding_id=binding.id,
+                        name=binding.name,
+                        host=binding.host,
+                        credential_scheme=binding.credential_scheme,
+                        username=binding.username,
+                        inject_env=tuple(binding.inject_env),
+                        token=raw_secret_token,
+                        expires_at=_aware(lease.expires_at),
                     )
                 )
             record.status = "redeemed"
@@ -1010,9 +1016,7 @@ class IsolationControlPlane:
                 "preview_scope_invalid", "Preview scope or distributed fence is invalid"
             )
         opaque_key = f"pvr_{secrets.token_hex(24)}"
-        preview_root = _normalize_hostname(
-            origin.preview_root_domain, field="preview_root_domain"
-        )
+        preview_root = _normalize_hostname(origin.preview_root_domain, field="preview_root_domain")
         preview_host = f"pv-{opaque_key[4:28]}.{preview_root}"
         raw_token = f"pv_{secrets.token_urlsafe(40)}"
         expires_at = min(issued_at + lifetime, capability.expires_at)

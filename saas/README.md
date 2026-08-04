@@ -350,12 +350,41 @@ migrations round trip, the wheel contains 83 required artifacts, both patches
 replay, and source intrusion remains 8 files/413 lines with a 0.9905 isolated
 code ratio. The evidence-successor wheel inventory now requires 84 artifacts.
 
+The Secret Broker transport slice now replaces Runner-side direct Vault
+resolution with a dedicated end-to-end mTLS redemption channel. Both peers
+must allow exactly TLS 1.3, validate the private CA, and require peer
+certificates. The Broker derives the Runner UUID only from one exact
+`spiffe://omnigent/runner/{uuid}` URI SAN; `runner_id` is intentionally absent
+from the request body. The endpoint, Host, route, content framing, JSON member
+set, body size, timeout, and response schema are fixed, environment proxy
+discovery and redirects are disabled, and lease/fence/generation authorization
+continues to execute in the existing PostgreSQL Secret Broker authority under
+the server-injected Vault provider. Control-plane denials are collapsed at the
+transport boundary so a caller cannot distinguish invalid from stale leases.
+
+The Runner adapter now accepts separate launch-grant and Secret-redemption
+authorities. Production composition can therefore keep launch grants on the
+trusted control-plane client while injecting `MutualTlsSecretBrokerClient` for
+plaintext redemption; the legacy combined in-process authority remains only a
+backward-compatible test/composition seam. Every Secret lease also binds the
+credential scheme, optional username, and exact environment-variable allowlist,
+which the Runner rechecks before creating official credential-proxy entries.
+The client retries a transport failure once with one UUIDv4 request ID. The
+Broker shares the in-flight task and caches a successful response only in a
+bounded, short-lived process-local replay table; request-ID reuse with another
+Runner, Run, or lease token fails closed. End-to-end mTLS supplies request
+integrity. Deployments must not terminate and recreate TLS between Runner and
+Broker; doing so requires a protocol successor with independent request
+proof-of-possession rather than treating a forwarding header as identity.
+
 The production gate therefore remains pending: no real Runner deployment has
-yet passed the cgroup verifier; the Secret Broker and Preview tunnel do not yet
-have deployed mutually authenticated cross-process/host transport; Preview
-WebSocket, custom-domain, and abuse controls remain incomplete; the UDS adapter
-has no deployed Supervisor lifecycle/crash-recovery evidence; and two real
-failure domains, network partition, and N-1 rollback are unproven.
+yet passed the cgroup verifier; the Secret Broker mTLS adapter has no deployed
+certificate issuance, rotation/revocation, service discovery, replica retry,
+Vault/KMS, memory-lifetime, or separate-host evidence; the Preview tunnel does
+not yet have deployed mutually authenticated cross-process/host transport;
+Preview WebSocket, custom-domain, and abuse controls remain incomplete; the UDS
+adapter has no deployed Supervisor lifecycle/crash-recovery evidence; and two
+real failure domains, network partition, and N-1 rollback are unproven.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

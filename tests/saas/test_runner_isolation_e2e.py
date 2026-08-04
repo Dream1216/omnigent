@@ -153,6 +153,9 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
                 binding_id=binding_id,
                 name="github-api",
                 host="example.com",
+                credential_scheme="bearer",
+                username=None,
+                inject_env=("GH_TOKEN",),
                 token="secret-token",
                 expires_at=expires_at,
             ),
@@ -177,6 +180,7 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
     adapter = RunnerIsolationAdapter(
         staging_root=staging_root,
         authority=authority,
+        secret_authority=authority,
         secret_provider=_SecretProvider(),
         containment=containment,
     )
@@ -204,6 +208,7 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
     assert staged_files[0].read_text(encoding="utf-8") == real_secret
     assert containment.verified
     package_root = Path(omnigent.__file__ or "").resolve().parent
+    assert prepared.os_env_spec.sandbox is not None
     mounted_read_paths = {
         Path(path).resolve() for path in prepared.os_env_spec.sandbox.read_paths or []
     }

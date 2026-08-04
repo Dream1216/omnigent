@@ -84,6 +84,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/runner_adapter/containment.py",
     "saas/runner_adapter/isolation.py",
     "saas/runner_adapter/worktrees.py",
+    "saas/secret_broker_transport.py",
     "saas/production/baseline.json",
     "saas/production/runbooks/backup-restore.md",
     "saas/production/runbooks/control-plane-degradation.md",
