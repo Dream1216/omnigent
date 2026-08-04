@@ -330,6 +330,15 @@
           ]
         },
         {
+          "id": "p4-runner-local-preview-uds-target-adapter-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_tunnel.py",
+            "tests/saas/test_preview_tunnel.py",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json"
+          ]
+        },
+        {
           "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
@@ -337,7 +346,8 @@
             "tests/saas/test_preview_tunnel.py",
             "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
             "saas/acceptance/p4-containment-egress-ci-30921247156.json",
-            "saas/acceptance/p4-preview-tunnel-ci-30923776172.json"
+            "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json"
           ]
         },
         {

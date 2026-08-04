@@ -343,6 +343,12 @@ replacement, symlinks, public modes, expiry, connection timeout, and stale
 lifecycle state fail closed. Contract tests launch a real child Uvicorn process
 on the derived UDS, stream an end-to-end response over the official Runner
 frames, and verify header stripping, bounded timeout, and replacement denial.
+Exact implementation run `30926375395` verifies this slice at
+`0e689dd7ea89eb33b0341d5601d4f997bd57f227`: 688 compatibility tests and the
+36/22 official Linux security matrix pass, Pyrefly reports zero errors, P4c
+migrations round trip, the wheel contains 83 required artifacts, both patches
+replay, and source intrusion remains 8 files/413 lines with a 0.9905 isolated
+code ratio. The evidence-successor wheel inventory now requires 84 artifacts.
 
 The production gate therefore remains pending: no real Runner deployment has
 yet passed the cgroup verifier; the Secret Broker and Preview tunnel do not yet
