@@ -33,6 +33,7 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.rls import RlsContext, apply_rls_context
 
 
 class ControlPlaneResolutionError(PermissionError):
@@ -119,6 +120,7 @@ class SqlAlchemyContextResolver:
         """Build a versioned RequestContext from current server-side memberships."""
 
         with self._session_factory() as session, session.begin():
+            apply_rls_context(session, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
             facts = self._load_scope_facts(
                 session, actor_id=actor_id, tenant_id=tenant_id, space_id=space_id
             )
@@ -147,6 +149,10 @@ class SqlAlchemyContextResolver:
             self._deny("resource_selector_invalid", "resource type must not be empty")
 
         with self._session_factory() as session, session.begin():
+            apply_rls_context(
+                session,
+                RlsContext(actor_id=request.actor_id, tenant_id=request.tenant_id),
+            )
             facts = self._load_scope_facts(
                 session,
                 actor_id=request.actor_id,
@@ -259,6 +265,88 @@ class SqlAlchemyContextResolver:
                 )
             except RuntimeResolutionError as error:
                 raise ControlPlaneResolutionError(error.code, str(error)) from error
+
+    def resolve_space_allocation(self, request: RequestContext) -> RuntimeContext:
+        """Resolve the single active allocation partition for new Space-scoped work."""
+
+        with self._session_factory() as session, session.begin():
+            apply_rls_context(
+                session,
+                RlsContext(actor_id=request.actor_id, tenant_id=request.tenant_id),
+            )
+            facts = self._load_scope_facts(
+                session,
+                actor_id=request.actor_id,
+                tenant_id=request.tenant_id,
+                space_id=request.space_id,
+            )
+            self._require_active_scope(facts)
+            if (
+                request.user_security_version != facts.user_security_version
+                or request.tenant_membership_version != facts.tenant_membership_version
+                or request.space_membership_version != facts.space_membership_version
+            ):
+                self._deny(
+                    "authorization_snapshot_stale",
+                    "security or membership facts changed after context issuance",
+                )
+            rows = session.execute(
+                sa.select(
+                    RuntimePartitionRecord,
+                    RuntimePlacementRecord,
+                    RuntimeIdentityAliasRecord,
+                )
+                .join(
+                    RuntimePlacementRecord,
+                    RuntimePlacementRecord.id == RuntimePartitionRecord.placement_id,
+                )
+                .join(
+                    RuntimeIdentityAliasRecord,
+                    sa.and_(
+                        RuntimeIdentityAliasRecord.runtime_partition_id
+                        == RuntimePartitionRecord.id,
+                        RuntimeIdentityAliasRecord.user_id == request.actor_id,
+                    ),
+                )
+                .where(
+                    RuntimePartitionRecord.tenant_id == request.tenant_id,
+                    RuntimePartitionRecord.space_id == request.space_id,
+                    RuntimePartitionRecord.status == "active",
+                    RuntimeIdentityAliasRecord.status == "active",
+                )
+            ).all()
+            if len(rows) != 1:
+                self._deny(
+                    "allocation_partition_ambiguous",
+                    "Space must have exactly one active allocation partition",
+                )
+            partition, placement, identity_alias = rows[0]
+            if placement.status != "active":
+                self._deny("placement_not_active", "runtime placement is not active")
+            if placement.runtime_type != partition.runtime_type:
+                self._deny("placement_runtime_mismatch", "runtime placement type does not match")
+            self._require_compatible_runtime(partition, placement)
+            physical_workspace_id = self._parse_omnigent_workspace(partition)
+            return RuntimeContext(
+                actor_id=request.actor_id,
+                tenant_id=request.tenant_id,
+                space_id=request.space_id,
+                project_id=None,
+                user_security_version=request.user_security_version,
+                tenant_membership_version=request.tenant_membership_version,
+                space_membership_version=request.space_membership_version,
+                runtime_partition_id=partition.id,
+                placement_id=partition.placement_id,
+                placement_generation=partition.placement_generation,
+                binding_generation=partition.placement_generation,
+                data_region=placement.data_region,
+                physical_workspace_id=physical_workspace_id,
+                runtime_user_key=identity_alias.runtime_user_key,
+                runtime_type=partition.runtime_type,
+                source_revision=partition.source_revision,
+                adapter_contract_version=partition.adapter_contract_version,
+                trace_id=request.trace_id,
+            )
 
     def _load_scope_facts(
         self,

@@ -43,15 +43,54 @@ Outbox records. `MembershipLifecycleService`:
   dedicated high-risk workflows provide fresh authentication, impact preview,
   resource transfer, and audited approval.
 
-An idempotent retry of invitation creation returns the stable invitation ID but
-never reveals its raw secret again. A delivery worker or caller must deliver the
-first response safely; the notification dispatcher and encrypted delivery
-handoff remain a later slice.
+The third P1/P2 slice completes the first deployable identity and governance
+boundary without changing the official server application:
 
-This is foundation code, not production multi-tenancy proof. Authentication,
-HTTP/Cookie integration, identity linking, Password Credentials, Project
-authorization, real PostgreSQL RLS, Outbox dispatch, distributed Run/Runner
-control, billing, and administration remain behind later gated phases.
+- `SaasAuthProvider` plugs opaque, revocable sessions into the official
+  `AuthProvider` interface; `SaasAuthContextMiddleware` validates HttpOnly
+  Cookie or Bearer credentials, browser Origin/CSRF, current security version,
+  Tenant/Space membership, runtime allocation, and runtime identity alias;
+- Identity Connections never merge users by email. Provider callbacks must
+  construct a trusted `VerifiedIdentityAssertion`; the public HTTP surface does
+  not accept provider assertions directly;
+- Password Credentials use Argon2id, a unique verified login email, credential
+  versions, constant-work unknown-user verification, bounded lockout, and
+  all-session revocation after enrollment or rotation;
+- `OutboxDispatcher` leases events with PostgreSQL `FOR UPDATE SKIP LOCKED`,
+  publishes outside the database transaction, acknowledges by claim token, and
+  provides at-least-once retry with exponential backoff. Consumers must
+  deduplicate by immutable event ID;
+- Owner transfer locks and compare-and-swaps both memberships, requires fresh
+  authentication and reason, writes an audit record, and revokes both users'
+  sessions in one transaction;
+- member removal requires a short-lived, trusted resource-impact snapshot and
+  re-collects every fact before execution. It fails closed when the impact
+  provider is absent, the member is an Owner, blockers exist, or facts changed.
+  Tenant removal also logically removes active Space memberships;
+- PostgreSQL RLS policies use transaction-local server-chosen actor/Tenant
+  values. The packaged role bootstrap separates `saas_app`,
+  `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
+  `saas_platform`; none has `BYPASSRLS`.
+
+The official `create_app` already accepts an injected AuthProvider and extra
+routers. Build `SaasHttpIntegration`, pass `integration.auth_provider` and
+`[integration.extra_router]` to official `create_app`, then call
+`integration.install_middleware(app)` before serving. This keeps HTTP
+authentication entirely in the downstream boundary and adds no new
+official-source patch.
+
+Database roles are deliberately not created by Alembic because managed
+PostgreSQL role ownership is an operator concern. After migration, run
+`saas/control_plane/postgresql_roles.sql` as the control-plane database owner,
+and give each service login exactly one role. Run identity/session endpoints
+with `saas_authenticator`, governance workflows with `saas_governance`, runtime
+resolution with `saas_app`, and dispatch workers with `saas_dispatcher`.
+
+This remains a validated implementation slice, not complete production SaaS
+proof. OAuth/OIDC callback verification, Project authorization, concrete
+resource-impact/reassignment adapters, distributed Run/Runner control,
+administration UI, billing, backup/restore, and replica/failover acceptance
+remain behind later gates.
 
 Run the focused checks:
 
@@ -68,4 +107,14 @@ Exercise the independent migration against a disposable database:
 export OMNIGENT_SAAS_DB_URL=sqlite:////tmp/omnigent-saas-control-plane.db
 uv run alembic -c saas/control_plane/alembic.ini upgrade head
 uv run alembic -c saas/control_plane/alembic.ini check
+```
+
+Exercise the real PostgreSQL RLS negative test with a disposable PostgreSQL 16
+database owned by the URL's user:
+
+```bash
+export OMNIGENT_SAAS_TEST_POSTGRES_URL=\
+postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+uv sync --frozen --extra dev --extra saas
+uv run pytest tests/saas/test_postgresql_rls.py
 ```

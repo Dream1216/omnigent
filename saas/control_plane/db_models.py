@@ -17,6 +17,8 @@ TENANT_ROLES = ("owner", "admin", "member")
 SPACE_ROLES = ("owner", "admin", "operator", "member")
 IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
+OWNER_TRANSFER_STATUSES = ("completed", "cancelled")
+REMOVAL_PREFLIGHT_STATUSES = ("ready", "blocked", "executed", "expired", "cancelled")
 PLACEMENT_STATUSES = ("active", "draining", "quarantined", "retired")
 PARTITION_STATUSES = (
     "provisioning",
@@ -114,6 +116,7 @@ class AuthSessionRecord(SaasBase):
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
     )
     token_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    csrf_token_hash: Mapped[str | None] = mapped_column(sa.String(64))
     security_version: Mapped[int] = mapped_column(nullable=False)
     authn_method: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
@@ -125,9 +128,45 @@ class AuthSessionRecord(SaasBase):
 
     __table_args__ = (
         sa.CheckConstraint("length(token_hash) = 64", name="ck_auth_session_token_hash"),
+        sa.CheckConstraint(
+            "csrf_token_hash IS NULL OR length(csrf_token_hash) = 64",
+            name="ck_auth_session_csrf_hash",
+        ),
         sa.CheckConstraint("security_version > 0", name="ck_auth_session_security_version"),
         sa.CheckConstraint("length(authn_method) > 0", name="ck_auth_session_method_nonempty"),
         sa.Index("ix_auth_session_user_active", "user_id", "revoked_at", "expires_at"),
+    )
+
+
+class PasswordCredential(SaasBase):
+    """Argon2id password credential kept separate from the Global User."""
+
+    __tablename__ = "saas_password_credentials"
+
+    user_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), primary_key=True
+    )
+    login_email_normalized: Mapped[str] = mapped_column(
+        sa.String(320), nullable=False, unique=True
+    )
+    password_hash: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    password_version: Mapped[int] = mapped_column(nullable=False, default=1)
+    failed_attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "length(login_email_normalized) > 0", name="ck_password_login_email_nonempty"
+        ),
+        sa.CheckConstraint("length(password_hash) > 0", name="ck_password_hash_nonempty"),
+        sa.CheckConstraint("password_version > 0", name="ck_password_version"),
+        sa.CheckConstraint("failed_attempts >= 0", name="ck_password_failed_attempts"),
     )
 
 
@@ -332,6 +371,10 @@ class ControlPlaneOutboxEvent(SaasBase):
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    available_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    claim_token: Mapped[UUID | None] = mapped_column()
+    last_error: Mapped[str | None] = mapped_column(sa.String(2048))
     published_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
@@ -345,7 +388,106 @@ class ControlPlaneOutboxEvent(SaasBase):
         sa.CheckConstraint("length(request_hash) = 64", name="ck_outbox_request_hash"),
         sa.CheckConstraint("attempt_count >= 0", name="ck_outbox_attempt_count"),
         sa.Index("ix_outbox_unpublished", "published_at", "created_at"),
+        sa.Index("ix_outbox_dispatchable", "published_at", "available_at", "claimed_at"),
         sa.Index("ix_outbox_tenant_event", "tenant_id", "event_type", "created_at"),
+    )
+
+
+class OwnershipTransferRecord(SaasBase):
+    """Immutable receipt for an atomic Tenant or Space ownership transfer."""
+
+    __tablename__ = "saas_ownership_transfers"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    space_id: Mapped[UUID | None] = mapped_column()
+    from_user_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    to_user_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="completed")
+    source_version_before: Mapped[int] = mapped_column(nullable=False)
+    target_version_before: Mapped[int] = mapped_column(nullable=False)
+    source_version_after: Mapped[int] = mapped_column(nullable=False)
+    target_version_after: Mapped[int] = mapped_column(nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id"),
+            ("saas_spaces.tenant_id", "saas_spaces.id"),
+            ondelete="RESTRICT",
+            name="fk_ownership_transfer_space",
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(OWNER_TRANSFER_STATUSES)})",
+            name="ck_ownership_transfer_status",
+        ),
+        sa.CheckConstraint("from_user_id <> to_user_id", name="ck_owner_transfer_distinct_users"),
+        sa.CheckConstraint("length(reason) > 0", name="ck_owner_transfer_reason_nonempty"),
+        sa.CheckConstraint(
+            "source_version_before > 0 AND target_version_before > 0 AND "
+            "source_version_after > source_version_before AND "
+            "target_version_after > target_version_before",
+            name="ck_owner_transfer_versions",
+        ),
+        sa.Index("ix_ownership_transfer_scope", "tenant_id", "space_id", "created_at"),
+    )
+
+
+class MemberRemovalPreflightRecord(SaasBase):
+    """Time-limited, hash-bound resource impact snapshot for member removal."""
+
+    __tablename__ = "saas_member_removal_preflights"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    space_id: Mapped[UUID | None] = mapped_column()
+    user_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    membership_version: Mapped[int] = mapped_column(nullable=False)
+    impact_snapshot: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    blocking_count: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    executed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id"),
+            ("saas_spaces.tenant_id", "saas_spaces.id"),
+            ondelete="RESTRICT",
+            name="fk_member_removal_preflight_space",
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(REMOVAL_PREFLIGHT_STATUSES)})",
+            name="ck_member_removal_preflight_status",
+        ),
+        sa.CheckConstraint("membership_version > 0", name="ck_removal_membership_version"),
+        sa.CheckConstraint("length(snapshot_hash) = 64", name="ck_removal_snapshot_hash"),
+        sa.CheckConstraint("blocking_count >= 0", name="ck_removal_blocking_count"),
+        sa.Index("ix_member_removal_scope", "tenant_id", "space_id", "user_id", "status"),
     )
 
 

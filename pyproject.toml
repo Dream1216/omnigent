@@ -258,6 +258,8 @@ databricks = [
     # fresh install on Python 3.14 tries (and fails) to build it from source.
     "databricks-ai-bridge>=0.19",
 ]
+# PostgreSQL driver for the SaaS control plane and its real-RLS acceptance gate.
+saas = ["psycopg[binary]>=3.1,<4"]
 # Load testing (dev/loadtest/). Locust drives the concurrency; the test also
 # needs the `dev` + `agents-sdk` extras (BenchEnvironment boots the stack and the
 # openai-agents harness runs the mocked turns). Opt-in — only load-test users
@@ -370,7 +372,7 @@ include = ["omnigent*", "saas*"]
 [tool.setuptools.package-data]
 "omnigent.db" = ["alembic.ini"]
 "omnigent.db.migrations" = ["script.py.mako"]
-"saas.control_plane" = ["alembic.ini"]
+"saas.control_plane" = ["alembic.ini", "postgresql_roles.sql"]
 "saas.control_plane.migrations" = ["script.py.mako"]
 "omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "polly/**/*"]
 "omnigent.resources.pi_native" = ["*.js"]

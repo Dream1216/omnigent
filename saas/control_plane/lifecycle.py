@@ -43,6 +43,7 @@ class IssuedAuthSession:
 
     session_id: UUID
     token: str
+    csrf_token: str
     security_version: int
     expires_at: datetime
 
@@ -55,6 +56,7 @@ class ValidatedAuthSession:
     user_id: UUID
     security_version: int
     authn_method: str
+    authenticated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +157,7 @@ class MembershipLifecycleService:
             raise LifecycleError("invalid_authn_method", "authentication method is invalid")
 
         raw_token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(32)
         session_id = uuid4()
         with self._session_factory.begin() as db:
             user = db.get(GlobalUser, user_id)
@@ -165,6 +168,7 @@ class MembershipLifecycleService:
                     id=session_id,
                     user_id=user_id,
                     token_hash=_secret_hash(raw_token),
+                    csrf_token_hash=_secret_hash(csrf_token),
                     security_version=user.security_version,
                     authn_method=authn_method,
                     expires_at=expires_at,
@@ -176,6 +180,7 @@ class MembershipLifecycleService:
         return IssuedAuthSession(
             session_id=session_id,
             token=raw_token,
+            csrf_token=csrf_token,
             security_version=security_version,
             expires_at=expires_at,
         )
@@ -211,7 +216,45 @@ class MembershipLifecycleService:
                 user_id=user.id,
                 security_version=user.security_version,
                 authn_method=auth_session.authn_method,
+                authenticated_at=_comparable_time(auth_session.created_at),
             )
+
+    def validate_csrf(self, token: str, csrf_token: str) -> None:
+        """Validate a double-submit CSRF token against its authenticated session."""
+
+        if not token or not csrf_token:
+            raise LifecycleError("csrf_invalid", "CSRF token is invalid")
+        with self._session_factory() as db:
+            valid = db.execute(
+                sa.select(AuthSessionRecord.id).where(
+                    AuthSessionRecord.token_hash == _secret_hash(token),
+                    AuthSessionRecord.csrf_token_hash == _secret_hash(csrf_token),
+                    AuthSessionRecord.revoked_at.is_(None),
+                )
+            ).scalar_one_or_none()
+        if valid is None:
+            raise LifecycleError("csrf_invalid", "CSRF token is invalid")
+
+    def revoke_auth_session(self, token: str, *, now: datetime | None = None) -> bool:
+        """Revoke exactly one opaque session token; repeated logout is harmless."""
+
+        revoked_at = now or _utcnow()
+        _require_aware(revoked_at, "now")
+        if not token:
+            return False
+        with self._session_factory.begin() as db:
+            result = cast(
+                CursorResult[tuple[object]],
+                db.execute(
+                    sa.update(AuthSessionRecord)
+                    .where(
+                        AuthSessionRecord.token_hash == _secret_hash(token),
+                        AuthSessionRecord.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=revoked_at)
+                ),
+            )
+            return result.rowcount == 1
 
     def create_invitation(
         self,

@@ -255,6 +255,26 @@ def test_server_resolves_membership_versions_and_runtime_placement(control_plane
     assert runtime.binding_generation == 2
 
 
+def test_space_allocation_resolves_new_work_without_client_placement_input(
+    control_plane,
+) -> None:
+    resolver, _factory, scope = _resolver(control_plane)
+    request = resolver.resolve_request_context(
+        actor_id=scope.actor_id,
+        tenant_id=scope.tenant_id,
+        space_id=scope.space_id,
+        trace_id="trace-space-allocation",
+    )
+
+    runtime = resolver.resolve_space_allocation(request)
+
+    assert runtime.runtime_partition_id == scope.partition_id
+    assert runtime.placement_id == scope.placement_id
+    assert runtime.physical_workspace_id == 41
+    assert runtime.runtime_user_key == "user_7f7b"
+    assert runtime.binding_generation == 4
+
+
 def test_same_user_can_resolve_a_second_tenant_but_not_cross_tenant_resource(
     control_plane,
 ) -> None:
