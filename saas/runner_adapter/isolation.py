@@ -7,6 +7,7 @@ import os
 import secrets
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
@@ -134,6 +135,41 @@ def _official_package_root() -> Path:
             "official_package_root_unsafe", "official package root must be a real directory"
         )
     return package_root
+
+
+@lru_cache(maxsize=1)
+def _official_runtime_read_paths() -> tuple[Path, ...]:
+    """Return the package plus only validated linked official example assets.
+
+    Editable installs keep ``omnigent/resources/examples/*`` as symlinks into
+    the repository's ``examples`` directory. The bwrap backend correctly masks
+    a symlink whose target is outside the mounted roots, so each such official
+    asset target must be mounted explicitly. Targets outside the fixed official
+    examples root fail closed instead of widening the sandbox to the checkout.
+    """
+
+    package_root = _official_package_root()
+    checkout_root = package_root.parent
+    examples_root = checkout_root / "examples"
+    roots = {package_root}
+    for candidate in package_root.rglob("*"):
+        if not candidate.is_symlink():
+            continue
+        try:
+            target = candidate.resolve(strict=True)
+            allowed_root = examples_root.resolve(strict=True)
+        except OSError as exc:
+            raise RunnerIsolationAdapterError(
+                "official_package_link_invalid",
+                "official package contains an unresolved runtime asset link",
+            ) from exc
+        if not _is_relative_to(target, allowed_root):
+            raise RunnerIsolationAdapterError(
+                "official_package_link_unsafe",
+                "official package runtime asset link escapes the allowed asset root",
+            )
+        roots.add(target)
+    return tuple(sorted(roots, key=str))
 
 
 @dataclass(slots=True)
@@ -313,7 +349,7 @@ class RunnerIsolationAdapter:
                 )
             sandbox = OSEnvSandboxSpec(
                 type=contract.backend,
-                read_paths=[str(_official_package_root())],
+                read_paths=[str(path) for path in _official_runtime_read_paths()],
                 write_paths=(
                     [str(worktree_path)] if grant.worktree_access_mode == "writer" else None
                 ),

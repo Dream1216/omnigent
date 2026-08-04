@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+import omnigent
 from omnigent.inner.credential_proxy import SYNTHETIC_CREDENTIAL_PREFIX
 from saas.control_plane import (
     SandboxLaunchContract,
@@ -192,6 +193,14 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
     assert stat.S_IMODE(staged_files[0].stat().st_mode) == 0o600
     assert staged_files[0].read_text(encoding="utf-8") == real_secret
     assert containment.verified
+    package_root = Path(omnigent.__file__ or "").resolve().parent
+    mounted_read_paths = {
+        Path(path).resolve() for path in prepared.os_env_spec.sandbox.read_paths or []
+    }
+    assert package_root in mounted_read_paths
+    for linked_asset in package_root.rglob("*"):
+        if linked_asset.is_symlink():
+            assert linked_asset.resolve(strict=True) in mounted_read_paths
 
     async def exercise():
         environment = await prepared.start()
