@@ -31,7 +31,7 @@ def _valid_evidence() -> dict[str, object]:
     labels = {
         "org.opencontainers.image.revision": product_revision,
         "ai.omnigent.upstream.revision": upstream["upstream_revision"],
-        "ai.omnigent.saas.schema-revision": "p4a000000001",
+        "ai.omnigent.saas.schema-revision": "p4b000000001",
         "ai.omnigent.saas.adapter-contract-version": upstream["adapter_contract_version"],
     }
     images = []
@@ -79,7 +79,7 @@ def _valid_evidence() -> dict[str, object]:
         "product_revision": product_revision,
         "upstream_revision": upstream["upstream_revision"],
         "adapter_contract_version": upstream["adapter_contract_version"],
-        "control_plane_schema_revision": "p4a000000001",
+        "control_plane_schema_revision": "p4b000000001",
         "workflow": {
             "repository": "example/repo",
             "workflow_ref": ".github/workflows/release.yml@refs/heads/main",

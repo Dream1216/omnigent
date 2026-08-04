@@ -14,6 +14,11 @@ from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
 from saas.control_plane.governance import RemovalImpact, RemovalImpactProvider
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.worktree_models import (
+    ACTIVE_WORKTREE_STATUSES,
+    ChangeSetRecord,
+    WorktreeInstanceRecord,
+)
 
 
 class CompositeRemovalImpactProvider:
@@ -93,6 +98,79 @@ class ExecutionRemovalImpactProvider:
             "active_runs": [{"run_id": str(run_id), "status": status} for run_id, status in runs]
         }
         return RemovalImpact(facts=facts, blocking_count=len(runs))
+
+
+class WorktreeRemovalImpactProvider:
+    """Block removal while the member owns open changes or retained Worktree state."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def collect(
+        self,
+        *,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> RemovalImpact:
+        with self._session_factory.begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=user_id, tenant_id=tenant_id, space_id=space_id),
+            )
+            change_filters = [
+                ChangeSetRecord.tenant_id == tenant_id,
+                ChangeSetRecord.created_by == user_id,
+                ChangeSetRecord.status.in_({"open", "checkpointed", "quarantined"}),
+            ]
+            worktree_filters = [
+                WorktreeInstanceRecord.tenant_id == tenant_id,
+                WorktreeInstanceRecord.created_by == user_id,
+                WorktreeInstanceRecord.status.in_(
+                    ACTIVE_WORKTREE_STATUSES | {"rebuild_pending", "quarantined"}
+                ),
+            ]
+            if space_id is not None:
+                change_filters.append(ChangeSetRecord.space_id == space_id)
+                worktree_filters.append(WorktreeInstanceRecord.space_id == space_id)
+            change_sets = tuple(
+                db.execute(
+                    sa.select(ChangeSetRecord.id, ChangeSetRecord.status)
+                    .where(*change_filters)
+                    .order_by(ChangeSetRecord.id)
+                ).all()
+            )
+            worktrees = tuple(
+                db.execute(
+                    sa.select(
+                        WorktreeInstanceRecord.id,
+                        WorktreeInstanceRecord.change_set_id,
+                        WorktreeInstanceRecord.status,
+                        WorktreeInstanceRecord.dirty,
+                    )
+                    .where(*worktree_filters)
+                    .order_by(WorktreeInstanceRecord.id)
+                ).all()
+            )
+        facts: dict[str, object] = {
+            "open_change_sets": [
+                {"change_set_id": str(change_set_id), "status": status}
+                for change_set_id, status in change_sets
+            ],
+            "retained_worktrees": [
+                {
+                    "worktree_id": str(worktree_id),
+                    "change_set_id": str(change_set_id),
+                    "status": status,
+                    "dirty": dirty,
+                }
+                for worktree_id, change_set_id, status, dirty in worktrees
+            ],
+        }
+        return RemovalImpact(
+            facts=facts,
+            blocking_count=len(change_sets) + len(worktrees),
+        )
 
 
 class ProjectRemovalImpactProvider:

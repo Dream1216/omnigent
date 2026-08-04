@@ -85,7 +85,7 @@ boundary without changing the official server application:
   re-collects every fact before execution. It fails closed when the impact
   provider is absent, the member is an Owner, blockers exist, or facts changed.
   Tenant removal also logically removes active Space memberships;
-- all 38 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
+- all 44 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
   SECURITY` with transaction-local server-chosen Actor/Tenant/Space values.
   The packaged role bootstrap separates `saas_app`,
   `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
@@ -177,10 +177,12 @@ failures back off without losing durable leases.
 Member-removal composition must use `CompositeRemovalImpactProvider` with an
 explicit required-domain set. Project ownership and grants are collected by
 `ProjectRemovalImpactProvider`; all non-terminal Runs created by the member are
-collected by `ExecutionRemovalImpactProvider`. A missing required domain fails
-at startup. Once Worktree ownership exists, `worktrees` must be added to that
-required set before member removal is enabled; it is intentionally impossible
-to infer a zero impact from an unwired provider.
+collected by `ExecutionRemovalImpactProvider`; open/checkpointed ChangeSets and
+active, rebuild-pending, or quarantined Worktrees are collected by
+`WorktreeRemovalImpactProvider`. Production composition must require all three
+domains (`projects`, `runs`, and `worktrees`). A missing required domain fails
+at startup; it is intentionally impossible to infer a zero impact from an
+unwired provider.
 
 Database roles are deliberately not created by Alembic because managed
 PostgreSQL role ownership is an operator concern. After migration, run
@@ -208,9 +210,36 @@ dispatch or capability records. Exact-revision GitHub Actions run
 `e0a806f66bd53ab60466d7294653fadf2d1b093d` with 642 tests on PostgreSQL 16
 plus Chromium, migration head `p4a000000001`, 64 required wheel artifacts,
 two patch replays, and source-intrusion enforcement. The first P4 gate is
-therefore closed, but P4 cannot complete before Worktree/ChangeSet,
+therefore closed, but P4 cannot complete before the physical Worktree Adapter,
 Sandbox/Secret/Egress/Preview, two real failure domains, network partition,
-and N-1 rollback acceptance.
+and N-1 rollback acceptance. The paired image-candidate run `30901594130`
+proves repeated server and host archive builds have matching executable
+manifest/config digests for both `linux/amd64` and `linux/arm64` at the exact
+same revision. It remains explicitly non-production: the archives are not
+registry-published immutable digests, keyless signatures and protected workflow
+identity are unverified, vulnerability/license evidence is absent, and no
+digest-pinned canary or N-1 rollback was exercised.
+
+The second P4 implementation slice now persists credential-free Repository
+bindings, atomic multi-Repository ChangeSet groups, immutable base revisions,
+Project Worktree quotas, leased Worktree Instances, and append-only lifecycle
+events. A partial unique index makes each modifying ChangeSet single-Writer;
+readonly instances cannot become dirty. Every allocation consumes a live
+scheduling capability and binds its hashed one-time token to Tenant, Space,
+Project, Run fence, Runner connection generation, and Worktree lease
+generation. The server generates the opaque runtime key and rejects path/URL
+inputs; only the downstream Runner Adapter may map that key to a host path.
+Dirty expiry with a checkpoint enters `rebuild_pending` and can be rebuilt on a
+new Runner/fence from opaque recovery and environment references; dirty expiry
+without recovery is quarantined. Release decrements transactional quota
+counters, late writes fail after generation fencing, and physical deletion
+requires an exact opaque-key/generation confirmation after the GC grace period.
+Real PostgreSQL tests cover six-table forced RLS, scoped governance reads,
+least-privilege service grants, and two concurrent control-plane instances
+competing for one Writer. This closes the Repository/ChangeSet/Worktree
+control-plane subgate only after exact-revision CI evidence is committed; it
+does not close the remaining physical Git adapter, canonical-path/symlink,
+Sandbox, Secret, Egress, Preview, two-failure-domain, or N-1 gates.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

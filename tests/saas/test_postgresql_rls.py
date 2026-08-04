@@ -62,6 +62,12 @@ _CONTROL_PLANE_RLS_TABLES = {
     "saas_tenant_queue_shares",
     "saas_run_dispatches",
     "saas_capability_tokens",
+    "saas_repositories",
+    "saas_changeset_groups",
+    "saas_changesets",
+    "saas_worktree_quotas",
+    "saas_worktree_instances",
+    "saas_worktree_events",
 }
 
 

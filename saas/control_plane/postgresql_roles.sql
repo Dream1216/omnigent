@@ -61,7 +61,13 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_control_plane_outbox
 TO saas_governance;
 
-GRANT SELECT ON saas_runs TO saas_governance;
+GRANT SELECT ON
+    saas_runs,
+    saas_repositories,
+    saas_changeset_groups,
+    saas_changesets,
+    saas_worktree_instances
+TO saas_governance;
 
 GRANT SELECT ON
     saas_global_users,
@@ -76,7 +82,20 @@ GRANT SELECT ON
     saas_runtime_partitions,
     saas_runtime_identity_aliases,
     saas_runtime_resource_bindings,
-    saas_runtime_binding_sagas
+    saas_runtime_binding_sagas,
+    saas_repositories,
+    saas_changeset_groups,
+    saas_changesets,
+    saas_worktree_quotas,
+    saas_worktree_instances,
+    saas_worktree_events
+TO saas_app;
+
+GRANT INSERT, UPDATE ON
+    saas_repositories,
+    saas_changeset_groups,
+    saas_changesets,
+    saas_worktree_quotas
 TO saas_app;
 
 GRANT SELECT, INSERT ON saas_authorization_decisions TO saas_app;
@@ -123,6 +142,20 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_capability_tokens
 TO saas_executor;
 
+GRANT SELECT ON
+    saas_repositories,
+    saas_changeset_groups
+TO saas_executor;
+
+GRANT SELECT, UPDATE ON saas_worktree_quotas TO saas_executor;
+
+GRANT SELECT, INSERT, UPDATE ON
+    saas_changesets,
+    saas_worktree_instances
+TO saas_executor;
+
+GRANT SELECT, INSERT ON saas_worktree_events TO saas_executor;
+
 GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
@@ -163,5 +196,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_tenant_queue_shares,
     saas_run_dispatches,
     saas_capability_tokens,
+    saas_repositories,
+    saas_changeset_groups,
+    saas_changesets,
+    saas_worktree_quotas,
+    saas_worktree_instances,
+    saas_worktree_events,
     saas_control_plane_outbox
 TO saas_platform;

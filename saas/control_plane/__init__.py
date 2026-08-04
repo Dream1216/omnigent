@@ -142,6 +142,7 @@ from saas.control_plane.removal_impact import (
     CompositeRemovalImpactProvider,
     ExecutionRemovalImpactProvider,
     ProjectRemovalImpactProvider,
+    WorktreeRemovalImpactProvider,
 )
 from saas.control_plane.resolver import (
     AvailableScope,
@@ -165,6 +166,22 @@ from saas.control_plane.scheduling_models import (
     RunnerRegistrationRecord,
     TenantQueueShareRecord,
 )
+from saas.control_plane.worktree_models import (
+    ChangeSetGroupRecord,
+    ChangeSetRecord,
+    RepositoryRecord,
+    WorktreeEventRecord,
+    WorktreeInstanceRecord,
+    WorktreeQuotaRecord,
+)
+from saas.control_plane.worktrees import (
+    ChangeSetSpec,
+    CreatedChangeSetGroup,
+    WorktreeControlPlane,
+    WorktreeControlPlaneError,
+    WorktreeLease,
+    WorktreeMutation,
+)
 
 __all__ = [
     "PERMISSION_CATALOG",
@@ -183,6 +200,9 @@ __all__ = [
     "AuthorizationSource",
     "AvailableScope",
     "CapabilityTokenRecord",
+    "ChangeSetGroupRecord",
+    "ChangeSetRecord",
+    "ChangeSetSpec",
     "CompositeRemovalImpactProvider",
     "ContextSnapshotError",
     "ContextSnapshotPolicy",
@@ -191,6 +211,7 @@ __all__ = [
     "ControlPlaneDependencyUnavailable",
     "ControlPlaneOutboxEvent",
     "ControlPlaneResolutionError",
+    "CreatedChangeSetGroup",
     "DispatchResult",
     "EffectCallRecord",
     "EffectCallState",
@@ -247,6 +268,7 @@ __all__ = [
     "RemovalImpact",
     "RemovalImpactProvider",
     "RemovalPreflight",
+    "RepositoryRecord",
     "ResourceGrantRecord",
     "RlsContext",
     "RunAdmission",
@@ -292,6 +314,14 @@ __all__ = [
     "VerifiedCapability",
     "VerifiedContextSnapshot",
     "VerifiedIdentityAssertion",
+    "WorktreeControlPlane",
+    "WorktreeControlPlaneError",
+    "WorktreeEventRecord",
+    "WorktreeInstanceRecord",
+    "WorktreeLease",
+    "WorktreeMutation",
+    "WorktreeQuotaRecord",
+    "WorktreeRemovalImpactProvider",
     "apply_rls_context",
     "create_project_admin_router",
     "create_saas_auth_router",

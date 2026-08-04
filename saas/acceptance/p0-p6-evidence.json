@@ -44,7 +44,8 @@
             ".github/workflows/saas-image-candidate.yml",
             "deploy/docker/Dockerfile",
             "setup.py",
-            "tests/saas/test_image_supply_chain.py"
+            "tests/saas/test_image_supply_chain.py",
+            "saas/acceptance/p4-image-candidate-ci-30901594130.json"
           ]
         },
         {
@@ -264,7 +265,12 @@
           ]
         },
         {
-          "id": "p4-worktree-changeset-sandbox-secret-egress-preview",
+          "id": "p4-worktree-changeset-control-plane",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p4-sandbox-secret-egress-preview",
           "status": "pending",
           "evidence": []
         },
