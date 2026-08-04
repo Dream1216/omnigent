@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -20,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from saas.control_plane import (
     ControlPlaneOutboxEvent,
+    PreviewGatewayCertificateRecord,
     PreviewGatewayDirectoryAuthority,
     PreviewRouteGrant,
     RunnerConnection,
@@ -37,6 +39,40 @@ from saas.preview_tunnel import (
     PlacementRoutedPreviewTunnel,
     PreviewTunnelAdapterError,
 )
+
+
+def _activate_gateway_for_placement(
+    factory: sessionmaker[Session],
+    directory: PreviewGatewayDirectoryAuthority,
+    *,
+    gateway_instance_id: str,
+    registration_token: str,
+    now: datetime,
+) -> None:
+    with factory.begin() as db:
+        for purpose in ("preview_relay_client", "preview_relay_server"):
+            fingerprint = hashlib.sha256(f"{gateway_instance_id}:{purpose}".encode()).hexdigest()
+            db.add(
+                PreviewGatewayCertificateRecord(
+                    gateway_instance_id=gateway_instance_id,
+                    purpose=purpose,
+                    fingerprint_sha256=fingerprint,
+                    spki_sha256=hashlib.sha256(f"spki:{fingerprint}".encode()).hexdigest(),
+                    serial_hex=fingerprint[:32],
+                    spiffe_id=f"spiffe://omnigent/preview-gateway/{gateway_instance_id}",
+                    trust_bundle_version="placement-test-bundle",
+                    rotation_generation=1,
+                    certificate_not_before=now - timedelta(minutes=1),
+                    certificate_not_after=now + timedelta(hours=1),
+                    status="active",
+                    activated_at=now,
+                )
+            )
+    directory.activate_gateway(
+        gateway_instance_id=gateway_instance_id,
+        registration_token=registration_token,
+        now=now,
+    )
 
 
 def _fixture() -> tuple[
@@ -75,6 +111,7 @@ def _fixture() -> tuple[
         )
     directory = PreviewGatewayDirectoryAuthority(factory, service_session_factory=factory)
     for gateway_instance_id in ("gateway-a", "gateway-b"):
+        registration_token = f"{gateway_instance_id}-" + "x" * 40
         directory.register_gateway(
             gateway_instance_id=gateway_instance_id,
             connect_host="127.0.0.1",
@@ -83,8 +120,15 @@ def _fixture() -> tuple[
             failure_domain="cn-east-1a",
             source_revision="upstream",
             adapter_contract_version="0.2.0",
-            registration_token=f"{gateway_instance_id}-" + "x" * 40,
+            registration_token=registration_token,
             lease_duration=timedelta(minutes=2),
+            now=now,
+        )
+        _activate_gateway_for_placement(
+            factory,
+            directory,
+            gateway_instance_id=gateway_instance_id,
+            registration_token=registration_token,
             now=now,
         )
     scheduling = SchedulingControlPlane(factory)
@@ -429,7 +473,8 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
             },
         )
 
-    platform = SchedulingControlPlane(_role_factory(engine, "saas_platform"))
+    platform_factory = _role_factory(engine, "saas_platform")
+    platform = SchedulingControlPlane(platform_factory)
     executor_factory = _role_factory(engine, "saas_executor")
     scheduling = SchedulingControlPlane(executor_factory)
     pool_id = platform.create_pool(
@@ -449,6 +494,7 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
         service_session_factory=_role_factory(engine, "saas_preview_gateway"),
     )
     for gateway_instance_id in (f"gateway-a-{nonce}", f"gateway-b-{nonce}"):
+        registration_token = f"{gateway_instance_id}-" + "x" * 40
         directory.register_gateway(
             gateway_instance_id=gateway_instance_id,
             connect_host="127.0.0.1",
@@ -457,8 +503,15 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
             failure_domain="cn-east-1a",
             source_revision="upstream",
             adapter_contract_version="0.2.0",
-            registration_token=f"{gateway_instance_id}-" + "x" * 40,
+            registration_token=registration_token,
             lease_duration=timedelta(minutes=2),
+            now=now,
+        )
+        _activate_gateway_for_placement(
+            platform_factory,
+            directory,
+            gateway_instance_id=gateway_instance_id,
+            registration_token=registration_token,
             now=now,
         )
     stale_gateway_id = f"gateway-stale-{nonce}"

@@ -595,6 +595,39 @@ external CA issuance, production Trust Bundle distribution, deployed Gateway
 registration/service discovery, cross-host failure evidence, or
 two-failure-domain proof; the release remains `NO-GO`.
 
+Migration `p4g000000001` adds two-phase Preview Gateway process activation.
+New registrations are `starting` and cannot be discovered, selected for new
+Runner ownership, or authorize Relay leaves as a live peer. The downstream
+`PreviewGatewayRuntime` keeps the registration token in process memory, keeps
+private keys inside an injected local/HSM provider, installs both
+purpose-separated leaves, binds the listener, registers its actual port,
+performs an exact advertised-endpoint mTLS readiness probe while the directory
+is still non-routable, and activates only after both certificates and the
+probe succeed. The process then heartbeats its bounded lease, rotates both
+leaves as one coordinated pair, and drains existing local Tunnel ownership
+before release.
+
+The pre-activation probe uses an independently authorized, server-owned
+platform health identity and pins the prepared server leaf. It must not reuse
+the Gateway's `preview_relay_client` leaf: ordinary Gateway certificate
+authorization remains denied while the instance is `starting`. Both runtime
+leaves must advertise the same accepted Trust Bundle version, and the
+PostgreSQL activation trigger repeats that pair-consistency check.
+
+Startup and maintenance failures are fail-closed: readiness is removed first,
+all cleanup steps are attempted even if one fails, the listener is closed, the
+durable identity is released with lease expiry as the database-outage fallback,
+active leaves are revoked, and provider-held private material is discarded.
+The PostgreSQL trigger independently requires both valid certificate purposes
+for `starting -> active`, preserves activation time, and rejects terminal time
+reversal. The Preview Gateway role can heartbeat, drain, or release only its
+token-selected row and has no grant to write `activated_at`; final activation
+uses the platform authority transaction. Local real-PostgreSQL migration and
+negative-RLS checks pass, but exact-revision Linux CI evidence is still pending.
+External CA/HSM deployment, Trust Bundle rollout, DNS/load-balancer health,
+cross-host failure and partition behavior, and two failure domains remain
+production blockers, so this candidate does not change the `NO-GO` decision.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

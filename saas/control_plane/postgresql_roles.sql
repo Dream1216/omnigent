@@ -222,7 +222,7 @@ TO saas_preview_gateway;
 GRANT SELECT (
     id, connect_host, connect_port, server_name, failure_domain,
     source_revision, adapter_contract_version, status, registered_at,
-    last_heartbeat_at, lease_expires_at, released_at, release_reason
+    activated_at, last_heartbeat_at, lease_expires_at, released_at, release_reason
 ) ON saas_preview_gateway_instances TO saas_preview_gateway;
 GRANT UPDATE (
     status, last_heartbeat_at, lease_expires_at, released_at, release_reason, updated_at

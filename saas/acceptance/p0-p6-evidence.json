@@ -417,6 +417,21 @@
           ]
         },
         {
+          "id": "p4-preview-gateway-runtime-lifecycle-contract",
+          "status": "pending",
+          "evidence": [
+            "saas/preview_gateway_runtime.py",
+            "saas/control_plane/gateway_models.py",
+            "saas/control_plane/gateways.py",
+            "saas/control_plane/migrations/versions/p4g000000001_preview_gateway_runtime_lifecycle.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_preview_gateway_runtime.py",
+            "tests/saas/test_preview_gateway_authority.py",
+            "tests/saas/test_runner_tunnel_placement.py",
+            "tests/saas/test_isolation_postgresql.py"
+          ]
+        },
+        {
           "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
@@ -433,9 +448,12 @@
             "saas/control_plane/gateway_models.py",
             "saas/control_plane/gateways.py",
             "saas/control_plane/migrations/versions/p4f000000001_preview_gateway_authority.py",
+            "saas/preview_gateway_runtime.py",
+            "saas/control_plane/migrations/versions/p4g000000001_preview_gateway_runtime_lifecycle.py",
             "tests/saas/test_preview_tunnel.py",
             "tests/saas/test_preview_relay_transport.py",
             "tests/saas/test_preview_gateway_authority.py",
+            "tests/saas/test_preview_gateway_runtime.py",
             "tests/saas/test_preview_supervisor.py",
             "tests/saas/test_certificate_lifecycle.py",
             "tests/saas/test_runner_tunnel_placement.py",

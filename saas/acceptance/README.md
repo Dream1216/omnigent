@@ -174,3 +174,26 @@ is therefore `passed`; the evidence-successor wheel requires 104 artifacts.
 External CA/Trust Bundle operations, deployed cross-host registration and
 service discovery, network partitions, and two failure domains remain
 independent `NO-GO` requirements. Eleven aggregate gates remain pending.
+
+The p4g candidate adds a downstream-owned Preview Gateway process coordinator
+and an explicit non-routable `starting` state. It prepares and installs a
+purpose-separated client/server leaf pair without exposing private-key bytes,
+binds the Relay listener before durable registration, verifies the exact
+advertised mTLS endpoint while the directory still rejects routing, and only
+then atomically activates the Gateway. Heartbeats extend a bounded lease;
+renewal activates both replacement leaves before installing them; partial
+pair activation is revoked; and startup, maintenance, signal, or planned-drain
+failure removes readiness, closes the listener, releases or expires the
+registration, revokes current leaves, and asks the key provider to destroy the
+private material. PostgreSQL rejects activation without both valid purposes,
+one common accepted Trust Bundle, direct Gateway-role activation,
+activation-time rewrite, lifecycle reversal,
+and stale endpoint reuse. Migration `p4g000000001` has passed a real
+PostgreSQL `p4f -> p4g -> p4f -> p4g` local round trip, but the exact-revision
+Linux compatibility workflow has not yet verified this implementation, so the
+runtime subgate remains `pending` and the aggregate pending count is twelve.
+Pre-activation readiness uses an independently authorized platform health
+probe identity rather than the still-disabled Gateway client leaf.
+This does not provide an external CA, production Trust Bundle distribution,
+deployed DNS/load-balancer registration, cross-host topology, network-partition
+evidence, or two failure domains; production remains `NO-GO`.

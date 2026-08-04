@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from saas.control_plane.db_models import SaasBase, _values
 
-PREVIEW_GATEWAY_STATUSES = ("active", "draining", "released", "expired")
+PREVIEW_GATEWAY_STATUSES = ("starting", "active", "draining", "released", "expired")
 PREVIEW_GATEWAY_CERTIFICATE_PURPOSES = (
     "preview_relay_client",
     "preview_relay_server",
@@ -33,8 +33,9 @@ class PreviewGatewayInstanceRecord(SaasBase):
     registration_token_hash: Mapped[str] = mapped_column(
         sa.String(64), nullable=False, unique=True
     )
-    status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="active")
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="starting")
     registered_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_heartbeat_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     lease_expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -80,10 +81,15 @@ class PreviewGatewayInstanceRecord(SaasBase):
             name="ck_preview_gateway_lease_window",
         ),
         sa.CheckConstraint(
-            "(status IN ('active', 'draining') AND released_at IS NULL "
+            "(status = 'starting' AND activated_at IS NULL AND released_at IS NULL "
+            "AND release_reason IS NULL) OR "
+            "(status IN ('active', 'draining') AND activated_at IS NOT NULL "
+            "AND activated_at >= registered_at AND released_at IS NULL "
             "AND release_reason IS NULL) OR "
             "(status IN ('released', 'expired') AND released_at IS NOT NULL "
-            "AND length(release_reason) > 0)",
+            "AND released_at >= registered_at "
+            "AND (activated_at IS NULL OR (activated_at >= registered_at "
+            "AND released_at >= activated_at)) AND length(release_reason) > 0)",
             name="ck_preview_gateway_lifecycle",
         ),
         sa.Index(

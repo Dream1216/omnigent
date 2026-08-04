@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 from datetime import datetime, timedelta, timezone
@@ -175,10 +176,67 @@ def _register(
     )
 
 
+def _activate_gateway(
+    directory: PreviewGatewayDirectoryAuthority,
+    certificates: PreviewGatewayCertificateAuthority,
+    *,
+    gateway_instance_id: str,
+    token: str,
+    now: datetime,
+    server_name: str = "localhost",
+) -> tuple[bytes, bytes]:
+    client_der = _gateway_certificate(
+        gateway_instance_id,
+        purpose="preview_relay_client",
+        now=now,
+        server_name=server_name,
+    )
+    server_der = _gateway_certificate(
+        gateway_instance_id,
+        purpose="preview_relay_server",
+        now=now,
+        server_name=server_name,
+    )
+    for purpose, certificate_der in (
+        ("preview_relay_client", client_der),
+        ("preview_relay_server", server_der),
+    ):
+        certificates.activate_certificate(
+            gateway_instance_id=gateway_instance_id,
+            purpose=purpose,
+            certificate_der=certificate_der,
+            trust_bundle_version="bundle-v1",
+            now=now,
+        )
+    directory.activate_gateway(
+        gateway_instance_id=gateway_instance_id,
+        registration_token=token,
+        now=now,
+    )
+    return client_der, server_der
+
+
 def test_gateway_directory_token_lifecycle_discovery_and_non_reuse(gateway_fixture) -> None:
-    _, factory, directory, _, now = gateway_fixture
+    _, factory, directory, certificates, now = gateway_fixture
     token = "gateway-registration-" + "x" * 40
     _register(directory, gateway_instance_id="gateway-a", token=token, now=now)
+    with pytest.raises(PreviewGatewayLifecycleError) as starting:
+        directory.resolve(_placement("gateway-a"))
+    assert starting.value.code == "preview_gateway_route_unavailable"
+    with pytest.raises(PreviewGatewayLifecycleError) as incomplete:
+        directory.activate_gateway(
+            gateway_instance_id="gateway-a",
+            registration_token=token,
+            now=now,
+        )
+    assert incomplete.value.code == "preview_gateway_certificates_incomplete"
+    _activate_gateway(
+        directory,
+        certificates,
+        gateway_instance_id="gateway-a",
+        token=token,
+        now=now,
+    )
     endpoint = directory.resolve(_placement("gateway-a"))
     assert (endpoint.connect_host, endpoint.port, endpoint.server_name) == (
         "127.0.0.1",
@@ -230,10 +288,44 @@ def test_gateway_directory_token_lifecycle_discovery_and_non_reuse(gateway_fixtu
         )
         assert [event.event_type for event in events] == [
             "preview.gateway.registered",
+            "preview.gateway.activated",
             "preview.gateway.draining",
             "preview.gateway.released",
         ]
         assert token not in str([event.payload for event in events])
+
+
+def test_gateway_activation_rejects_mixed_trust_bundle_pair(gateway_fixture) -> None:
+    _, factory, directory, _, now = gateway_fixture
+    gateway_id = "gateway-mixed-bundle"
+    token = "gateway-mixed-bundle-token-" + "x" * 40
+    certificates = PreviewGatewayCertificateAuthority(
+        factory,
+        accepted_trust_bundle_versions=("bundle-v1", "bundle-v2"),
+    )
+    _register(directory, gateway_instance_id=gateway_id, token=token, now=now)
+    for purpose, bundle in (
+        ("preview_relay_client", "bundle-v1"),
+        ("preview_relay_server", "bundle-v2"),
+    ):
+        certificates.activate_certificate(
+            gateway_instance_id=gateway_id,
+            purpose=purpose,
+            certificate_der=_gateway_certificate(gateway_id, purpose=purpose, now=now),
+            trust_bundle_version=bundle,
+            now=now,
+        )
+
+    with pytest.raises(PreviewGatewayLifecycleError) as inconsistent:
+        directory.activate_gateway(
+            gateway_instance_id=gateway_id,
+            registration_token=token,
+            now=now,
+        )
+    assert inconsistent.value.code == "preview_gateway_certificates_incomplete"
+    with pytest.raises(PreviewGatewayLifecycleError) as unavailable:
+        directory.resolve(_placement(gateway_id))
+    assert unavailable.value.code == "preview_gateway_route_unavailable"
 
 
 def test_gateway_reconcile_expires_without_reviving_stale_token(gateway_fixture) -> None:
@@ -270,6 +362,11 @@ def test_gateway_certificates_are_purpose_separated_rotatable_and_revocable(
         purpose="preview_relay_server",
         certificate_der=server_der,
         trust_bundle_version="bundle-v1",
+        now=now,
+    )
+    directory.activate_gateway(
+        gateway_instance_id="gateway-cert",
+        registration_token=token,
         now=now,
     )
     assert certificates.is_preview_gateway_certificate_authorized(
@@ -397,6 +494,19 @@ def test_gateway_release_invalidates_active_certificates(gateway_fixture) -> Non
         trust_bundle_version="bundle-v1",
         now=now,
     )
+    server_der = _gateway_certificate("gateway-release", purpose="preview_relay_server", now=now)
+    certificates.activate_certificate(
+        gateway_instance_id="gateway-release",
+        purpose="preview_relay_server",
+        certificate_der=server_der,
+        trust_bundle_version="bundle-v1",
+        now=now,
+    )
+    directory.activate_gateway(
+        gateway_instance_id="gateway-release",
+        registration_token=token,
+        now=now,
+    )
     directory.release_gateway(
         gateway_instance_id="gateway-release",
         registration_token=token,
@@ -473,8 +583,43 @@ def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() ->
             now=now + timedelta(seconds=11),
         )
     assert wrong_token.value.code == "preview_gateway_token_denied"
+    with pytest.raises(DBAPIError, match="lifecycle is monotonic"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_preview_gateway")
+            connection.execute(
+                sa.text(
+                    "SELECT set_config('app.gateway_registration_token_hash', :digest, true)"
+                ),
+                {"digest": hashlib.sha256(token.encode()).hexdigest()},
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_preview_gateway_instances SET status = 'active' WHERE id = :id"
+                ),
+                {"id": gateway_instance_id},
+            )
+    with pytest.raises(DBAPIError, match="permission denied"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_preview_gateway")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_preview_gateway_instances SET activated_at = :now WHERE id = :id"
+                ),
+                {"id": gateway_instance_id, "now": now + timedelta(seconds=10)},
+            )
+    with pytest.raises(DBAPIError, match="lifecycle is monotonic"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_preview_gateway_instances "
+                    "SET status = 'active', activated_at = :now WHERE id = :id"
+                ),
+                {"id": gateway_instance_id, "now": now + timedelta(seconds=10)},
+            )
 
     client_der = _gateway_certificate(gateway_instance_id, purpose="preview_relay_client", now=now)
+    server_der = _gateway_certificate(gateway_instance_id, purpose="preview_relay_server", now=now)
     platform_certificates = PreviewGatewayCertificateAuthority(
         platform_factory, accepted_trust_bundle_versions=("bundle-v1",)
     )
@@ -488,6 +633,27 @@ def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() ->
         trust_bundle_version="bundle-v1",
         now=now,
     )
+    platform_certificates.activate_certificate(
+        gateway_instance_id=gateway_instance_id,
+        purpose="preview_relay_server",
+        certificate_der=server_der,
+        trust_bundle_version="bundle-v1",
+        now=now,
+    )
+    directory.activate_gateway(
+        gateway_instance_id=gateway_instance_id,
+        registration_token=token,
+        now=now + timedelta(seconds=10),
+    )
+    with pytest.raises(DBAPIError, match="lifecycle is monotonic"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_preview_gateway_instances SET activated_at = :now WHERE id = :id"
+                ),
+                {"id": gateway_instance_id, "now": now + timedelta(seconds=11)},
+            )
     assert gateway_certificates.is_preview_gateway_certificate_authorized(
         gateway_instance_id=gateway_instance_id,
         certificate_der=client_der,

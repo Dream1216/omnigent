@@ -31,7 +31,8 @@ _DNS_NAME = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\."
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
-_LIVE_STATUSES = frozenset(("active", "draining"))
+_REGISTERED_STATUSES = frozenset(("starting", "active", "draining"))
+_ROUTABLE_STATUSES = frozenset(("active", "draining"))
 _INSTANCE_SAFE_COLUMNS = (
     PreviewGatewayInstanceRecord.id,
     PreviewGatewayInstanceRecord.connect_host,
@@ -42,6 +43,7 @@ _INSTANCE_SAFE_COLUMNS = (
     PreviewGatewayInstanceRecord.adapter_contract_version,
     PreviewGatewayInstanceRecord.status,
     PreviewGatewayInstanceRecord.registered_at,
+    PreviewGatewayInstanceRecord.activated_at,
     PreviewGatewayInstanceRecord.last_heartbeat_at,
     PreviewGatewayInstanceRecord.lease_expires_at,
     PreviewGatewayInstanceRecord.released_at,
@@ -70,6 +72,7 @@ class RegisteredPreviewGateway:
     adapter_contract_version: str
     status: str
     registered_at: datetime
+    activated_at: datetime | None
     last_heartbeat_at: datetime
     lease_expires_at: datetime
 
@@ -318,7 +321,7 @@ class PreviewGatewayDirectoryAuthority:
                         maximum=32,
                     ),
                     registration_token_hash=token_hash,
-                    status="active",
+                    status="starting",
                     registered_at=registered_at,
                     last_heartbeat_at=registered_at,
                     lease_expires_at=registered_at + lease_duration,
@@ -353,7 +356,10 @@ class PreviewGatewayDirectoryAuthority:
                 registration_token_hash=token_hash,
                 lock=True,
             )
-            if record.status not in _LIVE_STATUSES or heartbeat_at >= record.lease_expires_at:
+            if (
+                record.status not in _REGISTERED_STATUSES
+                or heartbeat_at >= record.lease_expires_at
+            ):
                 raise PreviewGatewayLifecycleError(
                     "preview_gateway_lease_stale", "Preview Gateway lease is stale"
                 )
@@ -377,9 +383,88 @@ class PreviewGatewayDirectoryAuthority:
                 adapter_contract_version=record.adapter_contract_version,
                 status=record.status,
                 registered_at=record.registered_at,
+                activated_at=record.activated_at,
                 last_heartbeat_at=heartbeat_at,
                 lease_expires_at=lease_expires_at,
             )
+
+    def activate_gateway(
+        self,
+        *,
+        gateway_instance_id: str,
+        registration_token: str,
+        now: datetime | None = None,
+    ) -> RegisteredPreviewGateway:
+        """Publish a bound listener only after both purpose-separated leaves exist."""
+
+        activated_at = _time(now or _utcnow(), field="activation time")
+        token_hash = _token_hash(registration_token)
+        with self._authority_session_factory.begin() as db:
+            instance = db.scalar(
+                sa.select(PreviewGatewayInstanceRecord)
+                .where(PreviewGatewayInstanceRecord.id == gateway_instance_id)
+                .with_for_update()
+            )
+            if instance is None or not hmac.compare_digest(
+                instance.registration_token_hash, token_hash
+            ):
+                raise PreviewGatewayLifecycleError(
+                    "preview_gateway_token_denied",
+                    "Preview Gateway registration token is denied",
+                )
+            record = self._receipt(instance)
+            if record.status == "active":
+                return record
+            if record.status != "starting" or activated_at >= record.lease_expires_at:
+                raise PreviewGatewayLifecycleError(
+                    "preview_gateway_activation_stale",
+                    "Preview Gateway activation is stale",
+                )
+            if activated_at < record.last_heartbeat_at:
+                raise PreviewGatewayLifecycleError(
+                    "preview_gateway_time_reversed", "Preview Gateway time cannot move backwards"
+                )
+            active_certificates = tuple(
+                db.execute(
+                    sa.select(
+                        PreviewGatewayCertificateRecord.purpose,
+                        PreviewGatewayCertificateRecord.trust_bundle_version,
+                    ).where(
+                        PreviewGatewayCertificateRecord.gateway_instance_id == gateway_instance_id,
+                        PreviewGatewayCertificateRecord.status == "active",
+                        PreviewGatewayCertificateRecord.certificate_not_before <= activated_at,
+                        PreviewGatewayCertificateRecord.certificate_not_after > activated_at,
+                    )
+                )
+            )
+            purposes = frozenset(row.purpose for row in active_certificates)
+            trust_bundles = frozenset(row.trust_bundle_version for row in active_certificates)
+            if (
+                purposes != frozenset(PREVIEW_GATEWAY_CERTIFICATE_PURPOSES)
+                or len(trust_bundles) != 1
+            ):
+                raise PreviewGatewayLifecycleError(
+                    "preview_gateway_certificates_incomplete",
+                    "Preview Gateway certificate pair is incomplete or inconsistent",
+                )
+            instance.status = "active"
+            instance.activated_at = activated_at
+            active = RegisteredPreviewGateway(
+                gateway_instance_id=record.gateway_instance_id,
+                connect_host=record.connect_host,
+                connect_port=record.connect_port,
+                server_name=record.server_name,
+                failure_domain=record.failure_domain,
+                source_revision=record.source_revision,
+                adapter_contract_version=record.adapter_contract_version,
+                status="active",
+                registered_at=record.registered_at,
+                activated_at=activated_at,
+                last_heartbeat_at=record.last_heartbeat_at,
+                lease_expires_at=record.lease_expires_at,
+            )
+            db.add(self._receipt_event(active, event_type="preview.gateway.activated"))
+            return active
 
     def begin_draining(
         self,
@@ -420,6 +505,7 @@ class PreviewGatewayDirectoryAuthority:
                 adapter_contract_version=record.adapter_contract_version,
                 status="draining",
                 registered_at=record.registered_at,
+                activated_at=record.activated_at,
                 last_heartbeat_at=record.last_heartbeat_at,
                 lease_expires_at=record.lease_expires_at,
             )
@@ -471,6 +557,7 @@ class PreviewGatewayDirectoryAuthority:
                 adapter_contract_version=record.adapter_contract_version,
                 status="released",
                 registered_at=record.registered_at,
+                activated_at=record.activated_at,
                 last_heartbeat_at=record.last_heartbeat_at,
                 lease_expires_at=record.lease_expires_at,
             )
@@ -492,7 +579,7 @@ class PreviewGatewayDirectoryAuthority:
             query = (
                 sa.select(PreviewGatewayInstanceRecord)
                 .where(
-                    PreviewGatewayInstanceRecord.status.in_(tuple(_LIVE_STATUSES)),
+                    PreviewGatewayInstanceRecord.status.in_(tuple(_REGISTERED_STATUSES)),
                     PreviewGatewayInstanceRecord.lease_expires_at <= reconciled_at,
                 )
                 .order_by(PreviewGatewayInstanceRecord.lease_expires_at)
@@ -532,7 +619,7 @@ class PreviewGatewayDirectoryAuthority:
             ).one_or_none()
             if (
                 row is None
-                or row.status not in _LIVE_STATUSES
+                or row.status not in _ROUTABLE_STATUSES
                 or now >= _aware(row.lease_expires_at)
             ):
                 raise PreviewGatewayLifecycleError(
@@ -583,6 +670,7 @@ class PreviewGatewayDirectoryAuthority:
             adapter_contract_version=row.adapter_contract_version,
             status=row.status,
             registered_at=_aware(row.registered_at),
+            activated_at=_aware(row.activated_at) if row.activated_at is not None else None,
             last_heartbeat_at=_aware(row.last_heartbeat_at),
             lease_expires_at=_aware(row.lease_expires_at),
         )
@@ -599,6 +687,9 @@ class PreviewGatewayDirectoryAuthority:
             adapter_contract_version=record.adapter_contract_version,
             status=record.status,
             registered_at=_aware(record.registered_at),
+            activated_at=(
+                _aware(record.activated_at) if record.activated_at is not None else None
+            ),
             last_heartbeat_at=_aware(record.last_heartbeat_at),
             lease_expires_at=_aware(record.lease_expires_at),
         )
@@ -703,7 +794,7 @@ class PreviewGatewayCertificateAuthority:
             )
             if (
                 gateway is None
-                or gateway.status not in _LIVE_STATUSES
+                or gateway.status not in _REGISTERED_STATUSES
                 or activated_at >= _aware(gateway.lease_expires_at)
             ):
                 raise PreviewGatewayLifecycleError(
@@ -894,7 +985,7 @@ class PreviewGatewayCertificateAuthority:
             )
             return bool(
                 accepted_lifecycle
-                and row.gateway_status in _LIVE_STATUSES
+                and row.gateway_status in _ROUTABLE_STATUSES
                 and checked_at < _aware(row.gateway_lease_expires_at)
                 and endpoint_matches
                 and record.trust_bundle_version in self._accepted_trust_bundle_versions
