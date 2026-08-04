@@ -1,6 +1,23 @@
 name: SaaS image candidate
 
 on:
+  push:
+    branches:
+      - "codex/**"
+    paths:
+      - ".github/workflows/saas-image-candidate.yml"
+      - "deploy/docker/Dockerfile"
+      - "setup.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "web/**"
+      - "saas/production/**"
+      - "saas/supply_chain/**"
+      - "saas/scripts/check_image_supply_chain.py"
+      - "saas/scripts/compare_oci_rebuilds.py"
+      - "tests/saas/test_image_supply_chain.py"
   workflow_dispatch:
 
 permissions:
