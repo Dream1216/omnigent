@@ -4,7 +4,7 @@
   "reviewed_at": "2026-08-04",
   "revision_contract": {
     "upstream_manifest": "saas/upstream-baseline.json",
-    "upstream_revision": "b8fd1952ac77b8c78ef971de801f2d35379c3b3b",
+    "upstream_revision": "45eab11d531f3224eb59b39da7d8cb18256e21a1",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p4b000000001",
     "deployment_scope": "single-region-multi-az"
