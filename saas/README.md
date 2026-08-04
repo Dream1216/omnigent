@@ -607,8 +607,9 @@ probe succeed. The process then heartbeats its bounded lease, rotates both
 leaves as one coordinated pair, and drains existing local Tunnel ownership
 before release.
 
-The pre-activation probe uses an independently authorized, server-owned
-platform health identity and pins the prepared server leaf. It must not reuse
+The injected pre-activation probe contract requires an independently
+authorized, server-owned platform health identity and pins the prepared server
+leaf. Its implementation must not reuse
 the Gateway's `preview_relay_client` leaf: ordinary Gateway certificate
 authorization remains denied while the instance is `starting`. Both runtime
 leaves must advertise the same accepted Trust Bundle version, and the
@@ -623,7 +624,15 @@ for `starting -> active`, preserves activation time, and rejects terminal time
 reversal. The Preview Gateway role can heartbeat, drain, or release only its
 token-selected row and has no grant to write `activated_at`; final activation
 uses the platform authority transaction. Local real-PostgreSQL migration and
-negative-RLS checks pass, but exact-revision Linux CI evidence is still pending.
+negative-RLS checks pass. Exact implementation run `30959947571` verifies the
+contract at `e698027952e171bf3a22e4360373965626f56fd7`: 753
+PostgreSQL/Chromium compatibility tests, 56 official zygote/query-context
+regressions, and the 36/22 Linux security matrix pass; Pyrefly reports zero
+errors, p4g migrations upgrade/check/downgrade, the wheel contains 106 required
+artifacts, both patches replay, and source intrusion remains 8 files/432 lines
+with a 0.9923 isolated-code ratio. The runtime lifecycle subgate is passed; the
+evidence-successor wheel inventory requires 107 artifacts and eleven aggregate
+gates remain pending.
 External CA/HSM deployment, Trust Bundle rollout, DNS/load-balancer health,
 cross-host failure and partition behavior, and two failure domains remain
 production blockers, so this candidate does not change the `NO-GO` decision.

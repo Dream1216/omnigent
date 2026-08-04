@@ -418,7 +418,7 @@
         },
         {
           "id": "p4-preview-gateway-runtime-lifecycle-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/preview_gateway_runtime.py",
             "saas/control_plane/gateway_models.py",
@@ -428,7 +428,8 @@
             "tests/saas/test_preview_gateway_runtime.py",
             "tests/saas/test_preview_gateway_authority.py",
             "tests/saas/test_runner_tunnel_placement.py",
-            "tests/saas/test_isolation_postgresql.py"
+            "tests/saas/test_isolation_postgresql.py",
+            "saas/acceptance/p4-preview-gateway-runtime-ci-30959947571.json"
           ]
         },
         {
