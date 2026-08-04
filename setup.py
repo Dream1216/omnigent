@@ -16,6 +16,7 @@ wheel alongside the rest of the package.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -252,6 +253,10 @@ class _GenerateBuildInfo(build_py):
         # for an empty fallback. The format is deliberately minimal
         # — anything more elaborate (version strings, branch names)
         # belongs in pyproject.toml or git tags, not here.
+        source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+        build_time_epoch = int(source_date_epoch) if source_date_epoch else int(time.time())
+        if build_time_epoch < 0:
+            raise ValueError("SOURCE_DATE_EPOCH must be a non-negative integer")
         target.write_text(
             '"""Auto-generated at wheel build time; do not edit.\n\n'
             "This module is created by ``setup.py`` immediately before\n"
@@ -262,7 +267,7 @@ class _GenerateBuildInfo(build_py):
             "not have it on disk.\n"
             '"""\n'
             "from __future__ import annotations\n\n"
-            f"BUILD_TIME_EPOCH: int = {int(time.time())}\n"
+            f"BUILD_TIME_EPOCH: int = {build_time_epoch}\n"
             f"COMMIT_SHA: str = {commit!r}\n"
         )
 

@@ -1,0 +1,41 @@
+# Backup and restore runbook
+
+## Preconditions
+
+Backups are encrypted, deletion-protected, and stored in a different failure
+domain under an identity that production application roles cannot assume. Each
+backup record binds database or object version, source SHA, schema head, adapter
+contract, KMS key version, start and completion time, and integrity hash.
+
+Never restore production data into a shared development environment. Tenant
+restore uses an isolated account, network, keys, object prefix, search index,
+and Runner pool until validation is complete.
+
+## Restore sequence
+
+1. Select a recovery point within the approved data-class RPO and preserve the
+   original backup and WAL chain.
+2. Restore PostgreSQL and object versions into isolation. Keep all application
+   traffic disabled and use `NOSUPERUSER NOBYPASSRLS` probe roles.
+3. Apply the exact official migrations followed by SaaS migrations. Stop on
+   schema signature, policy, extension, source, or adapter drift.
+4. Replay deletion tombstones, session and grant revocations, membership and
+   policy versions, Partition and Binding generations, and Outbox or Run Event
+   cursors newer than the base backup.
+5. Verify row counts and content hashes by Tenant, all 23 control-plane forced
+   RLS tables, all 17 runtime workspace policies, active-binding uniqueness,
+   key decryptability, ledger conservation, and missing object references.
+6. Rebuild T2 Worktrees and temporary environments from Base Revision,
+   ChangeSet artifacts, and Environment Snapshot. Never restore an old writable
+   lease or fence token.
+7. Promote a canary scope only after authorization, logout, deletion,
+   revocation, Run replay, audit, and billing probes pass. Expand gradually.
+
+## Drill evidence
+
+Run at least one randomly selected Tenant restore and one regional or cluster
+restore every 90 days. Record requested and achieved recovery points, actual
+RPO/RTO, lost or corrected facts, manual steps, revision tuple, hash report,
+negative RLS output, tombstone and revocation replay, sign-off roles, and dated
+remediation. A backup without successful isolated restore evidence is not a
+production capability.

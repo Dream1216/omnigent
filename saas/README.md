@@ -20,6 +20,16 @@ P0 establishes executable controls that stay independent of feature claims:
 5. `acceptance/p0-p6-evidence.json` keeps implementation evidence, pending
    acceptance gates, and the current `NO-GO` decision machine-readable. CI
    rejects a premature phase completion or production `GO`.
+6. `production/baseline.json` turns the eleven production ADRs, seven service
+   ownership records, six SLOs, T0-T2 RPO/RTO proposals, STRIDE threats, and
+   risk register into validated data. Its strict mode stays blocked until the
+   required human approvals, live dashboards, and recovery drills exist.
+7. `supply_chain/release-policy.json` defines digest-pinned build materials,
+   repeat-build comparison, source/schema/adapter image labels, dual SBOM,
+   maximum SLSA provenance, keyless signature, zero Critical/High admission,
+   OSS/SaaS regression, digest-only canary, and N-1 requirements. The candidate
+   workflow builds twice without publishing; it cannot be mistaken for signed
+   production evidence.
 
 The first P1 slice adds an independent control-plane schema and migration for
 Global User, Tenant, Space, versioned Membership, Runtime Placement, Runtime
@@ -174,6 +184,22 @@ PostgreSQL 16 + Chromium CI record, so P1 is complete. P3 durable Run authority,
 P4 multi-failure-domain
 execution and Worktree isolation, P5 production recovery, and P6 commercial
 governance have not started and must not be inferred from these foundations.
+
+P0 now has executable baseline and image-candidate controls rather than empty
+evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
+three data-class objectives still need the exact-revision approval roles, SLO
+dashboards are not live, no immutable tenant/regional restore drill is recorded,
+and no signed, vulnerability-cleared, digest-pinned production server/host
+image has been promoted through canary and N-1 rollback. Run the structural
+checks during development and add `--require-ready` only to a protected
+production promotion workflow:
+
+```bash
+uv run python -m saas.scripts.check_production_baseline
+uv run python -m saas.scripts.check_image_supply_chain
+uv run python -m saas.scripts.check_production_baseline --require-ready
+uv run python -m saas.scripts.check_image_supply_chain --require-ready
+```
 
 Run the focused checks:
 

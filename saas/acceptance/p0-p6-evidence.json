@@ -24,17 +24,39 @@
         {
           "id": "p0-approved-production-adrs-and-owners",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/baseline.json",
+            "saas/scripts/check_production_baseline.py",
+            "saas/production/runbooks/control-plane-degradation.md",
+            "saas/production/runbooks/incident-response.md",
+            "tests/saas/test_production_baseline.py"
+          ]
         },
         {
           "id": "p0-reproducible-official-image-and-oss-regression",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/scripts/compare_oci_rebuilds.py",
+            "saas/production/runbooks/image-release.md",
+            ".github/workflows/saas-image-candidate.yml",
+            "deploy/docker/Dockerfile",
+            "setup.py",
+            "tests/saas/test_image_supply_chain.py"
+          ]
         },
         {
           "id": "p0-slo-rpo-rto-threat-model-and-service-catalog",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/baseline.json",
+            "saas/scripts/check_production_baseline.py",
+            "saas/production/runbooks/backup-restore.md",
+            "saas/production/runbooks/control-plane-degradation.md",
+            "saas/production/runbooks/incident-response.md",
+            "tests/saas/test_production_baseline.py"
+          ]
         }
       ]
     },

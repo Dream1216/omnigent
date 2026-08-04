@@ -46,6 +46,7 @@ def bind_managed_session_initializer(
     finally:
         _managed_session_initializer.reset(token)
 
+
 # A zero-argument callable returning a fresh database password (e.g. a
 # short-lived Lakebase OAuth token). Invoked once per *new* DBAPI connection.
 LakebaseTokenProvider = Callable[[], str]

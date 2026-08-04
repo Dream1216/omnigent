@@ -10,7 +10,7 @@ index 4187d952..0fdaabb7 100644
  from datetime import datetime, timezone
  from pathlib import Path
  from typing import TYPE_CHECKING
-@@ -26,6 +27,24 @@ _logger = logging.getLogger(__name__)
+@@ -26,6 +27,25 @@ _logger = logging.getLogger(__name__)
 
  # A callable that returns a context manager yielding a Session.
  ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]
@@ -32,6 +32,7 @@ index 4187d952..0fdaabb7 100644
 +        yield
 +    finally:
 +        _managed_session_initializer.reset(token)
++
 
  # A zero-argument callable returning a fresh database password (e.g. a
  # short-lived Lakebase OAuth token). Invoked once per *new* DBAPI connection.

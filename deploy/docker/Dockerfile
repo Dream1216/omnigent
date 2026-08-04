@@ -56,6 +56,13 @@
 # Must satisfy pyproject requires-python (>=3.12); 3.11 fails dependency resolution.
 ARG PYTHON_VERSION=3.12
 ARG NODE_VERSION=22
+ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
+ARG NODE_IMAGE=node:${NODE_VERSION}-slim
+ARG SOURCE_DATE_EPOCH
+ARG SOURCE_REVISION=unknown
+ARG UPSTREAM_REVISION=unknown
+ARG CONTROL_PLANE_SCHEMA_REVISION=unknown
+ARG ADAPTER_CONTRACT_VERSION=unknown
 
 # ── Web UI builder ──────────────────────────────────────
 # Builds the web SPA so `docker build` works from a clean checkout —
@@ -67,7 +74,7 @@ ARG NODE_VERSION=22
 #
 # Behind a corporate npm proxy, pass it through:
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
-FROM node:${NODE_VERSION}-slim AS web-builder
+FROM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 WORKDIR /web
@@ -91,12 +98,14 @@ RUN pnpm --filter web run build
 # out of the shipped images. Deliberately SPA-free and psycopg-free so
 # the host target can build without node; the server-only additions
 # live in server-builder below.
-FROM python:${PYTHON_VERSION}-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
+ARG SOURCE_DATE_EPOCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential \
@@ -115,6 +124,7 @@ COPY pyproject.toml setup.py ./
 COPY LICENSE NOTICE ./
 COPY sdks/ ./sdks/
 COPY omnigent/ ./omnigent/
+COPY saas/ ./saas/
 # The built-in polly agent's packaged bundle (omnigent/resources/examples/
 # polly) is a symlink into the top-level examples/ tree. Ship examples/ so the
 # symlink resolves at boot; without it the new-session picker silently drops
@@ -165,7 +175,7 @@ RUN if [ -n "${OMNIGENT_EXTRAS}" ]; then \
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
 # image; contributes no layers of its own.
-FROM node:${NODE_VERSION}-slim AS node-runtime
+FROM ${NODE_IMAGE} AS node-runtime
 
 # ── Host runtime (`--target host`) ──────────────────────
 # Prebaked Omnigent host for remote sandboxes: full omnigent install,
@@ -193,9 +203,18 @@ FROM node:${NODE_VERSION}-slim AS node-runtime
 #     literally named `sandbox` before running the agent (defense in depth)
 #     and fails closed if it is absent. The other providers run as root and
 #     never reference it.
-FROM python:${PYTHON_VERSION}-slim AS host
+FROM ${PYTHON_IMAGE} AS host
 ARG NPM_CONFIG_REGISTRY=
+ARG SOURCE_REVISION
+ARG UPSTREAM_REVISION
+ARG CONTROL_PLANE_SCHEMA_REVISION
+ARG ADAPTER_CONTRACT_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      ai.omnigent.upstream.revision=${UPSTREAM_REVISION} \
+      ai.omnigent.saas.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
+      ai.omnigent.saas.adapter-contract-version=${ADAPTER_CONTRACT_VERSION}
 
 # IS_SANDBOX: devcontainer-convention flag consulted by Claude Code —
 # it refuses --dangerously-skip-permissions under root without it, and
@@ -235,10 +254,10 @@ RUN git config --system credential.helper \
 
 # Node runtime for the harness CLIs, copied from the official image
 # (same Debian base as python-slim, so the binary is ABI-compatible)
-# rather than apt — keeps the version pinned to NODE_VERSION and skips
+# rather than apt — keeps the version pinned to NODE_IMAGE and skips
 # nodesource setup. npm/npx are symlinks into npm's node_modules.
 # (`node-runtime` is the alias stage below — COPY --from does not
-# expand build args, so the FROM line does the ${NODE_VERSION} part.)
+# expand build args, so the FROM line resolves ${NODE_IMAGE}.)
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
@@ -361,7 +380,17 @@ WORKDIR /root
 CMD ["sleep", "infinity"]
 
 # ── Server runtime (default target) ─────────────────────
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
+
+ARG SOURCE_REVISION
+ARG UPSTREAM_REVISION
+ARG CONTROL_PLANE_SCHEMA_REVISION
+ARG ADAPTER_CONTRACT_VERSION
+
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      ai.omnigent.upstream.revision=${UPSTREAM_REVISION} \
+      ai.omnigent.saas.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
+      ai.omnigent.saas.adapter-contract-version=${ADAPTER_CONTRACT_VERSION}
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

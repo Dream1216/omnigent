@@ -31,3 +31,11 @@ revocation, Outbox invalidation, strict low-risk read degradation, and
 fail-closed login/scope/Mutation/WebSocket/new-Run/sensitive-read behavior.
 Together with the OIDC record, it closes P1; the overall release remains
 `NO-GO` because P0 and P3-P6 still contain pending gates.
+
+P0's three pending gates now list concrete policy, validator, Runbook, build,
+and test evidence. `check_production_baseline` distinguishes complete baseline
+content from approvals, measured dashboards, and recovery-drill proof;
+`check_image_supply_chain` distinguishes a repeatable unsigned candidate from a
+signed immutable production image. Both commands have `--require-ready` modes
+that fail until their external evidence is complete. The evidence paths on a
+pending gate therefore show implemented controls, not a passed gate.

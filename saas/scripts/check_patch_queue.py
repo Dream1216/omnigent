@@ -58,6 +58,7 @@ def check_patch_queue(repo: Path) -> dict[str, Any]:
     )
     covered_paths: set[str] = set()
     results: list[dict[str, object]] = []
+    content_mismatches: list[str] = []
     violations: list[str] = []
 
     with tempfile.TemporaryDirectory(prefix="omnigent-patch-replay-") as temp_name:
@@ -95,18 +96,32 @@ def check_patch_queue(repo: Path) -> dict[str, Any]:
                 break
             _run(checkout, "apply", str(patch))
 
+        for path in sorted(official_deltas):
+            replayed = checkout / path
+            product = repo / path
+            if not replayed.is_file() or not product.is_file():
+                content_mismatches.append(path)
+                continue
+            if replayed.read_bytes() != product.read_bytes():
+                content_mismatches.append(path)
+
     missing_patch_paths = sorted(official_deltas - covered_paths)
     stale_patch_paths = sorted(covered_paths - official_deltas)
     if missing_patch_paths:
         violations.append(f"official source changes lack patches: {missing_patch_paths}")
     if stale_patch_paths:
         violations.append(f"patches do not match product source changes: {stale_patch_paths}")
+    if content_mismatches:
+        violations.append(
+            f"replayed patch content differs from product source: {content_mismatches}"
+        )
     return {
         "status": "pass" if not violations else "fail",
         "upstream_revision": baseline,
         "patch_count": len(patches),
         "official_source_paths": sorted(official_deltas),
         "covered_paths": sorted(covered_paths),
+        "content_mismatches": content_mismatches,
         "patches": results,
         "violations": violations,
     }

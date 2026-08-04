@@ -74,6 +74,12 @@ jobs:
           --output artifacts/patch-replay-report.json
       - name: Validate P0-P6 acceptance ledger
         run: uv run python -m saas.scripts.check_acceptance_manifest
+      - name: Validate P0 production baselines
+        run: |
+          uv run python -m saas.scripts.check_production_baseline \
+            --output artifacts/production-baseline-report.json
+          uv run python -m saas.scripts.check_image_supply_chain \
+            --output artifacts/image-supply-chain-report.json
       - name: Enforce source-intrusion budget
         run: >-
           uv run python saas/scripts/check_upstream_delta.py
@@ -86,4 +92,6 @@ jobs:
           path: |
             artifacts/upstream-delta-report.json
             artifacts/patch-replay-report.json
+            artifacts/production-baseline-report.json
+            artifacts/image-supply-chain-report.json
           if-no-files-found: error

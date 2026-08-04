@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-saas-production-image-v1",
+  "reviewed_at": "2026-08-04",
+  "candidate_workflow": ".github/workflows/saas-image-candidate.yml",
+  "release_runbook": "saas/production/runbooks/image-release.md",
+  "dockerfile": "deploy/docker/Dockerfile",
+  "upstream_manifest": "saas/upstream-baseline.json",
+  "production_evidence": "saas/acceptance/p0-production-image-evidence.json",
+  "images": [
+    {
+      "name": "omnigent-saas-server",
+      "target": "runtime",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "required_smoke": ["cli-help", "health", "migration", "auth-context", "dual-rls"]
+    },
+    {
+      "name": "omnigent-saas-host",
+      "target": "host",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "required_smoke": ["cli-help", "git", "tmux", "bubblewrap", "runner-connect"]
+    }
+  ],
+  "reproducibility": {
+    "source_date_epoch": "product-commit-timestamp",
+    "base_images_must_be_digest_pinned": true,
+    "clean_tree_required": true,
+    "repeat_builds": 2,
+    "matching_platform_manifest_and_config_required": true,
+    "dependency_locks": ["uv.lock", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+    "required_build_args": [
+      "PYTHON_IMAGE",
+      "NODE_IMAGE",
+      "SOURCE_DATE_EPOCH",
+      "SOURCE_REVISION",
+      "UPSTREAM_REVISION",
+      "CONTROL_PLANE_SCHEMA_REVISION",
+      "ADAPTER_CONTRACT_VERSION"
+    ]
+  },
+  "required_labels": [
+    "org.opencontainers.image.revision",
+    "ai.omnigent.upstream.revision",
+    "ai.omnigent.saas.schema-revision",
+    "ai.omnigent.saas.adapter-contract-version"
+  ],
+  "attestations": {
+    "provenance_predicate": "https://slsa.dev/provenance/v1",
+    "provenance_mode": "max",
+    "sbom_formats": ["spdx-json", "cyclonedx-json"],
+    "keyless_signature_required": true,
+    "signature_issuer": "https://token.actions.githubusercontent.com",
+    "protected_workflow_identity_required": true
+  },
+  "regression": {
+    "official_suites": [
+      "tests/db/test_workspace_scope.py",
+      "tests/cli/test_cli.py",
+      "tests/runner/transports/ws_tunnel/test_serve.py",
+      "tests/server/test_managed_hosts.py",
+      "tests/server/integration/test_sessions_archive.py"
+    ],
+    "saas_suite": "tests/saas",
+    "real_postgresql_required": true,
+    "chromium_required": true,
+    "migration_upgrade_check_downgrade_required": true,
+    "patch_replay_required": true,
+    "source_intrusion_budget_required": true
+  },
+  "vulnerability_policy": {
+    "critical_allowed": 0,
+    "high_allowed": 0,
+    "exceptions_require_owner_expiry_and_compensating_control": true
+  },
+  "promotion": {
+    "digest_only_deployment": true,
+    "n_minus_one_digest_required": true,
+    "canary_required": true,
+    "floating_tag_may_authorize_deployment": false
+  }
+}

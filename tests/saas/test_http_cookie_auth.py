@@ -306,9 +306,7 @@ def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
 
     snapshot_bound = client.get(
         "/v1/protected",
-        headers={
-            "X-SaaS-Context-Snapshot": snapshot_response.json()["context_snapshot"]
-        },
+        headers={"X-SaaS-Context-Snapshot": snapshot_response.json()["context_snapshot"]},
     )
     assert snapshot_bound.status_code == 200
     assert snapshot_bound.json()["workspace_id"] == 41

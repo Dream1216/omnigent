@@ -11,6 +11,7 @@ from pathlib import Path
 REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p0-p6-evidence.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
+    "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",
     "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
     "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
@@ -53,6 +54,15 @@ REQUIRED_WHEEL_PATHS = (
     "saas/runtime_rls/__init__.py",
     "saas/runtime_rls/installer.py",
     "saas/runtime_rls/postgresql_roles.sql",
+    "saas/production/baseline.json",
+    "saas/production/runbooks/backup-restore.md",
+    "saas/production/runbooks/control-plane-degradation.md",
+    "saas/production/runbooks/image-release.md",
+    "saas/production/runbooks/incident-response.md",
+    "saas/scripts/check_image_supply_chain.py",
+    "saas/scripts/check_production_baseline.py",
+    "saas/scripts/compare_oci_rebuilds.py",
+    "saas/supply_chain/release-policy.json",
 )
 
 
