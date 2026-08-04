@@ -67,8 +67,18 @@ jobs:
         run: >-
           uv run pytest
           tests/inner/sandbox/test_sandbox_behavior.py
+          tests/inner/sandbox/test_egress_e2e.py::test_egress_direct_tcp_bypass_is_blocked
+          tests/inner/sandbox/test_egress_e2e.py::test_s2_egress_blocks_private_destination_by_default
+          tests/inner/sandbox/test_egress_e2e.py::test_s4_same_uid_external_process_cannot_use_helper_relay
+          tests/inner/sandbox/test_egress_e2e.py::test_s4_two_sandboxes_cannot_borrow_each_others_proxy
           tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_swap_on_access_injects_basic_without_sandbox_secret
           tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_https_bearer_swaps_injected_env_token
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_private_and_link_local_ranges
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_cgnat_alibaba_imds
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_azure_wireserver
+          tests/inner/egress/test_proxy.py::test_s2_dns_rebinding_fail_then_loopback_is_blocked_e2e
+          tests/inner/egress/test_proxy.py::test_s5_connect_rejects_unsafe_host_before_dns
+          tests/inner/egress/test_proxy.py::test_s5_http_rejects_unsafe_host_before_dns
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Verify SaaS migration CLI

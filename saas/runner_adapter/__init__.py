@@ -6,6 +6,7 @@ from saas.runner_adapter.isolation import (
     PreparedRunnerIsolation,
     RunnerIsolationAdapter,
     RunnerIsolationAdapterError,
+    reap_orphaned_secret_directories,
 )
 from saas.runner_adapter.worktrees import (
     CheckpointArtifact,
@@ -34,4 +35,5 @@ __all__ = [
     "RunnerWorktreeAdapterError",
     "StaticRepositoryMirrorResolver",
     "WorktreeLifecycleAuthority",
+    "reap_orphaned_secret_directories",
 ]

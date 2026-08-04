@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from hashlib import sha256
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Protocol
 from uuid import UUID
 
@@ -30,6 +33,13 @@ from saas.control_plane.isolation import (
     TrustedRunnerLaunchGrant,
 )
 from saas.runner_adapter.worktrees import PhysicalWorktree
+
+_SECRET_DIRECTORY = re.compile(r"^sec-(?P<nonce>[0-9a-f]{48})$")
+_CREATING_DIRECTORY = re.compile(r"^\.creating-(?P<nonce>[0-9a-f]{48})$")
+_SECRET_MATERIAL = re.compile(r"^material-[0-9a-f]{48}$")
+_SECRET_LEASE_FILE = ".omnigent-saas-secret-lease"
+_SECRET_LEASE_KIND = "omnigent-saas-secret-staging"
+_SECRET_LEASE_SCHEMA = 1
 
 
 class IsolationAuthority(Protocol):
@@ -97,6 +107,187 @@ def _private_root(value: Path | str) -> Path:
             "secret_staging_root_unsafe", "secret staging root must be a private real directory"
         )
     return resolved
+
+
+@lru_cache(maxsize=1)
+def _fcntl() -> ModuleType:
+    if os.name != "posix":
+        raise RunnerIsolationAdapterError(
+            "secret_staging_lock_unsupported",
+            "crash-safe Secret staging requires POSIX advisory locks",
+        )
+    return import_module("fcntl")
+
+
+def _open_lock(path: Path, *, create: bool) -> int:
+    flags = os.O_RDWR | (os.O_CREAT | os.O_EXCL if create else 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags | nofollow, 0o600)
+    try:
+        _fcntl().flock(descriptor, _fcntl().LOCK_EX | _fcntl().LOCK_NB)
+    except Exception:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _lease_document(
+    *,
+    nonce: str,
+    runner_id: UUID,
+    run_id: UUID,
+    grant_id: UUID,
+) -> bytes:
+    return json.dumps(
+        {
+            "schema": _SECRET_LEASE_SCHEMA,
+            "kind": _SECRET_LEASE_KIND,
+            "nonce": nonce,
+            "runner_id": str(runner_id),
+            "run_id": str(run_id),
+            "grant_id": str(grant_id),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+
+def _read_lease_document(descriptor: int, *, nonce: str) -> None:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    encoded = os.read(descriptor, 4097)
+    if len(encoded) > 4096:
+        raise RunnerIsolationAdapterError(
+            "secret_staging_lease_invalid", "Secret staging lease metadata is oversized"
+        )
+    try:
+        document = json.loads(encoded)
+        valid = (
+            isinstance(document, dict)
+            and document.get("schema") == _SECRET_LEASE_SCHEMA
+            and document.get("kind") == _SECRET_LEASE_KIND
+            and document.get("nonce") == nonce
+            and all(
+                isinstance(document.get(field), str)
+                and str(UUID(document[field])) == document[field]
+                for field in ("runner_id", "run_id", "grant_id")
+            )
+        )
+    except (UnicodeDecodeError, ValueError, TypeError):
+        valid = False
+    if not valid:
+        raise RunnerIsolationAdapterError(
+            "secret_staging_lease_invalid", "Secret staging lease metadata is invalid"
+        )
+
+
+def _remove_locked_secret_directory(directory: Path, descriptor: int) -> None:
+    try:
+        if directory.exists():
+            for child in directory.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    raise RunnerIsolationAdapterError(
+                        "secret_staging_entry_invalid",
+                        "Secret staging directory contains an unexpected nested directory",
+                    )
+                child.unlink(missing_ok=True)
+            directory.rmdir()
+    finally:
+        with suppress(OSError):
+            _fcntl().flock(descriptor, _fcntl().LOCK_UN)
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _create_secret_directory(
+    root: Path,
+    *,
+    runner_id: UUID,
+    run_id: UUID,
+    grant_id: UUID,
+) -> tuple[Path, int]:
+    nonce = secrets.token_hex(24)
+    creating = root / f".creating-{nonce}"
+    directory = root / f"sec-{nonce}"
+    creating.mkdir(mode=0o700)
+    descriptor = -1
+    try:
+        descriptor = _open_lock(creating / _SECRET_LEASE_FILE, create=True)
+        _write_all(
+            descriptor,
+            _lease_document(
+                nonce=nonce,
+                runner_id=runner_id,
+                run_id=run_id,
+                grant_id=grant_id,
+            ),
+        )
+        os.fsync(descriptor)
+        creating.rename(directory)
+        return directory, descriptor
+    except Exception:
+        if descriptor >= 0:
+            _remove_locked_secret_directory(creating, descriptor)
+        elif creating.exists():
+            with suppress(OSError):
+                creating.rmdir()
+        raise
+
+
+def reap_orphaned_secret_directories(staging_root: Path | str) -> int:
+    """Remove only validated Secret directories whose owner lock was released.
+
+    The lease file is held with an exclusive advisory lock for the complete
+    Prepared lifecycle. Process termination releases that kernel lock, so a new
+    Runner process can distinguish crash residue from a live peer without PID
+    probing or age guesses. Unknown/corrupt entries fail closed instead of being
+    recursively deleted.
+    """
+
+    root = _private_root(staging_root)
+    reaped = 0
+    for directory in sorted(root.iterdir(), key=lambda path: path.name):
+        match = _SECRET_DIRECTORY.fullmatch(directory.name) or _CREATING_DIRECTORY.fullmatch(
+            directory.name
+        )
+        if match is None:
+            continue
+        if directory.is_symlink() or not directory.is_dir():
+            raise RunnerIsolationAdapterError(
+                "secret_staging_entry_invalid", "Secret staging entry is not a real directory"
+            )
+        lease_path = directory / _SECRET_LEASE_FILE
+        try:
+            descriptor = _open_lock(lease_path, create=False)
+        except BlockingIOError:
+            continue
+        except FileNotFoundError as exc:
+            raise RunnerIsolationAdapterError(
+                "secret_staging_lease_missing", "Secret staging directory has no lease metadata"
+            ) from exc
+        try:
+            _read_lease_document(descriptor, nonce=match.group("nonce"))
+            for child in directory.iterdir():
+                if child.name == _SECRET_LEASE_FILE:
+                    continue
+                if (
+                    not _SECRET_MATERIAL.fullmatch(child.name)
+                    or child.is_symlink()
+                    or not child.is_file()
+                ):
+                    raise RunnerIsolationAdapterError(
+                        "secret_staging_entry_invalid",
+                        "Secret staging directory contains an unexpected entry",
+                    )
+            _remove_locked_secret_directory(directory, descriptor)
+            descriptor = -1
+            reaped += 1
+        finally:
+            if descriptor >= 0:
+                with suppress(OSError):
+                    _fcntl().flock(descriptor, _fcntl().LOCK_UN)
+                with suppress(OSError):
+                    os.close(descriptor)
+    return reaped
 
 
 def _write_all(descriptor: int, value: bytes) -> None:
@@ -179,6 +370,7 @@ class PreparedRunnerIsolation:
     launch_grant: TrustedRunnerLaunchGrant
     os_env_spec: OSEnvSpec
     secret_directory: Path
+    _lock_descriptor: int = field(repr=False)
     _fingerprint: str = field(repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -234,13 +426,10 @@ class PreparedRunnerIsolation:
         self._closed = True
 
     def _remove_secret_files(self) -> None:
-        if not self.secret_directory.exists():
-            return
-        for child in self.secret_directory.iterdir():
-            if child.is_file() and not child.is_symlink():
-                child.unlink(missing_ok=True)
-        with suppress(OSError):
-            self.secret_directory.rmdir()
+        descriptor = self._lock_descriptor
+        self._lock_descriptor = -1
+        if descriptor >= 0:
+            _remove_locked_secret_directory(self.secret_directory, descriptor)
 
     def __enter__(self) -> PreparedRunnerIsolation:
         return self
@@ -261,6 +450,7 @@ class RunnerIsolationAdapter:
         containment: ContainmentVerifier,
     ) -> None:
         self._staging_root = _private_root(staging_root)
+        reap_orphaned_secret_directories(self._staging_root)
         self._authority = authority
         self._secret_provider = secret_provider
         self._containment = containment
@@ -316,8 +506,12 @@ class RunnerIsolationAdapter:
                 "sandbox_contract_unsafe", "isolation grant contains an unsafe sandbox contract"
             )
         self._containment.require_enforced(runner_id=runner_id, contract=contract)
-        secret_directory = self._staging_root / f"sec-{secrets.token_hex(24)}"
-        secret_directory.mkdir(mode=0o700)
+        secret_directory, lock_descriptor = _create_secret_directory(
+            self._staging_root,
+            runner_id=runner_id,
+            run_id=run_id,
+            grant_id=grant.grant_id,
+        )
         entries: list[CredentialProxyEntry] = []
         try:
             for reference in grant.secret_leases:
@@ -386,11 +580,9 @@ class RunnerIsolationAdapter:
                 grant,
                 spec,
                 secret_directory,
+                lock_descriptor,
                 _spec_fingerprint(spec),
             )
         except Exception:
-            for child in secret_directory.iterdir():
-                if child.is_file() and not child.is_symlink():
-                    child.unlink(missing_ok=True)
-            secret_directory.rmdir()
+            _remove_locked_secret_directory(secret_directory, lock_descriptor)
             raise

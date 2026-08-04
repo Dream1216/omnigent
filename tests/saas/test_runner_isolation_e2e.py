@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import stat
 import sys
@@ -20,7 +21,12 @@ from saas.control_plane import (
     ToolPolicy,
     TrustedRunnerLaunchGrant,
 )
-from saas.runner_adapter import PhysicalWorktree, RunnerIsolationAdapter
+from saas.runner_adapter import (
+    PhysicalWorktree,
+    RunnerIsolationAdapter,
+    reap_orphaned_secret_directories,
+)
+from saas.runner_adapter import isolation as isolation_adapter
 
 _ACTIVE_BACKEND = (
     "linux_bwrap"
@@ -188,8 +194,12 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
         run_id=run_id,
         physical_worktree=physical,
     )
-    staged_files = tuple(prepared.secret_directory.iterdir())
+    staged_files = tuple(prepared.secret_directory.glob("material-*"))
     assert len(staged_files) == 1
+    lease_file = prepared.secret_directory / ".omnigent-saas-secret-lease"
+    assert stat.S_IMODE(prepared.secret_directory.stat().st_mode) == 0o700
+    assert stat.S_IMODE(lease_file.stat().st_mode) == 0o600
+    assert real_secret not in lease_file.read_text(encoding="utf-8")
     assert stat.S_IMODE(staged_files[0].stat().st_mode) == 0o600
     assert staged_files[0].read_text(encoding="utf-8") == real_secret
     assert containment.verified
@@ -231,3 +241,34 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
     assert not prepared.secret_directory.exists()
     assert authority.launch_tokens == ["launch-token"]
     assert authority.secret_tokens == ["secret-token"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="crash-safe staging uses POSIX locks")
+def test_crash_reaper_skips_live_lease_then_removes_released_secret_material(
+    tmp_path: Path,
+) -> None:
+    staging_root = tmp_path / "secret-staging"
+    staging_root.mkdir(mode=0o700)
+    directory, descriptor = isolation_adapter._create_secret_directory(
+        staging_root,
+        runner_id=uuid4(),
+        run_id=uuid4(),
+        grant_id=uuid4(),
+    )
+    material = directory / f"material-{'a' * 48}"
+    material.write_text("crash-residual-secret", encoding="utf-8")
+    material.chmod(0o600)
+
+    try:
+        assert reap_orphaned_secret_directories(staging_root) == 0
+        assert directory.exists()
+        assert material.exists()
+
+        os.close(descriptor)
+        descriptor = -1
+        assert reap_orphaned_secret_directories(staging_root) == 1
+        assert not directory.exists()
+        assert not material.exists()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
