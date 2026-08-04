@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -24,6 +24,7 @@ from saas.control_plane.db_models import (
     AuthSessionRecord,
     ControlPlaneOutboxEvent,
     GlobalUser,
+    IdentityConflict,
     IdentityConnection,
     PasswordCredential,
 )
@@ -65,6 +66,24 @@ class PasswordChanged:
     password_version: int
     security_version: int
     revoked_session_count: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityLoginResolution:
+    """OIDC login outcome: one user or one explicit conflict, never both."""
+
+    user_id: UUID | None
+    conflict_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityConflictResolved:
+    """Explicit conflict decision made by the reauthenticated candidate user."""
+
+    conflict_id: UUID
+    decision: Literal["approve", "reject"]
+    identity_connection_id: UUID | None
     replayed: bool
 
 
@@ -208,12 +227,310 @@ class IdentityManagementService:
             )
             return user_id
 
+    def resolve_verified_login(
+        self, assertion: VerifiedIdentityAssertion
+    ) -> IdentityLoginResolution:
+        """Resolve an OIDC login without ever merging accounts by email alone."""
+
+        assertion.validate()
+        email = normalize_email(assertion.email) if assertion.email else None
+        with self._session_factory.begin() as db:
+            existing = db.execute(
+                sa.select(IdentityConnection).where(
+                    IdentityConnection.issuer == assertion.issuer,
+                    IdentityConnection.subject == assertion.subject,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                if existing.status != "active":
+                    raise LifecycleError("identity_revoked", "identity connection is revoked")
+                return IdentityLoginResolution(user_id=existing.user_id, conflict_id=None)
+
+            candidates: set[UUID] = set()
+            if assertion.email_verified and email is not None:
+                candidates.update(
+                    db.execute(
+                        sa.select(IdentityConnection.user_id)
+                        .join(GlobalUser, GlobalUser.id == IdentityConnection.user_id)
+                        .where(
+                            IdentityConnection.email_normalized == email,
+                            IdentityConnection.email_verified.is_(True),
+                            IdentityConnection.status == "active",
+                            GlobalUser.status == "active",
+                        )
+                    ).scalars()
+                )
+                candidates.update(
+                    db.execute(
+                        sa.select(PasswordCredential.user_id)
+                        .join(GlobalUser, GlobalUser.id == PasswordCredential.user_id)
+                        .where(
+                            PasswordCredential.login_email_normalized == email,
+                            GlobalUser.status == "active",
+                        )
+                    ).scalars()
+                )
+                candidates.update(
+                    db.execute(
+                        sa.select(GlobalUser.id).where(
+                            GlobalUser.primary_email_normalized == email,
+                            GlobalUser.status == "active",
+                        )
+                    ).scalars()
+                )
+
+            if candidates:
+                conflict = db.execute(
+                    sa.select(IdentityConflict)
+                    .where(
+                        IdentityConflict.issuer == assertion.issuer,
+                        IdentityConflict.subject == assertion.subject,
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if conflict is not None:
+                    if conflict.status == "approved":
+                        linked = db.execute(
+                            sa.select(IdentityConnection).where(
+                                IdentityConnection.issuer == assertion.issuer,
+                                IdentityConnection.subject == assertion.subject,
+                                IdentityConnection.status == "active",
+                            )
+                        ).scalar_one_or_none()
+                        if linked is None:
+                            raise LifecycleError(
+                                "identity_conflict_state_invalid",
+                                "approved identity conflict has no active connection",
+                            )
+                        return IdentityLoginResolution(user_id=linked.user_id, conflict_id=None)
+                    if conflict.status == "rejected":
+                        raise LifecycleError(
+                            "identity_conflict_rejected",
+                            "identity connection was explicitly rejected",
+                        )
+                    return IdentityLoginResolution(user_id=None, conflict_id=conflict.id)
+
+                conflict_id = uuid4()
+                candidate_user_id = next(iter(candidates)) if len(candidates) == 1 else None
+                db.add(
+                    IdentityConflict(
+                        id=conflict_id,
+                        provider=assertion.provider,
+                        issuer=assertion.issuer,
+                        subject=assertion.subject,
+                        email_normalized=cast(str, email),
+                        display_name=assertion.display_name,
+                        candidate_user_id=candidate_user_id,
+                        status="pending",
+                        version=1,
+                    )
+                )
+                request_hash = _hash_payload(
+                    {
+                        "provider": assertion.provider,
+                        "issuer": assertion.issuer,
+                        "subject": assertion.subject,
+                        "email": email,
+                        "candidate_user_id": (
+                            str(candidate_user_id) if candidate_user_id is not None else None
+                        ),
+                    }
+                )
+                _add_event(
+                    db,
+                    event_type="identity.conflict.created",
+                    aggregate_type="identity_conflict",
+                    aggregate_key=str(conflict_id),
+                    idempotency_key=f"identity-conflict:{request_hash}",
+                    request_hash=request_hash,
+                    payload={
+                        "identity_conflict_id": str(conflict_id),
+                        "provider": assertion.provider,
+                        "issuer": assertion.issuer,
+                        "candidate_user_id": (
+                            str(candidate_user_id) if candidate_user_id is not None else None
+                        ),
+                    },
+                )
+                try:
+                    db.flush()
+                except IntegrityError as error:
+                    raise LifecycleError(
+                        "identity_conflict", "identity conflict was created concurrently"
+                    ) from error
+                return IdentityLoginResolution(user_id=None, conflict_id=conflict_id)
+
+        return IdentityLoginResolution(
+            user_id=self.provision_identity(assertion), conflict_id=None
+        )
+
+    def resolve_identity_conflict(
+        self,
+        *,
+        user_id: UUID,
+        conflict_id: UUID,
+        decision: Literal["approve", "reject"],
+        reason: str,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        expected_security_version: int | None = None,
+        now: datetime | None = None,
+    ) -> IdentityConflictResolved:
+        """Approve or reject a same-email subject after recent account reauthentication."""
+
+        resolved_at = now or _now()
+        if decision not in ("approve", "reject"):
+            raise LifecycleError("identity_conflict_decision_invalid", "decision is invalid")
+        if not reason.strip() or len(reason) > 1024:
+            raise LifecycleError("identity_conflict_reason_invalid", "reason is invalid")
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise LifecycleError("invalid_idempotency_key", "idempotency key is invalid")
+        comparable_reauthenticated_at = _comparable_time(reauthenticated_at)
+        if comparable_reauthenticated_at > resolved_at + timedelta(seconds=30):
+            raise LifecycleError(
+                "recent_authentication_required", "recent authentication is required"
+            )
+        if resolved_at - comparable_reauthenticated_at > timedelta(minutes=5):
+            raise LifecycleError(
+                "recent_authentication_required", "recent authentication is required"
+            )
+        request_hash = _hash_payload(
+            {
+                "user_id": str(user_id),
+                "conflict_id": str(conflict_id),
+                "decision": decision,
+                "reason": reason.strip(),
+            }
+        )
+        with self._session_factory.begin() as db:
+            receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
+            receipt = db.execute(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
+                )
+            ).scalar_one_or_none()
+            if receipt is not None:
+                if (
+                    receipt.request_hash != request_hash
+                    or receipt.event_type != "identity.conflict.resolved"
+                ):
+                    raise LifecycleError(
+                        "idempotency_conflict", "idempotency key belongs to another request"
+                    )
+                connection_raw = receipt.payload.get("identity_connection_id")
+                return IdentityConflictResolved(
+                    conflict_id=conflict_id,
+                    decision=cast(Literal["approve", "reject"], receipt.payload["decision"]),
+                    identity_connection_id=(
+                        UUID(cast(str, connection_raw)) if connection_raw else None
+                    ),
+                    replayed=True,
+                )
+
+            user = db.execute(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            ).scalar_one_or_none()
+            conflict = db.execute(
+                sa.select(IdentityConflict)
+                .where(IdentityConflict.id == conflict_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if user is None or user.status != "active":
+                raise LifecycleError("user_inactive", "active user is required")
+            if (
+                expected_security_version is not None
+                and user.security_version != expected_security_version
+            ):
+                raise LifecycleError(
+                    "authorization_snapshot_stale", "account changed during identity confirmation"
+                )
+            if conflict is None:
+                raise LifecycleError("identity_conflict_not_found", "identity conflict not found")
+            if conflict.candidate_user_id is None:
+                raise LifecycleError(
+                    "identity_conflict_manual_review_required",
+                    "ambiguous identity conflict requires platform review",
+                )
+            if conflict.candidate_user_id != user_id:
+                raise LifecycleError("forbidden", "identity conflict belongs to another user")
+            if conflict.status != "pending":
+                raise LifecycleError(
+                    "identity_conflict_already_resolved", "identity conflict is already resolved"
+                )
+
+            connection_id: UUID | None = None
+            if decision == "approve":
+                existing = db.execute(
+                    sa.select(IdentityConnection).where(
+                        IdentityConnection.issuer == conflict.issuer,
+                        IdentityConnection.subject == conflict.subject,
+                    )
+                ).scalar_one_or_none()
+                if existing is not None and existing.user_id != user_id:
+                    raise LifecycleError(
+                        "identity_conflict", "identity subject belongs to another Global User"
+                    )
+                if existing is None:
+                    connection_id = uuid4()
+                    db.add(
+                        IdentityConnection(
+                            id=connection_id,
+                            user_id=user_id,
+                            provider=conflict.provider,
+                            issuer=conflict.issuer,
+                            subject=conflict.subject,
+                            email_normalized=conflict.email_normalized,
+                            email_verified=True,
+                            status="active",
+                        )
+                    )
+                elif existing.status != "active":
+                    raise LifecycleError(
+                        "identity_revoked", "revoked identities cannot be relinked"
+                    )
+                else:
+                    connection_id = existing.id
+
+            conflict.status = "approved" if decision == "approve" else "rejected"
+            conflict.version += 1
+            conflict.resolved_by = user_id
+            conflict.resolution_reason = reason.strip()
+            conflict.resolved_at = resolved_at
+            payload: dict[str, object] = {
+                "identity_conflict_id": str(conflict_id),
+                "user_id": str(user_id),
+                "decision": decision,
+                "identity_connection_id": str(connection_id) if connection_id else None,
+            }
+            _add_event(
+                db,
+                event_type="identity.conflict.resolved",
+                aggregate_type="global_user",
+                aggregate_key=str(user_id),
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                payload=payload,
+            )
+            try:
+                db.flush()
+            except IntegrityError as error:
+                raise LifecycleError(
+                    "identity_conflict", "identity subject was linked concurrently"
+                ) from error
+            return IdentityConflictResolved(
+                conflict_id=conflict_id,
+                decision=decision,
+                identity_connection_id=connection_id,
+                replayed=False,
+            )
+
     def link_identity(
         self,
         *,
         user_id: UUID,
         assertion: VerifiedIdentityAssertion,
         idempotency_key: str,
+        expected_security_version: int | None = None,
     ) -> UUID:
         """Link a provider-verified subject to an already authenticated Global User."""
 
@@ -245,9 +562,18 @@ class IdentityManagementService:
                     )
                 return UUID(cast(str, receipt.payload["identity_connection_id"]))
 
-            user = db.get(GlobalUser, user_id)
+            user = db.execute(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            ).scalar_one_or_none()
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
+            if (
+                expected_security_version is not None
+                and user.security_version != expected_security_version
+            ):
+                raise LifecycleError(
+                    "authorization_snapshot_stale", "account changed during identity link"
+                )
             existing = db.execute(
                 sa.select(IdentityConnection).where(
                     IdentityConnection.issuer == assertion.issuer,

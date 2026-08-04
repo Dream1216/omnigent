@@ -19,9 +19,11 @@ from saas.control_plane.db_models import (
     AuthSessionRecord,
     ControlPlaneOutboxEvent,
     GlobalUser,
+    IdentityConflict,
     IdentityConnection,
     MemberRemovalPreflightRecord,
     MembershipInvitation,
+    OidcLoginTransaction,
     OwnershipTransferRecord,
     PasswordCredential,
     ProjectMembershipRecord,
@@ -56,6 +58,8 @@ from saas.control_plane.http_auth import (
     create_saas_http_integration,
 )
 from saas.control_plane.identity import (
+    IdentityConflictResolved,
+    IdentityLoginResolution,
     IdentityManagementService,
     PasswordChanged,
     PasswordCredentialService,
@@ -70,6 +74,12 @@ from saas.control_plane.lifecycle import (
     MembershipLifecycleService,
     ValidatedAuthSession,
     normalize_email,
+)
+from saas.control_plane.oidc import (
+    OidcAuthorizationCompleted,
+    OidcAuthorizationService,
+    OidcAuthorizationStarted,
+    OidcProviderConfig,
 )
 from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
 from saas.control_plane.permissions import (
@@ -121,7 +131,10 @@ __all__ = [
     "ControlPlaneResolutionError",
     "DispatchResult",
     "GlobalUser",
+    "IdentityConflict",
+    "IdentityConflictResolved",
     "IdentityConnection",
+    "IdentityLoginResolution",
     "IdentityManagementService",
     "InvitationAccepted",
     "InvitationCreated",
@@ -133,6 +146,11 @@ __all__ = [
     "MembershipGovernanceService",
     "MembershipInvitation",
     "MembershipLifecycleService",
+    "OidcAuthorizationCompleted",
+    "OidcAuthorizationService",
+    "OidcAuthorizationStarted",
+    "OidcLoginTransaction",
+    "OidcProviderConfig",
     "OutboxDispatcher",
     "OutboxPublisher",
     "OwnershipTransferRecord",

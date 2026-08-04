@@ -32,6 +32,8 @@ GRANT USAGE ON SCHEMA public TO
 GRANT SELECT, INSERT, UPDATE ON
     saas_global_users,
     saas_identity_connections,
+    saas_identity_conflicts,
+    saas_oidc_login_transactions,
     saas_auth_sessions,
     saas_password_credentials,
     saas_control_plane_outbox
@@ -77,6 +79,8 @@ GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_global_users,
     saas_identity_connections,
+    saas_identity_conflicts,
+    saas_oidc_login_transactions,
     saas_auth_sessions,
     saas_password_credentials,
     saas_tenants,

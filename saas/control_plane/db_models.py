@@ -23,6 +23,9 @@ TENANT_ROLES = (
 )
 SPACE_ROLES = ("owner", "admin", "operator", "member", "viewer")
 IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
+OIDC_LOGIN_TRANSACTION_STATUSES = ("pending", "consumed", "failed")
+OIDC_LOGIN_PURPOSES = ("login", "link")
+IDENTITY_CONFLICT_STATUSES = ("pending", "approved", "rejected")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
 OWNER_TRANSFER_STATUSES = ("completed", "cancelled")
 REMOVAL_PREFLIGHT_STATUSES = ("ready", "blocked", "executed", "expired", "cancelled")
@@ -187,6 +190,111 @@ class PasswordCredential(SaasBase):
         sa.CheckConstraint("length(password_hash) > 0", name="ck_password_hash_nonempty"),
         sa.CheckConstraint("password_version > 0", name="ck_password_version"),
         sa.CheckConstraint("failed_attempts >= 0", name="ck_password_failed_attempts"),
+    )
+
+
+class OidcLoginTransaction(SaasBase):
+    """One-time, replica-independent Authorization Code + PKCE transaction."""
+
+    __tablename__ = "saas_oidc_login_transactions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    state_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    browser_binding_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    nonce_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    code_verifier_ciphertext: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    purpose: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    target_user_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    target_security_version: Mapped[int | None] = mapped_column()
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"status IN ({_values(OIDC_LOGIN_TRANSACTION_STATUSES)})",
+            name="ck_oidc_login_transaction_status",
+        ),
+        sa.CheckConstraint(
+            f"purpose IN ({_values(OIDC_LOGIN_PURPOSES)})",
+            name="ck_oidc_login_transaction_purpose",
+        ),
+        sa.CheckConstraint("length(provider) > 0", name="ck_oidc_login_provider_nonempty"),
+        sa.CheckConstraint("length(state_hash) = 64", name="ck_oidc_login_state_hash"),
+        sa.CheckConstraint(
+            "length(browser_binding_hash) = 64", name="ck_oidc_login_browser_binding_hash"
+        ),
+        sa.CheckConstraint("length(nonce_hash) = 64", name="ck_oidc_login_nonce_hash"),
+        sa.CheckConstraint(
+            "length(code_verifier_ciphertext) > 0", name="ck_oidc_login_verifier_nonempty"
+        ),
+        sa.CheckConstraint(
+            "(purpose = 'login' AND target_user_id IS NULL "
+            "AND target_security_version IS NULL) OR "
+            "(purpose = 'link' AND target_user_id IS NOT NULL "
+            "AND target_security_version > 0)",
+            name="ck_oidc_login_target_by_purpose",
+        ),
+        sa.Index("ix_oidc_login_expiry", "status", "expires_at"),
+    )
+
+
+class IdentityConflict(SaasBase):
+    """Verified OIDC subject awaiting explicit same-account confirmation."""
+
+    __tablename__ = "saas_identity_conflicts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    issuer: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    subject: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(sa.String(320), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(sa.String(256))
+    candidate_user_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    resolved_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    resolution_reason: Mapped[str | None] = mapped_column(sa.String(1024))
+    resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"status IN ({_values(IDENTITY_CONFLICT_STATUSES)})",
+            name="ck_identity_conflict_status",
+        ),
+        sa.CheckConstraint("length(provider) > 0", name="ck_identity_conflict_provider"),
+        sa.CheckConstraint("length(issuer) > 0", name="ck_identity_conflict_issuer"),
+        sa.CheckConstraint("length(subject) > 0", name="ck_identity_conflict_subject"),
+        sa.CheckConstraint("length(email_normalized) > 0", name="ck_identity_conflict_email"),
+        sa.CheckConstraint("version > 0", name="ck_identity_conflict_version"),
+        sa.CheckConstraint(
+            "(status = 'pending' AND resolved_by IS NULL AND resolved_at IS NULL "
+            "AND resolution_reason IS NULL) OR "
+            "(status IN ('approved', 'rejected') AND resolved_by IS NOT NULL "
+            "AND resolved_at IS NOT NULL AND length(resolution_reason) > 0)",
+            name="ck_identity_conflict_resolution",
+        ),
+        sa.UniqueConstraint("issuer", "subject", name="uq_identity_conflict_issuer_subject"),
+        sa.Index("ix_identity_conflict_candidate", "candidate_user_id", "status"),
     )
 
 

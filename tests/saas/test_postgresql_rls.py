@@ -25,6 +25,8 @@ from saas.control_plane import (
 _CONTROL_PLANE_RLS_TABLES = {
     "saas_global_users",
     "saas_identity_connections",
+    "saas_identity_conflicts",
+    "saas_oidc_login_transactions",
     "saas_auth_sessions",
     "saas_password_credentials",
     "saas_tenants",
@@ -72,6 +74,10 @@ def test_real_postgresql_rls_denies_cross_tenant_and_missing_context() -> None:
         uuid4(),
     )
     event_key = f"rls-seed-{uuid4()}"
+    oidc_transaction_id = uuid4()
+    identity_conflict_id = uuid4()
+    oidc_state_hash = uuid4().hex + uuid4().hex
+    conflict_subject = f"rls-conflict-{uuid4()}"
 
     with engine.begin() as connection:
         _migrate(connection, root)
@@ -191,6 +197,54 @@ def test_real_postgresql_rls_denies_cross_tenant_and_missing_context() -> None:
             connection.execute(sa.text("SELECT id FROM saas_global_users")).scalars()
         )
         assert {actor_a, actor_b} <= visible_users
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_oidc_login_transactions "
+                "(id, provider, state_hash, browser_binding_hash, nonce_hash, "
+                "code_verifier_ciphertext, purpose, status, expires_at) VALUES "
+                "(:id, 'test', :state_hash, :browser_hash, :nonce_hash, "
+                "'encrypted-verifier', 'login', 'pending', now() + interval '5 minutes')"
+            ),
+            {
+                "id": oidc_transaction_id,
+                "state_hash": oidc_state_hash,
+                "browser_hash": "b" * 64,
+                "nonce_hash": "c" * 64,
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_identity_conflicts "
+                "(id, provider, issuer, subject, email_normalized, candidate_user_id, "
+                "status, version) VALUES "
+                "(:id, 'test', 'https://idp.example.test', :subject, "
+                "'actor-a@example.test', :candidate, 'pending', 1)"
+            ),
+            {
+                "id": identity_conflict_id,
+                "subject": conflict_subject,
+                "candidate": actor_a,
+            },
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_oidc_login_transactions WHERE id = :id"),
+                {"id": oidc_transaction_id},
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_identity_conflicts WHERE id = :id"),
+                {"id": identity_conflict_id},
+            ).scalar_one()
+            == 1
+        )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET ROLE saas_rls_app_login")
+            connection.execute(sa.text("SELECT count(*) FROM saas_oidc_login_transactions"))
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET ROLE saas_rls_dispatch_login")

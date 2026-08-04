@@ -36,7 +36,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p2a000000004"
+        assert revision == "p2a000000005"
 
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())

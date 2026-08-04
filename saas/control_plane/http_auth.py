@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -23,6 +23,7 @@ from saas.control_plane.lifecycle import (
     MembershipLifecycleService,
     ValidatedAuthSession,
 )
+from saas.control_plane.oidc import OidcAuthorizationService
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ class SaasCookieConfig:
     same_site: Literal["lax", "strict", "none"] = "lax"
     ttl: timedelta = timedelta(hours=8)
     trusted_origins: frozenset[str] = frozenset()
+    oidc_transaction_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name or self.ttl <= timedelta(0):
@@ -50,6 +52,17 @@ class SaasCookieConfig:
             raise ValueError("__Host- cookies require secure=True")
         if self.same_site == "none" and not self.secure:
             raise ValueError("SameSite=None cookies require secure=True")
+        transaction_name = self.oidc_transaction_cookie_name
+        if transaction_name == self.name:
+            raise ValueError("OIDC transaction cookie must differ from the session cookie")
+        if transaction_name.startswith("__Host-") and not self.secure:
+            raise ValueError("__Host- cookies require secure=True")
+
+    @property
+    def oidc_transaction_cookie_name(self) -> str:
+        """Return a distinct browser-binding cookie with matching prefix posture."""
+
+        return self.oidc_transaction_name or f"{self.name}_oidc"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +123,11 @@ class RemovalPreflightRequest(BaseModel):
 
 
 class RemovalExecutionRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class IdentityConflictResolutionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
     reason: str = Field(min_length=1, max_length=1024)
 
 
@@ -207,7 +225,7 @@ class SaasAuthContextMiddleware:
             return
         connection = HTTPConnection(scope)
         token, token_source = self._auth.extract_token(connection)
-        if connection.url.path in self._public_paths:
+        if self._is_public_request(connection.url.path, cast(str, scope.get("method", "GET"))):
             try:
                 self._enforce_public_browser_origin(connection, scope)
             except LifecycleError as error:
@@ -270,6 +288,18 @@ class SaasAuthContextMiddleware:
         if not self._cookie.trusted_origins or origin not in self._cookie.trusted_origins:
             raise LifecycleError("origin_forbidden", "browser request Origin is forbidden")
 
+    def _is_public_request(self, path: str, method: str) -> bool:
+        if path in self._public_paths:
+            return True
+        parts = path.split("/")
+        return (
+            method == "GET"
+            and len(parts) == 6
+            and parts[1:4] == ["saas", "auth", "oidc"]
+            and bool(parts[4])
+            and parts[5] in {"start", "callback"}
+        )
+
     def _resolve_runtime_context(
         self, connection: HTTPConnection, session: ValidatedAuthSession
     ) -> RuntimeContext | None:
@@ -305,6 +335,7 @@ def create_saas_auth_router(
     passwords: PasswordCredentialService,
     cookie_config: SaasCookieConfig,
     governance: MembershipGovernanceService | None = None,
+    oidc: OidcAuthorizationService | None = None,
 ) -> APIRouter:
     """Build login/logout/self-service identity routes for downstream app wiring."""
 
@@ -323,15 +354,7 @@ def create_saas_auth_router(
             )
         except LifecycleError as error:
             raise _http_error(error, 401) from error
-        response.set_cookie(
-            key=cookie_config.name,
-            value=issued.token,
-            max_age=int(cookie_config.ttl.total_seconds()),
-            path="/",
-            secure=cookie_config.secure,
-            httponly=True,
-            samesite=cookie_config.same_site,
-        )
+        _set_session_cookie(response, cookie_config, issued.token)
         return {
             "user_id": str(user_id),
             "csrf_token": issued.csrf_token,
@@ -427,6 +450,150 @@ def create_saas_auth_router(
             "security_version": changed.security_version,
             "reauthentication_required": True,
         }
+
+    if oidc is not None:
+
+        @router.get("/auth/oidc/{provider}/start")
+        def start_oidc_login(provider: str) -> Response:
+            try:
+                started = oidc.begin(provider)
+            except LifecycleError as error:
+                raise _http_error(error, 400) from error
+            response = RedirectResponse(started.authorization_url, status_code=302)
+            _set_oidc_transaction_cookie(
+                response,
+                cookie_config,
+                started.browser_binding,
+                started.expires_at,
+            )
+            return response
+
+        @router.post("/auth/oidc/{provider}/link/start")
+        def start_oidc_link(provider: str, request: Request) -> Response:
+            principal = _require_principal(auth_provider, request)
+            try:
+                started = oidc.begin(
+                    provider,
+                    purpose="link",
+                    target_session=principal.session,
+                )
+            except LifecycleError as error:
+                raise _http_error(error, 409) from error
+            response = RedirectResponse(started.authorization_url, status_code=303)
+            _set_oidc_transaction_cookie(
+                response,
+                cookie_config,
+                started.browser_binding,
+                started.expires_at,
+            )
+            return response
+
+        @router.get("/auth/oidc/{provider}/callback")
+        async def complete_oidc(
+            provider: str,
+            request: Request,
+            code: str | None = None,
+            state: str = "",
+            error: str | None = None,
+        ) -> Response:
+            browser_binding = request.cookies.get(cookie_config.oidc_transaction_cookie_name, "")
+            try:
+                if error is not None:
+                    oidc.abort(
+                        provider,
+                        state=state,
+                        browser_binding=browser_binding,
+                    )
+                    raise LifecycleError(
+                        "oidc_authorization_declined", "OIDC authorization was declined"
+                    )
+                completed = await oidc.complete(
+                    provider,
+                    code=code or "",
+                    state=state,
+                    browser_binding=browser_binding,
+                )
+            except LifecycleError as lifecycle_error:
+                response = JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": {
+                            "code": lifecycle_error.code,
+                            "message": str(lifecycle_error),
+                        }
+                    },
+                )
+                _clear_oidc_transaction_cookie(response, cookie_config)
+                return response
+
+            if completed.conflict_id is not None:
+                response = JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": {
+                            "code": "identity_confirmation_required",
+                            "message": "explicit account confirmation is required",
+                        },
+                        "identity_conflict_id": str(completed.conflict_id),
+                    },
+                )
+                _clear_oidc_transaction_cookie(response, cookie_config)
+                return response
+
+            user_id = cast(UUID, completed.user_id)
+            issued_at = datetime.now(timezone.utc)
+            issued = lifecycle.issue_auth_session(
+                user_id=user_id,
+                authn_method=f"oidc:{provider}",
+                expires_at=issued_at + cookie_config.ttl,
+                now=issued_at,
+            )
+            response = JSONResponse(
+                status_code=200,
+                content={
+                    "user_id": str(user_id),
+                    "csrf_token": issued.csrf_token,
+                    "expires_at": issued.expires_at.isoformat(),
+                    "purpose": completed.purpose,
+                },
+            )
+            _set_session_cookie(response, cookie_config, issued.token)
+            _clear_oidc_transaction_cookie(response, cookie_config)
+            return response
+
+        @router.post("/auth/identity-conflicts/{conflict_id}")
+        def resolve_identity_conflict(
+            conflict_id: UUID,
+            body: IdentityConflictResolutionRequest,
+            request: Request,
+            response: Response,
+            idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+        ) -> dict[str, object]:
+            principal = _require_principal(auth_provider, request)
+            try:
+                resolved = identities.resolve_identity_conflict(
+                    user_id=principal.session.user_id,
+                    conflict_id=conflict_id,
+                    decision=body.decision,
+                    reason=body.reason,
+                    reauthenticated_at=principal.session.authenticated_at,
+                    idempotency_key=idempotency_key,
+                    expected_security_version=principal.session.security_version,
+                )
+            except LifecycleError as lifecycle_error:
+                raise _http_error(lifecycle_error, 409) from lifecycle_error
+            _clear_cookie(response, cookie_config)
+            return {
+                "identity_conflict_id": str(resolved.conflict_id),
+                "decision": resolved.decision,
+                "identity_connection_id": (
+                    str(resolved.identity_connection_id)
+                    if resolved.identity_connection_id is not None
+                    else None
+                ),
+                "replayed": resolved.replayed,
+                "reauthentication_required": True,
+            }
 
     if governance is not None:
 
@@ -538,6 +705,7 @@ def create_saas_http_integration(
     project_admin: ProjectAdministrationService | None = None,
     project_authorizer: ProjectAuthorizer | None = None,
     runtime_bindings: RuntimeBindingService | None = None,
+    oidc: OidcAuthorizationService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -549,6 +717,7 @@ def create_saas_http_integration(
         passwords=passwords,
         cookie_config=cookie_config,
         governance=governance,
+        oidc=oidc,
     )
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
@@ -579,6 +748,46 @@ def _clear_cookie(response: Response, cookie_config: SaasCookieConfig) -> None:
         secure=cookie_config.secure,
         httponly=True,
         samesite=cookie_config.same_site,
+    )
+
+
+def _set_session_cookie(response: Response, cookie_config: SaasCookieConfig, token: str) -> None:
+    response.set_cookie(
+        key=cookie_config.name,
+        value=token,
+        max_age=int(cookie_config.ttl.total_seconds()),
+        path="/",
+        secure=cookie_config.secure,
+        httponly=True,
+        samesite=cookie_config.same_site,
+    )
+
+
+def _set_oidc_transaction_cookie(
+    response: Response,
+    cookie_config: SaasCookieConfig,
+    browser_binding: str,
+    expires_at: datetime,
+) -> None:
+    max_age = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+    response.set_cookie(
+        key=cookie_config.oidc_transaction_cookie_name,
+        value=browser_binding,
+        max_age=max_age,
+        path="/",
+        secure=cookie_config.secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _clear_oidc_transaction_cookie(response: Response, cookie_config: SaasCookieConfig) -> None:
+    response.delete_cookie(
+        cookie_config.oidc_transaction_cookie_name,
+        path="/",
+        secure=cookie_config.secure,
+        httponly=True,
+        samesite="lax",
     )
 
 

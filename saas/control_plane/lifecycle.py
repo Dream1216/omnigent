@@ -58,6 +58,7 @@ class ValidatedAuthSession:
     security_version: int
     authn_method: str
     authenticated_at: datetime
+    expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +219,7 @@ class MembershipLifecycleService:
                 security_version=user.security_version,
                 authn_method=auth_session.authn_method,
                 authenticated_at=_comparable_time(auth_session.created_at),
+                expires_at=_comparable_time(auth_session.expires_at),
             )
 
     def validate_csrf(self, token: str, csrf_token: str) -> None:
