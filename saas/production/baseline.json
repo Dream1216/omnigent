@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "baseline_id": "omnigent-saas-single-region-v1",
-  "reviewed_at": "2026-08-04",
+  "reviewed_at": "2026-08-05",
   "revision_contract": {
     "upstream_manifest": "saas/upstream-baseline.json",
-    "upstream_revision": "a47a9ee3bf7287f7e70fc0f599f241e43275ecfc",
+    "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p4c000000001",
     "deployment_scope": "single-region-multi-az"
@@ -50,8 +50,8 @@
       "title": "Runner isolation and responsibility modes",
       "owner": "execution-platform",
       "status": "proposed",
-      "decision": "Support Managed Shared, Managed Dedicated, and Customer-managed Runner modes behind one capability and lease contract; dedicated and customer-managed modes change placement and responsibility, not authorization semantics.",
-      "verification_gate": "Two failure domains, certificate rotation, quarantine, lease expiry, stale fencing, and tenant-pool isolation must pass."
+      "decision": "Support Managed Shared, Managed Dedicated, and Customer-managed Runner modes behind one capability and lease contract; dedicated and customer-managed modes change placement and responsibility, not authorization semantics. Managed modes disable the upstream copy-on-write Runner zygote and reject ambient provider credentials until a fork-safety review proves post-fork credential, descriptor, native-state, telemetry, and tenant-context reset.",
+      "verification_gate": "Two failure domains, certificate rotation, quarantine, lease expiry, stale fencing, tenant-pool isolation, canonical managed process policy, and negative ambient-credential inheritance must pass."
     },
     {
       "id": "ADR-005",
@@ -460,7 +460,7 @@
     ]
   },
   "risk_register": {
-    "last_reviewed_at": "2026-08-04",
+    "last_reviewed_at": "2026-08-05",
     "review_interval_days": 14,
     "risks": [
       {

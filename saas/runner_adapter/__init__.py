@@ -11,6 +11,13 @@ from saas.runner_adapter.isolation import (
     SecretRedemptionAuthority,
     reap_orphaned_secret_directories,
 )
+from saas.runner_adapter.process_policy import (
+    ManagedRunnerProcessPolicyError,
+    activate_managed_host_environment,
+    build_managed_host_environment,
+    require_managed_host_environment,
+    run_managed_host_process,
+)
 from saas.runner_adapter.worktrees import (
     CheckpointArtifact,
     FilesystemRecoveryArtifactStore,
@@ -30,6 +37,7 @@ __all__ = [
     "IsolationAuthority",
     "LaunchGrantAuthority",
     "LinuxCgroupV2ContainmentVerifier",
+    "ManagedRunnerProcessPolicyError",
     "PhysicalCheckpoint",
     "PhysicalWorktree",
     "PreparedRunnerIsolation",
@@ -41,5 +49,9 @@ __all__ = [
     "SecretRedemptionAuthority",
     "StaticRepositoryMirrorResolver",
     "WorktreeLifecycleAuthority",
+    "activate_managed_host_environment",
+    "build_managed_host_environment",
     "reap_orphaned_secret_directories",
+    "require_managed_host_environment",
+    "run_managed_host_process",
 ]

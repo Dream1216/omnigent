@@ -377,6 +377,20 @@ integrity. Deployments must not terminate and recreate TLS between Runner and
 Broker; doing so requires a protocol successor with independent request
 proof-of-possession rather than treating a forwarding header as identity.
 
+The 2026-08-05 upstream synchronization adds the official copy-on-write Runner
+zygote/forkserver and semantic database query names. Local single-user Hosts
+retain the upstream default. Managed Shared and Managed Dedicated execution use
+`runner_adapter.process_policy` before constructing the official `HostProcess`:
+the adapter requires the canonical `OMNIGENT_RUNNER_ZYGOTE=0`, rejects known
+ambient provider/Git credential variables and arbitrary Runner passthrough, and
+therefore selects the official direct-`Popen` path. This is a downstream
+composition rule, not an upstream patch. Re-enabling the zygote in managed
+modes requires independent proof that every fork resets cached credentials,
+file descriptors, native-library state, telemetry, and Tenant/Space/Project/Run
+context. CI now runs the new official zygote, harness client, query-context,
+threadpool, allocator, cancellation, and process-lifecycle regressions while
+the SaaS adapter keeps managed isolation fail closed.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

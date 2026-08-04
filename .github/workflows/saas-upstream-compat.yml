@@ -63,6 +63,25 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+      - name: Run official zygote and query-context compatibility tests
+        run: >-
+          uv run pytest
+          tests/host/test_runner_zygote.py
+          tests/runtime/harnesses/test_harness_zygote_client.py
+          tests/stores/test_query_context.py
+          tests/host/test_connect.py::test_handle_stop_terminates_process
+          tests/host/test_connect.py::test_handle_runner_status_alive_for_running_process
+          tests/host/test_connect.py::test_handle_runner_status_dead_for_exited_process
+          tests/host/test_connect.py::test_launch_cancelled_midspawn_does_not_leak_untracked_runner
+          tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
+          tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_rejects_invalid_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_rejects_invalid_env
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_empty_off_linux
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_defaults_on_linux
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_arena_max_zero_disables_cap
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_honors_overrides
       - name: Run official hard-sandbox and credential-proxy acceptance
         run: >-
           uv run pytest
