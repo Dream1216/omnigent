@@ -439,7 +439,7 @@ compatibility tests, 56 official zygote/query-context regressions, and the
 migrations upgrade/check/downgrade, the wheel contains 89 required artifacts,
 both patches replay, and source intrusion remains 8 files/432 lines with a
 0.9907 isolated-code ratio. The evidence-successor wheel inventory requires 90
-artifacts. Eleven aggregate acceptance gates and the production decision remain
+artifacts. Twelve aggregate acceptance gates and the production decision remain
 `NO-GO`.
 
 The next P4 control-plane slice adds a durable Runner certificate lifecycle
@@ -485,7 +485,7 @@ This remains a certificate lifecycle contract, not deployed PKI evidence.
 Production still requires an external issuer and Trust Bundle distribution
 mechanism, automated issuance/renewal and emergency revocation, service
 discovery, multi-replica/cross-host Broker and Preview composition, alerting,
-and expiry / CA-compromise drills. Eleven aggregate acceptance gates remain
+and expiry / CA-compromise drills. Twelve aggregate acceptance gates remain
 pending, so the aggregate P4 gate and release decision remain `NO-GO`.
 
 The next P4 control-plane slice replaces process-local Runner tunnel ownership
@@ -521,8 +521,34 @@ evidence-successor wheel inventory requires 98 artifacts.
 The relay is still an authenticated transport interface rather than a deployed
 cross-host mTLS or message-bus implementation. Therefore this slice removes the
 process-local routing decision but does not establish production cross-host
-delivery, failure-domain recovery, or the aggregate P4 gate. Eleven aggregate
+delivery, failure-domain recovery, or the aggregate P4 gate. Twelve aggregate
 acceptance gates remain pending and the release remains `NO-GO`.
+
+The next downstream-only slice implements the `PreviewReplicaRelay` interface
+as a one-request TLS 1.3 protocol without modifying official Omnigent code.
+Both Gateway peers require certificates and exactly one Gateway SPIFFE URI SAN.
+The sending replica verifies that the server certificate Gateway identity is
+the same durable Placement owner selected by PostgreSQL, then calls an injected
+certificate lifecycle authorizer before sending the request. The receiving
+replica authorizes the client leaf before reading request bytes, requires the
+wire destination to equal its own Gateway identity, and invokes
+`accept_relay`, which re-resolves the exact Placement, Runner Connection
+Generation, Routing Generation, relay subject, and Preview token before using
+the local official Runner session.
+
+The framed protocol rejects duplicate JSON members, ambiguous certificate
+identities, caller-supplied endpoints, oversized metadata/bodies/chunks,
+unsupported methods, invalid paths, ambient credential headers, and malformed
+or stale route facts. Response chunks are streamed with an aggregate byte
+limit, idle timeout, and client-disconnect cancellation. The client performs
+no automatic transport retry, including for GET, because this initial contract
+does not yet have a durable relay request/replay authority and must never
+silently repeat an unknown-result mutation. This transport subgate remains
+pending until exact-revision CI evidence is recorded. Production endpoint
+discovery, external CA/Trust Bundle issuance and rotation, certificate
+compromise drills, deployed cross-host topology, Preview WebSocket forwarding,
+network-partition behavior, and two failure domains remain independent release
+blockers.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium

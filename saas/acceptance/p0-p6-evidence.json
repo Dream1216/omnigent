@@ -391,6 +391,14 @@
           ]
         },
         {
+          "id": "p4-mtls-cross-replica-preview-relay-transport-contract",
+          "status": "pending",
+          "evidence": [
+            "saas/preview_relay_transport.py",
+            "tests/saas/test_preview_relay_transport.py"
+          ]
+        },
+        {
           "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
@@ -403,7 +411,9 @@
             "saas/control_plane/placements.py",
             "saas/control_plane/migrations/versions/p4e000000001_runner_tunnel_placement.py",
             "saas/secret_broker_transport.py",
+            "saas/preview_relay_transport.py",
             "tests/saas/test_preview_tunnel.py",
+            "tests/saas/test_preview_relay_transport.py",
             "tests/saas/test_preview_supervisor.py",
             "tests/saas/test_certificate_lifecycle.py",
             "tests/saas/test_runner_tunnel_placement.py",

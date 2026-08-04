@@ -129,3 +129,19 @@ trips, the 97-artifact wheel check, patch replay, and the source-intrusion
 budget; the contract gate is therefore `passed`. The relay remains an
 authenticated transport interface rather than deployed cross-host mTLS or a
 production message bus, so this slice cannot close the P4 production aggregate.
+
+The follow-up Preview Relay slice implements that interface as a bounded,
+one-request TLS 1.3 transport. Both peers must present a certificate with
+exactly one `spiffe://omnigent/preview-gateway/{gateway_instance_id}` URI SAN;
+the sender binds the server certificate identity to the durable Placement
+owner before writing request bytes, and both sides call an injected certificate
+lifecycle authorizer. The wire request contains the opaque Placement identity
+and complete Preview route fences but no caller-selected network endpoint. The
+receiver re-resolves Placement before touching the local official Runner
+session. Response bodies remain streamed with byte, frame, idle-timeout, and
+disconnect cancellation bounds. There is deliberately no automatic retry, so
+an unknown-result POST/PUT/PATCH/DELETE is never replayed. The gate remains
+`pending` until an immutable exact-revision CI record exists; even after that
+contract record, production service discovery, external CA and Trust Bundle
+operations, cross-host deployment, network-partition behavior, and two failure
+domains remain separate `NO-GO` requirements.

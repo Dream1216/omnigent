@@ -387,7 +387,7 @@ class PlacementRoutedPreviewTunnel:
     async def forward(self, request: PreviewTunnelRequest) -> PreviewTunnelResponse:
         """Resolve every request from durable state and select local or peer forwarding."""
 
-        placement = self._resolve(request.route)
+        placement = await asyncio.to_thread(self._resolve, request.route)
         if placement.gateway_instance_id == self._gateway_instance_id:
             return await self._local_tunnel.forward(request)
         if self._relay is None:
@@ -405,7 +405,8 @@ class PlacementRoutedPreviewTunnel:
 
         route = request.route
         try:
-            self._placements.require_route_owner(
+            await asyncio.to_thread(
+                self._placements.require_route_owner,
                 placement=placement,
                 runner_id=route.runner_id,
                 runner_connection_generation=route.runner_connection_generation,
