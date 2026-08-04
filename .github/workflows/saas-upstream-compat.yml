@@ -50,6 +50,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          # ubuntu-latest enables AppArmor's unprivileged-userns restriction;
+          # the official Omnigent Linux sandbox workflows disable it only on
+          # the ephemeral runner so bwrap can create its user/network namespaces.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run SaaS compatibility tests
         run: >-
           uv run pytest
