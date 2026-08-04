@@ -16,7 +16,8 @@
             "saas/scripts/check_upstream_delta.py",
             "saas/scripts/check_patch_queue.py",
             "saas/upstream-patches/README.md",
-            ".github/workflows/saas-upstream-compat.yml"
+            ".github/workflows/saas-upstream-compat.yml",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json"
           ]
         },
         {
@@ -115,7 +116,8 @@
             "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
             "tests/saas/test_postgresql_rls.py",
             "tests/saas/test_runtime_postgresql_rls.py",
-            "saas/acceptance/p2-ci-30883002639.json"
+            "saas/acceptance/p2-ci-30883002639.json",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json"
           ]
         },
         {
@@ -138,7 +140,8 @@
             "tests/saas/test_postgresql_rls.py",
             "tests/saas/test_runtime_postgresql_rls.py",
             "tests/saas/test_project_admin_browser.py",
-            "saas/acceptance/p2-ci-30883002639.json"
+            "saas/acceptance/p2-ci-30883002639.json",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json"
           ]
         }
       ]
