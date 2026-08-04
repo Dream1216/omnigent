@@ -422,14 +422,25 @@ health failure, startup timeout, TERM resistance, crash detection, route
 expiry, Runner-generation mismatch, and pathname replacement. The wheel gate
 now requires this adapter as its 89th SaaS artifact.
 
-This closes only the local process-lifecycle implementation seam after an
-exact-revision CI record is captured. It does not prove a deployed service
-manager can reap children after the Runner itself crashes, nor dedicated
+This closes only the local process-lifecycle contract subgate. It does not
+prove a deployed service manager can reap children after the Runner itself
+crashes, nor dedicated
 Preview UID/mount/cgroup isolation, Placement reconciliation, deployed
 Gateway-to-Runner mutual authentication, request-frame streaming, WebSocket,
 custom-domain/certificate lifecycle, abuse controls, or two failure domains.
 The aggregate P4 production gate and release decision therefore remain
 pending and `NO-GO`.
+
+Exact implementation run `30937413470` verifies the Supervisor contract at
+`e5c90601d83a56f76899d61d1594bf3dcc539ed5` against official revision
+`8e17c9ec081fc0219c71db773cc7bb0cb516633a`: 711 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the
+36/22 official Linux security matrix pass; Pyrefly reports zero errors, P4c
+migrations upgrade/check/downgrade, the wheel contains 89 required artifacts,
+both patches replay, and source intrusion remains 8 files/432 lines with a
+0.9907 isolated-code ratio. The evidence-successor wheel inventory requires 90
+artifacts. Eleven aggregate acceptance gates and the production decision remain
+`NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
@@ -446,9 +457,10 @@ yet passed the cgroup verifier; the Secret Broker mTLS adapter has no deployed
 certificate issuance, rotation/revocation, service discovery, replica retry,
 Vault/KMS, memory-lifetime, or separate-host evidence; the Preview tunnel does
 not yet have deployed mutually authenticated cross-process/host transport;
-Preview WebSocket, custom-domain, and abuse controls remain incomplete; the UDS
-adapter has no deployed Supervisor lifecycle/crash-recovery evidence; and two
-real failure domains, network partition, and N-1 rollback are unproven.
+Preview WebSocket, custom-domain, and abuse controls remain incomplete; the
+local Supervisor has no deployed external service-manager recovery evidence for
+Runner death or dedicated UID/mount/cgroup isolation; and two real failure
+domains, network partition, and N-1 rollback are unproven.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

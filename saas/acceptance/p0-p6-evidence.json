@@ -353,6 +353,16 @@
           ]
         },
         {
+          "id": "p4-runner-local-preview-process-supervisor-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_tunnel.py",
+            "saas/runner_adapter/preview_supervisor.py",
+            "tests/saas/test_preview_supervisor.py",
+            "saas/acceptance/p4-preview-supervisor-ci-30937413470.json"
+          ]
+        },
+        {
           "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
@@ -365,6 +375,7 @@
             "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
             "saas/acceptance/p4-preview-uds-ci-30926375395.json",
             "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
+            "saas/acceptance/p4-preview-supervisor-ci-30937413470.json",
             "saas/runner_adapter/process_policy.py",
             "tests/saas/test_managed_runner_process_policy.py",
             "saas/acceptance/p4-upstream-sync-ci-30932712224.json"

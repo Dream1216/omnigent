@@ -74,9 +74,17 @@ Runner-local UDS target gate derives a server-chosen socket below a private
 Runner root, pins its filesystem identity, forbids TCP fallback, and passes a
 real spawned-process/UDS end-to-end test. The Runner tunnel resolver remains
 process-local, and official protocol v1 still buffers each bounded request body
-in one frame. This evidence does not establish a deployed Supervisor lifecycle,
-dedicated UID/mount isolation, mutual authentication, multi-replica placement,
-Preview WebSocket forwarding, custom domains, or abuse controls.
+in one frame. The next passed Supervisor contract starts that real target from
+an immutable server-owned specification, publishes it only after a direct UDS
+health check, excludes ambient credentials, and revokes then terminates the
+entire owned process group on stop, crash, or route expiry. Exact-revision run
+`30937413470` verifies all 711 PostgreSQL/Chromium compatibility tests, 56
+official zygote/query-context regressions, and the 36/22 Linux security matrix.
+This remains a local lifecycle seam: it does not establish external reaping
+after the Runner itself crashes, dedicated UID/mount/cgroup isolation,
+cross-host mutual authentication and certificate lifecycle, multi-replica
+Placement reconciliation, Preview WebSocket forwarding, custom domains, or
+abuse controls.
 
 The mTLS Secret Broker adapter is another separate passed contract gate. A real
 TLS 1.3 socket handshake binds the Runner to one SPIFFE URI SAN, the request has
