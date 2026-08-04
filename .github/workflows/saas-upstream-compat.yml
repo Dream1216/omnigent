@@ -1,0 +1,47 @@
+name: SaaS upstream compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "codex/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-upstream-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Run SaaS compatibility tests
+        run: uv run pytest tests/saas
+      - name: Type-check SaaS compatibility code
+        run: uv run pyrefly check saas
+      - name: Enforce source-intrusion budget
+        run: >-
+          uv run python saas/scripts/check_upstream_delta.py
+          --output artifacts/upstream-delta-report.json
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-delta-report
+          path: artifacts/upstream-delta-report.json
+          if-no-files-found: error
