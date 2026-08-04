@@ -17,7 +17,7 @@ def test_current_acceptance_manifest_is_consistent_and_no_go() -> None:
     assert [phase["status"] for phase in manifest["phases"]] == [
         "in_progress",
         "in_progress",
-        "in_progress",
+        "complete",
         "not_started",
         "not_started",
         "not_started",

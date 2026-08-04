@@ -134,11 +134,10 @@ only `omnigent_runtime_app`. The service login must not own protected tables
 and must remain `NOSUPERUSER NOBYPASSRLS`.
 
 This remains a validated implementation slice, not complete production SaaS
-proof. The evidence manifest deliberately keeps P0, P1, and P2 in progress:
-the local current-revision matrix passes real PostgreSQL control-plane/Runtime
-RLS, concurrent Outbox/Owner operations, and real Chromium Project Admin tests;
-PostgreSQL 16 remote CI and the aggregate P2 MVP decision are still required.
-OAuth/OIDC provider callback verification,
+proof. P2's current implementation gate passes the local and GitHub PostgreSQL
+16 matrices for control-plane/Runtime RLS, concurrent Identity/Outbox/Owner
+operations, Binding Saga fault injection, patch replay, and real Chromium
+Project Admin tests. P0 and P1 remain in progress: OAuth/OIDC provider callback verification,
 the multi-replica Context Shell/revocation degradation matrix, approved
 production ADRs, reproducible signed images, and Service Catalog/SLO/RPO/RTO
 evidence are also pending. P3 durable Run authority, P4 multi-failure-domain

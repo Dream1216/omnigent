@@ -10,6 +10,7 @@ from pathlib import Path
 
 REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p0-p6-evidence.json",
+    "saas/acceptance/p2-ci-30883002639.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",
     "saas/admin_ui/project_admin.js",

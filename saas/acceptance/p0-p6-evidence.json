@@ -76,7 +76,7 @@
     },
     {
       "id": "P2",
-      "status": "in_progress",
+      "status": "complete",
       "gates": [
         {
           "id": "p2-project-grant-binding-authorizer",
@@ -109,12 +109,13 @@
         },
         {
           "id": "p2-dual-real-postgresql-rls-current-revision",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/runtime_rls/installer.py",
             "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
             "tests/saas/test_postgresql_rls.py",
-            "tests/saas/test_runtime_postgresql_rls.py"
+            "tests/saas/test_runtime_postgresql_rls.py",
+            "saas/acceptance/p2-ci-30883002639.json"
           ]
         },
         {
@@ -131,8 +132,14 @@
         },
         {
           "id": "p2-mvp-gate",
-          "status": "pending",
-          "evidence": []
+          "status": "passed",
+          "evidence": [
+            "tests/saas/test_project_authorization.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_runtime_postgresql_rls.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p2-ci-30883002639.json"
+          ]
         }
       ]
     },
