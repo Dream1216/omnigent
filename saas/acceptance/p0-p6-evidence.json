@@ -306,10 +306,23 @@
           ]
         },
         {
+          "id": "p4-crash-secret-cleanup-egress-and-containment-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/runner_adapter/isolation.py",
+            "saas/runner_adapter/containment.py",
+            ".github/workflows/saas-upstream-compat.yml",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "tests/saas/test_runner_containment.py",
+            "saas/acceptance/p4-containment-egress-ci-30921247156.json"
+          ]
+        },
+        {
           "id": "p4-production-containment-egress-preview-tunnel",
           "status": "pending",
           "evidence": [
-            "saas/acceptance/p4-isolation-preview-ci-30918608868.json"
+            "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
+            "saas/acceptance/p4-containment-egress-ci-30921247156.json"
           ]
         },
         {

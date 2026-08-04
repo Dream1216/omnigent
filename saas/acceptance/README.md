@@ -46,9 +46,13 @@ signed immutable production image. Both commands have `--require-ready` modes
 that fail until their external evidence is complete. The evidence paths on a
 pending gate therefore show implemented controls, not a passed gate.
 
-The P4 Worktree record closes only the credential-free Repository, atomic
-ChangeSet, quota, fenced lease, lifecycle, removal-preflight, and PostgreSQL RLS
-control-plane subgate at an immutable implementation revision. The physical
-Runner Git/filesystem adapter is an independent pending gate, so this evidence
-cannot be used to claim host-path, mount-boundary, Sandbox, Preview, or
-cross-failure-domain acceptance.
+The P4 records separately close the credential-free Repository/ChangeSet/
+Worktree control plane, the physical Git/filesystem Runner adapter, the
+isolation/Secret/Preview control-plane contract, and the crash-safe Secret
+staging, malicious-egress regression, and Linux cgroup-v2 verifier contract.
+The verifier reads exact kernel facts and fails closed, but does not create a
+cgroup or prove that a production Runner Pod, container, or microVM is actually
+hardened. Deployed mutually authenticated Secret Broker and streaming Preview
+tunnels, WebSocket/custom-domain/abuse controls, two independent failure
+domains, and N-1 rollback therefore remain pending and the release remains
+`NO-GO`.
