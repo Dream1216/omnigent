@@ -203,10 +203,14 @@ lock so concurrent replicas cannot oversubscribe capacity while
 `ENABLE + FORCE RLS`; real PostgreSQL tests prove two concurrent scheduler
 replicas claim two distinct Tenants/Runs, counters remain consistent, ordinary
 roles cannot enumerate Runner topology, and Tenant/Space scope cannot cross
-dispatch or capability records. This closes local implementation risk only:
-the gate remains pending until exact-revision CI evidence exists, and P4 cannot
-complete before Worktree/ChangeSet, Sandbox/Secret/Egress/Preview, two real
-failure domains, network partition, and N-1 rollback acceptance.
+dispatch or capability records. Exact-revision GitHub Actions run
+`30901594129` verifies this slice at
+`e0a806f66bd53ab60466d7294653fadf2d1b093d` with 642 tests on PostgreSQL 16
+plus Chromium, migration head `p4a000000001`, 64 required wheel artifacts,
+two patch replays, and source-intrusion enforcement. The first P4 gate is
+therefore closed, but P4 cannot complete before Worktree/ChangeSet,
+Sandbox/Secret/Egress/Preview, two real failure domains, network partition,
+and N-1 rollback acceptance.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

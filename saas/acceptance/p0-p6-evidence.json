@@ -91,7 +91,8 @@
             "tests/saas/test_official_http_integration.py",
             "tests/saas/test_outbox_worker.py",
             "tests/saas/test_project_authorization.py",
-            "tests/saas/test_postgresql_rls.py"
+            "tests/saas/test_postgresql_rls.py",
+            "saas/acceptance/p4-scheduling-ci-30901594129.json"
           ]
         },
         {
@@ -251,14 +252,15 @@
       "gates": [
         {
           "id": "p4-fair-queue-runner-registry-lease-fencing",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/scheduling_models.py",
             "saas/control_plane/scheduling.py",
             "saas/control_plane/migrations/versions/p4a000000001_runner_scheduling.py",
             "saas/control_plane/postgresql_roles.sql",
             "tests/saas/test_scheduling_control_plane.py",
-            "tests/saas/test_scheduling_postgresql.py"
+            "tests/saas/test_scheduling_postgresql.py",
+            "saas/acceptance/p4-scheduling-ci-30901594129.json"
           ]
         },
         {
