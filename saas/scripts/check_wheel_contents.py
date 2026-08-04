@@ -77,6 +77,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/runtime_rls/installer.py",
     "saas/runtime_rls/postgresql_roles.sql",
     "saas/runner_adapter/__init__.py",
+    "saas/runner_adapter/containment.py",
     "saas/runner_adapter/isolation.py",
     "saas/runner_adapter/worktrees.py",
     "saas/production/baseline.json",

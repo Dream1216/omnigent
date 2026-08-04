@@ -1,5 +1,6 @@
 """Runner-owned physical adapters behind the SaaS control-plane boundary."""
 
+from saas.runner_adapter.containment import LinuxCgroupV2ContainmentVerifier
 from saas.runner_adapter.isolation import (
     ContainmentVerifier,
     IsolationAuthority,
@@ -25,6 +26,7 @@ __all__ = [
     "ContainmentVerifier",
     "FilesystemRecoveryArtifactStore",
     "IsolationAuthority",
+    "LinuxCgroupV2ContainmentVerifier",
     "PhysicalCheckpoint",
     "PhysicalWorktree",
     "PreparedRunnerIsolation",
