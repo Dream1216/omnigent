@@ -50,7 +50,9 @@ jobs:
         run: >-
           uv run pytest
           tests/db/test_workspace_scope.py
+          tests/cli/test_cli.py
           tests/runner/transports/ws_tunnel/test_serve.py
+          tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
       - name: Type-check SaaS compatibility code
