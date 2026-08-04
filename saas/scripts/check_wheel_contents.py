@@ -9,10 +9,20 @@ from collections.abc import Collection
 from pathlib import Path
 
 REQUIRED_WHEEL_PATHS = (
+    "saas/acceptance/p0-p6-evidence.json",
+    "saas/admin_ui/project_admin.css",
+    "saas/admin_ui/project_admin.html",
+    "saas/admin_ui/project_admin.js",
+    "saas/upstream-baseline.json",
+    "saas/compatibility/store_adapter.py",
+    "saas/control_plane/authorization.py",
+    "saas/control_plane/binding_saga.py",
+    "saas/control_plane/bindings.py",
     "saas/control_plane/alembic.ini",
     "saas/control_plane/db_models.py",
     "saas/control_plane/governance.py",
     "saas/control_plane/http_auth.py",
+    "saas/control_plane/idempotency.py",
     "saas/control_plane/identity.py",
     "saas/control_plane/lifecycle.py",
     "saas/control_plane/migrations/env.py",
@@ -21,10 +31,20 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p1a000000002_identity_lifecycle.py",
     "saas/control_plane/migrations/versions/p1a000000003_auth_governance_outbox.py",
     "saas/control_plane/migrations/versions/p2a000000001_postgresql_rls.py",
+    "saas/control_plane/migrations/versions/p2a000000002_project_authorization.py",
+    "saas/control_plane/migrations/versions/p2a000000003_binding_saga.py",
+    "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
     "saas/control_plane/outbox.py",
+    "saas/control_plane/permissions.py",
     "saas/control_plane/postgresql_roles.sql",
+    "saas/control_plane/project_http.py",
+    "saas/control_plane/projects.py",
+    "saas/control_plane/removal_impact.py",
     "saas/control_plane/resolver.py",
     "saas/control_plane/rls.py",
+    "saas/runtime_rls/__init__.py",
+    "saas/runtime_rls/installer.py",
+    "saas/runtime_rls/postgresql_roles.sql",
 )
 
 

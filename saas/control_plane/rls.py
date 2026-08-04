@@ -15,6 +15,7 @@ class RlsContext:
 
     actor_id: UUID | None = None
     tenant_id: UUID | None = None
+    space_id: UUID | None = None
 
 
 def apply_rls_context(session: Session, context: RlsContext) -> None:
@@ -30,4 +31,8 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     session.execute(
         sa.text("SELECT set_config('app.tenant_id', :value, true)"),
         {"value": str(context.tenant_id) if context.tenant_id else ""},
+    )
+    session.execute(
+        sa.text("SELECT set_config('app.space_id', :value, true)"),
+        {"value": str(context.space_id) if context.space_id else ""},
     )

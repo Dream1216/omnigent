@@ -27,6 +27,7 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.idempotency import scoped_idempotency_key
 
 
 class LifecycleError(RuntimeError):
@@ -295,7 +296,11 @@ class MembershipLifecycleService:
 
         with self._session_factory.begin() as db:
             replay = self._load_receipt(
-                db, idempotency_key, request_digest, "membership.invitation.created"
+                db,
+                tenant_id,
+                idempotency_key,
+                request_digest,
+                "membership.invitation.created",
             )
             if replay is not None:
                 return InvitationCreated(
@@ -552,7 +557,7 @@ class MembershipLifecycleService:
         )
         event_type = "tenant.membership.updated"
         with self._session_factory.begin() as db:
-            replay = self._load_receipt(db, idempotency_key, request_digest, event_type)
+            replay = self._load_receipt(db, tenant_id, idempotency_key, request_digest, event_type)
             if replay is not None:
                 return self._membership_result(replay, replayed=True)
 
@@ -673,7 +678,7 @@ class MembershipLifecycleService:
         )
         event_type = "space.membership.updated"
         with self._session_factory.begin() as db:
-            replay = self._load_receipt(db, idempotency_key, request_digest, event_type)
+            replay = self._load_receipt(db, tenant_id, idempotency_key, request_digest, event_type)
             if replay is not None:
                 return self._membership_result(replay, replayed=True)
 
@@ -872,11 +877,16 @@ class MembershipLifecycleService:
 
     @staticmethod
     def _load_receipt(
-        db: Session, idempotency_key: str, request_hash: str, event_type: str
+        db: Session,
+        tenant_id: UUID,
+        idempotency_key: str,
+        request_hash: str,
+        event_type: str,
     ) -> dict[str, object] | None:
+        receipt_key = scoped_idempotency_key("tenant", tenant_id, idempotency_key)
         receipt = db.execute(
             sa.select(ControlPlaneOutboxEvent).where(
-                ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                ControlPlaneOutboxEvent.idempotency_key == receipt_key
             )
         ).scalar_one_or_none()
         if receipt is None:
@@ -905,7 +915,7 @@ class MembershipLifecycleService:
                 aggregate_type=aggregate_type,
                 aggregate_key=aggregate_key,
                 event_type=event_type,
-                idempotency_key=idempotency_key,
+                idempotency_key=scoped_idempotency_key("tenant", tenant_id, idempotency_key),
                 request_hash=request_hash,
                 payload=payload,
                 attempt_count=0,

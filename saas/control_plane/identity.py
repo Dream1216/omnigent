@@ -27,6 +27,7 @@ from saas.control_plane.db_models import (
     IdentityConnection,
     PasswordCredential,
 )
+from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
 
 _MAX_PASSWORD_FAILURES = 5
@@ -98,7 +99,7 @@ def _add_event(
             aggregate_type=aggregate_type,
             aggregate_key=aggregate_key,
             event_type=event_type,
-            idempotency_key=idempotency_key,
+            idempotency_key=scoped_idempotency_key("user", aggregate_key, idempotency_key),
             request_hash=request_hash,
             payload=payload,
             attempt_count=0,
@@ -231,9 +232,10 @@ class IdentityManagementService:
             }
         )
         with self._session_factory.begin() as db:
+            receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -333,9 +335,10 @@ class IdentityManagementService:
             {"user_id": str(user_id), "connection_id": str(connection_id)}
         )
         with self._session_factory.begin() as db:
+            receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -344,19 +347,20 @@ class IdentityManagementService:
                         "idempotency_conflict", "idempotency key belongs to another request"
                     )
                 return
-            connection = db.get(IdentityConnection, connection_id)
-            if connection is None or connection.user_id != user_id:
+            connections = list(
+                db.execute(
+                    sa.select(IdentityConnection)
+                    .where(IdentityConnection.user_id == user_id)
+                    .order_by(IdentityConnection.id)
+                    .with_for_update()
+                ).scalars()
+            )
+            connection = next((item for item in connections if item.id == connection_id), None)
+            if connection is None:
                 raise LifecycleError("identity_not_found", "identity connection does not exist")
             if connection.status == "revoked":
                 return
-            active_count = db.execute(
-                sa.select(sa.func.count())
-                .select_from(IdentityConnection)
-                .where(
-                    IdentityConnection.user_id == user_id,
-                    IdentityConnection.status == "active",
-                )
-            ).scalar_one()
+            active_count = sum(item.status == "active" for item in connections)
             has_password = db.get(PasswordCredential, user_id) is not None
             if active_count <= 1 and not has_password:
                 raise LifecycleError(
@@ -487,9 +491,10 @@ class PasswordCredentialService:
             {"user_id": str(user_id), "expected_version": expected_version}
         )
         with self._session_factory() as db:
+            receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -546,9 +551,10 @@ class PasswordCredentialService:
 
         new_hash = hash_password(new_password)
         with self._session_factory.begin() as db:
+            receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:

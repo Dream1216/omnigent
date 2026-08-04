@@ -13,8 +13,15 @@ USER_STATUSES = ("active", "suspended", "deleted")
 TENANT_STATUSES = ("trial", "active", "suspended", "pending_deletion", "deleted")
 SPACE_STATUSES = ("active", "suspended", "archived")
 MEMBERSHIP_STATUSES = ("invited", "active", "suspended", "removed")
-TENANT_ROLES = ("owner", "admin", "member")
-SPACE_ROLES = ("owner", "admin", "operator", "member")
+TENANT_ROLES = (
+    "owner",
+    "admin",
+    "billing_admin",
+    "security_auditor",
+    "operator",
+    "member",
+)
+SPACE_ROLES = ("owner", "admin", "operator", "member", "viewer")
 IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
 OWNER_TRANSFER_STATUSES = ("completed", "cancelled")
@@ -29,6 +36,19 @@ PARTITION_STATUSES = (
     "retired",
 )
 BINDING_STATUSES = ("active", "suspended", "retired")
+PROJECT_STATUSES = ("active", "suspended", "archived")
+PROJECT_VISIBILITIES = ("private", "space", "restricted")
+PROJECT_ROLES = ("owner", "manage", "operate", "edit", "read")
+GRANT_SUBJECT_TYPES = ("user", "space")
+GRANT_STATUSES = ("active", "revoked")
+BINDING_SAGA_STATUSES = (
+    "pending",
+    "runtime_created",
+    "bound",
+    "compensating",
+    "compensated",
+    "failed",
+)
 
 
 def _values(values: tuple[str, ...]) -> str:
@@ -283,6 +303,308 @@ class SpaceMembership(SaasBase):
         ),
         sa.CheckConstraint(f"role IN ({_values(SPACE_ROLES)})", name="ck_space_membership_role"),
         sa.CheckConstraint("version > 0", name="ck_space_membership_version"),
+    )
+
+
+class ProjectRecord(SaasBase):
+    """Project collaboration boundary; content access is never implied by Tenant admin."""
+
+    __tablename__ = "saas_projects"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    name: Mapped[str] = mapped_column(sa.String(256), nullable=False)
+    visibility: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="private")
+    created_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="active")
+    authorization_version: Mapped[int] = mapped_column(nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id"),
+            ("saas_spaces.tenant_id", "saas_spaces.id"),
+            ondelete="RESTRICT",
+            name="fk_project_space",
+        ),
+        sa.CheckConstraint(
+            f"visibility IN ({_values(PROJECT_VISIBILITIES)})",
+            name="ck_project_visibility",
+        ),
+        sa.CheckConstraint(f"status IN ({_values(PROJECT_STATUSES)})", name="ck_project_status"),
+        sa.CheckConstraint("length(name) > 0", name="ck_project_name_nonempty"),
+        sa.CheckConstraint("authorization_version > 0", name="ck_project_auth_version"),
+        sa.UniqueConstraint("tenant_id", "space_id", "id", name="uq_project_scope"),
+        sa.Index("ix_project_scope_status", "tenant_id", "space_id", "status"),
+    )
+
+
+class ProjectMembershipRecord(SaasBase):
+    """Versioned scoped Project role for a user or the containing Space."""
+
+    __tablename__ = "saas_project_memberships"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID] = mapped_column(primary_key=True)
+    subject_type: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    subject_id: Mapped[UUID] = mapped_column(primary_key=True)
+    role: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id"),
+            ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
+            ondelete="RESTRICT",
+            name="fk_project_membership_project",
+        ),
+        sa.CheckConstraint(
+            f"subject_type IN ({_values(GRANT_SUBJECT_TYPES)})",
+            name="ck_project_membership_subject_type",
+        ),
+        sa.CheckConstraint(
+            f"role IN ({_values(PROJECT_ROLES)})", name="ck_project_membership_role"
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(GRANT_STATUSES)})", name="ck_project_membership_status"
+        ),
+        sa.CheckConstraint(
+            "subject_type <> 'space' OR subject_id = space_id",
+            name="ck_project_membership_space_subject",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_project_membership_version"),
+        sa.Index(
+            "ix_project_membership_subject",
+            "tenant_id",
+            "space_id",
+            "subject_type",
+            "subject_id",
+            "status",
+        ),
+    )
+
+
+class ResourceGrantRecord(SaasBase):
+    """Additive resource-scoped role; strong policy restrictions are evaluated separately."""
+
+    __tablename__ = "saas_resource_grants"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID] = mapped_column(nullable=False)
+    resource_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    resource_id: Mapped[UUID] = mapped_column(nullable=False)
+    subject_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(nullable=False)
+    role: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id"),
+            ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
+            ondelete="RESTRICT",
+            name="fk_resource_grant_project",
+        ),
+        sa.CheckConstraint(
+            f"subject_type IN ({_values(GRANT_SUBJECT_TYPES)})",
+            name="ck_resource_grant_subject_type",
+        ),
+        sa.CheckConstraint(f"role IN ({_values(PROJECT_ROLES)})", name="ck_resource_grant_role"),
+        sa.CheckConstraint(
+            f"status IN ({_values(GRANT_STATUSES)})", name="ck_resource_grant_status"
+        ),
+        sa.CheckConstraint(
+            "subject_type <> 'space' OR subject_id = space_id",
+            name="ck_resource_grant_space_subject",
+        ),
+        sa.CheckConstraint("length(resource_type) > 0", name="ck_resource_grant_type_nonempty"),
+        sa.CheckConstraint("version > 0", name="ck_resource_grant_version"),
+        sa.Index(
+            "uq_active_resource_grant",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "resource_type",
+            "resource_id",
+            "subject_type",
+            "subject_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'active'"),
+            postgresql_where=sa.text("status = 'active'"),
+        ),
+        sa.Index(
+            "ix_resource_grant_subject",
+            "tenant_id",
+            "space_id",
+            "subject_type",
+            "subject_id",
+            "status",
+        ),
+    )
+
+
+class AuthorizationDecisionRecord(SaasBase):
+    """Auditable shadow/enforced authorization result without resource content."""
+
+    __tablename__ = "saas_authorization_decisions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID | None] = mapped_column()
+    actor_id: Mapped[UUID] = mapped_column(nullable=False)
+    action: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    resource_type: Mapped[str | None] = mapped_column(sa.String(64))
+    resource_id: Mapped[UUID | None] = mapped_column()
+    mode: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    allowed: Mapped[bool] = mapped_column(nullable=False)
+    reason: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    sources: Mapped[list[dict[str, object]]] = mapped_column(sa.JSON, nullable=False)
+    policy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    trace_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id"),
+            ("saas_spaces.tenant_id", "saas_spaces.id"),
+            ondelete="RESTRICT",
+            name="fk_authorization_decision_space",
+        ),
+        sa.CheckConstraint("mode IN ('shadow', 'enforce')", name="ck_authorization_mode"),
+        sa.CheckConstraint("length(action) > 0", name="ck_authorization_action_nonempty"),
+        sa.CheckConstraint("length(reason) > 0", name="ck_authorization_reason_nonempty"),
+        sa.CheckConstraint("length(trace_id) > 0", name="ck_authorization_trace_nonempty"),
+        sa.Index(
+            "ix_authorization_decision_scope",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "created_at",
+        ),
+        sa.Index("ix_authorization_decision_actor", "actor_id", "created_at"),
+    )
+
+
+class RuntimeBindingSagaRecord(SaasBase):
+    """Durable cross-database resource-provisioning and Binding state machine."""
+
+    __tablename__ = "saas_runtime_binding_sagas"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID] = mapped_column(nullable=False)
+    runtime_partition_id: Mapped[UUID] = mapped_column(nullable=False)
+    resource_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    saas_resource_id: Mapped[UUID] = mapped_column(nullable=False)
+    runtime_resource_id: Mapped[str | None] = mapped_column(sa.String(256))
+    binding_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_runtime_resource_bindings.id", ondelete="RESTRICT")
+    )
+    partition_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
+    idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(sa.String(2048))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id"),
+            ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
+            ondelete="RESTRICT",
+            name="fk_binding_saga_project",
+        ),
+        sa.ForeignKeyConstraint(
+            ("runtime_partition_id", "tenant_id", "space_id"),
+            (
+                "saas_runtime_partitions.id",
+                "saas_runtime_partitions.tenant_id",
+                "saas_runtime_partitions.space_id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_binding_saga_partition",
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(BINDING_SAGA_STATUSES)})",
+            name="ck_binding_saga_status",
+        ),
+        sa.CheckConstraint("length(resource_type) > 0", name="ck_binding_saga_type_nonempty"),
+        sa.CheckConstraint("length(idempotency_key) > 0", name="ck_binding_saga_key_nonempty"),
+        sa.CheckConstraint("length(request_hash) = 64", name="ck_binding_saga_request_hash"),
+        sa.CheckConstraint("partition_generation > 0", name="ck_binding_saga_generation"),
+        sa.CheckConstraint("attempt_count >= 0", name="ck_binding_saga_attempt_count"),
+        sa.CheckConstraint(
+            "(status = 'pending' AND runtime_resource_id IS NULL) OR "
+            "(status <> 'pending' AND runtime_resource_id IS NOT NULL)",
+            name="ck_binding_saga_runtime_resource_state",
+        ),
+        sa.CheckConstraint(
+            "(status = 'bound' AND binding_id IS NOT NULL) OR "
+            "(status <> 'bound' AND binding_id IS NULL)",
+            name="ck_binding_saga_binding_state",
+        ),
+        sa.Index(
+            "ix_binding_saga_scope_status",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "status",
+        ),
     )
 
 
@@ -631,6 +953,12 @@ class RuntimeResourceBindingRecord(SaasBase):
             ),
             ondelete="RESTRICT",
             name="fk_runtime_binding_partition_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id"),
+            ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
+            ondelete="RESTRICT",
+            name="fk_runtime_binding_project_scope",
         ),
         sa.CheckConstraint(
             f"status IN ({_values(BINDING_STATUSES)})", name="ck_resource_binding_status"

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Omnigent · Project Control Plane</title>
+    <link rel="stylesheet" href="/saas/admin/assets/project-admin.css">
+    <script src="/saas/admin/assets/project-admin.js" defer></script>
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="masthead">
+      <a class="wordmark" href="/saas/admin/projects" aria-label="Omnigent Control Plane">
+        <span class="wordmark-mark">O</span>
+        <span><strong>OMNIGENT</strong><small>PROJECT CONTROL PLANE</small></span>
+      </a>
+      <div class="system-state">
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="context-state" data-testid="context-state">NO CONTEXT</span>
+        <span class="revision">POLICY / 2026-08-04.P2</span>
+      </div>
+      <button class="quiet-button" id="logout-button" type="button" hidden>退出会话</button>
+    </header>
+
+    <main class="shell">
+      <section class="login-deck" id="login-deck" aria-labelledby="login-title">
+        <div class="login-copy">
+          <p class="eyebrow">AUTHENTICATION BOUNDARY</p>
+          <h1 id="login-title">先证明身份，<br>再进入作用域。</h1>
+          <p>控制台不会从 URL、表单或本地缓存信任任何角色。Tenant、Space 与授权版本均由服务端重新解析。</p>
+        </div>
+        <form class="login-form" id="login-form">
+          <label>
+            <span>已验证邮箱</span>
+            <input data-testid="login-email" id="login-email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password Credential</span>
+            <input data-testid="login-password" id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-button" data-testid="login-submit" type="submit">
+            建立 HttpOnly 会话 <span>↗</span>
+          </button>
+          <p class="form-message" id="login-message" role="status"></p>
+        </form>
+      </section>
+
+      <div class="workspace" id="workspace" hidden>
+        <aside class="scope-rail">
+          <div class="rail-index">01 / SCOPE</div>
+          <h2>作用域握手</h2>
+          <p>服务端将当前用户、Tenant Membership 与 Space Membership 重新绑定为版本化上下文。</p>
+          <form id="scope-form" class="stack-form">
+            <label>
+              <span>Tenant ID</span>
+              <input data-testid="tenant-id" id="tenant-id" name="tenant" spellcheck="false" required>
+            </label>
+            <label>
+              <span>Space ID</span>
+              <input data-testid="space-id" id="space-id" name="space" spellcheck="false" required>
+            </label>
+            <button class="scope-button" data-testid="scope-connect" type="submit">
+              CONNECT SCOPE
+            </button>
+          </form>
+          <dl class="scope-facts">
+            <div><dt>ACTOR</dt><dd id="actor-id">—</dd></div>
+            <div><dt>CATALOG</dt><dd id="permission-count">—</dd></div>
+            <div><dt>CSRF</dt><dd id="csrf-state">UNBOUND</dd></div>
+          </dl>
+        </aside>
+
+        <section class="project-board">
+          <div class="board-heading">
+            <div>
+              <p class="eyebrow">02 / PROJECT INDEX</p>
+              <h1>隔离单元</h1>
+            </div>
+            <span class="project-count" id="project-count">00</span>
+          </div>
+
+          <form class="create-strip" id="project-create-form">
+            <input data-testid="project-name" id="project-name" name="name" maxlength="256" placeholder="新 Project 名称" required>
+            <select data-testid="project-visibility" id="project-visibility" name="visibility">
+              <option value="restricted">RESTRICTED</option>
+              <option value="private">PRIVATE</option>
+              <option value="space">SPACE</option>
+            </select>
+            <button data-testid="project-create" type="submit">CREATE +</button>
+          </form>
+
+          <div class="empty-state" id="project-empty">
+            <span>Ø</span>
+            <p>连接作用域后读取可见 Project。不可见对象不会以占位符泄漏。</p>
+          </div>
+          <div class="project-list" data-testid="project-list" id="project-list" aria-live="polite"></div>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-heading">
+            <p class="eyebrow">03 / AUTHORIZATION LAB</p>
+            <span class="version-chip" id="project-version">V—</span>
+          </div>
+          <h2 data-testid="selected-project-name" id="selected-project-name">未选择 Project</h2>
+          <p class="project-key" id="selected-project-id">选择左侧隔离单元以执行授权模拟。</p>
+
+          <section class="lab-module">
+            <div class="module-label">ACCESS DECISION / SHADOW</div>
+            <form id="decision-form" class="stack-form compact">
+              <label>
+                <span>Subject User ID</span>
+                <input data-testid="decision-subject" id="decision-subject" spellcheck="false" required>
+              </label>
+              <label>
+                <span>Action</span>
+                <select data-testid="decision-action" id="decision-action">
+                  <option value="project.content.read">project.content.read</option>
+                  <option value="project.content.edit">project.content.edit</option>
+                  <option value="project.read_metadata">project.read_metadata</option>
+                  <option value="runtime.binding.manage">runtime.binding.manage</option>
+                </select>
+              </label>
+              <div class="resource-pair">
+                <input id="decision-resource-type" placeholder="resource type / optional">
+                <input id="decision-resource-id" placeholder="resource UUID / optional">
+              </div>
+              <button class="lab-button" data-testid="decision-run" type="submit">SIMULATE DECISION</button>
+            </form>
+            <div class="decision-result" data-testid="decision-result" id="decision-result" aria-live="polite">
+              <strong>WAITING</strong><span>尚未执行授权决策</span>
+            </div>
+            <ul class="source-list" id="decision-sources"></ul>
+          </section>
+
+          <section class="lab-module">
+            <div class="module-label">PROJECT MEMBERSHIP</div>
+            <form id="membership-form" class="stack-form compact">
+              <label>
+                <span>Subject User ID</span>
+                <input data-testid="member-subject" id="member-subject" spellcheck="false" required>
+              </label>
+              <label>
+                <span>Role</span>
+                <select data-testid="member-role" id="member-role">
+                  <option value="read">READ</option>
+                  <option value="edit">EDIT</option>
+                  <option value="operate">OPERATE</option>
+                  <option value="manage">MANAGE / CONTENT-BLIND</option>
+                  <option value="owner">OWNER</option>
+                </select>
+              </label>
+              <div class="split-actions">
+                <button data-testid="member-grant" type="submit">SET ROLE</button>
+                <button class="danger-button" data-testid="member-revoke" id="member-revoke" type="button">REVOKE</button>
+              </div>
+            </form>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="event-tape">
+      <span>EVENT TAPE</span>
+      <ol data-testid="event-log" id="event-log" aria-live="polite">
+        <li><time>BOOT</time><span>Project Control Plane assets verified</span></li>
+      </ol>
+    </footer>
+  </body>
+</html>

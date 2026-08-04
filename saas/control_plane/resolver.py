@@ -22,6 +22,7 @@ from saas.compatibility import (
     RuntimeResourceBinding,
     resolve_runtime_context,
 )
+from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.db_models import (
     GlobalUser,
     RuntimeIdentityAliasRecord,
@@ -105,9 +106,11 @@ class SqlAlchemyContextResolver:
         self,
         session_factory: sessionmaker[Session],
         compatibility_policy: RuntimeCompatibilityPolicy,
+        project_authorizer: ProjectAuthorizer | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._compatibility_policy = compatibility_policy
+        self._project_authorizer = project_authorizer
 
     def resolve_request_context(
         self,
@@ -120,7 +123,10 @@ class SqlAlchemyContextResolver:
         """Build a versioned RequestContext from current server-side memberships."""
 
         with self._session_factory() as session, session.begin():
-            apply_rls_context(session, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
+            apply_rls_context(
+                session,
+                RlsContext(actor_id=actor_id, tenant_id=tenant_id, space_id=space_id),
+            )
             facts = self._load_scope_facts(
                 session, actor_id=actor_id, tenant_id=tenant_id, space_id=space_id
             )
@@ -142,16 +148,37 @@ class SqlAlchemyContextResolver:
         *,
         resource_type: str,
         saas_resource_id: UUID,
+        action: str = "project.content.read",
     ) -> RuntimeContext:
         """Resolve one authorized SaaS resource to its trusted runtime context."""
 
         if not resource_type.strip():
             self._deny("resource_selector_invalid", "resource type must not be empty")
+        if request.project_id is not None:
+            if self._project_authorizer is None:
+                self._deny(
+                    "project_authorization_required",
+                    "project-scoped resources require a configured Authorizer",
+                )
+            decision = self._project_authorizer.evaluate(
+                request,
+                action=action,
+                project_id=request.project_id,
+                resource_type=resource_type,
+                resource_id=saas_resource_id,
+                mode="enforce",
+            )
+            if not decision.allowed:
+                self._deny("resource_not_routable", "resource is not accessible")
 
         with self._session_factory() as session, session.begin():
             apply_rls_context(
                 session,
-                RlsContext(actor_id=request.actor_id, tenant_id=request.tenant_id),
+                RlsContext(
+                    actor_id=request.actor_id,
+                    tenant_id=request.tenant_id,
+                    space_id=request.space_id,
+                ),
             )
             facts = self._load_scope_facts(
                 session,
@@ -213,11 +240,13 @@ class SqlAlchemyContextResolver:
                 )
 
             binding, partition, placement, identity_alias = rows[0]
-            if binding.project_id is not None:
+            if binding.project_id is not None and request.project_id is None:
                 self._deny(
                     "project_authorization_required",
-                    "project-scoped bindings require the P2 project authorizer",
+                    "project-scoped resources require an authorized Project context",
                 )
+            if binding.project_id != request.project_id:
+                self._deny("resource_not_routable", "resource is not accessible")
             if placement.status != "active":
                 self._deny("placement_not_active", "runtime placement is not active")
             if placement.runtime_type != partition.runtime_type:
@@ -272,7 +301,11 @@ class SqlAlchemyContextResolver:
         with self._session_factory() as session, session.begin():
             apply_rls_context(
                 session,
-                RlsContext(actor_id=request.actor_id, tenant_id=request.tenant_id),
+                RlsContext(
+                    actor_id=request.actor_id,
+                    tenant_id=request.tenant_id,
+                    space_id=request.space_id,
+                ),
             )
             facts = self._load_scope_facts(
                 session,

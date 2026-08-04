@@ -44,6 +44,8 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked dependencies
         run: uv sync --frozen --extra dev --extra saas
+      - name: Install P2 browser runtime
+        run: uv run playwright install --with-deps chromium
       - name: Run SaaS compatibility tests
         run: uv run pytest tests/db/test_workspace_scope.py tests/saas
       - name: Type-check SaaS compatibility code
@@ -59,6 +61,12 @@ jobs:
         run: |
           uv build --wheel --out-dir artifacts/saas-wheel
           uv run python -m saas.scripts.check_wheel_contents artifacts/saas-wheel
+      - name: Replay downstream patch queue
+        run: >-
+          uv run python saas/scripts/check_patch_queue.py
+          --output artifacts/patch-replay-report.json
+      - name: Validate P0-P6 acceptance ledger
+        run: uv run python -m saas.scripts.check_acceptance_manifest
       - name: Enforce source-intrusion budget
         run: >-
           uv run python saas/scripts/check_upstream_delta.py
@@ -68,5 +76,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upstream-delta-report
-          path: artifacts/upstream-delta-report.json
+          path: |
+            artifacts/upstream-delta-report.json
+            artifacts/patch-replay-report.json
           if-no-files-found: error

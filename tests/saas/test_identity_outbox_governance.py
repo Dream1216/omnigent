@@ -139,6 +139,43 @@ def test_password_credentials_lock_rotate_and_revoke_sessions(
     )
 
 
+def test_password_idempotency_keys_are_isolated_per_global_user(
+    sessions: sessionmaker[Session],
+) -> None:
+    identities = IdentityManagementService(sessions)
+    passwords = PasswordCredentialService(sessions)
+    first_id = identities.provision_identity(_assertion("password-scope-a", "scope-a@example.com"))
+    second_id = identities.provision_identity(
+        _assertion("password-scope-b", "scope-b@example.com")
+    )
+
+    first = passwords.set_password(
+        user_id=first_id,
+        new_password="scope-a-password-value",
+        expected_version=None,
+        idempotency_key="shared-password-key",
+        now=NOW,
+    )
+    second = passwords.set_password(
+        user_id=second_id,
+        new_password="scope-b-password-value",
+        expected_version=None,
+        idempotency_key="shared-password-key",
+        now=NOW,
+    )
+
+    assert first.password_version == second.password_version == 1
+    with sessions() as db:
+        stored_keys = list(
+            db.execute(
+                sa.select(ControlPlaneOutboxEvent.idempotency_key).where(
+                    ControlPlaneOutboxEvent.event_type == "identity.password.changed"
+                )
+            ).scalars()
+        )
+    assert len(stored_keys) == len(set(stored_keys)) == 2
+
+
 class _RecordingPublisher:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -213,7 +250,7 @@ def _seed_governance(sessions: sessionmaker[Session]) -> tuple[UUID, UUID, UUID,
                 GlobalUser(id=member_id, status="active", security_version=1),
                 Tenant(
                     id=tenant_id,
-                    slug="governance",
+                    slug=f"governance-{tenant_id.hex}",
                     name="Governance",
                     status="active",
                     plan="team",
@@ -226,7 +263,7 @@ def _seed_governance(sessions: sessionmaker[Session]) -> tuple[UUID, UUID, UUID,
             Space(
                 id=space_id,
                 tenant_id=tenant_id,
-                slug="engineering",
+                slug=f"engineering-{space_id.hex}",
                 name="Engineering",
                 status="active",
             )
@@ -329,6 +366,32 @@ def test_owner_transfer_is_atomic_idempotent_and_revokes_both_users(
         lifecycle.validate_auth_session(owner_session.token, now=NOW)
     with pytest.raises(LifecycleError):
         lifecycle.validate_auth_session(member_session.token, now=NOW)
+
+
+def test_owner_transfer_idempotency_keys_are_isolated_per_tenant(
+    sessions: sessionmaker[Session],
+) -> None:
+    first_owner, first_target, first_tenant, _ = _seed_governance(sessions)
+    second_owner, second_target, second_tenant, _ = _seed_governance(sessions)
+    service = MembershipGovernanceService(sessions, _ImpactProvider())
+
+    for owner_id, target_id, tenant_id in (
+        (first_owner, first_target, first_tenant),
+        (second_owner, second_target, second_tenant),
+    ):
+        transferred = service.transfer_ownership(
+            actor_id=owner_id,
+            tenant_id=tenant_id,
+            from_user_id=owner_id,
+            to_user_id=target_id,
+            source_expected_version=1,
+            target_expected_version=1,
+            reason="same public key in an isolated tenant",
+            reauthenticated_at=NOW,
+            idempotency_key="shared-owner-transfer-key",
+            now=NOW,
+        )
+        assert transferred.replayed is False
 
 
 def test_member_removal_revalidates_impact_and_cascades_space_memberships(

@@ -10,11 +10,16 @@ from sqlalchemy.pool import StaticPool
 
 from saas.compatibility import current_runtime_context
 from saas.control_plane import (
+    PERMISSION_CATALOG,
+    PROJECT_ADMIN_ROUTE_PERMISSIONS,
     IdentityManagementService,
     MembershipGovernanceService,
     MembershipLifecycleService,
     PasswordCredentialService,
+    ProjectAdministrationService,
+    ProjectAuthorizer,
     RemovalImpact,
+    RuntimeBindingService,
     RuntimeCompatibilityPolicy,
     RuntimeIdentityAliasRecord,
     RuntimePartitionRecord,
@@ -36,7 +41,9 @@ class _NoRemovalImpact:
         return RemovalImpact(facts={"owned_resources": []}, blocking_count=0)
 
 
-def _build_app() -> tuple[TestClient, dict[str, str]]:
+def _build_fastapi_app(
+    trusted_origin: str = "http://testserver",
+) -> tuple[FastAPI, dict[str, str]]:
     engine = sa.create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -180,11 +187,14 @@ def _build_app() -> tuple[TestClient, dict[str, str]]:
         allowed_schema_revisions=frozenset({"c4d5e6f7a8b9"}),
         adapter_contract_version="0.2.0",
     )
-    resolver = SqlAlchemyContextResolver(sessions, policy)
+    project_authorizer = ProjectAuthorizer(sessions)
+    resolver = SqlAlchemyContextResolver(sessions, policy, project_authorizer=project_authorizer)
+    project_admin = ProjectAdministrationService(sessions, project_authorizer)
+    runtime_bindings = RuntimeBindingService(sessions, project_authorizer, policy)
     cookie = SaasCookieConfig(
         name="saas_session",
         secure=False,
-        trusted_origins=frozenset({"http://testserver"}),
+        trusted_origins=frozenset({trusted_origin}),
     )
     integration = create_saas_http_integration(
         lifecycle=lifecycle,
@@ -193,6 +203,9 @@ def _build_app() -> tuple[TestClient, dict[str, str]]:
         context_resolver=resolver,
         cookie_config=cookie,
         governance=MembershipGovernanceService(sessions, _NoRemovalImpact()),
+        project_admin=project_admin,
+        project_authorizer=project_authorizer,
+        runtime_bindings=runtime_bindings,
     )
     auth = integration.auth_provider
     app = FastAPI()
@@ -209,12 +222,18 @@ def _build_app() -> tuple[TestClient, dict[str, str]]:
         }
 
     integration.install_middleware(app)
-    return TestClient(app), {
+    return app, {
         "tenant_id": str(tenant_id),
         "space_id": str(space_id),
         "user_id": str(user_id),
         "member_id": str(member_id),
+        "partition_id": str(partition_id),
     }
+
+
+def _build_app() -> tuple[TestClient, dict[str, str]]:
+    app, scope = _build_fastapi_app()
+    return TestClient(app), scope
 
 
 def _login(client: TestClient) -> str:
@@ -229,7 +248,22 @@ def _login(client: TestClient) -> str:
 
 def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
     client, scope = _build_app()
+    cross_site_login = client.post(
+        "/saas/auth/login",
+        json={"email": "HTTP@example.com", "password": "initial-http-password"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert cross_site_login.status_code == 403
+    assert cross_site_login.json()["error"]["code"] == "origin_forbidden"
+    assert client.get("/saas/auth/status").json() == {
+        "authenticated": False,
+        "user_id": None,
+    }
     csrf = _login(client)
+    assert client.get("/saas/auth/status").json() == {
+        "authenticated": True,
+        "user_id": scope["user_id"],
+    }
     assert client.get("/saas/auth/me").json()["user_id"] == scope["user_id"]
 
     missing_scope = client.get("/v1/protected")
@@ -340,3 +374,149 @@ def test_governance_http_routes_bind_fresh_session_and_impact_preflight() -> Non
     assert rotated.json()["reauthentication_required"] is True
     assert "Max-Age=0" in rotated.headers["set-cookie"]
     assert client.get("/saas/auth/me").status_code == 401
+
+
+def test_project_admin_http_permission_and_binding_matrix() -> None:
+    client, scope = _build_app()
+    admin_page = client.get("/saas/admin/projects")
+    assert admin_page.status_code == 200
+    assert "PROJECT CONTROL PLANE" in admin_page.text
+    assert "script-src 'self'" in admin_page.headers["content-security-policy"]
+    assert (
+        client.get("/saas/admin/assets/project-admin.css")
+        .headers["content-type"]
+        .startswith("text/css")
+    )
+    assert (
+        client.get("/saas/admin/assets/project-admin.js")
+        .headers["content-type"]
+        .startswith("text/javascript")
+    )
+    csrf = _login(client)
+    base = f"/saas/tenants/{scope['tenant_id']}/spaces/{scope['space_id']}"
+    headers = {
+        "Origin": "http://testserver",
+        "X-CSRF-Token": csrf,
+    }
+    catalog = client.get("/saas/admin/permissions")
+    assert catalog.status_code == 200
+    catalog_names = {item["name"] for item in catalog.json()["permissions"]}
+    assert catalog_names == set(PERMISSION_CATALOG)
+    assert set(PROJECT_ADMIN_ROUTE_PERMISSIONS.values()) <= catalog_names
+
+    created = client.post(
+        f"{base}/projects",
+        json={"name": "HTTP restricted", "visibility": "restricted"},
+        headers={**headers, "Idempotency-Key": "http-project-create"},
+    )
+    assert created.status_code == 201
+    project_id = created.json()["project_id"]
+    assert created.json()["authorization_version"] == 1
+    listed = client.get(f"{base}/projects")
+    assert listed.status_code == 200
+    assert [project["project_id"] for project in listed.json()] == [project_id]
+
+    denied = client.post(
+        f"{base}/projects/{project_id}/access/decisions",
+        json={
+            "action": "project.content.read",
+            "subject_user_id": scope["member_id"],
+        },
+        headers=headers,
+    )
+    assert denied.status_code == 200
+    assert denied.json()["allowed"] is False
+    assert denied.json()["mode"] == "shadow"
+    granted = client.put(
+        f"{base}/projects/{project_id}/members/user/{scope['member_id']}",
+        json={"role": "read"},
+        headers={**headers, "Idempotency-Key": "http-project-reader"},
+    )
+    assert granted.status_code == 200
+    assert granted.json()["status"] == "active"
+    allowed = client.post(
+        f"{base}/projects/{project_id}/access/decisions",
+        json={
+            "action": "project.content.read",
+            "subject_user_id": scope["member_id"],
+        },
+        headers=headers,
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["allowed"] is True
+    assert any(
+        source["source_type"] == "project_membership" for source in allowed.json()["sources"]
+    )
+
+    membership_revoked = client.delete(
+        f"{base}/projects/{project_id}/members/user/{scope['member_id']}",
+        headers={**headers, "Idempotency-Key": "http-project-reader-revoke"},
+    )
+    assert membership_revoked.status_code == 200
+    assert membership_revoked.json()["status"] == "revoked"
+
+    resource_id = str(uuid4())
+    resource_grant = client.put(
+        f"{base}/projects/{project_id}/resource-grants",
+        json={
+            "resource_type": "conversation",
+            "resource_id": resource_id,
+            "subject_type": "user",
+            "subject_id": scope["member_id"],
+            "role": "read",
+        },
+        headers={**headers, "Idempotency-Key": "http-resource-reader"},
+    )
+    assert resource_grant.status_code == 200
+    assert resource_grant.json()["grant_id"] is not None
+    exact_allowed = client.post(
+        f"{base}/projects/{project_id}/access/decisions",
+        json={
+            "action": "project.content.read",
+            "subject_user_id": scope["member_id"],
+            "resource_type": "conversation",
+            "resource_id": resource_id,
+        },
+        headers=headers,
+    )
+    assert exact_allowed.status_code == 200
+    assert exact_allowed.json()["allowed"] is True
+    resource_revoked = client.delete(
+        f"{base}/projects/{project_id}/resource-grants/{resource_grant.json()['grant_id']}",
+        headers={**headers, "Idempotency-Key": "http-resource-reader-revoke"},
+    )
+    assert resource_revoked.status_code == 200
+    assert resource_revoked.json()["status"] == "revoked"
+    exact_denied = client.post(
+        f"{base}/projects/{project_id}/access/decisions",
+        json={
+            "action": "project.content.read",
+            "subject_user_id": scope["member_id"],
+            "resource_type": "conversation",
+            "resource_id": resource_id,
+        },
+        headers=headers,
+    )
+    assert exact_denied.status_code == 200
+    assert exact_denied.json()["allowed"] is False
+
+    bound = client.post(
+        f"{base}/projects/{project_id}/bindings",
+        json={
+            "runtime_partition_id": scope["partition_id"],
+            "resource_type": "conversation",
+            "runtime_resource_id": "http-project-runtime-resource",
+            "saas_resource_id": resource_id,
+            "expected_partition_generation": 3,
+        },
+        headers={**headers, "Idempotency-Key": "http-project-binding"},
+    )
+    assert bound.status_code == 201
+    assert bound.json()["status"] == "active"
+    retired = client.post(
+        f"{base}/bindings/{bound.json()['binding_id']}/retire",
+        json={"expected_binding_generation": 1},
+        headers={**headers, "Idempotency-Key": "http-project-binding-retire"},
+    )
+    assert retired.status_code == 200
+    assert retired.json()["status"] == "retired"

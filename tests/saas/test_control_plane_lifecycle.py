@@ -25,6 +25,7 @@ from saas.control_plane import (
     TenantMembership,
     normalize_email,
 )
+from saas.control_plane.idempotency import scoped_idempotency_key
 
 NOW = datetime(2026, 8, 4, 3, 0, tzinfo=timezone.utc)
 
@@ -488,7 +489,8 @@ def test_membership_version_conflict_rolls_back_security_invalidation(
         assert (
             db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == "stale-role-change"
+                    ControlPlaneOutboxEvent.idempotency_key
+                    == scoped_idempotency_key("tenant", lifecycle.tenant_id, "stale-role-change")
                 )
             ).scalar_one_or_none()
             is None

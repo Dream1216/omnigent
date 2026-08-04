@@ -1,6 +1,21 @@
 """SaaS-owned identity, tenancy, and runtime-placement control plane."""
 
+from saas.control_plane.authorization import (
+    AuthorizationDecision,
+    AuthorizationSource,
+    ProjectAuthorizationError,
+    ProjectAuthorizer,
+)
+from saas.control_plane.binding_saga import (
+    ProvisioningTarget,
+    RuntimeBindingSagaResult,
+    RuntimeBindingSagaService,
+    RuntimeProvisioningError,
+    RuntimeResourceProvisioner,
+)
+from saas.control_plane.bindings import RuntimeBindingChanged, RuntimeBindingService
 from saas.control_plane.db_models import (
+    AuthorizationDecisionRecord,
     AuthSessionRecord,
     ControlPlaneOutboxEvent,
     GlobalUser,
@@ -9,6 +24,10 @@ from saas.control_plane.db_models import (
     MembershipInvitation,
     OwnershipTransferRecord,
     PasswordCredential,
+    ProjectMembershipRecord,
+    ProjectRecord,
+    ResourceGrantRecord,
+    RuntimeBindingSagaRecord,
     RuntimeIdentityAliasRecord,
     RuntimePartitionRecord,
     RuntimePlacementRecord,
@@ -53,6 +72,31 @@ from saas.control_plane.lifecycle import (
     normalize_email,
 )
 from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
+from saas.control_plane.permissions import (
+    PERMISSION_CATALOG,
+    POLICY_VERSION,
+    PROJECT_ROLE_PERMISSIONS,
+    RESOURCE_ROLE_PERMISSIONS,
+    SPACE_ROLE_PERMISSIONS,
+    TENANT_ROLE_PERMISSIONS,
+    PermissionDefinition,
+    PermissionRisk,
+    PermissionScope,
+    permission_catalog_payload,
+)
+from saas.control_plane.project_http import (
+    PROJECT_ADMIN_ROUTE_PERMISSIONS,
+    create_project_admin_router,
+    validate_project_admin_route_permissions,
+)
+from saas.control_plane.projects import (
+    ProjectAdministrationService,
+    ProjectChanged,
+    ProjectCreated,
+    ProjectMetadata,
+    ScopedGrantChanged,
+)
+from saas.control_plane.removal_impact import ProjectRemovalImpactProvider
 from saas.control_plane.resolver import (
     ControlPlaneResolutionError,
     RuntimeCompatibilityPolicy,
@@ -62,7 +106,17 @@ from saas.control_plane.resolver import (
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
 __all__ = [
+    "PERMISSION_CATALOG",
+    "POLICY_VERSION",
+    "PROJECT_ADMIN_ROUTE_PERMISSIONS",
+    "PROJECT_ROLE_PERMISSIONS",
+    "RESOURCE_ROLE_PERMISSIONS",
+    "SPACE_ROLE_PERMISSIONS",
+    "TENANT_ROLE_PERMISSIONS",
     "AuthSessionRecord",
+    "AuthorizationDecision",
+    "AuthorizationDecisionRecord",
+    "AuthorizationSource",
     "ControlPlaneOutboxEvent",
     "ControlPlaneResolutionError",
     "DispatchResult",
@@ -86,20 +140,42 @@ __all__ = [
     "PasswordChanged",
     "PasswordCredential",
     "PasswordCredentialService",
+    "PermissionDefinition",
+    "PermissionRisk",
+    "PermissionScope",
+    "ProjectAdministrationService",
+    "ProjectAuthorizationError",
+    "ProjectAuthorizer",
+    "ProjectChanged",
+    "ProjectCreated",
+    "ProjectMembershipRecord",
+    "ProjectMetadata",
+    "ProjectRecord",
+    "ProjectRemovalImpactProvider",
+    "ProvisioningTarget",
     "RemovalImpact",
     "RemovalImpactProvider",
     "RemovalPreflight",
+    "ResourceGrantRecord",
     "RlsContext",
+    "RuntimeBindingChanged",
+    "RuntimeBindingSagaRecord",
+    "RuntimeBindingSagaResult",
+    "RuntimeBindingSagaService",
+    "RuntimeBindingService",
     "RuntimeCompatibilityPolicy",
     "RuntimeIdentityAliasRecord",
     "RuntimePartitionRecord",
     "RuntimePlacementRecord",
+    "RuntimeProvisioningError",
     "RuntimeResourceBindingRecord",
+    "RuntimeResourceProvisioner",
     "SaasAuthContextMiddleware",
     "SaasAuthProvider",
     "SaasBase",
     "SaasCookieConfig",
     "SaasHttpIntegration",
+    "ScopedGrantChanged",
     "Space",
     "SpaceMembership",
     "SqlAlchemyContextResolver",
@@ -109,8 +185,11 @@ __all__ = [
     "ValidatedAuthSession",
     "VerifiedIdentityAssertion",
     "apply_rls_context",
+    "create_project_admin_router",
     "create_saas_auth_router",
     "create_saas_http_integration",
     "load_runtime_compatibility_policy",
     "normalize_email",
+    "permission_catalog_payload",
+    "validate_project_admin_route_permissions",
 ]

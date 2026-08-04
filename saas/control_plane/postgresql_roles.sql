@@ -44,6 +44,11 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_spaces,
     saas_tenant_memberships,
     saas_space_memberships,
+    saas_projects,
+    saas_project_memberships,
+    saas_resource_grants,
+    saas_runtime_resource_bindings,
+    saas_runtime_binding_sagas,
     saas_ownership_transfers,
     saas_member_removal_preflights,
     saas_control_plane_outbox
@@ -55,11 +60,17 @@ GRANT SELECT ON
     saas_spaces,
     saas_tenant_memberships,
     saas_space_memberships,
+    saas_projects,
+    saas_project_memberships,
+    saas_resource_grants,
     saas_runtime_placements,
     saas_runtime_partitions,
     saas_runtime_identity_aliases,
-    saas_runtime_resource_bindings
+    saas_runtime_resource_bindings,
+    saas_runtime_binding_sagas
 TO saas_app;
+
+GRANT SELECT, INSERT ON saas_authorization_decisions TO saas_app;
 
 GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 
@@ -73,10 +84,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_tenant_memberships,
     saas_space_memberships,
     saas_membership_invitations,
+    saas_projects,
+    saas_project_memberships,
+    saas_resource_grants,
+    saas_authorization_decisions,
     saas_runtime_placements,
     saas_runtime_partitions,
     saas_runtime_identity_aliases,
     saas_runtime_resource_bindings,
+    saas_runtime_binding_sagas,
     saas_ownership_transfers,
     saas_member_removal_preflights,
     saas_control_plane_outbox

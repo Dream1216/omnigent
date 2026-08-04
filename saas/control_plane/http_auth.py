@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Literal, cast
+from enum import Enum
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Request, Response
@@ -23,6 +24,11 @@ from saas.control_plane.lifecycle import (
     ValidatedAuthSession,
 )
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
+
+if TYPE_CHECKING:
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.control_plane.bindings import RuntimeBindingService
+    from saas.control_plane.projects import ProjectAdministrationService
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -64,7 +70,7 @@ class SaasHttpIntegration:
     cookie_config: SaasCookieConfig
 
     @property
-    def extra_router(self) -> tuple[APIRouter, str, list[str]]:
+    def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
         """Official `create_app(extra_routers=...)` registration tuple."""
 
         return self.router, "/saas", ["saas"]
@@ -202,6 +208,14 @@ class SaasAuthContextMiddleware:
         connection = HTTPConnection(scope)
         token, token_source = self._auth.extract_token(connection)
         if connection.url.path in self._public_paths:
+            try:
+                self._enforce_public_browser_origin(connection, scope)
+            except LifecycleError as error:
+                await JSONResponse(
+                    status_code=403,
+                    content={"error": {"code": error.code, "message": str(error)}},
+                )(scope, receive, send)
+                return
             await self._app(scope, receive, send)
             return
         if token is None:
@@ -245,6 +259,16 @@ class SaasAuthContextMiddleware:
         if scope["type"] == "http" and method in _UNSAFE_METHODS:
             csrf_token = connection.headers.get("x-csrf-token", "")
             self._auth.validate_csrf(token, csrf_token)
+
+    def _enforce_public_browser_origin(self, connection: HTTPConnection, scope: Scope) -> None:
+        """Reject cross-site browser login while preserving non-browser API clients."""
+
+        method = cast(str, scope.get("method", "GET"))
+        origin = connection.headers.get("origin")
+        if method not in _UNSAFE_METHODS or origin is None:
+            return
+        if not self._cookie.trusted_origins or origin not in self._cookie.trusted_origins:
+            raise LifecycleError("origin_forbidden", "browser request Origin is forbidden")
 
     def _resolve_runtime_context(
         self, connection: HTTPConnection, session: ValidatedAuthSession
@@ -330,6 +354,18 @@ def create_saas_auth_router(
             "user_id": str(principal.session.user_id),
             "security_version": principal.session.security_version,
             "authn_method": principal.session.authn_method,
+        }
+
+    @router.get("/auth/status")
+    def auth_status(request: Request) -> dict[str, object]:
+        """Return a non-error browser bootstrap result without exposing session facts."""
+
+        principal = auth_provider.get_principal(request)
+        if principal is None:
+            return {"authenticated": False, "user_id": None}
+        return {
+            "authenticated": True,
+            "user_id": str(principal.session.user_id),
         }
 
     @router.get("/identities")
@@ -499,6 +535,9 @@ def create_saas_http_integration(
     context_resolver: SqlAlchemyContextResolver,
     cookie_config: SaasCookieConfig,
     governance: MembershipGovernanceService | None = None,
+    project_admin: ProjectAdministrationService | None = None,
+    project_authorizer: ProjectAuthorizer | None = None,
+    runtime_bindings: RuntimeBindingService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -511,6 +550,20 @@ def create_saas_http_integration(
         cookie_config=cookie_config,
         governance=governance,
     )
+    if (project_admin is None) != (project_authorizer is None):
+        raise ValueError("Project Admin service and Authorizer must be configured together")
+    if project_admin is not None and project_authorizer is not None:
+        from saas.control_plane.project_http import create_project_admin_router
+
+        router.include_router(
+            create_project_admin_router(
+                auth_provider=auth_provider,
+                resolver=context_resolver,
+                projects=project_admin,
+                authorizer=project_authorizer,
+                bindings=runtime_bindings,
+            )
+        )
     return SaasHttpIntegration(
         auth_provider=auth_provider,
         router=router,

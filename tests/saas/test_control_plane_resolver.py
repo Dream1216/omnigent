@@ -26,6 +26,7 @@ from saas.control_plane import (
     TenantMembership,
     load_runtime_compatibility_policy,
 )
+from saas.control_plane.db_models import ProjectRecord
 
 COMPATIBILITY_POLICY = RuntimeCompatibilityPolicy(
     runtime_type="omnigent",
@@ -436,14 +437,28 @@ def test_project_binding_waits_for_project_authorizer(control_plane) -> None:
         space_id=scope.space_id,
         trace_id="trace-project-gate",
     )
+    project_id = uuid4()
     with factory.begin() as session:
+        session.add(
+            ProjectRecord(
+                id=project_id,
+                tenant_id=scope.tenant_id,
+                space_id=scope.space_id,
+                name="Project gate",
+                visibility="restricted",
+                created_by=scope.actor_id,
+                status="active",
+                authorization_version=1,
+            )
+        )
+        session.flush()
         binding = session.scalar(
             sa.select(RuntimeResourceBindingRecord).where(
                 RuntimeResourceBindingRecord.saas_resource_id == scope.saas_resource_id
             )
         )
         assert binding is not None
-        binding.project_id = uuid4()
+        binding.project_id = project_id
 
     with pytest.raises(ControlPlaneResolutionError) as exc_info:
         resolver.resolve_existing_resource(

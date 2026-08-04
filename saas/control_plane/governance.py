@@ -19,9 +19,13 @@ from saas.control_plane.db_models import (
     GlobalUser,
     MemberRemovalPreflightRecord,
     OwnershipTransferRecord,
+    ProjectMembershipRecord,
+    ProjectRecord,
+    ResourceGrantRecord,
     SpaceMembership,
     TenantMembership,
 )
+from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
@@ -106,6 +110,9 @@ class MemberRemoved:
     removed_space_memberships: int
     security_version: int
     revoked_session_count: int
+    revoked_project_memberships: int
+    revoked_resource_grants: int
+    changed_project_authorizations: int
     replayed: bool
 
 
@@ -186,7 +193,7 @@ def _add_event(
             aggregate_type=aggregate_type,
             aggregate_key=aggregate_key,
             event_type=event_type,
-            idempotency_key=idempotency_key,
+            idempotency_key=scoped_idempotency_key("tenant", tenant_id, idempotency_key),
             request_hash=request_hash,
             payload=payload,
             attempt_count=0,
@@ -246,11 +253,12 @@ class MembershipGovernanceService:
             }
         )
         event_type = f"{scope}.ownership.transferred"
+        receipt_key = scoped_idempotency_key("tenant", tenant_id, idempotency_key)
         with self._session_factory.begin() as db:
             apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -367,12 +375,13 @@ class MembershipGovernanceService:
             }
         )
         event_type = f"{scope}.membership.removal.preflighted"
+        receipt_key = scoped_idempotency_key("tenant", tenant_id, idempotency_key)
         with self._session_factory.begin() as db:
             apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
             self._require_removal_admin(db, tenant_id, space_id, actor_id)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -397,7 +406,7 @@ class MembershipGovernanceService:
             apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -518,9 +527,10 @@ class MembershipGovernanceService:
                 }
             )
             event_type = f"{scope}.membership.removed"
+            receipt_key = scoped_idempotency_key("tenant", tenant_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -538,7 +548,7 @@ class MembershipGovernanceService:
             apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.idempotency_key == idempotency_key
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
                 )
             ).scalar_one_or_none()
             if receipt is not None:
@@ -585,6 +595,9 @@ class MembershipGovernanceService:
                     "preflight_stale", "membership or resource impact changed after preflight"
                 )
 
+            revoked_project_memberships, revoked_resource_grants, changed_projects = (
+                self._revoke_project_access(db, tenant_id, space_id, user_id)
+            )
             membership.version += 1
             membership.status = "removed"
             removed_spaces = 0
@@ -618,6 +631,9 @@ class MembershipGovernanceService:
                 "removed_space_memberships": removed_spaces,
                 "security_version": security_version,
                 "revoked_session_count": revoked_count,
+                "revoked_project_memberships": revoked_project_memberships,
+                "revoked_resource_grants": revoked_resource_grants,
+                "changed_project_authorizations": changed_projects,
                 "reason": cleaned_reason,
                 "removed_by": str(actor_id),
             }
@@ -632,6 +648,65 @@ class MembershipGovernanceService:
                 payload=payload,
             )
             return self._removed_result(payload, replayed=False)
+
+    @staticmethod
+    def _revoke_project_access(
+        db: Session,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> tuple[int, int, int]:
+        membership_filters = [
+            ProjectMembershipRecord.tenant_id == tenant_id,
+            ProjectMembershipRecord.subject_type == "user",
+            ProjectMembershipRecord.subject_id == user_id,
+            ProjectMembershipRecord.status == "active",
+        ]
+        grant_filters = [
+            ResourceGrantRecord.tenant_id == tenant_id,
+            ResourceGrantRecord.subject_type == "user",
+            ResourceGrantRecord.subject_id == user_id,
+            ResourceGrantRecord.status == "active",
+        ]
+        if space_id is not None:
+            membership_filters.append(ProjectMembershipRecord.space_id == space_id)
+            grant_filters.append(ResourceGrantRecord.space_id == space_id)
+        memberships = list(
+            db.execute(
+                sa.select(ProjectMembershipRecord).where(*membership_filters).with_for_update()
+            ).scalars()
+        )
+        grants = list(
+            db.execute(
+                sa.select(ResourceGrantRecord).where(*grant_filters).with_for_update()
+            ).scalars()
+        )
+        if any(membership.role == "owner" for membership in memberships):
+            raise LifecycleError(
+                "preflight_stale", "Project ownership must be transferred before removal"
+            )
+        affected_projects = {
+            *(membership.project_id for membership in memberships),
+            *(grant.project_id for grant in grants),
+        }
+        for membership in memberships:
+            membership.status = "revoked"
+            membership.version += 1
+        for grant in grants:
+            grant.status = "revoked"
+            grant.version += 1
+        if affected_projects:
+            projects = db.execute(
+                sa.select(ProjectRecord)
+                .where(
+                    ProjectRecord.tenant_id == tenant_id,
+                    ProjectRecord.id.in_(affected_projects),
+                )
+                .with_for_update()
+            ).scalars()
+            for project in projects:
+                project.authorization_version += 1
+        return len(memberships), len(grants), len(affected_projects)
 
     @staticmethod
     def _lock_transfer_memberships(
@@ -709,5 +784,10 @@ class MembershipGovernanceService:
             removed_space_memberships=cast(int, payload["removed_space_memberships"]),
             security_version=cast(int, payload["security_version"]),
             revoked_session_count=cast(int, payload["revoked_session_count"]),
+            revoked_project_memberships=cast(int, payload.get("revoked_project_memberships", 0)),
+            revoked_resource_grants=cast(int, payload.get("revoked_resource_grants", 0)),
+            changed_project_authorizations=cast(
+                int, payload.get("changed_project_authorizations", 0)
+            ),
             replayed=replayed,
         )

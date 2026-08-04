@@ -1,0 +1,224 @@
+{
+  "manifest_version": 1,
+  "plan": "docs/omnigent-multitenant-multiorg-saas-iteration-plan-2026-08-01.md",
+  "reviewed_at": "2026-08-04",
+  "release_decision": "NO-GO",
+  "phases": [
+    {
+      "id": "P0",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p0-upstream-boundary",
+          "status": "passed",
+          "evidence": [
+            "saas/upstream-baseline.json",
+            "saas/scripts/check_upstream_delta.py",
+            "saas/scripts/check_patch_queue.py",
+            "saas/upstream-patches/README.md",
+            ".github/workflows/saas-upstream-compat.yml"
+          ]
+        },
+        {
+          "id": "p0-approved-production-adrs-and-owners",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p0-reproducible-official-image-and-oss-regression",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p0-slo-rpo-rto-threat-model-and-service-catalog",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p1-identity-membership-and-placement-domain",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/identity.py",
+            "saas/control_plane/lifecycle.py",
+            "saas/control_plane/resolver.py",
+            "tests/saas/test_control_plane_lifecycle.py",
+            "tests/saas/test_control_plane_resolver.py"
+          ]
+        },
+        {
+          "id": "p1-http-cookie-password-owner-transfer-removal",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/idempotency.py",
+            "saas/control_plane/governance.py",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_identity_outbox_governance.py"
+          ]
+        },
+        {
+          "id": "p1-real-oauth-oidc-callback-verification",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p1-context-shell-multi-replica-revocation-and-failure-degradation-e2e",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p2-project-grant-binding-authorizer",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/permissions.py",
+            "saas/control_plane/authorization.py",
+            "saas/control_plane/projects.py",
+            "saas/control_plane/bindings.py",
+            "tests/saas/test_project_authorization.py"
+          ]
+        },
+        {
+          "id": "p2-cross-database-saga-fault-injection",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/binding_saga.py",
+            "tests/saas/test_project_authorization.py"
+          ]
+        },
+        {
+          "id": "p2-store-adapter-and-patch-replay",
+          "status": "passed",
+          "evidence": [
+            "saas/compatibility/store_adapter.py",
+            "saas/upstream-patches/0002-managed-session-initializer.patch",
+            "tests/saas/test_store_adapter_contract.py",
+            "tests/saas/test_upstream_delta.py"
+          ]
+        },
+        {
+          "id": "p2-dual-real-postgresql-rls-current-revision",
+          "status": "pending",
+          "evidence": [
+            "saas/runtime_rls/installer.py",
+            "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_runtime_postgresql_rls.py"
+          ]
+        },
+        {
+          "id": "p2-browser-project-admin-permission-matrix",
+          "status": "passed",
+          "evidence": [
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.css",
+            "saas/admin_ui/project_admin.js",
+            "saas/control_plane/project_http.py",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_project_admin_browser.py"
+          ]
+        },
+        {
+          "id": "p2-mvp-gate",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "status": "not_started",
+      "gates": [
+        {
+          "id": "p3-durable-task-session-run-event-authority",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p3-admission-quota-idempotent-tool-artifact",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p3-queue-cancel-recover-replay-and-persist-before-push",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "status": "not_started",
+      "gates": [
+        {
+          "id": "p4-fair-queue-runner-registry-lease-fencing",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p4-worktree-changeset-sandbox-secret-egress-preview",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p4-two-failure-domain-and-n-minus-one-rollback",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "status": "not_started",
+      "gates": [
+        {
+          "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p5-slo-capacity-supply-chain-api-webhook-deletion",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p5-production-foundation-gate",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "status": "not_started",
+      "gates": [
+        {
+          "id": "p6-billing-ledger-entitlement-quota-subscription",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p6-enterprise-identity-audit-api-platform-console-privacy",
+          "status": "pending",
+          "evidence": []
+        },
+        {
+          "id": "p6-two-consecutive-upstream-syncs-and-commercial-gate",
+          "status": "pending",
+          "evidence": []
+        }
+      ]
+    }
+  ]
+}

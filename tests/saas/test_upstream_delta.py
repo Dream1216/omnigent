@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from saas.scripts.check_patch_queue import check_patch_queue
 from saas.scripts.check_upstream_delta import FileDelta, evaluate_delta
 
 
@@ -69,3 +72,13 @@ def test_reverse_dependency_and_patch_overflow_fail_budget() -> None:
     assert "official code imports downstream SaaS packages" in report["violations"]
     assert "upstream baseline is not an ancestor of the product revision" in report["violations"]
     assert "manifest upstream_version does not match pyproject.toml" in report["violations"]
+
+
+def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
+    repo = Path(__file__).resolve().parents[2]
+
+    report = check_patch_queue(repo)
+
+    assert report["status"] == "pass"
+    assert report["patch_count"] == 2
+    assert report["covered_paths"] == report["official_source_paths"]
