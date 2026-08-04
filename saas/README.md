@@ -185,8 +185,11 @@ signed images, and Service Catalog/SLO/RPO/RTO evidence are pending. The P1
 Context Shell/multi-replica/degradation gate now has an immutable passing
 PostgreSQL 16 + Chromium CI record, so P1 is complete.
 
-The P3 implementation now supplies a durable execution authority while its
-three acceptance gates remain pending exact-revision CI evidence:
+P3 is complete. Its durable execution authority is verified at exact
+implementation revision `1e574b4c3b0e341d933a61c7fd521908d9dd2540` by
+GitHub Actions run `30895599094` (625 tests on PostgreSQL 16 plus Chromium,
+Alembic upgrade/check/downgrade, Pyrefly, 57 required wheel artifacts, patch
+replay, production baseline checks, and source-intrusion enforcement):
 
 - Task stores durable intent but no duplicated status; Task state is derived
   from authoritative Runs. Session has an independent active/closed lifetime,

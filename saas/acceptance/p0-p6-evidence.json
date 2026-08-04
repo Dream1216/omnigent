@@ -194,40 +194,43 @@
     },
     {
       "id": "P3",
-      "status": "in_progress",
+      "status": "complete",
       "gates": [
         {
           "id": "p3-durable-task-session-run-event-authority",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/execution_models.py",
             "saas/control_plane/execution.py",
             "saas/control_plane/migrations/versions/p3a000000001_execution_authority.py",
             "tests/saas/test_execution_control_plane.py",
-            "tests/saas/test_execution_postgresql.py"
+            "tests/saas/test_execution_postgresql.py",
+            "saas/acceptance/p3-ci-30895599094.json"
           ]
         },
         {
           "id": "p3-admission-quota-idempotent-tool-artifact",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/execution_models.py",
             "saas/control_plane/execution.py",
             "saas/control_plane/migrations/versions/p3a000000001_execution_authority.py",
             "saas/control_plane/postgresql_roles.sql",
             "tests/saas/test_execution_control_plane.py",
-            "tests/saas/test_execution_postgresql.py"
+            "tests/saas/test_execution_postgresql.py",
+            "saas/acceptance/p3-ci-30895599094.json"
           ]
         },
         {
           "id": "p3-queue-cancel-recover-replay-and-persist-before-push",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/execution.py",
             "saas/control_plane/outbox.py",
             "tests/saas/test_execution_control_plane.py",
             "tests/saas/test_execution_postgresql.py",
-            "tests/saas/test_postgresql_rls.py"
+            "tests/saas/test_postgresql_rls.py",
+            "saas/acceptance/p3-ci-30895599094.json"
           ]
         }
       ]
