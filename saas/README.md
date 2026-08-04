@@ -377,6 +377,16 @@ integrity. Deployments must not terminate and recreate TLS between Runner and
 Broker; doing so requires a protocol successor with independent request
 proof-of-possession rather than treating a forwarding header as identity.
 
+Exact implementation run `30929785430` verifies this transport at
+`d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
+compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly
+reports zero errors, P4c migrations round trip, the wheel contains 85 required
+artifacts, both patches replay, and source intrusion remains 8 files/413 lines
+with a 0.9907 isolated-code ratio. The evidence-successor wheel inventory now
+requires 86 artifacts. The PostgreSQL Secret Broker role tests run in the same
+CI, but they are independent of the TLS socket test and therefore do not prove
+a deployed cross-host mTLS-to-PostgreSQL path.
+
 The production gate therefore remains pending: no real Runner deployment has
 yet passed the cgroup verifier; the Secret Broker mTLS adapter has no deployed
 certificate issuance, rotation/revocation, service discovery, replica retry,

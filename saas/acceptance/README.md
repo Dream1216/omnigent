@@ -68,3 +68,14 @@ process-local, and official protocol v1 still buffers each bounded request body
 in one frame. This evidence does not establish a deployed Supervisor lifecycle,
 dedicated UID/mount isolation, mutual authentication, multi-replica placement,
 Preview WebSocket forwarding, custom domains, or abuse controls.
+
+The mTLS Secret Broker adapter is another separate passed contract gate. A real
+TLS 1.3 socket handshake binds the Runner to one SPIFFE URI SAN, the request has
+no caller-selected Runner identity, the Broker injects the only Vault provider,
+and the Runner rechecks the complete credential metadata from its launch grant.
+Bounded same-request replay allows one transport retry without a second
+authority call. The same exact-revision CI independently passes the real
+PostgreSQL forced-RLS and dedicated `saas_secret_broker` role matrix. It does
+not yet prove deployed certificate lifecycle, cross-host mTLS-to-PostgreSQL,
+multi-replica encrypted replay, production Vault/KMS, memory zeroization, or
+failure-domain behavior.
