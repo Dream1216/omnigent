@@ -392,10 +392,11 @@
         },
         {
           "id": "p4-mtls-cross-replica-preview-relay-transport-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/preview_relay_transport.py",
-            "tests/saas/test_preview_relay_transport.py"
+            "tests/saas/test_preview_relay_transport.py",
+            "saas/acceptance/p4-preview-relay-ci-30951270461.json"
           ]
         },
         {
@@ -426,6 +427,7 @@
             "saas/acceptance/p4-preview-supervisor-ci-30937413470.json",
             "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json",
             "saas/acceptance/p4-runner-tunnel-placement-ci-30948364396.json",
+            "saas/acceptance/p4-preview-relay-ci-30951270461.json",
             "saas/runner_adapter/process_policy.py",
             "tests/saas/test_managed_runner_process_policy.py",
             "saas/acceptance/p4-upstream-sync-ci-30932712224.json"

@@ -140,8 +140,13 @@ and complete Preview route fences but no caller-selected network endpoint. The
 receiver re-resolves Placement before touching the local official Runner
 session. Response bodies remain streamed with byte, frame, idle-timeout, and
 disconnect cancellation bounds. There is deliberately no automatic retry, so
-an unknown-result POST/PUT/PATCH/DELETE is never replayed. The gate remains
-`pending` until an immutable exact-revision CI record exists; even after that
-contract record, production service discovery, external CA and Trust Bundle
+an unknown-result POST/PUT/PATCH/DELETE is never replayed. The gate is now
+verified by an immutable exact-revision CI record; even with that contract
+record, production service discovery, external CA and Trust Bundle
 operations, cross-host deployment, network-partition behavior, and two failure
-domains remain separate `NO-GO` requirements.
+domains remain separate `NO-GO` requirements. Exact-revision run `30951270461`
+passes 734 PostgreSQL/Chromium compatibility tests, 56 official zygote/query
+context regressions, the 36/22 Linux security matrix, Pyrefly, P4e migration
+round trips, the 99-artifact wheel check, patch replay, and the source-intrusion
+budget; the transport contract gate is therefore `passed`. Eleven aggregate
+acceptance gates remain pending and the release remains `NO-GO`.
