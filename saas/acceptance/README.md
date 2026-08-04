@@ -122,8 +122,10 @@ the older generation, stale owner tokens cannot release replacements, and a
 bounded `SKIP LOCKED` reconciler expires abandoned ownership. Preview RLS
 reveals the current route only for the exact still-active Preview token and
 Runner generation. The receiving replica re-resolves ownership before touching
-its local official session. Local PostgreSQL 18.4 and routing tests pass, but
-the contract gate remains `pending` until an exact implementation revision has
-completed the full CI matrix and recorded immutable evidence. The relay remains
-an authenticated transport interface rather than deployed cross-host mTLS or a
+its local official session. Exact-revision run `30948364396` passes 724
+PostgreSQL/Chromium compatibility tests, 56 official zygote/query-context
+regressions, the 36/22 Linux security matrix, Pyrefly, P4e migration round
+trips, the 97-artifact wheel check, patch replay, and the source-intrusion
+budget; the contract gate is therefore `passed`. The relay remains an
+authenticated transport interface rather than deployed cross-host mTLS or a
 production message bus, so this slice cannot close the P4 production aggregate.

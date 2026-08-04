@@ -509,14 +509,20 @@ touching its local official `RunnerSession`; the official `TunnelRegistry` and
 mutation plus the four Placement Outbox event types and cannot insert unrelated
 global events.
 
-Local lifecycle, concurrent-replica, reconnect-fencing, real PostgreSQL RLS,
-trigger, Outbox, and opaque-relay routing tests pass. The acceptance subgate
-remains pending until an exact implementation revision completes the full CI
-matrix and records immutable evidence. The relay is still an authenticated
-transport interface rather than a deployed cross-host mTLS or message-bus
-implementation. Therefore this slice removes the process-local routing
-decision but does not establish production cross-host delivery, failure-domain
-recovery, or the aggregate P4 gate; the release remains `NO-GO`.
+Exact implementation run `30948364396` verifies this contract at
+`d8adb772f021135bf639ada20497b0e75325a62a`: 724 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the
+36/22 Linux security matrix pass; Pyrefly reports zero errors, P4e migrations
+upgrade/check/downgrade, the wheel contains 97 required artifacts, both patches
+replay, and source intrusion remains 8 files/432 lines with a 0.9913 isolated
+code ratio. The Placement Router contract subgate is therefore passed; the
+evidence-successor wheel inventory requires 98 artifacts.
+
+The relay is still an authenticated transport interface rather than a deployed
+cross-host mTLS or message-bus implementation. Therefore this slice removes the
+process-local routing decision but does not establish production cross-host
+delivery, failure-domain recovery, or the aggregate P4 gate. Eleven aggregate
+acceptance gates remain pending and the release remains `NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium

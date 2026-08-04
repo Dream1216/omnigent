@@ -27,6 +27,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p4-preview-uds-ci-30926375395.json",
     "saas/acceptance/p4-preview-supervisor-ci-30937413470.json",
     "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json",
+    "saas/acceptance/p4-runner-tunnel-placement-ci-30948364396.json",
     "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
     "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
     "saas/acceptance/p4-worktree-ci-30906291765.json",
