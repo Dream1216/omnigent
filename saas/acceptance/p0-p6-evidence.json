@@ -81,10 +81,17 @@
           "status": "passed",
           "evidence": [
             "saas/control_plane/http_auth.py",
+            "saas/application.py",
             "saas/control_plane/idempotency.py",
             "saas/control_plane/governance.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/outbox_worker.py",
             "tests/saas/test_http_cookie_auth.py",
-            "tests/saas/test_identity_outbox_governance.py"
+            "tests/saas/test_identity_outbox_governance.py",
+            "tests/saas/test_official_http_integration.py",
+            "tests/saas/test_outbox_worker.py",
+            "tests/saas/test_project_authorization.py",
+            "tests/saas/test_postgresql_rls.py"
           ]
         },
         {
@@ -228,9 +235,11 @@
           "evidence": [
             "saas/control_plane/execution.py",
             "saas/control_plane/outbox.py",
+            "saas/outbox_worker.py",
             "tests/saas/test_execution_control_plane.py",
             "tests/saas/test_execution_postgresql.py",
             "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_outbox_worker.py",
             "saas/acceptance/p3-ci-30895599094.json"
           ]
         }
@@ -238,12 +247,19 @@
     },
     {
       "id": "P4",
-      "status": "not_started",
+      "status": "in_progress",
       "gates": [
         {
           "id": "p4-fair-queue-runner-registry-lease-fencing",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/control_plane/scheduling_models.py",
+            "saas/control_plane/scheduling.py",
+            "saas/control_plane/migrations/versions/p4a000000001_runner_scheduling.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_scheduling_control_plane.py",
+            "tests/saas/test_scheduling_postgresql.py"
+          ]
         },
         {
           "id": "p4-worktree-changeset-sandbox-secret-egress-preview",

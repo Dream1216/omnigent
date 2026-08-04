@@ -9,6 +9,7 @@ from collections.abc import Collection
 from pathlib import Path
 
 REQUIRED_WHEEL_PATHS = (
+    "saas/application.py",
     "saas/acceptance/p0-p6-evidence.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
@@ -48,6 +49,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p2a000000006_context_shell_actor_rls.py",
     "saas/control_plane/migrations/versions/p2a000000007_runtime_placement_platform_write.py",
     "saas/control_plane/migrations/versions/p3a000000001_execution_authority.py",
+    "saas/control_plane/migrations/versions/p4a000000001_runner_scheduling.py",
     "saas/control_plane/outbox.py",
     "saas/control_plane/permissions.py",
     "saas/control_plane/postgresql_roles.sql",
@@ -56,6 +58,9 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/removal_impact.py",
     "saas/control_plane/resolver.py",
     "saas/control_plane/rls.py",
+    "saas/control_plane/scheduling.py",
+    "saas/control_plane/scheduling_models.py",
+    "saas/outbox_worker.py",
     "saas/runtime_rls/__init__.py",
     "saas/runtime_rls/installer.py",
     "saas/runtime_rls/postgresql_roles.sql",

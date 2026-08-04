@@ -10,13 +10,14 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     AdmissionQuotaRecord,
     ExecutionControlPlane,
     ExecutionControlPlaneError,
+    ExecutionRemovalImpactProvider,
     ExecutionRevisionSet,
     GlobalUser,
     ProjectMembershipRecord,
@@ -409,4 +410,86 @@ def test_real_postgresql_admission_quota_race_has_one_winner() -> None:
             db.execute(sa.select(sa.func.count()).select_from(QuotaReservationRecord)).scalar_one()
             >= 1
         )
+    engine.dispose()
+
+
+def test_real_postgresql_governance_reads_only_scoped_active_run_impact() -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(_postgres_url())
+    actor_a, actor_b = uuid4(), uuid4()
+    tenant_a, tenant_b = uuid4(), uuid4()
+    space_a, space_b = uuid4(), uuid4()
+    project_a, project_b = uuid4(), uuid4()
+    task_a, task_b = uuid4(), uuid4()
+    run_a, run_b = uuid4(), uuid4()
+    role = f"saas_p4_governance_impact_{uuid4().hex[:12]}"
+
+    with engine.begin() as connection:
+        _migrate(connection, root)
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql(
+            f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT; "
+            f"GRANT saas_governance TO {role}; SET LOCAL ROLE saas_platform"
+        )
+        _seed_scope(
+            connection,
+            actor_id=actor_a,
+            tenant_id=tenant_a,
+            space_id=space_a,
+            project_id=project_a,
+            task_id=task_a,
+            run_id=run_a,
+            suffix="governance-a",
+        )
+        _seed_scope(
+            connection,
+            actor_id=actor_b,
+            tenant_id=tenant_b,
+            space_id=space_b,
+            project_id=project_b,
+            task_id=task_b,
+            run_id=run_b,
+            suffix="governance-b",
+        )
+
+    factory = sessionmaker(engine, expire_on_commit=False)
+
+    @sa.event.listens_for(factory, "after_begin")
+    def _use_governance_role(
+        _session: Session,
+        _transaction: object,
+        connection: sa.Connection,
+    ) -> None:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
+
+    impact = ExecutionRemovalImpactProvider(factory).collect(
+        tenant_id=tenant_a,
+        space_id=None,
+        user_id=actor_a,
+    )
+    assert impact.blocking_count == 1
+    assert impact.facts == {
+        "active_runs": [{"run_id": str(run_a), "status": "queued"}],
+    }
+
+    with factory.begin() as db:
+        assert db.execute(sa.text("SELECT count(*) FROM saas_runs")).scalar_one() == 0
+
+    with pytest.raises(DBAPIError):
+        with factory.begin() as db:
+            db.execute(
+                sa.text("UPDATE saas_runs SET priority = 99 WHERE id = :run"), {"run": run_a}
+            )
+
+    with engine.begin() as connection:
+        policy = connection.execute(
+            sa.text(
+                "SELECT polcmd FROM pg_policy JOIN pg_class ON pg_class.oid = polrelid "
+                "WHERE relname = 'saas_runs' AND polname = 'rls_saas_runs_governance_read'"
+            )
+        ).scalar_one()
+        assert policy == "r"
+        connection.exec_driver_sql(f"DROP ROLE {role}")
     engine.dispose()

@@ -61,6 +61,8 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_control_plane_outbox
 TO saas_governance;
 
+GRANT SELECT ON saas_runs TO saas_governance;
+
 GRANT SELECT ON
     saas_global_users,
     saas_tenants,
@@ -113,6 +115,14 @@ GRANT SELECT, INSERT ON
     saas_control_plane_outbox
 TO saas_executor;
 
+GRANT SELECT ON saas_runner_pools TO saas_executor;
+GRANT SELECT, INSERT, UPDATE ON
+    saas_runner_registrations,
+    saas_tenant_queue_shares,
+    saas_run_dispatches,
+    saas_capability_tokens
+TO saas_executor;
+
 GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
@@ -148,5 +158,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_effect_calls,
     saas_artifacts,
     saas_run_artifacts,
+    saas_runner_pools,
+    saas_runner_registrations,
+    saas_tenant_queue_shares,
+    saas_run_dispatches,
+    saas_capability_tokens,
     saas_control_plane_outbox
 TO saas_platform;

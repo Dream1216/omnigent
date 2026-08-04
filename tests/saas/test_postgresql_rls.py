@@ -21,6 +21,7 @@ from saas.control_plane import (
     MembershipGovernanceService,
     OutboxDispatcher,
 )
+from saas.outbox_worker import verify_dispatcher_database_role
 
 _CONTROL_PLANE_RLS_TABLES = {
     "saas_global_users",
@@ -56,6 +57,11 @@ _CONTROL_PLANE_RLS_TABLES = {
     "saas_effect_calls",
     "saas_artifacts",
     "saas_run_artifacts",
+    "saas_runner_pools",
+    "saas_runner_registrations",
+    "saas_tenant_queue_shares",
+    "saas_run_dispatches",
+    "saas_capability_tokens",
 }
 
 
@@ -906,3 +912,76 @@ def test_real_postgresql_concurrent_identity_revocation_preserves_login_method()
     assert sorted(statuses) == ["active", "revoked"]
     assert security_version == 2
     engine.dispose()
+
+
+def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login() -> None:
+    root = Path(__file__).resolve().parents[2]
+    owner_engine = sa.create_engine(_postgres_url())
+    suffix = uuid4().hex[:16]
+    dispatcher_login = f"saas_dispatch_login_{suffix}"
+    wrong_login = f"saas_wrong_login_{suffix}"
+    mixed_login = f"saas_mixed_login_{suffix}"
+    schema_login = f"saas_schema_login_{suffix}"
+    dispatcher_password = f"dispatcher-{uuid4().hex}"
+    wrong_password = f"wrong-{uuid4().hex}"
+    mixed_password = f"mixed-{uuid4().hex}"
+    schema_password = f"schema-{uuid4().hex}"
+    with owner_engine.begin() as connection:
+        _migrate(connection, root)
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql(
+            f"""
+            CREATE ROLE {dispatcher_login} LOGIN PASSWORD '{dispatcher_password}'
+                NOSUPERUSER NOBYPASSRLS INHERIT;
+            CREATE ROLE {wrong_login} LOGIN PASSWORD '{wrong_password}'
+                NOSUPERUSER NOBYPASSRLS INHERIT;
+            CREATE ROLE {mixed_login} LOGIN PASSWORD '{mixed_password}'
+                NOSUPERUSER NOBYPASSRLS INHERIT;
+            CREATE ROLE {schema_login} LOGIN PASSWORD '{schema_password}'
+                NOSUPERUSER NOBYPASSRLS INHERIT;
+            GRANT saas_dispatcher TO {dispatcher_login};
+            GRANT saas_app TO {wrong_login};
+            GRANT saas_dispatcher, saas_app TO {mixed_login};
+            GRANT saas_dispatcher TO {schema_login};
+            ALTER ROLE {schema_login} SET search_path = pg_catalog, public;
+            """
+        )
+
+    base = sa.engine.make_url(_postgres_url())
+    dispatcher_engine = sa.create_engine(
+        base.set(username=dispatcher_login, password=dispatcher_password),
+        pool_pre_ping=True,
+    )
+    wrong_engine = sa.create_engine(
+        base.set(username=wrong_login, password=wrong_password),
+        pool_pre_ping=True,
+    )
+    mixed_engine = sa.create_engine(
+        base.set(username=mixed_login, password=mixed_password),
+        pool_pre_ping=True,
+    )
+    schema_engine = sa.create_engine(
+        base.set(username=schema_login, password=schema_password),
+        pool_pre_ping=True,
+    )
+    try:
+        verify_dispatcher_database_role(dispatcher_engine)
+        with pytest.raises(RuntimeError, match="dispatcher privilege boundary"):
+            verify_dispatcher_database_role(wrong_engine)
+        with pytest.raises(RuntimeError, match="dispatcher privilege boundary"):
+            verify_dispatcher_database_role(mixed_engine)
+        with pytest.raises(RuntimeError, match="public search_path"):
+            verify_dispatcher_database_role(schema_engine)
+    finally:
+        dispatcher_engine.dispose()
+        wrong_engine.dispose()
+        mixed_engine.dispose()
+        schema_engine.dispose()
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"DROP ROLE {dispatcher_login}")
+            connection.exec_driver_sql(f"DROP ROLE {wrong_login}")
+            connection.exec_driver_sql(f"DROP ROLE {mixed_login}")
+            connection.exec_driver_sql(f"DROP ROLE {schema_login}")
+        owner_engine.dispose()

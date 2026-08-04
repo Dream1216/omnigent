@@ -159,7 +159,7 @@ def test_real_postgresql_context_shell_replica_revocation_and_degradation() -> N
     tenant_id, other_tenant_id = uuid4(), uuid4()
     space_id, other_space_id = uuid4(), uuid4()
     placement_id, partition_id = uuid4(), uuid4()
-    clock = _Clock(datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc))
+    clock = _Clock(datetime.now(timezone.utc).replace(microsecond=0))
 
     with engine.begin() as connection:
         _migrate(connection, root)

@@ -22,9 +22,10 @@ and Runner pool until validation is complete.
 4. Replay deletion tombstones, session and grant revocations, membership and
    policy versions, Partition and Binding generations, and Outbox or Run Event
    cursors newer than the base backup.
-5. Verify row counts and content hashes by Tenant, all 23 control-plane forced
-   RLS tables, all 17 runtime workspace policies, active-binding uniqueness,
-   key decryptability, ledger conservation, and missing object references.
+5. Verify row counts and content hashes by Tenant, every control-plane table
+   enumerated by the current forced-RLS acceptance test, all 17 runtime
+   workspace policies, active-binding uniqueness, key decryptability, ledger
+   conservation, and missing object references.
 6. Rebuild T2 Worktrees and temporary environments from Base Revision,
    ChangeSet artifacts, and Environment Snapshot. Never restore an old writable
    lease or fence token.

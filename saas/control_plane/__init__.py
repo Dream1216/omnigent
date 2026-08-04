@@ -138,7 +138,11 @@ from saas.control_plane.projects import (
     ProjectMetadata,
     ScopedGrantChanged,
 )
-from saas.control_plane.removal_impact import ProjectRemovalImpactProvider
+from saas.control_plane.removal_impact import (
+    CompositeRemovalImpactProvider,
+    ExecutionRemovalImpactProvider,
+    ProjectRemovalImpactProvider,
+)
 from saas.control_plane.resolver import (
     AvailableScope,
     ControlPlaneResolutionError,
@@ -147,6 +151,20 @@ from saas.control_plane.resolver import (
     load_runtime_compatibility_policy,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.scheduling import (
+    FairRunLease,
+    RunnerConnection,
+    SchedulingControlPlane,
+    SchedulingError,
+    VerifiedCapability,
+)
+from saas.control_plane.scheduling_models import (
+    CapabilityTokenRecord,
+    RunDispatchRecord,
+    RunnerPoolRecord,
+    RunnerRegistrationRecord,
+    TenantQueueShareRecord,
+)
 
 __all__ = [
     "PERMISSION_CATALOG",
@@ -164,6 +182,8 @@ __all__ = [
     "AuthorizationDecisionRecord",
     "AuthorizationSource",
     "AvailableScope",
+    "CapabilityTokenRecord",
+    "CompositeRemovalImpactProvider",
     "ContextSnapshotError",
     "ContextSnapshotPolicy",
     "ContextSnapshotService",
@@ -176,8 +196,10 @@ __all__ = [
     "EffectCallState",
     "ExecutionControlPlane",
     "ExecutionControlPlaneError",
+    "ExecutionRemovalImpactProvider",
     "ExecutionRevisionSet",
     "ExecutionSessionRecord",
+    "FairRunLease",
     "GlobalUser",
     "IdentityConflict",
     "IdentityConflictResolved",
@@ -229,10 +251,14 @@ __all__ = [
     "RlsContext",
     "RunAdmission",
     "RunArtifactRecord",
+    "RunDispatchRecord",
     "RunEventRecord",
     "RunLease",
     "RunMutation",
     "RunRecord",
+    "RunnerConnection",
+    "RunnerPoolRecord",
+    "RunnerRegistrationRecord",
     "RuntimeBindingChanged",
     "RuntimeBindingSagaRecord",
     "RuntimeBindingSagaResult",
@@ -250,6 +276,8 @@ __all__ = [
     "SaasBase",
     "SaasCookieConfig",
     "SaasHttpIntegration",
+    "SchedulingControlPlane",
+    "SchedulingError",
     "ScopedGrantChanged",
     "SessionTaskRecord",
     "Space",
@@ -258,8 +286,10 @@ __all__ = [
     "TaskRecord",
     "Tenant",
     "TenantMembership",
+    "TenantQueueShareRecord",
     "UnavailableRemovalImpactProvider",
     "ValidatedAuthSession",
+    "VerifiedCapability",
     "VerifiedContextSnapshot",
     "VerifiedIdentityAssertion",
     "apply_rls_context",

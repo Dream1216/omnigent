@@ -85,7 +85,7 @@ boundary without changing the official server application:
   re-collects every fact before execution. It fails closed when the impact
   provider is absent, the member is an Owner, blockers exist, or facts changed.
   Tenant removal also logically removes active Space memberships;
-- all 23 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
+- all 38 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
   SECURITY` with transaction-local server-chosen Actor/Tenant/Space values.
   The packaged role bootstrap separates `saas_app`,
   `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
@@ -155,11 +155,32 @@ boundary:
   idempotency contract.
 
 The official `create_app` already accepts an injected AuthProvider and extra
-routers. Build `SaasHttpIntegration`, pass `integration.auth_provider` and
-`[integration.extra_router]` to official `create_app`, then call
-`integration.install_middleware(app)` before serving. This keeps HTTP
-authentication entirely in the downstream boundary and adds no new
-official-source patch.
+routers. Build `SaasHttpIntegration`, then pass it to
+`create_omnigent_saas_app` in `saas.application`. The downstream composition
+root injects the SaaS AuthProvider and `/saas` router, installs the context
+middleware before serving, and rejects a competing AuthProvider or duplicate
+SaaS route prefix. An integration test logs in through the SaaS Cookie and
+accesses the official `/v1/me` route on the real official application factory.
+This keeps HTTP authentication entirely in the downstream boundary and adds no
+new official-source patch.
+
+The production Outbox loop is runnable as `python -m saas.outbox_worker`. It
+requires `OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL` to identify a real LOGIN
+role that inherits only `saas_dispatcher`, and
+`OMNIGENT_SAAS_OUTBOX_PUBLISHER=module:attribute` to identify an idempotent
+publisher object, class, or zero-argument factory. Startup rejects a
+superuser, `BYPASSRLS`, table owner, assumed role, another SaaS service role,
+non-Outbox table access, or unsafe Outbox grants. SIGTERM/SIGINT drains the
+current bounded cycle and returns worker counters; transient infrastructure
+failures back off without losing durable leases.
+
+Member-removal composition must use `CompositeRemovalImpactProvider` with an
+explicit required-domain set. Project ownership and grants are collected by
+`ProjectRemovalImpactProvider`; all non-terminal Runs created by the member are
+collected by `ExecutionRemovalImpactProvider`. A missing required domain fails
+at startup. Once Worktree ownership exists, `worktrees` must be added to that
+required set before member removal is enabled; it is intentionally impossible
+to infer a zero impact from an unwired provider.
 
 Database roles are deliberately not created by Alembic because managed
 PostgreSQL role ownership is an operator concern. After migration, run
@@ -170,6 +191,23 @@ resolution with `saas_app`, and dispatch workers with `saas_dispatcher`.
 P3 admission/API transactions also use tenant-scoped `saas_app`; execution
 workers inherit only `saas_executor`, while event delivery remains isolated in
 `saas_dispatcher`.
+
+P4 is now `in_progress`. Its first implementation slice adds a durable weighted
+fair queue, shared Runner Pool/registration records, compatibility-checked
+Runner reconnect generations, persisted Run dispatches, monotonic lease/fence
+state, and short-lived hashed capability tokens bound to Tenant, Space,
+Project, Run, Runner incarnation, dispatch generation, action, and resource
+scope. PostgreSQL claims use row locks plus a transaction-scoped advisory Pool
+lock so concurrent replicas cannot oversubscribe capacity while
+`saas_executor` remains read-only on Pool configuration. Five new tables use
+`ENABLE + FORCE RLS`; real PostgreSQL tests prove two concurrent scheduler
+replicas claim two distinct Tenants/Runs, counters remain consistent, ordinary
+roles cannot enumerate Runner topology, and Tenant/Space scope cannot cross
+dispatch or capability records. This closes local implementation risk only:
+the gate remains pending until exact-revision CI evidence exists, and P4 cannot
+complete before Worktree/ChangeSet, Sandbox/Secret/Egress/Preview, two real
+failure domains, network partition, and N-1 rollback acceptance.
+
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login
 only `omnigent_runtime_app`. The service login must not own protected tables
@@ -215,9 +253,9 @@ replay, production baseline checks, and source-intrusion enforcement):
   non-bypass executor access, immutable artifacts, and one-winner concurrent
   quota admission.
 
-P4 multi-failure-domain
-execution and Worktree isolation, P5 production recovery, and P6 commercial
-governance have not started and must not be inferred from these foundations.
+P4 multi-failure-domain execution and Worktree isolation are only partially
+implemented; P5 production recovery and P6 commercial governance have not
+started. None may be inferred from the P4 scheduling foundation.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
@@ -266,5 +304,6 @@ uv run pytest \
   tests/saas/test_postgresql_rls.py \
   tests/saas/test_execution_postgresql.py \
   tests/saas/test_runtime_postgresql_rls.py \
-  tests/saas/test_context_snapshot_postgresql.py
+  tests/saas/test_context_snapshot_postgresql.py \
+  tests/saas/test_scheduling_postgresql.py
 ```

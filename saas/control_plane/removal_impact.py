@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -9,8 +10,89 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.db_models import ProjectMembershipRecord, ResourceGrantRecord
-from saas.control_plane.governance import RemovalImpact
+from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
+from saas.control_plane.governance import RemovalImpact, RemovalImpactProvider
+from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls import RlsContext, apply_rls_context
+
+
+class CompositeRemovalImpactProvider:
+    """Collect every configured resource domain into one stable snapshot."""
+
+    def __init__(
+        self,
+        providers: Mapping[str, RemovalImpactProvider],
+        *,
+        required_domains: frozenset[str] = frozenset(),
+    ) -> None:
+        cleaned = {name.strip(): provider for name, provider in providers.items() if name.strip()}
+        if len(cleaned) != len(providers):
+            raise ValueError("removal impact domain names must be non-empty and unique")
+        missing = required_domains - cleaned.keys()
+        if missing:
+            raise LifecycleError(
+                "removal_impact_provider_unavailable",
+                f"member removal impact domains are not wired: {', '.join(sorted(missing))}",
+            )
+        self._providers = tuple(sorted(cleaned.items()))
+
+    def collect(
+        self,
+        *,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> RemovalImpact:
+        facts: dict[str, object] = {}
+        blocking_count = 0
+        for domain, provider in self._providers:
+            impact = provider.collect(
+                tenant_id=tenant_id,
+                space_id=space_id,
+                user_id=user_id,
+            )
+            impact.validate()
+            facts[domain] = impact.facts
+            blocking_count += impact.blocking_count
+        return RemovalImpact(facts=facts, blocking_count=blocking_count)
+
+
+class ExecutionRemovalImpactProvider:
+    """Block member removal while their non-terminal Runs still exist."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def collect(
+        self,
+        *,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> RemovalImpact:
+        with self._session_factory.begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=user_id, tenant_id=tenant_id, space_id=space_id),
+            )
+            filters = [
+                RunRecord.tenant_id == tenant_id,
+                RunRecord.created_by == user_id,
+                RunRecord.status.not_in(TERMINAL_RUN_STATUSES),
+            ]
+            if space_id is not None:
+                filters.append(RunRecord.space_id == space_id)
+            runs = tuple(
+                db.execute(
+                    sa.select(RunRecord.id, RunRecord.status)
+                    .where(*filters)
+                    .order_by(RunRecord.id)
+                ).all()
+            )
+        facts: dict[str, object] = {
+            "active_runs": [{"run_id": str(run_id), "status": status} for run_id, status in runs]
+        }
+        return RemovalImpact(facts=facts, blocking_count=len(runs))
 
 
 class ProjectRemovalImpactProvider:

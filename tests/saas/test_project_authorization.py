@@ -15,7 +15,9 @@ from saas.compatibility import RequestContext
 from saas.control_plane import (
     PERMISSION_CATALOG,
     AuthorizationDecisionRecord,
+    CompositeRemovalImpactProvider,
     ControlPlaneOutboxEvent,
+    ExecutionRemovalImpactProvider,
     GlobalUser,
     LifecycleError,
     MembershipGovernanceService,
@@ -27,6 +29,7 @@ from saas.control_plane import (
     ProjectRemovalImpactProvider,
     ProvisioningTarget,
     ResourceGrantRecord,
+    RunRecord,
     RuntimeBindingSagaRecord,
     RuntimeBindingSagaService,
     RuntimeBindingService,
@@ -39,6 +42,7 @@ from saas.control_plane import (
     Space,
     SpaceMembership,
     SqlAlchemyContextResolver,
+    TaskRecord,
     Tenant,
     TenantMembership,
     permission_catalog_payload,
@@ -1050,6 +1054,93 @@ def test_member_removal_preflight_blocks_active_project_owner(project_control_pl
 
     assert preflight.status == "blocked"
     assert preflight.blocking_count == 1
+
+
+def test_member_removal_composite_preflight_blocks_active_runs(project_control_plane) -> None:
+    factory, scope = project_control_plane
+    _projects, _authorizer, project_id = _create_restricted_project(factory, scope)
+    task_id, run_id = uuid4(), uuid4()
+    with factory.begin() as db:
+        db.add(
+            TaskRecord(
+                id=task_id,
+                tenant_id=scope.tenant_id,
+                space_id=scope.space_id,
+                project_id=project_id,
+                created_by=scope.member_id,
+                title="member removal impact",
+                version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            RunRecord(
+                id=run_id,
+                tenant_id=scope.tenant_id,
+                space_id=scope.space_id,
+                project_id=project_id,
+                task_id=task_id,
+                session_id=None,
+                created_by=scope.member_id,
+                status="queued",
+                version=1,
+                event_sequence=0,
+                queue_class="interactive",
+                priority=0,
+                idempotency_key="removal-impact-run",
+                request_hash="a" * 64,
+                input={},
+                product_revision="product",
+                upstream_revision="upstream",
+                schema_revision="p4a000000001",
+                adapter_contract_version="0.2.0",
+                fence_token=0,
+            )
+        )
+
+    provider = CompositeRemovalImpactProvider(
+        {
+            "projects": ProjectRemovalImpactProvider(factory),
+            "runs": ExecutionRemovalImpactProvider(factory),
+        },
+        required_domains=frozenset({"projects", "runs"}),
+    )
+    governance = MembershipGovernanceService(factory, provider)
+    blocked = governance.create_removal_preflight(
+        actor_id=scope.owner_id,
+        tenant_id=scope.tenant_id,
+        user_id=scope.member_id,
+        idempotency_key="active-run-removal-preflight",
+    )
+    assert blocked.status == "blocked"
+    assert blocked.blocking_count == 1
+
+    with factory.begin() as db:
+        run = db.get(RunRecord, run_id)
+        assert run is not None
+        run.status = "succeeded"
+        run.terminal_at = datetime.now(timezone.utc)
+
+    ready = governance.create_removal_preflight(
+        actor_id=scope.owner_id,
+        tenant_id=scope.tenant_id,
+        user_id=scope.member_id,
+        idempotency_key="terminal-run-removal-preflight",
+    )
+    assert ready.status == "ready"
+    assert ready.blocking_count == 0
+
+
+def test_member_removal_composite_fails_closed_when_required_domain_is_missing(
+    project_control_plane,
+) -> None:
+    factory, _scope = project_control_plane
+    with pytest.raises(LifecycleError) as missing:
+        CompositeRemovalImpactProvider(
+            {"projects": ProjectRemovalImpactProvider(factory)},
+            required_domains=frozenset({"projects", "runs", "worktrees"}),
+        )
+    assert missing.value.code == "removal_impact_provider_unavailable"
 
 
 def _seed_saga_partition(
