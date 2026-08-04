@@ -165,7 +165,7 @@ def _build_fastapi_app(
                 runtime_version="0.9.0.dev0",
                 physical_partition_key="41",
                 placement_generation=3,
-                source_revision="2ce9c60bf57e168bdd4d7e6236e68e18ebb4bb9f",
+                source_revision="ab4bcaa7525ce45749271cb7d53403d2f240f523",
                 adapter_contract_version="0.2.0",
                 status="active",
             )
@@ -183,7 +183,7 @@ def _build_fastapi_app(
     policy = RuntimeCompatibilityPolicy(
         runtime_type="omnigent",
         allowed_runtime_versions=frozenset({"0.9.0.dev0"}),
-        allowed_source_revisions=frozenset({"2ce9c60bf57e168bdd4d7e6236e68e18ebb4bb9f"}),
+        allowed_source_revisions=frozenset({"ab4bcaa7525ce45749271cb7d53403d2f240f523"}),
         allowed_schema_revisions=frozenset({"c4d5e6f7a8b9"}),
         adapter_contract_version="0.2.0",
     )

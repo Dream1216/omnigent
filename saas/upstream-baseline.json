@@ -45,6 +45,6 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "2ce9c60bf57e168bdd4d7e6236e68e18ebb4bb9f",
+  "upstream_revision": "ab4bcaa7525ce45749271cb7d53403d2f240f523",
   "upstream_version": "0.9.0.dev0"
 }

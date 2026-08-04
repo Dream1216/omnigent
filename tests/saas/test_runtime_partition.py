@@ -45,7 +45,7 @@ def _records():
         physical_workspace_id=41,
         runtime_type="omnigent",
         data_region="cn-east-1",
-        source_revision="2ce9c60bf57e168bdd4d7e6236e68e18ebb4bb9f",
+        source_revision="ab4bcaa7525ce45749271cb7d53403d2f240f523",
         adapter_contract_version="0.2.0",
         status=PartitionStatus.ACTIVE,
     )

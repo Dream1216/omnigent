@@ -47,7 +47,12 @@ jobs:
       - name: Install P2 browser runtime
         run: uv run playwright install --with-deps chromium
       - name: Run SaaS compatibility tests
-        run: uv run pytest tests/db/test_workspace_scope.py tests/saas
+        run: >-
+          uv run pytest
+          tests/db/test_workspace_scope.py
+          tests/runner/transports/ws_tunnel/test_serve.py
+          tests/server/integration/test_sessions_archive.py
+          tests/saas
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Verify SaaS migration CLI

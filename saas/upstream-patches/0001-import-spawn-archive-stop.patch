@@ -1,14 +1,3 @@
-diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
---- a/omnigent/server/routes/sessions/routes_core.py
-+++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -157,6 +157,7 @@ from omnigent.server.routes._sessions.orchestration import (
-     _persist_model_change_note,
-     _publish_runner_recovered_status,
-     _run_managed_launch,
-+    _spawn_archive_stop,
- )
- from omnigent.server.schemas import (
-     AutomaticSessionRenameRequest,
 diff --git a/omnigent/server/routes/sessions/__init__.py b/omnigent/server/routes/sessions/__init__.py
 --- a/omnigent/server/routes/sessions/__init__.py
 +++ b/omnigent/server/routes/sessions/__init__.py
