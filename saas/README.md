@@ -313,7 +313,12 @@ upstream intrusion budget. The cgroup verifier reads exact kernel facts and
 fails closed; it does not create the production cgroup or prove a deployed
 Runner Pod/container/microVM.
 
-The following P4 adapter slice binds the full Preview Route Grant—including
+Exact-revision GitHub Actions run `30923776172` verifies the next P4 adapter
+slice at `3b7505e32201898cd693b2c4548fe31517f04580`: 683 compatibility tests and
+the 36/22 official Linux security matrix pass, Pyrefly reports zero errors,
+P4c migrations round trip, the wheel contains 82 required artifacts, both
+patches replay, and source intrusion remains at 8 files/413 lines with a 0.9903
+isolated-code ratio. The adapter binds the full Preview Route Grant—including
 Tenant, Space, Project, Run fence, Runner connection generation, Worktree lease
 generation, and opaque Preview key—to one exact official `RunnerSession`
 object. Replacing the official WebSocket session without advancing the SaaS
@@ -323,7 +328,8 @@ internal routing metadata before dispatch, rechecks the complete target
 binding, and streams response chunks through the official frame protocol.
 Request bodies remain bounded but buffered because official tunnel protocol v1
 has one request-body frame. The process-local binding resolver is an explicit
-composition seam, not multi-process placement proof.
+composition seam, not multi-process placement proof. The evidence-successor
+wheel inventory now requires 83 artifacts.
 
 The production gate therefore remains pending: no real Runner deployment has
 yet passed the cgroup verifier; the Secret Broker and Preview tunnel do not yet

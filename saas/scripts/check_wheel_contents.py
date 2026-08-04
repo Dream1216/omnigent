@@ -23,6 +23,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p4-containment-egress-ci-30921247156.json",
     "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
     "saas/acceptance/p4-physical-worktree-ci-30910478415.json",
+    "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
     "saas/acceptance/p4-worktree-ci-30906291765.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",

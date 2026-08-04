@@ -56,3 +56,12 @@ hardened. Deployed mutually authenticated Secret Broker and streaming Preview
 tunnels, WebSocket/custom-domain/abuse controls, two independent failure
 domains, and N-1 rollback therefore remain pending and the release remains
 `NO-GO`.
+
+The generation-bound Preview HTTP adapter is also a separate passed contract
+gate. It binds the complete control-plane route and exact official
+`RunnerSession`, rejects stale reconnect generations and cross-scope metadata,
+streams response chunks, and cancels abandoned requests. Its current resolver
+and target are process-local; official protocol v1 still buffers each bounded
+request body in one frame. This evidence does not establish deployed mutual
+authentication, multi-replica placement, a real process/UDS target, Preview
+WebSocket forwarding, custom domains, or abuse controls.
