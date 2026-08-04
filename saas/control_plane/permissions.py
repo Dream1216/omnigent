@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-04.p2"
+POLICY_VERSION: Final = "2026-08-04.p4"
 
 
 class PermissionScope(StrEnum):
@@ -139,6 +139,20 @@ _DEFINITIONS = (
     _permission("run.cancel", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("run.retry", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("runtime.binding.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
+    _permission("environment.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
+    _permission("egress.policy.manage", PermissionScope.PROJECT, PermissionRisk.CRITICAL),
+    _permission(
+        "secret.manage",
+        PermissionScope.PROJECT,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+    ),
+    _permission(
+        "preview.open",
+        PermissionScope.PROJECT,
+        PermissionRisk.MEDIUM,
+        reads_content=True,
+    ),
 )
 
 PERMISSION_CATALOG = MappingProxyType({definition.name: definition for definition in _DEFINITIONS})
@@ -253,6 +267,10 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "run.cancel",
                 "run.retry",
                 "runtime.binding.manage",
+                "environment.manage",
+                "egress.policy.manage",
+                "secret.manage",
+                "preview.open",
             }
         ),
         # Manage is deliberately content-blind. Product copy must not imply otherwise.
@@ -265,6 +283,8 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "grant.manage",
                 "role.preview",
                 "runtime.binding.manage",
+                "environment.manage",
+                "egress.policy.manage",
             }
         ),
         "operate": frozenset(
@@ -278,6 +298,7 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "run.create",
                 "run.read_metadata",
                 "run.read_content",
+                "preview.open",
             }
         ),
         "read": frozenset(
@@ -286,6 +307,7 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "project.content.read",
                 "run.read_metadata",
                 "run.read_content",
+                "preview.open",
             }
         ),
     }

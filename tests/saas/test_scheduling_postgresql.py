@@ -179,6 +179,8 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
             f"GRANT SELECT, UPDATE ON "
             "saas_runner_pools, saas_runner_registrations, saas_tenant_queue_shares, "
             f"saas_run_dispatches, saas_capability_tokens TO {probe_role}; "
+            "GRANT SELECT ON saas_secret_access_leases, saas_preview_leases "
+            f"TO {probe_role}; "
             "SET LOCAL ROLE saas_platform"
         )
         connection.execute(
@@ -284,9 +286,12 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
         counters = db.execute(
             sa.text(
                 "SELECT "
-                "(SELECT sum(active_leases) FROM saas_runner_registrations), "
-                "(SELECT sum(active_leases) FROM saas_tenant_queue_shares)"
-            )
+                "(SELECT sum(active_leases) FROM saas_runner_registrations "
+                "WHERE pool_id = :pool_id), "
+                "(SELECT sum(active_leases) FROM saas_tenant_queue_shares "
+                "WHERE pool_id = :pool_id)"
+            ),
+            {"pool_id": pool_id},
         ).one()
         assert counters == (2, 2)
 
@@ -373,6 +378,8 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
             "REVOKE ALL PRIVILEGES ON "
             "saas_runner_pools, saas_runner_registrations, saas_tenant_queue_shares, "
             f"saas_run_dispatches, saas_capability_tokens FROM {probe_role}; "
+            "REVOKE ALL PRIVILEGES ON saas_secret_access_leases, saas_preview_leases "
+            f"FROM {probe_role}; "
             f"DROP ROLE {probe_role}"
         )
     engine.dispose()

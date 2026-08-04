@@ -17,6 +17,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_executor') THEN
         CREATE ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_secret_broker') THEN
+        CREATE ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_preview_gateway') THEN
+        CREATE ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
         CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
@@ -28,11 +34,13 @@ ALTER ROLE saas_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
-    saas_platform;
+    saas_secret_broker, saas_preview_gateway, saas_platform;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_global_users,
@@ -88,7 +96,11 @@ GRANT SELECT ON
     saas_changesets,
     saas_worktree_quotas,
     saas_worktree_instances,
-    saas_worktree_events
+    saas_worktree_events,
+    saas_egress_policies,
+    saas_execution_profiles,
+    saas_secret_bindings,
+    saas_preview_leases
 TO saas_app;
 
 GRANT INSERT, UPDATE ON
@@ -96,6 +108,13 @@ GRANT INSERT, UPDATE ON
     saas_changeset_groups,
     saas_changesets,
     saas_worktree_quotas
+TO saas_app;
+
+GRANT INSERT, UPDATE ON
+    saas_egress_policies,
+    saas_execution_profiles,
+    saas_secret_bindings,
+    saas_preview_leases
 TO saas_app;
 
 GRANT SELECT, INSERT ON saas_authorization_decisions TO saas_app;
@@ -156,6 +175,41 @@ TO saas_executor;
 
 GRANT SELECT, INSERT ON saas_worktree_events TO saas_executor;
 
+GRANT SELECT ON
+    saas_egress_policies,
+    saas_execution_profiles,
+    saas_secret_bindings
+TO saas_executor;
+
+GRANT SELECT, INSERT, UPDATE ON
+    saas_run_isolation_grants,
+    saas_secret_access_leases
+TO saas_executor;
+
+-- Cross-table RLS policies are evaluated with the invoking role's table
+-- privileges. These SELECT grants do not expose rows: both token tables use
+-- FORCE RLS and only the role-specific exact-token policy can reveal a row.
+GRANT SELECT ON
+    saas_secret_access_leases,
+    saas_preview_leases
+TO saas_app, saas_governance, saas_executor, saas_secret_broker, saas_preview_gateway;
+
+GRANT SELECT ON
+    saas_secret_bindings,
+    saas_runs,
+    saas_runner_registrations
+TO saas_secret_broker;
+
+GRANT SELECT, UPDATE ON saas_secret_access_leases TO saas_secret_broker;
+
+GRANT SELECT ON
+    saas_runs,
+    saas_runner_registrations,
+    saas_worktree_instances
+TO saas_preview_gateway;
+
+GRANT SELECT, UPDATE ON saas_preview_leases TO saas_preview_gateway;
+
 GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
@@ -202,5 +256,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_worktree_quotas,
     saas_worktree_instances,
     saas_worktree_events,
+    saas_egress_policies,
+    saas_execution_profiles,
+    saas_secret_bindings,
+    saas_run_isolation_grants,
+    saas_secret_access_leases,
+    saas_preview_leases,
     saas_control_plane_outbox
 TO saas_platform;

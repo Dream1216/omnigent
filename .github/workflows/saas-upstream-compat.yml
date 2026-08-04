@@ -46,6 +46,10 @@ jobs:
         run: uv sync --frozen --extra dev --extra saas
       - name: Install P2 browser runtime
         run: uv run playwright install --with-deps chromium
+      - name: Install hard sandbox runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
       - name: Run SaaS compatibility tests
         run: >-
           uv run pytest
@@ -55,6 +59,12 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+      - name: Run official hard-sandbox and credential-proxy acceptance
+        run: >-
+          uv run pytest
+          tests/inner/sandbox/test_sandbox_behavior.py
+          tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_swap_on_access_injects_basic_without_sandbox_secret
+          tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_https_bearer_swaps_injected_env_token
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Verify SaaS migration CLI

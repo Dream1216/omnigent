@@ -245,8 +245,10 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
         )
         connection.exec_driver_sql(
             f"CREATE ROLE {probe_role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT; "
+            f"GRANT saas_app TO {probe_role}; "
             f"GRANT SELECT, INSERT, UPDATE ON {', '.join(sorted(_WORKTREE_RLS_TABLES))} "
-            f"TO {probe_role}; SET LOCAL ROLE saas_platform"
+            f"TO {probe_role}; GRANT SELECT ON saas_preview_leases TO {probe_role}; "
+            "SET LOCAL ROLE saas_platform"
         )
         connection.execute(
             sa.text(
@@ -436,6 +438,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
     with engine.begin() as connection:
         connection.exec_driver_sql(
             f"REVOKE ALL PRIVILEGES ON {', '.join(sorted(_WORKTREE_RLS_TABLES))} "
-            f"FROM {probe_role}; DROP ROLE {probe_role}"
+            f"FROM {probe_role}; REVOKE ALL PRIVILEGES ON saas_preview_leases "
+            f"FROM {probe_role}; REVOKE saas_app FROM {probe_role}; DROP ROLE {probe_role}"
         )
     engine.dispose()
