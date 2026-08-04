@@ -40,7 +40,7 @@
     },
     {
       "id": "P1",
-      "status": "in_progress",
+      "status": "complete",
       "gates": [
         {
           "id": "p1-identity-membership-and-placement-domain",
@@ -79,8 +79,20 @@
         },
         {
           "id": "p1-context-shell-multi-replica-revocation-and-failure-degradation-e2e",
-          "status": "pending",
-          "evidence": []
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/context_snapshot.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/resolver.py",
+            "saas/control_plane/migrations/versions/p2a000000006_context_shell_actor_rls.py",
+            "saas/control_plane/migrations/versions/p2a000000007_runtime_placement_platform_write.py",
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.js",
+            "tests/saas/test_context_snapshot.py",
+            "tests/saas/test_context_snapshot_postgresql.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p1-context-shell-ci-30890178928.json"
+          ]
         }
       ]
     },

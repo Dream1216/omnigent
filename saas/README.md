@@ -169,10 +169,9 @@ operations, Binding Saga fault injection, patch replay, and real Chromium
 Project Admin tests. OIDC callback verification has an immutable passing CI
 record; P0 remains in progress because approved production ADRs, reproducible
 signed images, and Service Catalog/SLO/RPO/RTO evidence are pending. The P1
-Context Shell/multi-replica/degradation code
-passes the local PostgreSQL role, HTTP, fault-injection, and Chromium matrices,
-but its gate remains pending until an immutable exact-revision GitHub CI record
-is committed. P3 durable Run authority, P4 multi-failure-domain
+Context Shell/multi-replica/degradation gate now has an immutable passing
+PostgreSQL 16 + Chromium CI record, so P1 is complete. P3 durable Run authority,
+P4 multi-failure-domain
 execution and Worktree isolation, P5 production recovery, and P6 commercial
 governance have not started and must not be inferred from these foundations.
 

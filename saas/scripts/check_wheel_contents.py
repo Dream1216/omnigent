@@ -10,6 +10,7 @@ from pathlib import Path
 
 REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p0-p6-evidence.json",
+    "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p2-ci-30883002639.json",
     "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
     "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
