@@ -104,9 +104,10 @@ metadata. PostgreSQL serializes concurrent activation, enforces one active leaf
 per Runner/purpose, makes records append-only, exposes only the exact presented
 certificate through forced RLS, and invalidates a leaf on expiry, revocation,
 purpose mismatch, or Runner connection-generation change. The Secret Broker
-checks this authority before reading or redeeming a request. Its code and real
-PostgreSQL tests are listed while the contract gate remains `pending` until an
-immutable exact-revision CI record is committed. Even after that contract gate
-passes, external issuance, Trust Bundle rollout, deployed cross-host mTLS,
-expiry/compromise drills, and multi-replica reconciliation remain production
-blockers.
+checks this authority before reading or redeeming a request. Exact-revision run
+`30942353100` passes 721 PostgreSQL/Chromium compatibility tests, 56 official
+zygote/query-context regressions, the 36/22 Linux security matrix, Pyrefly,
+P4d migration round trips, the 93-artifact wheel check, patch replay, and the
+source-intrusion budget; the contract gate is therefore `passed`. External
+issuance, Trust Bundle rollout, deployed cross-host mTLS, expiry/compromise
+drills, and multi-replica reconciliation remain production blockers.

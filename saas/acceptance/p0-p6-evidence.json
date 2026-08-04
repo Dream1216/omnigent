@@ -364,7 +364,7 @@
         },
         {
           "id": "p4-runner-certificate-lifecycle-authority-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/certificate_models.py",
             "saas/control_plane/certificates.py",
@@ -372,7 +372,8 @@
             "saas/control_plane/postgresql_roles.sql",
             "saas/secret_broker_transport.py",
             "tests/saas/test_certificate_lifecycle.py",
-            "tests/saas/test_secret_broker_transport.py"
+            "tests/saas/test_secret_broker_transport.py",
+            "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json"
           ]
         },
         {
@@ -395,6 +396,7 @@
             "saas/acceptance/p4-preview-uds-ci-30926375395.json",
             "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
             "saas/acceptance/p4-preview-supervisor-ci-30937413470.json",
+            "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json",
             "saas/runner_adapter/process_policy.py",
             "tests/saas/test_managed_runner_process_policy.py",
             "saas/acceptance/p4-upstream-sync-ci-30932712224.json"

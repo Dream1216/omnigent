@@ -472,13 +472,21 @@ immediate revocation, Runner reconnect invalidation, role separation, and
 database lifecycle guards. The wheel gate now requires the two authority
 modules and P4d migration as artifacts 91 through 93.
 
-This is a certificate lifecycle contract, not deployed PKI evidence. Production
-still requires an external issuer and Trust Bundle distribution mechanism,
-automated issuance/renewal and emergency revocation, service discovery,
-multi-replica/cross-host Broker and Preview composition, alerting, and expiry /
-CA-compromise drills. Until an exact-revision CI record exists, even this
-contract subgate remains pending; the aggregate P4 gate and release decision
-remain `NO-GO`.
+Exact implementation run `30942353100` verifies this contract at
+`54cdd1dceb952a0ec5ea88ed1bf572d41351f554`: 721 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the
+36/22 Linux security matrix pass; Pyrefly reports zero errors, P4d migrations
+upgrade/check/downgrade, the wheel contains 93 required artifacts, both patches
+replay, and source intrusion remains 8 files/432 lines with a 0.9910 isolated
+code ratio. The certificate-lifecycle contract subgate is therefore passed;
+the evidence-successor wheel inventory requires 94 artifacts.
+
+This remains a certificate lifecycle contract, not deployed PKI evidence.
+Production still requires an external issuer and Trust Bundle distribution
+mechanism, automated issuance/renewal and emergency revocation, service
+discovery, multi-replica/cross-host Broker and Preview composition, alerting,
+and expiry / CA-compromise drills. Eleven aggregate acceptance gates remain
+pending, so the aggregate P4 gate and release decision remain `NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
