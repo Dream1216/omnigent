@@ -31,6 +31,7 @@ class _Authority:
             worktree_id=uuid4(),
             worktree_lease_generation=5,
             opaque_preview_key="pvr_test",
+            preview_token_hash="b" * 64,
             upstream_request_headers={
                 "accept": "text/html",
                 "content-type": "application/json",

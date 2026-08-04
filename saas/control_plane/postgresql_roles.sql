@@ -156,6 +156,7 @@ TO saas_executor;
 GRANT SELECT ON saas_runner_pools TO saas_executor;
 GRANT SELECT, INSERT, UPDATE ON
     saas_runner_registrations,
+    saas_runner_tunnel_placements,
     saas_tenant_queue_shares,
     saas_run_dispatches,
     saas_capability_tokens
@@ -209,6 +210,7 @@ GRANT SELECT ON
     saas_runs,
     saas_runner_certificates,
     saas_runner_registrations,
+    saas_runner_tunnel_placements,
     saas_worktree_instances
 TO saas_preview_gateway;
 
@@ -252,6 +254,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_runner_pools,
     saas_runner_certificates,
     saas_runner_registrations,
+    saas_runner_tunnel_placements,
     saas_tenant_queue_shares,
     saas_run_dispatches,
     saas_capability_tokens,

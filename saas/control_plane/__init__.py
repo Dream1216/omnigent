@@ -154,6 +154,12 @@ from saas.control_plane.permissions import (
     PermissionScope,
     permission_catalog_payload,
 )
+from saas.control_plane.placement_models import RunnerTunnelPlacementRecord
+from saas.control_plane.placements import (
+    RunnerTunnelPlacement,
+    RunnerTunnelPlacementAuthority,
+    RunnerTunnelPlacementError,
+)
 from saas.control_plane.project_http import (
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
     create_project_admin_router,
@@ -325,6 +331,10 @@ __all__ = [
     "RunnerConnection",
     "RunnerPoolRecord",
     "RunnerRegistrationRecord",
+    "RunnerTunnelPlacement",
+    "RunnerTunnelPlacementAuthority",
+    "RunnerTunnelPlacementError",
+    "RunnerTunnelPlacementRecord",
     "RuntimeBindingChanged",
     "RuntimeBindingSagaRecord",
     "RuntimeBindingSagaResult",

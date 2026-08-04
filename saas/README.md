@@ -488,6 +488,36 @@ discovery, multi-replica/cross-host Broker and Preview composition, alerting,
 and expiry / CA-compromise drills. Eleven aggregate acceptance gates remain
 pending, so the aggregate P4 gate and release decision remain `NO-GO`.
 
+The next P4 control-plane slice replaces process-local Runner tunnel ownership
+with a durable Placement Router contract. Migration `p4e000000001` records one
+live ownership lease per Runner, bound to the exact Connection Generation and a
+monotonic Routing Generation. The gateway instance, hashed owner token,
+server-generated opaque relay subject, bounded heartbeat deadline, and terminal
+reason are control-plane authority; clients cannot select them. Claim,
+heartbeat, drain, release, reconnect fencing, and bounded `SKIP LOCKED` expiry
+reconciliation emit narrowly scoped, non-secret Outbox events. Append-only and
+monotonic PostgreSQL triggers reject time reversal, authority rebinding, and
+deletion.
+
+Preview route reads use the dedicated Preview Gateway role and forced RLS. The
+database reveals a Placement only when the transaction carries the exact
+active Preview token hash, the Preview grant and Placement have not expired,
+and both the grant and Placement still match the current Runner connection
+generation. A receiving owner replica re-resolves these durable fields before
+touching its local official `RunnerSession`; the official `TunnelRegistry` and
+`RunnerSession` remain unchanged. Executor access is limited to Placement
+mutation plus the four Placement Outbox event types and cannot insert unrelated
+global events.
+
+Local lifecycle, concurrent-replica, reconnect-fencing, real PostgreSQL RLS,
+trigger, Outbox, and opaque-relay routing tests pass. The acceptance subgate
+remains pending until an exact implementation revision completes the full CI
+matrix and records immutable evidence. The relay is still an authenticated
+transport interface rather than a deployed cross-host mTLS or message-bus
+implementation. Therefore this slice removes the process-local routing
+decision but does not establish production cross-host delivery, failure-domain
+recovery, or the aggregate P4 gate; the release remains `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

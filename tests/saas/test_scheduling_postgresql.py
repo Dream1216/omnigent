@@ -18,6 +18,7 @@ from saas.control_plane import RunRecord, SchedulingControlPlane
 _SCHEDULING_RLS_TABLES = {
     "saas_runner_pools",
     "saas_runner_registrations",
+    "saas_runner_tunnel_placements",
     "saas_tenant_queue_shares",
     "saas_run_dispatches",
     "saas_capability_tokens",
@@ -178,7 +179,8 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
             f"CREATE ROLE {probe_role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT; "
             f"GRANT SELECT, UPDATE ON "
             "saas_runner_pools, saas_runner_registrations, saas_tenant_queue_shares, "
-            f"saas_run_dispatches, saas_capability_tokens TO {probe_role}; "
+            "saas_run_dispatches, saas_capability_tokens, saas_runner_tunnel_placements "
+            f"TO {probe_role}; "
             "GRANT SELECT ON saas_secret_access_leases, saas_preview_leases, "
             "saas_runner_certificates "
             f"TO {probe_role}; "
@@ -378,7 +380,8 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
         connection.exec_driver_sql(
             "REVOKE ALL PRIVILEGES ON "
             "saas_runner_pools, saas_runner_registrations, saas_tenant_queue_shares, "
-            f"saas_run_dispatches, saas_capability_tokens FROM {probe_role}; "
+            "saas_run_dispatches, saas_capability_tokens, saas_runner_tunnel_placements "
+            f"FROM {probe_role}; "
             "REVOKE ALL PRIVILEGES ON saas_secret_access_leases, saas_preview_leases, "
             "saas_runner_certificates "
             f"FROM {probe_role}; "

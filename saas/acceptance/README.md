@@ -72,19 +72,19 @@ gate. It binds the complete control-plane route and exact official
 streams response chunks, and cancels abandoned requests. The follow-up
 Runner-local UDS target gate derives a server-chosen socket below a private
 Runner root, pins its filesystem identity, forbids TCP fallback, and passes a
-real spawned-process/UDS end-to-end test. The Runner tunnel resolver remains
-process-local, and official protocol v1 still buffers each bounded request body
-in one frame. The next passed Supervisor contract starts that real target from
-an immutable server-owned specification, publishes it only after a direct UDS
-health check, excludes ambient credentials, and revokes then terminates the
-entire owned process group on stop, crash, or route expiry. Exact-revision run
+real spawned-process/UDS end-to-end test. Official protocol v1 still buffers
+each bounded request body in one frame. At that gate the Runner tunnel resolver was still process-local;
+the later Placement slice below replaces the ownership decision but not the
+cross-host relay transport. The next passed Supervisor contract starts that
+real target from an immutable server-owned specification, publishes it only
+after a direct UDS health check, excludes ambient credentials, and revokes then
+terminates the entire owned process group on stop, crash, or route expiry. Exact-revision run
 `30937413470` verifies all 711 PostgreSQL/Chromium compatibility tests, 56
 official zygote/query-context regressions, and the 36/22 Linux security matrix.
 This remains a local lifecycle seam: it does not establish external reaping
 after the Runner itself crashes, dedicated UID/mount/cgroup isolation,
-cross-host mutual authentication and certificate lifecycle, multi-replica
-Placement reconciliation, Preview WebSocket forwarding, custom domains, or
-abuse controls.
+cross-host mutual authentication and relay deployment, Preview WebSocket
+forwarding, custom domains, or abuse controls.
 
 The mTLS Secret Broker adapter is another separate passed contract gate. A real
 TLS 1.3 socket handshake binds the Runner to one SPIFFE URI SAN, the request has
@@ -111,3 +111,19 @@ P4d migration round trips, the 93-artifact wheel check, patch replay, and the
 source-intrusion budget; the contract gate is therefore `passed`. External
 issuance, Trust Bundle rollout, deployed cross-host mTLS, expiry/compromise
 drills, and multi-replica reconciliation remain production blockers.
+
+The next Placement Router slice removes the process-local ownership decision
+without modifying the official `TunnelRegistry` or `RunnerSession`. PostgreSQL
+stores one live ownership lease per Runner, bound to the exact Connection
+Generation, a monotonic Routing Generation, a hashed owner token, a
+server-generated opaque relay subject, and a bounded heartbeat deadline.
+Concurrent replicas serialize on the Runner row; reconnect immediately fences
+the older generation, stale owner tokens cannot release replacements, and a
+bounded `SKIP LOCKED` reconciler expires abandoned ownership. Preview RLS
+reveals the current route only for the exact still-active Preview token and
+Runner generation. The receiving replica re-resolves ownership before touching
+its local official session. Local PostgreSQL 18.4 and routing tests pass, but
+the contract gate remains `pending` until an exact implementation revision has
+completed the full CI matrix and recorded immutable evidence. The relay remains
+an authenticated transport interface rather than deployed cross-host mTLS or a
+production message bus, so this slice cannot close the P4 production aggregate.

@@ -76,6 +76,7 @@ def _route(*, generation: int = 4, opaque_key: str = "pvr_abc123") -> PreviewRou
         worktree_id=uuid4(),
         worktree_lease_generation=6,
         opaque_preview_key=opaque_key,
+        preview_token_hash="a" * 64,
         upstream_request_headers={
             "accept": "text/plain",
             "content-type": "application/json",

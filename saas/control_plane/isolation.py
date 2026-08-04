@@ -357,6 +357,7 @@ class PreviewRouteGrant:
     worktree_id: UUID
     worktree_lease_generation: int
     opaque_preview_key: str
+    preview_token_hash: str = field(repr=False)
     upstream_request_headers: dict[str, str]
     response_headers: dict[str, str]
     expires_at: datetime
@@ -1172,6 +1173,7 @@ class IsolationControlPlane:
                 worktree_id=record.worktree_id,
                 worktree_lease_generation=record.worktree_lease_generation,
                 opaque_preview_key=record.opaque_preview_key,
+                preview_token_hash=record.token_hash,
                 upstream_request_headers=safe_headers,
                 response_headers=dict(_PREVIEW_RESPONSE_HEADERS),
                 expires_at=_aware(record.expires_at),

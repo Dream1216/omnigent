@@ -33,7 +33,11 @@ from omnigent.runner.transports.ws_tunnel.registry import (
     RunnerSession,
     TunnelRegistry,
 )
-from saas.control_plane import PreviewRouteGrant
+from saas.control_plane import (
+    PreviewRouteGrant,
+    RunnerTunnelPlacement,
+    RunnerTunnelPlacementError,
+)
 from saas.preview_gateway import PreviewTunnelRequest, PreviewTunnelResponse
 
 _INTERNAL_PREFIX = "/__omnigent_saas/preview/"
@@ -85,6 +89,35 @@ class RunnerTunnelBinding:
 
 class RunnerTunnelBindingResolver(Protocol):
     def resolve(self, route: PreviewRouteGrant) -> RunnerTunnelBinding: ...
+
+
+class RunnerTunnelPlacementResolver(Protocol):
+    def resolve_preview_route(
+        self,
+        *,
+        runner_id: UUID,
+        runner_connection_generation: int,
+        preview_token_hash: str,
+        now: datetime | None = None,
+    ) -> RunnerTunnelPlacement: ...
+
+    def require_route_owner(
+        self,
+        *,
+        placement: RunnerTunnelPlacement,
+        runner_id: UUID,
+        runner_connection_generation: int,
+        preview_token_hash: str,
+        now: datetime | None = None,
+    ) -> RunnerTunnelPlacement: ...
+
+
+class PreviewReplicaRelay(Protocol):
+    async def forward(
+        self,
+        placement: RunnerTunnelPlacement,
+        request: PreviewTunnelRequest,
+    ) -> PreviewTunnelResponse: ...
 
 
 class LocalRunnerTunnelBindings:
@@ -326,6 +359,76 @@ class OfficialRunnerPreviewTunnel:
                 state,
             ),
         )
+
+
+class PlacementRoutedPreviewTunnel:
+    """Route Preview traffic to the replica owning the exact Runner incarnation.
+
+    PostgreSQL remains the ownership authority. The relay is intentionally an
+    interface: production transport must authenticate gateway peers and bind
+    each message to the opaque relay subject. Clients never select either.
+    """
+
+    def __init__(
+        self,
+        *,
+        gateway_instance_id: str,
+        placements: RunnerTunnelPlacementResolver,
+        local_tunnel: OfficialRunnerPreviewTunnel,
+        relay: PreviewReplicaRelay | None,
+    ) -> None:
+        if not gateway_instance_id or len(gateway_instance_id) > 128:
+            raise ValueError("gateway_instance_id is invalid")
+        self._gateway_instance_id = gateway_instance_id
+        self._placements = placements
+        self._local_tunnel = local_tunnel
+        self._relay = relay
+
+    async def forward(self, request: PreviewTunnelRequest) -> PreviewTunnelResponse:
+        """Resolve every request from durable state and select local or peer forwarding."""
+
+        placement = self._resolve(request.route)
+        if placement.gateway_instance_id == self._gateway_instance_id:
+            return await self._local_tunnel.forward(request)
+        if self._relay is None:
+            raise PreviewTunnelAdapterError(
+                "preview_runner_relay_unavailable", "Runner tunnel relay is unavailable"
+            )
+        return await self._relay.forward(placement, request)
+
+    async def accept_relay(
+        self,
+        placement: RunnerTunnelPlacement,
+        request: PreviewTunnelRequest,
+    ) -> PreviewTunnelResponse:
+        """Re-authorize ownership on the receiver before touching its local session."""
+
+        route = request.route
+        try:
+            self._placements.require_route_owner(
+                placement=placement,
+                runner_id=route.runner_id,
+                runner_connection_generation=route.runner_connection_generation,
+                preview_token_hash=route.preview_token_hash,
+            )
+        except RunnerTunnelPlacementError as exc:
+            raise PreviewTunnelAdapterError(
+                "preview_runner_placement_stale", "Runner tunnel placement is stale"
+            ) from exc
+        return await self._local_tunnel.forward(request)
+
+    def _resolve(self, route: PreviewRouteGrant) -> RunnerTunnelPlacement:
+        try:
+            return self._placements.resolve_preview_route(
+                runner_id=route.runner_id,
+                runner_connection_generation=route.runner_connection_generation,
+                preview_token_hash=route.preview_token_hash,
+            )
+        except RunnerTunnelPlacementError as exc:
+            raise PreviewTunnelAdapterError(
+                "preview_runner_placement_unavailable",
+                "Runner tunnel placement is unavailable",
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -736,11 +839,14 @@ __all__ = [
     "LocalPreviewTargetRegistry",
     "LocalRunnerTunnelBindings",
     "OfficialRunnerPreviewTunnel",
+    "PlacementRoutedPreviewTunnel",
+    "PreviewReplicaRelay",
     "PreviewRunnerASGI",
     "PreviewTargetBinding",
     "PreviewTunnelAdapterError",
     "RunnerTunnelBinding",
     "RunnerTunnelBindingResolver",
+    "RunnerTunnelPlacementResolver",
     "UnixSocketIdentity",
     "UnixSocketPreviewTarget",
 ]

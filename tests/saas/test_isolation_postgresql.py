@@ -13,7 +13,9 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane import RunnerTunnelPlacementAuthority
 from tests.saas.test_worktree_postgresql import _seed_scope, _set_scope
 
 _ISOLATION_RLS_TABLES = {
@@ -24,6 +26,7 @@ _ISOLATION_RLS_TABLES = {
     "saas_secret_access_leases",
     "saas_secret_bindings",
     "saas_runner_certificates",
+    "saas_runner_tunnel_placements",
 }
 
 
@@ -47,6 +50,7 @@ class _IsolationScope(TypedDict):
     grant: UUID
     secret_lease: UUID
     preview: UUID
+    tunnel_placement: UUID
     isolation_token_hash: str
     secret_token_hash: str
     preview_token_hash: str
@@ -81,6 +85,20 @@ def _set_token(connection: sa.Connection, setting: str, value: str | None) -> No
     )
 
 
+def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
+    factory = sessionmaker(engine, expire_on_commit=False)
+
+    @sa.event.listens_for(factory, "after_begin")
+    def _bind_role(
+        _session: Session,
+        _transaction: object,
+        connection: sa.Connection,
+    ) -> None:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
+
+    return factory
+
+
 def _seed_isolation_scope(
     connection: sa.Connection,
     *,
@@ -99,6 +117,7 @@ def _seed_isolation_scope(
     grant_id = scope["grant"]
     secret_lease_id = scope["secret_lease"]
     preview_id = scope["preview"]
+    tunnel_placement_id = scope["tunnel_placement"]
     connection.execute(
         sa.text(
             "UPDATE saas_runs SET status = 'leased', version = 2, lease_owner = :owner, "
@@ -339,6 +358,25 @@ def _seed_isolation_scope(
             "expires": now + timedelta(minutes=15),
         },
     )
+    connection.execute(
+        sa.text(
+            "INSERT INTO saas_runner_tunnel_placements "
+            "(id, runner_id, runner_connection_generation, routing_generation, "
+            "gateway_instance_id, relay_subject, ownership_token_hash, status, claimed_at, "
+            "last_heartbeat_at, lease_expires_at) VALUES "
+            "(:id, :runner, 1, 1, :gateway, :relay, :token_hash, 'active', :now, :now, "
+            ":expires)"
+        ),
+        {
+            "id": tunnel_placement_id,
+            "runner": runner_id,
+            "gateway": f"gateway-{suffix}",
+            "relay": f"rtp_{tunnel_placement_id.hex}",
+            "token_hash": _digest(f"tunnel-placement:{suffix}"),
+            "now": now,
+            "expires": now + timedelta(minutes=10),
+        },
+    )
 
 
 def _scope_record(suffix: str) -> _IsolationScope:
@@ -362,6 +400,7 @@ def _scope_record(suffix: str) -> _IsolationScope:
         "grant": uuid4(),
         "secret_lease": uuid4(),
         "preview": uuid4(),
+        "tunnel_placement": uuid4(),
         "isolation_token_hash": _digest(f"isolation:{suffix}"),
         "secret_token_hash": _digest(f"secret:{suffix}"),
         "preview_token_hash": _digest(f"preview:{suffix}"),
@@ -538,6 +577,11 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
             == 1
         )
 
+    with pytest.raises(DBAPIError, match="permission denied"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_secret_broker")
+            connection.execute(sa.text("SELECT id FROM saas_runner_tunnel_placements"))
+
     with pytest.raises(DBAPIError, match="Secret lease lifecycle is monotonic"):
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_secret_broker")
@@ -552,6 +596,29 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_preview_gateway")
+        _set_token(connection, "app.preview_token_hash", None)
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_runner_tunnel_placements")
+            ).scalar_one()
+            == 0
+        )
+
+    resolver = RunnerTunnelPlacementAuthority(
+        _role_factory(engine, "saas_platform"),
+        route_session_factory=_role_factory(engine, "saas_preview_gateway"),
+        gateway_instance_id=f"gateway-{first['suffix']}",
+    )
+    resolved = resolver.resolve_preview_route(
+        runner_id=first["runner"],
+        runner_connection_generation=1,
+        preview_token_hash=first["preview_token_hash"],
+        now=now + timedelta(minutes=1),
+    )
+    assert resolved.placement_id == first["tunnel_placement"]
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_preview_gateway")
         _set_scope(connection, tenant_id=second["tenant"], space_id=second["space"])
         _set_token(connection, "app.preview_token_hash", str(first["preview_token_hash"]))
         assert (
@@ -562,6 +629,12 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
         assert (
             connection.execute(sa.text("SELECT id FROM saas_runner_registrations")).scalar_one()
             == first["runner"]
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT id FROM saas_runner_tunnel_placements")
+            ).scalar_one()
+            == first["tunnel_placement"]
         )
         assert (
             connection.execute(sa.text("SELECT id FROM saas_worktree_instances")).scalar_one()
