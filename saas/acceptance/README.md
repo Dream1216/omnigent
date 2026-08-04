@@ -14,4 +14,7 @@ Immutable CI records name the verified GitHub Actions run and exact source
 revision. `p2-ci-30883002639.json` records the first complete P2 implementation;
 `p2-upstream-sync-ci-30883850613.json` records the next official-baseline sync,
 including patch shrinkage, expanded official regression tests, and renewed
-source-intrusion evidence.
+source-intrusion evidence. `p2-upstream-sync-ci-30884588165.json` records the
+following sync to `15dd7bec` and expands the gate to cover the changed CLI and
+managed-host tests. Two sync records prove repeatability but do not, by
+themselves, close the combined P6 commercial gate.
