@@ -29,6 +29,7 @@ from omnigent.harness_aliases import canonicalize_harness
 from omnigent.harness_availability import HARNESS_BINARY_MISSING, HarnessAvailability
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE,
+    WORKSPACE_MISSING_ERROR_CODE,
     HostCreateDirFrame,
     HostCreateDirResultFrame,
     HostCreateWorktreeFrame,
@@ -732,12 +733,18 @@ class HostProcess:
         self._auth_token_factory: Callable[[], str | None] | None = None
         self._auth_token_factory_resolved = False
         # Set on the first accepted WS upgrade. Distinguishes a host that
-        # never authenticated (login redirects turn fatal after
-        # _LOGIN_REDIRECT_FATAL_ATTEMPTS) from a live host hit by a server
-        # restart (login redirects retry forever).
+        # never authenticated (login redirects / 401 / 403 turn fatal) from a
+        # live host hit by a transient failure — a server restart or a dropped
+        # VPN whose proxy answers 401/403 before the request reaches the
+        # server — where the same failures retry forever instead of killing a
+        # host with running sessions.
         self._ever_connected = False
         # Consecutive login-page redirects; reset by a successful upgrade.
         self._login_redirect_streak = 0
+        # Consecutive 401/403 upgrade rejections on an already-connected host;
+        # reset by a successful upgrade. Gates the once-per-episode terminal
+        # notice so a VPN outage doesn't spam stderr on every retry.
+        self._auth_retry_streak = 0
         # Live tunnel connection, set by _serve_frames for the watcher
         # tasks (which outlive any single connection) to report on.
         self._ws: websockets.asyncio.client.ClientConnection | None = None
@@ -1085,6 +1092,31 @@ class HostProcess:
         """
         if status in _RETRYABLE_UPGRADE_STATUSES or not (400 <= status < 500):
             return None
+        if status in (401, 403) and self._ever_connected:
+            # A host that already completed an upgrade proved its credentials
+            # and authorization are valid, so a later 401/403 is almost always
+            # a network-path artifact — a dropped VPN whose corporate proxy
+            # answers the upgrade with 401/403 before it reaches the server.
+            # Retry forever (mirrors the login-redirect path) so a live host
+            # with running sessions survives the outage and resumes when the
+            # path recovers, instead of exiting and forcing a manual restart.
+            self._auth_retry_streak += 1
+            cause = (
+                f"Connection refused (HTTP {status}): the host tunnel was "
+                "rejected after it had already connected."
+            )
+            _logger.warning("%s Retrying — check your VPN/network.", cause)
+            if self._auth_retry_streak == 1:
+                # The warning above lands only in the CLI log file; print once
+                # per outage so a foreground `omnigent host` isn't silent.
+                print(
+                    f"⚠ {cause} Retrying — this usually means the VPN or "
+                    "network dropped. It will reconnect automatically once "
+                    "connectivity returns.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return None
         if status == 401:
             return HostConnectError(
                 "Authentication failed (HTTP 401): the server rejected the "
@@ -1158,6 +1190,7 @@ class HostProcess:
                 request_id=frame.request_id,
                 status="failed",
                 error=f"workspace path does not exist: {workspace}",
+                error_code=WORKSPACE_MISSING_ERROR_CODE,
             )
 
         runner_id = token_bound_runner_id(frame.binding_token)
@@ -2330,6 +2363,7 @@ class HostProcess:
         # from here on are server restarts, not an unauthenticated host.
         self._ever_connected = True
         self._login_redirect_streak = 0
+        self._auth_retry_streak = 0
         try:
             await self._serve_frames(ws)
         finally:
