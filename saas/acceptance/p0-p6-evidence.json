@@ -401,7 +401,7 @@
         },
         {
           "id": "p4-persistent-preview-gateway-discovery-and-certificate-authority-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/gateway_models.py",
             "saas/control_plane/gateways.py",
@@ -412,7 +412,8 @@
             "saas/preview_relay_transport.py",
             "tests/saas/test_preview_gateway_authority.py",
             "tests/saas/test_runner_tunnel_placement.py",
-            "tests/saas/test_preview_relay_transport.py"
+            "tests/saas/test_preview_relay_transport.py",
+            "saas/acceptance/p4-preview-gateway-authority-ci-30955223169.json"
           ]
         },
         {

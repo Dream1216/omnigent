@@ -582,17 +582,18 @@ a live Gateway lease. Rotation has bounded overlap, revocation is immediate,
 and PostgreSQL triggers reject identity/endpoint rebinding, time reversal,
 reactivation, deletion, and live Placement ownership by a stale Gateway.
 
-Local SQLite and real PostgreSQL 16 tests cover token denial, non-reuse,
-heartbeat/drain/release/expiry, service discovery, purpose separation,
-endpoint binding, rotation/revocation, certificate invalidation on Gateway
-release, column privileges, FORCE RLS, append-only guards, Placement coupling,
-and p4f upgrade/downgrade. The exact-revision CI gate remains pending until a
-remote run records the full PostgreSQL/Chromium, official regression, Linux
-security, Pyrefly, migration, wheel, patch-replay, and source-intrusion matrix.
-The implementation wheel inventory now requires 103 artifacts. This is still
-not external CA issuance, production Trust Bundle distribution, deployed
-service discovery, cross-host failure evidence, or two-failure-domain proof;
-the release remains `NO-GO`.
+Exact implementation run `30955223169` verifies this contract at
+`ece5e58120e8a6147174736b89126abfee48e953`: 745 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the
+36/22 Linux security matrix pass; Pyrefly reports zero errors, p4f migrations
+upgrade/check/downgrade, the wheel contains 103 required artifacts, both
+patches replay, and source intrusion remains 8 files/432 lines with a 0.9920
+isolated-code ratio. The persistent Gateway discovery/certificate subgate is
+therefore passed; the evidence-successor wheel inventory requires 104
+artifacts and eleven aggregate gates remain pending. This is still not
+external CA issuance, production Trust Bundle distribution, deployed Gateway
+registration/service discovery, cross-host failure evidence, or
+two-failure-domain proof; the release remains `NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium

@@ -165,8 +165,12 @@ SPIFFE URI, exact server-name coverage, accepted Trust Bundle metadata, bounded
 rotation overlap, and immediate revocation. Raw tokens, certificate DER, and
 private keys never enter PostgreSQL or Outbox. Column grants plus forced RLS
 hide token hashes and reveal only live endpoint fields or the exact presented
-fingerprint/purpose. Local SQLite and real PostgreSQL 16 tests pass the
-directory, certificate, role, trigger, migration, and Placement-coupling
-contracts, but the manifest subgate deliberately remains `pending` until an
-immutable exact-revision CI record exists. The candidate wheel inventory
-requires 103 artifacts and the aggregate release remains `NO-GO`.
+fingerprint/purpose. Exact-revision run `30955223169` at
+`ece5e58120e8a6147174736b89126abfee48e953` passes 745
+PostgreSQL/Chromium compatibility tests, 56 official regressions, the 36/22
+Linux security matrix, Pyrefly, p4f migration round trips, the 103-artifact
+wheel check, both patch replays, and the source-intrusion budget. The subgate
+is therefore `passed`; the evidence-successor wheel requires 104 artifacts.
+External CA/Trust Bundle operations, deployed cross-host registration and
+service discovery, network partitions, and two failure domains remain
+independent `NO-GO` requirements. Eleven aggregate gates remain pending.
