@@ -236,10 +236,18 @@ counters, late writes fail after generation fencing, and physical deletion
 requires an exact opaque-key/generation confirmation after the GC grace period.
 Real PostgreSQL tests cover six-table forced RLS, scoped governance reads,
 least-privilege service grants, and two concurrent control-plane instances
-competing for one Writer. This closes the Repository/ChangeSet/Worktree
-control-plane subgate only after exact-revision CI evidence is committed; it
-does not close the remaining physical Git adapter, canonical-path/symlink,
-Sandbox, Secret, Egress, Preview, two-failure-domain, or N-1 gates.
+competing for one Writer. Exact-revision GitHub Actions run `30906291765`
+verifies this slice at `bbec3f723e5ffdbe32a8734ed0d9ad00bb5a871a`
+against official revision `45eab11d531f3224eb59b39da7d8cb18256e21a1`:
+648 tests pass on PostgreSQL 16 plus Chromium, migration head
+`p4b000000001` upgrades/checks/downgrades cleanly, the wheel contains 69
+required SaaS artifacts, both downstream patches replay, and source intrusion
+remains at 8 direct upstream files, 389 net added lines, and a 0.9885 isolated
+code ratio. This closes only the Repository/ChangeSet/Worktree control-plane
+subgate. A separate machine-readable gate remains pending for the physical Git
+Runner Adapter, canonical-path/symlink/reparse-point and mount boundaries, and
+real filesystem deletion; Sandbox, Secret, Egress, Preview, two-failure-domain,
+and N-1 gates also remain pending.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login

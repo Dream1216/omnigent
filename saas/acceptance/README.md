@@ -45,3 +45,10 @@ content from approvals, measured dashboards, and recovery-drill proof;
 signed immutable production image. Both commands have `--require-ready` modes
 that fail until their external evidence is complete. The evidence paths on a
 pending gate therefore show implemented controls, not a passed gate.
+
+The P4 Worktree record closes only the credential-free Repository, atomic
+ChangeSet, quota, fenced lease, lifecycle, removal-preflight, and PostgreSQL RLS
+control-plane subgate at an immutable implementation revision. The physical
+Runner Git/filesystem adapter is an independent pending gate, so this evidence
+cannot be used to claim host-path, mount-boundary, Sandbox, Preview, or
+cross-failure-domain acceptance.

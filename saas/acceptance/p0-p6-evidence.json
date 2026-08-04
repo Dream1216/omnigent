@@ -266,6 +266,20 @@
         },
         {
           "id": "p4-worktree-changeset-control-plane",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/worktree_models.py",
+            "saas/control_plane/worktrees.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p4b000000001_changeset_worktrees.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_worktree_control_plane.py",
+            "tests/saas/test_worktree_postgresql.py",
+            "saas/acceptance/p4-worktree-ci-30906291765.json"
+          ]
+        },
+        {
+          "id": "p4-physical-worktree-runner-adapter",
           "status": "pending",
           "evidence": []
         },
