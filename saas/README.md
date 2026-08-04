@@ -391,6 +391,16 @@ context. CI now runs the new official zygote, harness client, query-context,
 threadpool, allocator, cancellation, and process-lifecycle regressions while
 the SaaS adapter keeps managed isolation fail closed.
 
+Exact upstream-sync implementation run `30932712224` verifies this boundary at
+`e76fe11e8bdc27cfa2013d1328924d4b0afce2eb`: 702 PostgreSQL/Chromium
+compatibility tests, 56 new official zygote/query-context regressions, and the
+36/22 official Linux security matrix pass; Pyrefly reports zero errors, P4c
+migrations round trip, the wheel contains 86 required artifacts, both patches
+replay against `8e17c9ec`, and source intrusion remains 8 files/432 lines with
+a 0.9904 isolated-code ratio. The evidence-successor wheel inventory requires
+88 artifacts. Eleven acceptance gates and the production decision remain
+`NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

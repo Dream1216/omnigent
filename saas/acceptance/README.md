@@ -24,6 +24,15 @@ themselves, close the combined P6 commercial gate.
 patches against ten new upstream commits, including host/runner recovery,
 worktree-isolating repro tooling, and stricter Web TypeScript checks.
 
+`p4-upstream-sync-ci-30932712224.json` records the next conflict-free sync to
+`8e17c9ec` after the P4 Secret Broker transport slice. It adds explicit Linux CI
+coverage for the upstream Runner/harness zygote, semantic database query names,
+allocator and threadpool bounds, and process cancellation. The downstream
+managed process policy selects the official direct-`Popen` path and rejects
+ambient credential forwarding; local single-user Hosts retain upstream
+behavior. This preserves compatibility but does not close deployed P4
+containment or failure-domain gates.
+
 `p1-oidc-ci-30887476782.json` records the complete OIDC Authorization Code +
 S256 PKCE, replica-independent browser transaction, strict ID Token, JWKS
 rotation, explicit same-email conflict, and PostgreSQL RLS acceptance on the

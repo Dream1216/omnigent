@@ -1,0 +1,66 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30932712224,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30932712224",
+  "job_id": 92071097862,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30932712224/job/92071097862",
+  "head_sha": "e76fe11e8bdc27cfa2013d1328924d4b0afce2eb",
+  "conclusion": "success",
+  "upstream": {
+    "previous_revision": "a47a9ee3bf7287f7e70fc0f599f241e43275ecfc",
+    "verified_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+    "commits_advanced": 6,
+    "merge_commit": "0c72871024b782106b9be9e87a83cd8fce55d4ee",
+    "merge_conflicts": 0
+  },
+  "environment": {
+    "ci_postgresql": "16",
+    "local_postgresql": "18.4",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "local_os": "macOS"
+  },
+  "verification": {
+    "ci_compatibility_tests": "702 passed, 226 warnings, 114.60s",
+    "local_compatibility_tests": "702 passed, 226 warnings, 158.89s",
+    "official_zygote_query_context_tests": "56 passed, 39.60s",
+    "official_linux_security_tests": "36 passed, 22 skipped, 17.35s",
+    "managed_process_policy_tests": "9 passed",
+    "managed_zygote_disabled": true,
+    "ambient_runner_credentials_rejected": true,
+    "wheel_required_artifacts": 86,
+    "patches_replayed": 2,
+    "migration_head": "p4c000000001",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 432,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9904,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "upstream_changes_verified": [
+    "copy-on-write Runner and harness zygote forkserver",
+    "bounded Runner glibc arenas and threadpool workers",
+    "semantic database query names",
+    "GitHub force-push protection policy",
+    "optional Nimble import lint handling",
+    "Web central CTA and background behavior"
+  ],
+  "managed_saas_boundary": {
+    "local_single_user_behavior": "retains the official zygote default",
+    "managed_shared_and_dedicated_behavior": "canonical OMNIGENT_RUNNER_ZYGOTE=0 selects official direct Popen",
+    "reason": "post-fork credential, descriptor, native-state, telemetry, and tenant-context reset is not yet independently proven",
+    "production_gate": "pending"
+  },
+  "evidence_successor_policy": "This record verifies the conflict-free official sync and managed Runner process-policy implementation. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, or explanatory documentation does not alter the verified implementation."
+}

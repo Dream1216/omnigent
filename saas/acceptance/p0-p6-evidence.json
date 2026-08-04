@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "plan": "docs/omnigent-multitenant-multiorg-saas-iteration-plan-2026-08-01.md",
-  "reviewed_at": "2026-08-04",
+  "reviewed_at": "2026-08-05",
   "release_decision": "NO-GO",
   "phases": [
     {
@@ -19,7 +19,8 @@
             ".github/workflows/saas-upstream-compat.yml",
             "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
             "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
-            "saas/acceptance/p3-upstream-sync-ci-30897083447.json"
+            "saas/acceptance/p3-upstream-sync-ci-30897083447.json",
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
           ]
         },
         {
@@ -361,7 +362,10 @@
           "saas/acceptance/p4-containment-egress-ci-30921247156.json",
           "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
           "saas/acceptance/p4-preview-uds-ci-30926375395.json",
-          "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json"
+          "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
+          "saas/runner_adapter/process_policy.py",
+          "tests/saas/test_managed_runner_process_policy.py",
+          "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
         ]
         },
         {
