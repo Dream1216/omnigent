@@ -344,9 +344,15 @@ class IssuedPreviewLease:
 @dataclass(frozen=True, slots=True)
 class PreviewRouteGrant:
     preview_id: UUID
+    tenant_id: UUID
+    space_id: UUID
+    project_id: UUID
     runner_id: UUID
+    runner_connection_generation: int
     run_id: UUID
+    run_fence_token: int
     worktree_id: UUID
+    worktree_lease_generation: int
     opaque_preview_key: str
     upstream_request_headers: dict[str, str]
     response_headers: dict[str, str]
@@ -1141,17 +1147,30 @@ class IsolationControlPlane:
             safe_headers = {
                 key: value
                 for key, value in normalized_headers.items()
-                if key in {"accept", "accept-encoding", "accept-language", "user-agent"}
+                if key
+                in {
+                    "accept",
+                    "accept-encoding",
+                    "accept-language",
+                    "content-type",
+                    "user-agent",
+                }
             }
             return PreviewRouteGrant(
-                record.id,
-                record.runner_id,
-                record.run_id,
-                record.worktree_id,
-                record.opaque_preview_key,
-                safe_headers,
-                dict(_PREVIEW_RESPONSE_HEADERS),
-                _aware(record.expires_at),
+                preview_id=record.id,
+                tenant_id=record.tenant_id,
+                space_id=record.space_id,
+                project_id=record.project_id,
+                runner_id=record.runner_id,
+                runner_connection_generation=record.runner_connection_generation,
+                run_id=record.run_id,
+                run_fence_token=record.run_fence_token,
+                worktree_id=record.worktree_id,
+                worktree_lease_generation=record.worktree_lease_generation,
+                opaque_preview_key=record.opaque_preview_key,
+                upstream_request_headers=safe_headers,
+                response_headers=dict(_PREVIEW_RESPONSE_HEADERS),
+                expires_at=_aware(record.expires_at),
             )
 
     def revoke_preview_lease(

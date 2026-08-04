@@ -21,11 +21,21 @@ class _Authority:
         self.calls: list[tuple[str, str, dict[str, str]]] = []
         self.route = PreviewRouteGrant(
             preview_id=uuid4(),
+            tenant_id=uuid4(),
+            space_id=uuid4(),
+            project_id=uuid4(),
             runner_id=uuid4(),
+            runner_connection_generation=3,
             run_id=uuid4(),
+            run_fence_token=7,
             worktree_id=uuid4(),
+            worktree_lease_generation=5,
             opaque_preview_key="pvr_test",
-            upstream_request_headers={"accept": "text/html", "user-agent": "preview-test"},
+            upstream_request_headers={
+                "accept": "text/html",
+                "content-type": "application/json",
+                "user-agent": "preview-test",
+            },
             response_headers={
                 "Content-Security-Policy": "sandbox; frame-ancestors 'none'",
                 "X-Frame-Options": "DENY",
@@ -108,7 +118,11 @@ def test_preview_gateway_exchanges_body_token_for_host_cookie_and_strips_credent
     assert forwarded.method == "GET"
     assert forwarded.path == "/nested/app"
     assert forwarded.query == "mode=test"
-    assert forwarded.headers == {"accept": "text/html", "user-agent": "preview-test"}
+    assert forwarded.headers == {
+        "accept": "text/html",
+        "content-type": "application/json",
+        "user-agent": "preview-test",
+    }
     assert authority.calls[0] == (host, token, {})
     assert authority.calls[1][0:2] == (host, token)
     assert "x-forwarded-for" not in authority.calls[1][2]

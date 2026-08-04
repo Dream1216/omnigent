@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from saas.control_plane import (
@@ -64,7 +65,7 @@ class PreviewTunnelRequest:
 class PreviewTunnelResponse:
     status_code: int
     headers: dict[str, str]
-    body: bytes
+    body: bytes | AsyncIterable[bytes]
 
 
 class PreviewTunnel(Protocol):
@@ -190,6 +191,40 @@ def _response_headers(response: PreviewTunnelResponse, route: PreviewRouteGrant)
     return safe
 
 
+async def _close_response_body(body: bytes | AsyncIterable[bytes]) -> None:
+    if isinstance(body, bytes):
+        return
+    close = getattr(body, "aclose", None)
+    if close is not None:
+        await close()
+
+
+async def _bounded_response_body(
+    body: bytes | AsyncIterable[bytes], *, maximum: int
+) -> AsyncIterator[bytes]:
+    received = 0
+    try:
+        if isinstance(body, bytes):
+            chunks: AsyncIterable[bytes] = _one_chunk(body)
+        else:
+            chunks = body
+        async for chunk in chunks:
+            if not isinstance(chunk, bytes):
+                raise ValueError("Preview tunnel emitted a non-bytes response chunk")
+            received += len(chunk)
+            if received > maximum:
+                raise ValueError("Preview tunnel response exceeded the byte limit")
+            if chunk:
+                yield chunk
+    finally:
+        await _close_response_body(body)
+
+
+async def _one_chunk(body: bytes) -> AsyncIterator[bytes]:
+    if body:
+        yield body
+
+
 def create_preview_gateway_app(
     *,
     authority: PreviewAuthority,
@@ -290,17 +325,35 @@ def create_preview_gateway_app(
             )
             if not 200 <= upstream.status_code <= 599:
                 raise ValueError("Preview tunnel returned an invalid status")
-            if len(upstream.body) > maximum_response_bytes:
+            if isinstance(upstream.body, bytes) and len(upstream.body) > maximum_response_bytes:
+                raise ValueError("Preview tunnel response exceeded the byte limit")
+            content_length = next(
+                (
+                    value
+                    for key, value in upstream.headers.items()
+                    if key.lower() == "content-length"
+                ),
+                None,
+            )
+            if content_length is not None and (
+                not content_length.isdigit() or int(content_length) > maximum_response_bytes
+            ):
                 raise ValueError("Preview tunnel response exceeded the byte limit")
         except IsolationControlPlaneError as error:
             return _error(403, error.code, str(error))
         except Exception:  # noqa: BLE001 - tunnel failures must collapse to a secretless 502
             return _error(502, "preview_tunnel_unavailable", "Preview tunnel is unavailable")
-        content = b"" if request.method == "HEAD" else upstream.body
-        return Response(
-            content=content,
+        headers = _response_headers(upstream, route)
+        if request.method == "HEAD":
+            try:
+                await _close_response_body(upstream.body)
+            except Exception:  # noqa: BLE001 - collapse transport details at the gateway
+                return _error(502, "preview_tunnel_unavailable", "Preview tunnel is unavailable")
+            return Response(content=b"", status_code=upstream.status_code, headers=headers)
+        return StreamingResponse(
+            _bounded_response_body(upstream.body, maximum=maximum_response_bytes),
             status_code=upstream.status_code,
-            headers=_response_headers(upstream, route),
+            headers=headers,
         )
 
     return app

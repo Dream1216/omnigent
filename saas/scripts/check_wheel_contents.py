@@ -74,6 +74,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/worktrees.py",
     "saas/outbox_worker.py",
     "saas/preview_gateway.py",
+    "saas/preview_tunnel.py",
     "saas/runtime_rls/__init__.py",
     "saas/runtime_rls/installer.py",
     "saas/runtime_rls/postgresql_roles.sql",

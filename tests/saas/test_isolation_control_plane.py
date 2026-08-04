@@ -569,7 +569,10 @@ def test_preview_origin_is_cookie_isolated_exact_host_fenced_and_revocable(
         now=now + timedelta(seconds=7),
     )
     assert route.runner_id == leased.runner_id
+    assert route.runner_connection_generation == materialization.runner_connection_generation
+    assert route.run_fence_token == materialization.run_fence_token
     assert route.worktree_id == materialization.worktree_id
+    assert route.worktree_lease_generation == materialization.lease_generation
     assert route.upstream_request_headers == {
         "accept": "text/html",
         "user-agent": "preview-test",

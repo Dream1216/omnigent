@@ -285,9 +285,11 @@ downstream Runner adapter rejects client sandbox overrides, requires an outer
 containment verifier, disables ambient environment and direct network access,
 masks `.git`, binds the exact physical Worktree/fences, and uses the official
 hard sandbox plus credential proxy. Parent-only credential source files stay
-outside the Worktree in a `0700` directory as `0600` files for the Prepared
-lifecycle because the official helper can transparently restart; failed start
-and `close()` delete them, and they are never mounted into the sandbox. The
+outside the Worktree in an atomically published `0700` directory as `0600`
+files for the Prepared lifecycle because the official helper can transparently
+restart. A POSIX advisory lock spans the complete lifecycle; startup cleanup
+skips live peers, removes only a validated released lease, and fails closed on
+malformed managed entries. They are never mounted into the sandbox. The
 independent Preview application exchanges a body/Bearer capability for an
 exact-host `__Host-` Cookie, rejects ambient SaaS credentials and Host/path
 smuggling, bounds streamed bodies, strips forwarding/upstream Cookie headers,
@@ -301,12 +303,34 @@ credential-proxy acceptance passes 13 tests with 17 platform skips, Pyrefly
 reports zero errors, migration head `p4c000000001` upgrades/checks/downgrades,
 the wheel contains 78 required artifacts, both patches replay, and source
 intrusion remains at 8 direct upstream files, 403 net added lines, and a 0.9901
-isolated code ratio. The evidence-successor wheel inventory now requires 79
-artifacts. The production gate remains pending: this record does not
-provide the outer cgroup/container/microVM implementation, DNS rebinding and
-malicious exfiltration suite, deployed mutually authenticated Secret Broker or
-Preview Runner tunnel, crash-residual credential cleanup, Preview WebSocket /
-custom-domain / abuse controls, or two real failure domains and N-1 rollback.
+isolated code ratio. Follow-up exact-revision runs `30920660193`, `30921247156`,
+and `30922052283` verify crash cleanup, the expanded official malicious-egress
+matrix, and the Linux cgroup-v2 verifier contract. The latest evidence
+successor passes 678 PostgreSQL/Chromium compatibility tests, 36 official Linux
+security tests with 22 platform skips, Pyrefly with zero errors, P4c migration
+round trips, 81 wheel artifacts, two patch replays, and the 8-file/413-line
+upstream intrusion budget. The cgroup verifier reads exact kernel facts and
+fails closed; it does not create the production cgroup or prove a deployed
+Runner Pod/container/microVM.
+
+The following P4 adapter slice binds the full Preview Route Grant—including
+Tenant, Space, Project, Run fence, Runner connection generation, Worktree lease
+generation, and opaque Preview key—to one exact official `RunnerSession`
+object. Replacing the official WebSocket session without advancing the SaaS
+connection generation fails closed. A downstream Runner ASGI wrapper accepts
+the internal route only from the official tunnel dispatcher, strips all
+internal routing metadata before dispatch, rechecks the complete target
+binding, and streams response chunks through the official frame protocol.
+Request bodies remain bounded but buffered because official tunnel protocol v1
+has one request-body frame. The process-local binding resolver is an explicit
+composition seam, not multi-process placement proof.
+
+The production gate therefore remains pending: no real Runner deployment has
+yet passed the cgroup verifier; the Secret Broker and Preview tunnel do not yet
+have deployed mutually authenticated cross-process/host transport; Preview
+WebSocket, custom-domain, abuse controls, and a real local-process/UDS target
+adapter remain incomplete; and two real failure domains, network partition,
+and N-1 rollback are unproven.
 
 After official migrations and Runtime RLS installation, run
 `saas/runtime_rls/postgresql_roles.sql` and grant each runtime service login
