@@ -442,9 +442,12 @@ def test_real_postgresql_certificate_rls_rotation_revocation_and_monotonicity() 
         )
         assert (
             db.scalar(
-                sa.select(sa.func.count())
-                .select_from(ControlPlaneOutboxEvent)
-                .where(ControlPlaneOutboxEvent.event_type == "runner.certificate.activated")
+                    sa.select(sa.func.count())
+                    .select_from(ControlPlaneOutboxEvent)
+                    .where(
+                        ControlPlaneOutboxEvent.event_type == "runner.certificate.activated",
+                        ControlPlaneOutboxEvent.aggregate_key == first.fingerprint_sha256,
+                    )
             )
             == 1
         )

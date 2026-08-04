@@ -154,6 +154,11 @@ GRANT SELECT, INSERT ON
 TO saas_executor;
 
 GRANT SELECT ON saas_runner_pools TO saas_executor;
+GRANT SELECT (
+    id, connect_host, connect_port, server_name, failure_domain,
+    source_revision, adapter_contract_version, status, registered_at,
+    last_heartbeat_at, lease_expires_at, released_at, release_reason
+) ON saas_preview_gateway_instances TO saas_executor;
 GRANT SELECT, INSERT, UPDATE ON
     saas_runner_registrations,
     saas_runner_tunnel_placements,
@@ -188,8 +193,8 @@ GRANT SELECT, INSERT, UPDATE ON
 TO saas_executor;
 
 -- Cross-table RLS policies are evaluated with the invoking role's table
--- privileges. These SELECT grants do not expose rows: all three authority
--- tables use FORCE RLS and only an exact token/certificate policy can reveal
+-- privileges. These SELECT grants do not expose rows: every authority table
+-- uses FORCE RLS and only an exact token/certificate policy can reveal
 -- a row to its dedicated service role.
 GRANT SELECT ON
     saas_secret_access_leases,
@@ -213,6 +218,17 @@ GRANT SELECT ON
     saas_runner_tunnel_placements,
     saas_worktree_instances
 TO saas_preview_gateway;
+
+GRANT SELECT (
+    id, connect_host, connect_port, server_name, failure_domain,
+    source_revision, adapter_contract_version, status, registered_at,
+    last_heartbeat_at, lease_expires_at, released_at, release_reason
+) ON saas_preview_gateway_instances TO saas_preview_gateway;
+GRANT UPDATE (
+    status, last_heartbeat_at, lease_expires_at, released_at, release_reason, updated_at
+) ON saas_preview_gateway_instances TO saas_preview_gateway;
+GRANT SELECT ON saas_preview_gateway_certificates TO saas_preview_gateway;
+GRANT SELECT, INSERT ON saas_control_plane_outbox TO saas_preview_gateway;
 
 GRANT SELECT, UPDATE ON saas_preview_leases TO saas_preview_gateway;
 
@@ -255,6 +271,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_runner_certificates,
     saas_runner_registrations,
     saas_runner_tunnel_placements,
+    saas_preview_gateway_instances,
+    saas_preview_gateway_certificates,
     saas_tenant_queue_shares,
     saas_run_dispatches,
     saas_capability_tokens,

@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.gateway_models import PreviewGatewayInstanceRecord
 from saas.control_plane.placement_models import RunnerTunnelPlacementRecord
 from saas.control_plane.scheduling_models import RunnerRegistrationRecord
 
@@ -137,6 +138,7 @@ class RunnerTunnelPlacementAuthority:
             )
 
         with self._authority_session_factory.begin() as db:
+            self._current_gateway(db, now=claimed_at, allow_draining=False)
             runner = self._current_runner(
                 db,
                 runner_id=runner_id,
@@ -245,6 +247,7 @@ class RunnerTunnelPlacementAuthority:
         connection_hash = _token_hash(runner_connection_token)
         ownership_hash = _token_hash(ownership_token)
         with self._authority_session_factory.begin() as db:
+            self._current_gateway(db, now=heartbeat_at, allow_draining=True)
             self._current_runner(
                 db,
                 runner_id=runner_id,
@@ -413,10 +416,22 @@ class RunnerTunnelPlacementAuthority:
                     {"digest": digest},
                 )
             row = db.execute(
-                sa.select(RunnerTunnelPlacementRecord, RunnerRegistrationRecord)
+                sa.select(
+                    RunnerTunnelPlacementRecord,
+                    RunnerRegistrationRecord,
+                    PreviewGatewayInstanceRecord.status.label("gateway_status"),
+                    PreviewGatewayInstanceRecord.lease_expires_at.label(
+                        "gateway_lease_expires_at"
+                    ),
+                )
                 .join(
                     RunnerRegistrationRecord,
                     RunnerRegistrationRecord.id == RunnerTunnelPlacementRecord.runner_id,
+                )
+                .join(
+                    PreviewGatewayInstanceRecord,
+                    PreviewGatewayInstanceRecord.id
+                    == RunnerTunnelPlacementRecord.gateway_instance_id,
                 )
                 .where(
                     RunnerTunnelPlacementRecord.runner_id == runner_id,
@@ -429,11 +444,13 @@ class RunnerTunnelPlacementAuthority:
                 raise RunnerTunnelPlacementError(
                     "runner_tunnel_route_unavailable", "Runner tunnel route is unavailable"
                 )
-            record, runner = row
+            record, runner, gateway_status, gateway_lease_expires_at = row
             if (
                 runner.status not in {"online", "draining"}
                 or runner.connection_generation != runner_connection_generation
                 or resolved_at >= _aware(record.lease_expires_at)
+                or gateway_status not in _LIVE_STATUSES
+                or resolved_at >= _aware(gateway_lease_expires_at)
             ):
                 raise RunnerTunnelPlacementError(
                     "runner_tunnel_route_stale", "Runner tunnel route is stale"
@@ -481,6 +498,26 @@ class RunnerTunnelPlacementAuthority:
                 "runner_tunnel_route_owner_changed", "Runner tunnel route owner changed"
             )
         return current
+
+    def _current_gateway(
+        self,
+        db: Session,
+        *,
+        now: datetime,
+        allow_draining: bool,
+    ) -> None:
+        row = db.execute(
+            sa.select(
+                PreviewGatewayInstanceRecord.id,
+                PreviewGatewayInstanceRecord.status,
+                PreviewGatewayInstanceRecord.lease_expires_at,
+            ).where(PreviewGatewayInstanceRecord.id == self.gateway_instance_id)
+        ).one_or_none()
+        accepted = _LIVE_STATUSES if allow_draining else frozenset(("active",))
+        if row is None or row.status not in accepted or now >= _aware(row.lease_expires_at):
+            raise RunnerTunnelPlacementError(
+                "runner_tunnel_gateway_stale", "Runner tunnel Gateway instance is stale"
+            )
 
     @staticmethod
     def _current_runner(

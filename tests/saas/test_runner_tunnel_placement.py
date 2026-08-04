@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from saas.control_plane import (
     ControlPlaneOutboxEvent,
+    PreviewGatewayDirectoryAuthority,
     PreviewRouteGrant,
     RunnerConnection,
     RunnerTunnelPlacement,
@@ -56,6 +57,7 @@ def _fixture() -> tuple[
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     placement_id = uuid4()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
     with factory.begin() as db:
         db.add(
             RuntimePlacementRecord(
@@ -71,6 +73,20 @@ def _fixture() -> tuple[
                 status="active",
             )
         )
+    directory = PreviewGatewayDirectoryAuthority(factory, service_session_factory=factory)
+    for gateway_instance_id in ("gateway-a", "gateway-b"):
+        directory.register_gateway(
+            gateway_instance_id=gateway_instance_id,
+            connect_host="127.0.0.1",
+            connect_port=8443,
+            server_name="localhost",
+            failure_domain="cn-east-1a",
+            source_revision="upstream",
+            adapter_contract_version="0.2.0",
+            registration_token=f"{gateway_instance_id}-" + "x" * 40,
+            lease_duration=timedelta(minutes=2),
+            now=now,
+        )
     scheduling = SchedulingControlPlane(factory)
     pool_id = scheduling.create_pool(
         placement_id=placement_id,
@@ -83,7 +99,6 @@ def _fixture() -> tuple[
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
     connection = scheduling.register_runner(
         pool_id=pool_id,
         instance_key="runner-placement-1",
@@ -429,6 +444,43 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
         adapter_contract_version="0.2.0",
     )
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    directory = PreviewGatewayDirectoryAuthority(
+        _role_factory(engine, "saas_platform"),
+        service_session_factory=_role_factory(engine, "saas_preview_gateway"),
+    )
+    for gateway_instance_id in (f"gateway-a-{nonce}", f"gateway-b-{nonce}"):
+        directory.register_gateway(
+            gateway_instance_id=gateway_instance_id,
+            connect_host="127.0.0.1",
+            connect_port=8443,
+            server_name="localhost",
+            failure_domain="cn-east-1a",
+            source_revision="upstream",
+            adapter_contract_version="0.2.0",
+            registration_token=f"{gateway_instance_id}-" + "x" * 40,
+            lease_duration=timedelta(minutes=2),
+            now=now,
+        )
+    stale_gateway_id = f"gateway-stale-{nonce}"
+    stale_gateway_token = f"{stale_gateway_id}-" + "x" * 40
+    directory.register_gateway(
+        gateway_instance_id=stale_gateway_id,
+        connect_host="127.0.0.1",
+        connect_port=8443,
+        server_name="localhost",
+        failure_domain="cn-east-1a",
+        source_revision="upstream",
+        adapter_contract_version="0.2.0",
+        registration_token=stale_gateway_token,
+        lease_duration=timedelta(minutes=2),
+        now=now,
+    )
+    directory.release_gateway(
+        gateway_instance_id=stale_gateway_id,
+        registration_token=stale_gateway_token,
+        reason="stale placement probe",
+        now=now + timedelta(seconds=1),
+    )
     connection = scheduling.register_runner(
         pool_id=pool_id,
         instance_key=f"placement-runner-{nonce}",
@@ -441,6 +493,29 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
         max_concurrency=2,
         now=now,
     )
+    with pytest.raises(DBAPIError, match="requires a live Preview Gateway"):
+        with engine.begin() as raw:
+            raw.exec_driver_sql("SET LOCAL ROLE saas_executor")
+            stale_placement_id = uuid4()
+            raw.execute(
+                sa.text(
+                    "INSERT INTO saas_runner_tunnel_placements "
+                    "(id, runner_id, runner_connection_generation, routing_generation, "
+                    "gateway_instance_id, relay_subject, ownership_token_hash, status, "
+                    "claimed_at, last_heartbeat_at, lease_expires_at) VALUES "
+                    "(:id, :runner, 1, 1, :gateway, :relay, :token_hash, 'active', "
+                    ":now, :now, :expires)"
+                ),
+                {
+                    "id": stale_placement_id,
+                    "runner": connection.runner_id,
+                    "gateway": stale_gateway_id,
+                    "relay": f"rtp_{stale_placement_id.hex}",
+                    "token_hash": uuid4().hex + uuid4().hex,
+                    "now": now,
+                    "expires": now + timedelta(seconds=45),
+                },
+            )
     gateways = (
         RunnerTunnelPlacementAuthority(
             executor_factory,

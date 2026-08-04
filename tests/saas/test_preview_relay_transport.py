@@ -428,8 +428,8 @@ async def test_mtls_preview_relay_streams_to_exact_placement_owner(tmp_path: Pat
     assert relayed.route.run_id == request.route.run_id
     assert relayed.route.worktree_id == request.route.worktree_id
     assert placements.calls[0][0].relay_subject == placement.relay_subject
-    assert server_authorizer.calls[0][:2] == ("gateway-a", "preview_relay")
-    assert client_authorizer.calls[0][:2] == ("gateway-b", "preview_relay")
+    assert server_authorizer.calls[0][:2] == ("gateway-a", "preview_relay_client")
+    assert client_authorizer.calls[0][:2] == ("gateway-b", "preview_relay_server")
     assert resolver.calls == [placement]
 
 
@@ -679,3 +679,23 @@ def test_mtls_preview_relay_rejects_weak_tls_and_untrusted_endpoint(tmp_path: Pa
 
     with pytest.raises(ValueError, match="endpoint"):
         PreviewRelayEndpoint("https://attacker.invalid/path", 443, "localhost")
+
+
+@pytest.mark.asyncio
+async def test_mtls_preview_relay_hides_service_discovery_failures(tmp_path: Path) -> None:
+    certificates = _certificate_fixture(tmp_path)
+    placement = _placement()
+
+    class _UnavailableDirectory:
+        def resolve(self, _placement: RunnerTunnelPlacement) -> PreviewRelayEndpoint:
+            raise RuntimeError("internal topology must not escape")
+
+    client = MutualTlsPreviewRelayClient(
+        gateway_instance_id="gateway-a",
+        endpoint_resolver=_UnavailableDirectory(),
+        tls_context=_client_context(certificates["client"]),
+        certificate_authorizer=_CertificateAuthorizer(("gateway-b",)),
+    )
+    with pytest.raises(PreviewRelayTransportError) as denied:
+        await client.forward(placement, _request(placement))
+    assert denied.value.code == "preview_relay_endpoint_unavailable"

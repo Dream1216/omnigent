@@ -24,7 +24,9 @@ class RunnerTunnelPlacementRecord(SaasBase):
     )
     runner_connection_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     routing_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
-    gateway_instance_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    gateway_instance_id: Mapped[str] = mapped_column(
+        sa.ForeignKey("saas_preview_gateway_instances.id", ondelete="RESTRICT"), nullable=False
+    )
     relay_subject: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
     ownership_token_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="active")

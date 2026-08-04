@@ -360,6 +360,22 @@ def _seed_isolation_scope(
     )
     connection.execute(
         sa.text(
+            "INSERT INTO saas_preview_gateway_instances "
+            "(id, connect_host, connect_port, server_name, failure_domain, source_revision, "
+            "adapter_contract_version, registration_token_hash, status, registered_at, "
+            "last_heartbeat_at, lease_expires_at) VALUES "
+            "(:gateway, '127.0.0.1', 8443, 'localhost', 'cn-east-1a', 'upstream', "
+            "'0.2.0', :gateway_token_hash, 'active', :now, :now, :expires)"
+        ),
+        {
+            "gateway": f"gateway-{suffix}",
+            "gateway_token_hash": _digest(f"preview-gateway:{suffix}"),
+            "now": now,
+            "expires": now + timedelta(minutes=10),
+        },
+    )
+    connection.execute(
+        sa.text(
             "INSERT INTO saas_runner_tunnel_placements "
             "(id, runner_id, runner_connection_generation, routing_generation, "
             "gateway_instance_id, relay_subject, ownership_token_hash, status, claimed_at, "

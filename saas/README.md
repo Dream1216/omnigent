@@ -85,7 +85,7 @@ boundary without changing the official server application:
   re-collects every fact before execution. It fails closed when the impact
   provider is absent, the member is an Owner, blockers exist, or facts changed.
   Tenant removal also logically removes active Space memberships;
-- all 44 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
+- all 48 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
   SECURITY` with transaction-local server-chosen Actor/Tenant/Space values.
   The packaged role bootstrap separates `saas_app`,
   `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
@@ -556,6 +556,43 @@ discovery, external CA/Trust Bundle issuance and rotation, certificate
 compromise drills, deployed cross-host topology, Preview WebSocket forwarding,
 network-partition behavior, and two failure domains remain independent release
 blockers.
+
+The next downstream-only slice replaces the Relay's injected static discovery
+and permissive lifecycle seam with PostgreSQL authority. Migration
+`p4f000000001` adds an append-only Preview Gateway Instance registry and
+purpose-separated Gateway certificate metadata. A process-lifetime Gateway ID
+is globally unique and never reusable; its internal connect host, TLS server
+name, failure domain, source revision, adapter contract, and registration-token
+digest are immutable. Token-authenticated heartbeats may only extend a bounded
+lease, draining stops new Runner ownership claims, and release or expiry makes
+both discovery and certificate authorization fail closed. Existing p4e rows
+are migrated to released, non-routable tombstones before a Placement-to-Gateway
+foreign key is installed, so an upgrade never invents a trusted endpoint.
+
+Relay client and server leaves now have distinct `preview_relay_client` and
+`preview_relay_server` purposes with exact EKUs. Both require one Gateway
+SPIFFE URI; a server leaf must cover only the registry-selected TLS server
+name. The database stores fingerprints, SPKI digests, serials, validity,
+Trust Bundle version, rotation generation, and lifecycle state, but never DER,
+private keys, or raw registration tokens. Forced RLS reveals no token hash,
+exposes only live non-secret endpoints to Executor/Preview roles, and exposes
+only the exact presented fingerprint and purpose to the certificate
+authorizer. Placement creation/renewal and Preview route reads now also require
+a live Gateway lease. Rotation has bounded overlap, revocation is immediate,
+and PostgreSQL triggers reject identity/endpoint rebinding, time reversal,
+reactivation, deletion, and live Placement ownership by a stale Gateway.
+
+Local SQLite and real PostgreSQL 16 tests cover token denial, non-reuse,
+heartbeat/drain/release/expiry, service discovery, purpose separation,
+endpoint binding, rotation/revocation, certificate invalidation on Gateway
+release, column privileges, FORCE RLS, append-only guards, Placement coupling,
+and p4f upgrade/downgrade. The exact-revision CI gate remains pending until a
+remote run records the full PostgreSQL/Chromium, official regression, Linux
+security, Pyrefly, migration, wheel, patch-replay, and source-intrusion matrix.
+The implementation wheel inventory now requires 103 artifacts. This is still
+not external CA issuance, production Trust Bundle distribution, deployed
+service discovery, cross-host failure evidence, or two-failure-domain proof;
+the release remains `NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium

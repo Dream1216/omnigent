@@ -600,7 +600,7 @@ class MutualTlsPreviewRelayServer:
                     self._certificate_authorizer.is_preview_gateway_certificate_authorized,
                     gateway_instance_id=peer_gateway_id,
                     certificate_der=certificate_der,
-                    purpose="preview_relay",
+                    purpose="preview_relay_client",
                 ),
                 timeout=self._request_timeout_seconds,
             )
@@ -782,7 +782,13 @@ class MutualTlsPreviewRelayClient:
         encoded_request = _encoded_request(
             placement, request, maximum_request_bytes=self._maximum_request_bytes
         )
-        endpoint = self._endpoint_resolver.resolve(placement)
+        try:
+            endpoint = self._endpoint_resolver.resolve(placement)
+        except Exception as exc:
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_unavailable",
+                "Preview Relay endpoint is unavailable",
+            ) from exc
         if not isinstance(endpoint, PreviewRelayEndpoint):
             raise PreviewRelayTransportError(
                 "preview_relay_endpoint_invalid", "Preview Relay endpoint is invalid"
@@ -810,7 +816,7 @@ class MutualTlsPreviewRelayClient:
                     self._certificate_authorizer.is_preview_gateway_certificate_authorized,
                     gateway_instance_id=peer_gateway_id,
                     certificate_der=certificate_der,
-                    purpose="preview_relay",
+                    purpose="preview_relay_server",
                 ),
                 timeout=self._connect_timeout_seconds,
             )

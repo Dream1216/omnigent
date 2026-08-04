@@ -78,6 +78,17 @@ from saas.control_plane.execution_models import (
     SessionTaskRecord,
     TaskRecord,
 )
+from saas.control_plane.gateway_models import (
+    PreviewGatewayCertificateRecord,
+    PreviewGatewayInstanceRecord,
+)
+from saas.control_plane.gateways import (
+    ActivatedPreviewGatewayCertificate,
+    PreviewGatewayCertificateAuthority,
+    PreviewGatewayDirectoryAuthority,
+    PreviewGatewayLifecycleError,
+    RegisteredPreviewGateway,
+)
 from saas.control_plane.governance import (
     MemberRemoved,
     MembershipGovernanceService,
@@ -227,6 +238,7 @@ __all__ = [
     "RESOURCE_ROLE_PERMISSIONS",
     "SPACE_ROLE_PERMISSIONS",
     "TENANT_ROLE_PERMISSIONS",
+    "ActivatedPreviewGatewayCertificate",
     "ActivatedRunnerCertificate",
     "AdmissionQuotaRecord",
     "ArtifactRecord",
@@ -298,6 +310,11 @@ __all__ = [
     "PermissionRisk",
     "PermissionScope",
     "PersistedRunEvent",
+    "PreviewGatewayCertificateAuthority",
+    "PreviewGatewayCertificateRecord",
+    "PreviewGatewayDirectoryAuthority",
+    "PreviewGatewayInstanceRecord",
+    "PreviewGatewayLifecycleError",
     "PreviewLeaseRecord",
     "PreviewOriginConfig",
     "PreviewRouteGrant",
@@ -312,6 +329,7 @@ __all__ = [
     "ProjectRemovalImpactProvider",
     "ProvisioningTarget",
     "QuotaReservationRecord",
+    "RegisteredPreviewGateway",
     "RemovalImpact",
     "RemovalImpactProvider",
     "RemovalPreflight",

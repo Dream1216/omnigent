@@ -150,3 +150,23 @@ context regressions, the 36/22 Linux security matrix, Pyrefly, P4e migration
 round trips, the 99-artifact wheel check, patch replay, and the source-intrusion
 budget; the transport contract gate is therefore `passed`. Eleven aggregate
 acceptance gates remain pending and the release remains `NO-GO`.
+
+The next p4f candidate persists the previously injected Preview Gateway
+directory and Relay certificate authorizer. Gateway IDs are process-lifetime
+and never reusable; immutable internal endpoints and provenance are bound to a
+hashed registration token, bounded heartbeat lease, monotonic drain/release/
+expiry lifecycle, and non-secret Outbox events. Legacy p4e Gateway references
+become released tombstones before a foreign key is installed. Placement claim,
+heartbeat, Preview route resolution, and Relay certificate authorization all
+fail when the Gateway lease is stale.
+
+Relay client and server leaves use separate exact-EKU purposes, one Gateway
+SPIFFE URI, exact server-name coverage, accepted Trust Bundle metadata, bounded
+rotation overlap, and immediate revocation. Raw tokens, certificate DER, and
+private keys never enter PostgreSQL or Outbox. Column grants plus forced RLS
+hide token hashes and reveal only live endpoint fields or the exact presented
+fingerprint/purpose. Local SQLite and real PostgreSQL 16 tests pass the
+directory, certificate, role, trigger, migration, and Placement-coupling
+contracts, but the manifest subgate deliberately remains `pending` until an
+immutable exact-revision CI record exists. The candidate wheel inventory
+requires 103 artifacts and the aggregate release remains `NO-GO`.
