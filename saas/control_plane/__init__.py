@@ -14,6 +14,12 @@ from saas.control_plane.binding_saga import (
     RuntimeResourceProvisioner,
 )
 from saas.control_plane.bindings import RuntimeBindingChanged, RuntimeBindingService
+from saas.control_plane.certificate_models import RunnerCertificateRecord
+from saas.control_plane.certificates import (
+    ActivatedRunnerCertificate,
+    CertificateLifecycleError,
+    RunnerCertificateAuthority,
+)
 from saas.control_plane.context_snapshot import (
     ContextSnapshotError,
     ContextSnapshotPolicy,
@@ -215,6 +221,7 @@ __all__ = [
     "RESOURCE_ROLE_PERMISSIONS",
     "SPACE_ROLE_PERMISSIONS",
     "TENANT_ROLE_PERMISSIONS",
+    "ActivatedRunnerCertificate",
     "AdmissionQuotaRecord",
     "ArtifactRecord",
     "ArtifactRegistration",
@@ -224,6 +231,7 @@ __all__ = [
     "AuthorizationSource",
     "AvailableScope",
     "CapabilityTokenRecord",
+    "CertificateLifecycleError",
     "ChangeSetGroupRecord",
     "ChangeSetRecord",
     "ChangeSetSpec",
@@ -312,6 +320,8 @@ __all__ = [
     "RunLease",
     "RunMutation",
     "RunRecord",
+    "RunnerCertificateAuthority",
+    "RunnerCertificateRecord",
     "RunnerConnection",
     "RunnerPoolRecord",
     "RunnerRegistrationRecord",

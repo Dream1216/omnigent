@@ -187,16 +187,19 @@ GRANT SELECT, INSERT, UPDATE ON
 TO saas_executor;
 
 -- Cross-table RLS policies are evaluated with the invoking role's table
--- privileges. These SELECT grants do not expose rows: both token tables use
--- FORCE RLS and only the role-specific exact-token policy can reveal a row.
+-- privileges. These SELECT grants do not expose rows: all three authority
+-- tables use FORCE RLS and only an exact token/certificate policy can reveal
+-- a row to its dedicated service role.
 GRANT SELECT ON
     saas_secret_access_leases,
-    saas_preview_leases
+    saas_preview_leases,
+    saas_runner_certificates
 TO saas_app, saas_governance, saas_executor, saas_secret_broker, saas_preview_gateway;
 
 GRANT SELECT ON
     saas_secret_bindings,
     saas_runs,
+    saas_runner_certificates,
     saas_runner_registrations
 TO saas_secret_broker;
 
@@ -204,6 +207,7 @@ GRANT SELECT, UPDATE ON saas_secret_access_leases TO saas_secret_broker;
 
 GRANT SELECT ON
     saas_runs,
+    saas_runner_certificates,
     saas_runner_registrations,
     saas_worktree_instances
 TO saas_preview_gateway;
@@ -246,6 +250,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_artifacts,
     saas_run_artifacts,
     saas_runner_pools,
+    saas_runner_certificates,
     saas_runner_registrations,
     saas_tenant_queue_shares,
     saas_run_dispatches,

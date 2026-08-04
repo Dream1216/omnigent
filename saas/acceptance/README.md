@@ -96,3 +96,17 @@ PostgreSQL forced-RLS and dedicated `saas_secret_broker` role matrix. It does
 not yet prove deployed certificate lifecycle, cross-host mTLS-to-PostgreSQL,
 multi-replica encrypted replay, production Vault/KMS, memory zeroization, or
 failure-domain behavior.
+
+The following certificate-lifecycle slice is intentionally narrower than a
+production PKI. External CA tooling retains private keys and signing authority;
+the SaaS control plane persists only public leaf fingerprints and lifecycle
+metadata. PostgreSQL serializes concurrent activation, enforces one active leaf
+per Runner/purpose, makes records append-only, exposes only the exact presented
+certificate through forced RLS, and invalidates a leaf on expiry, revocation,
+purpose mismatch, or Runner connection-generation change. The Secret Broker
+checks this authority before reading or redeeming a request. Its code and real
+PostgreSQL tests are listed while the contract gate remains `pending` until an
+immutable exact-revision CI record is committed. Even after that contract gate
+passes, external issuance, Trust Bundle rollout, deployed cross-host mTLS,
+expiry/compromise drills, and multi-replica reconciliation remain production
+blockers.

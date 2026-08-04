@@ -49,6 +49,18 @@ class SecretRedemptionAuthority(Protocol):
     ) -> SecretMaterial: ...
 
 
+class RunnerCertificateAuthorizer(Protocol):
+    """Replica-independent revocation and Runner-generation check for a TLS leaf."""
+
+    def is_runner_certificate_authorized(
+        self,
+        *,
+        runner_id: UUID,
+        certificate_der: bytes,
+        purpose: str,
+    ) -> bool: ...
+
+
 class SecretBrokerTransportError(RuntimeError):
     """Stable fail-closed transport error without certificate or token detail."""
 
@@ -76,25 +88,31 @@ def _require_tls13(context: ssl.SSLContext, *, server: bool) -> None:
         raise ValueError("Secret Broker client TLS context must verify the server hostname")
 
 
-def _runner_identity(writer: asyncio.StreamWriter) -> UUID:
+def _runner_certificate(writer: asyncio.StreamWriter) -> tuple[UUID, bytes]:
     ssl_object = writer.get_extra_info("ssl_object")
     if not isinstance(ssl_object, ssl.SSLObject | ssl.SSLSocket):
         raise SecretBrokerTransportError(
             "secret_broker_mtls_required", "Secret Broker requires mutual TLS"
         )
     certificate = ssl_object.getpeercert()
+    certificate_der = ssl_object.getpeercert(binary_form=True)
     subject_alt_names = certificate.get("subjectAltName", ()) if certificate else ()
     uri_identities = [
         value for kind, value in subject_alt_names if kind == "URI" and isinstance(value, str)
     ]
-    if len(uri_identities) != 1 or not _RUNNER_SPIFFE_ID.fullmatch(uri_identities[0]):
+    if (
+        len(uri_identities) != 1
+        or not _RUNNER_SPIFFE_ID.fullmatch(uri_identities[0])
+        or not isinstance(certificate_der, bytes)
+        or not certificate_der
+    ):
         raise SecretBrokerTransportError(
             "secret_broker_runner_identity_invalid",
             "Runner certificate identity is invalid",
         )
     matched = _RUNNER_SPIFFE_ID.fullmatch(uri_identities[0])
     assert matched is not None
-    return UUID(matched.group("runner"))
+    return UUID(matched.group("runner")), certificate_der
 
 
 def _parse_headers(encoded: bytes) -> tuple[str, str, dict[str, list[str]]]:
@@ -251,6 +269,7 @@ class MutualTlsSecretBrokerServer:
         authority: SecretRedemptionAuthority,
         provider: SecretValueProvider,
         tls_context: ssl.SSLContext,
+        certificate_authorizer: RunnerCertificateAuthorizer,
         *,
         expected_host: str = "secret-broker.internal",
         request_timeout_seconds: float = 5.0,
@@ -268,6 +287,7 @@ class MutualTlsSecretBrokerServer:
         self._authority = authority
         self._provider = provider
         self._tls_context = tls_context
+        self._certificate_authorizer = certificate_authorizer
         self._expected_host = expected_host
         self._request_timeout_seconds = request_timeout_seconds
         self._replay_ttl_seconds = replay_ttl_seconds
@@ -367,7 +387,18 @@ class MutualTlsSecretBrokerServer:
         writer: asyncio.StreamWriter,
     ) -> None:
         try:
-            runner_id = _runner_identity(writer)
+            runner_id, certificate_der = _runner_certificate(writer)
+            certificate_authorized = await asyncio.to_thread(
+                self._certificate_authorizer.is_runner_certificate_authorized,
+                runner_id=runner_id,
+                certificate_der=certificate_der,
+                purpose="secret_broker",
+            )
+            if not certificate_authorized:
+                raise SecretBrokerTransportError(
+                    "secret_broker_runner_certificate_denied",
+                    "Runner certificate is not active",
+                )
             encoded_head = await asyncio.wait_for(
                 reader.readuntil(b"\r\n\r\n"),
                 timeout=self._request_timeout_seconds,
@@ -422,6 +453,7 @@ class MutualTlsSecretBrokerServer:
                 status = 503
             elif exc.code in {
                 "secret_broker_mtls_required",
+                "secret_broker_runner_certificate_denied",
                 "secret_broker_runner_identity_invalid",
             }:
                 status = 403
@@ -607,6 +639,7 @@ class MutualTlsSecretBrokerClient:
 __all__ = [
     "MutualTlsSecretBrokerClient",
     "MutualTlsSecretBrokerServer",
+    "RunnerCertificateAuthorizer",
     "SecretBrokerTransportError",
     "SecretRedemptionAuthority",
 ]

@@ -58,6 +58,7 @@ _CONTROL_PLANE_RLS_TABLES = {
     "saas_artifacts",
     "saas_run_artifacts",
     "saas_runner_pools",
+    "saas_runner_certificates",
     "saas_runner_registrations",
     "saas_tenant_queue_shares",
     "saas_run_dispatches",

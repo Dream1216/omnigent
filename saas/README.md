@@ -442,6 +442,44 @@ both patches replay, and source intrusion remains 8 files/432 lines with a
 artifacts. Eleven aggregate acceptance gates and the production decision remain
 `NO-GO`.
 
+The next P4 control-plane slice adds a durable Runner certificate lifecycle
+authority without turning the SaaS database into a CA. External PKI remains
+responsible for key generation, signing, chain validation, and private-key
+custody. Migration `p4d000000001` stores only public leaf metadata: SHA-256
+certificate and SPKI fingerprints, serial, exact canonical Runner SPIFFE URI,
+purpose, Trust Bundle version, validity, Runner connection generation, and
+rotation generation. An activation is serialized on the Runner registration,
+is idempotent under concurrent retry, permits only one active certificate per
+Runner and purpose, and moves older leaves into a bounded retiring overlap.
+Revocation is immediate. PostgreSQL constraints, a partial unique index, and
+append-only/monotonic triggers prevent time reversal, reactivation, authority
+rebinding, and deletion. Activation and revocation produce non-secret Outbox
+events; neither certificate DER nor a private key enters the database or event
+payload.
+
+Dedicated Secret Broker and Preview Gateway roles cannot enumerate this
+table. Transaction-local, server-derived fingerprint and purpose settings
+expose only one currently valid, non-revoked certificate; its Runner
+registration becomes visible only when the stored connection generation still
+matches the current Runner incarnation. `MutualTlsSecretBrokerServer` now
+performs that durable certificate/generation authorization immediately after
+the TLS handshake and before reading a redemption request or invoking Secret
+Authority. A revoked,
+expired, wrong-purpose, stale-generation, or unregistered leaf therefore
+fails closed even when its CA chain is still cryptographically valid. Real
+PostgreSQL tests cover forced RLS, concurrent activation, bounded overlap,
+immediate revocation, Runner reconnect invalidation, role separation, and
+database lifecycle guards. The wheel gate now requires the two authority
+modules and P4d migration as artifacts 91 through 93.
+
+This is a certificate lifecycle contract, not deployed PKI evidence. Production
+still requires an external issuer and Trust Bundle distribution mechanism,
+automated issuance/renewal and emergency revocation, service discovery,
+multi-replica/cross-host Broker and Preview composition, alerting, and expiry /
+CA-compromise drills. Until an exact-revision CI record exists, even this
+contract subgate remains pending; the aggregate P4 gate and release decision
+remain `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

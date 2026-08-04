@@ -8,6 +8,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import Connection, engine_from_config, pool
 
+from saas.control_plane import certificate_models as _certificate_models  # noqa: F401
 from saas.control_plane import execution_models as _execution_models  # noqa: F401
 from saas.control_plane import isolation_models as _isolation_models  # noqa: F401
 from saas.control_plane import scheduling_models as _scheduling_models  # noqa: F401

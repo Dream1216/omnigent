@@ -23,6 +23,7 @@ _ISOLATION_RLS_TABLES = {
     "saas_run_isolation_grants",
     "saas_secret_access_leases",
     "saas_secret_bindings",
+    "saas_runner_certificates",
 }
 
 

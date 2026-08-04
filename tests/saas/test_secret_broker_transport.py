@@ -198,6 +198,22 @@ class _Authority:
         )
 
 
+class _CertificateAuthorizer:
+    def __init__(self, allowed_runner_ids: tuple[UUID, ...]) -> None:
+        self.allowed_runner_ids = frozenset(allowed_runner_ids)
+        self.calls: list[tuple[UUID, str, int]] = []
+
+    def is_runner_certificate_authorized(
+        self,
+        *,
+        runner_id: UUID,
+        certificate_der: bytes,
+        purpose: str,
+    ) -> bool:
+        self.calls.append((runner_id, purpose, len(certificate_der)))
+        return runner_id in self.allowed_runner_ids
+
+
 class _BrokerThread:
     def __init__(self, server: MutualTlsSecretBrokerServer) -> None:
         self._server = server
@@ -247,6 +263,7 @@ def _started_broker(
     runner_ids: tuple[UUID, ...],
     expected_runner_id: UUID,
     max_replay_entries: int = 4096,
+    authorized_runner_ids: tuple[UUID, ...] | None = None,
 ) -> tuple[
     MutualTlsSecretBrokerServer,
     _BrokerThread,
@@ -261,6 +278,9 @@ def _started_broker(
         authority,
         provider,
         _server_context(certificates["server"]),
+        _CertificateAuthorizer(
+            runner_ids if authorized_runner_ids is None else authorized_runner_ids
+        ),
         max_replay_entries=max_replay_entries,
     )
     broker_thread = _BrokerThread(server)
@@ -455,6 +475,36 @@ def test_mtls_secret_broker_rejects_wrong_runner_certificate_and_missing_client_
     assert authority.calls[0][1] == wrong_runner_id
 
 
+def test_mtls_secret_broker_checks_durable_certificate_lifecycle_before_authority(
+    tmp_path: Path,
+) -> None:
+    runner_id = uuid4()
+    server, broker_thread, authority, _, certificates = _started_broker(
+        tmp_path,
+        runner_ids=(runner_id,),
+        expected_runner_id=runner_id,
+        authorized_runner_ids=(),
+    )
+    client = MutualTlsSecretBrokerClient(
+        base_url=f"https://127.0.0.1:{server.port}",
+        runner_id=runner_id,
+        tls_context=_client_context(certificates["runner-0"]),
+    )
+    try:
+        with pytest.raises(SecretBrokerTransportError) as denied:
+            client.redeem_secret(
+                token="lease-token-once",
+                runner_id=runner_id,
+                run_id=uuid4(),
+                provider=_RunnerProviderMustNotRun(),
+            )
+        assert denied.value.code == "secret_broker_runner_certificate_denied"
+    finally:
+        client.close()
+        broker_thread.close()
+    assert authority.calls == []
+
+
 def test_mtls_secret_broker_rejects_weak_or_nonverifying_tls_context(tmp_path: Path) -> None:
     runner_id = uuid4()
     certificates = _certificate_fixture(tmp_path, (runner_id,))
@@ -464,7 +514,12 @@ def test_mtls_secret_broker_rejects_weak_or_nonverifying_tls_context(tmp_path: P
     weak_server_context = _server_context(certificates["server"])
     weak_server_context.minimum_version = ssl.TLSVersion.TLSv1_2
     with pytest.raises(ValueError, match=r"TLS 1\.3"):
-        MutualTlsSecretBrokerServer(authority, provider, weak_server_context)
+        MutualTlsSecretBrokerServer(
+            authority,
+            provider,
+            weak_server_context,
+            _CertificateAuthorizer((runner_id,)),
+        )
 
     weak_client_context = _client_context(certificates["runner-0"])
     weak_client_context.check_hostname = False
