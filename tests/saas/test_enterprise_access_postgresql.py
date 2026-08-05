@@ -374,7 +374,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
             connection.execute(
                 sa.text("SELECT id FROM saas_enterprise_access_preflights")
             ).scalars()
-        ) == {preflight_a.preflight_id}
+        ) == {preflight_a.preflight_id, role_preflight_a.preflight_id}
         assert group_b != group_a and role_b != role_a
         assert preflight_b.preflight_id != preflight_a.preflight_id
 
