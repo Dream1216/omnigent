@@ -11,6 +11,9 @@
     scopes: [],
     projects: [],
     selectedProject: null,
+    members: [],
+    selectedMember: null,
+    invitations: [],
     groups: [],
     roles: [],
     approvalInbox: [],
@@ -18,6 +21,8 @@
     groupLoadRevision: 0,
     roleLoadRevision: 0,
     approvalLoadRevision: 0,
+    memberLoadRevision: 0,
+    invitationLoadRevision: 0,
     view: "projects",
   };
 
@@ -78,6 +83,8 @@
     state.groupLoadRevision += 1;
     state.roleLoadRevision += 1;
     state.approvalLoadRevision += 1;
+    state.memberLoadRevision += 1;
+    state.invitationLoadRevision += 1;
     state.actorId = "";
     state.csrf = "";
     state.contextSnapshot = "";
@@ -86,6 +93,9 @@
     state.spaceId = "";
     state.projects = [];
     state.selectedProject = null;
+    state.members = [];
+    state.selectedMember = null;
+    state.invitations = [];
     state.groups = [];
     state.roles = [];
     state.approvalInbox = [];
@@ -97,6 +107,7 @@
     document.querySelector(".system-state").classList.remove("connected");
     $("#context-state").textContent = "NO CONTEXT";
     $("#snapshot-state").textContent = "UNBOUND";
+    hideOneTimeToken();
     showView("projects", { load: false });
   }
 
@@ -188,6 +199,234 @@
 
   function shortId(value) {
     return value ? value.slice(0, 8) : "—";
+  }
+
+  function formatDate(value) {
+    return value ? new Date(value).toLocaleString() : "—";
+  }
+
+  function memberLabel(member) {
+    return member.display_name || member.primary_email_normalized || shortId(member.user_id);
+  }
+
+  function hideOneTimeToken() {
+    $("#invite-one-time-token").textContent = "";
+    $("#invite-token-card").hidden = true;
+  }
+
+  function showOneTimeToken(token) {
+    if (!token) {
+      hideOneTimeToken();
+      log("Idempotent replay completed; bearer token is never replayed", "warning");
+      return;
+    }
+    $("#invite-one-time-token").textContent = token;
+    $("#invite-token-card").hidden = false;
+  }
+
+  function renderMembers(message = "当前 Tenant 没有可见成员。") {
+    const list = $("#tenant-member-list");
+    list.replaceChildren();
+    const count = String(state.members.length).padStart(2, "0");
+    $("#member-count").textContent = count;
+    $("#member-nav-count").textContent = count;
+    if (!state.members.length) {
+      list.append(governanceEmpty(message));
+      renderMemberDetail();
+      return;
+    }
+    state.members.forEach((member) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `member-row${state.selectedMember?.user_id === member.user_id ? " selected" : ""}`;
+      row.dataset.testid = `tenant-member-${member.user_id}`;
+      const identity = document.createElement("span");
+      const name = document.createElement("strong");
+      name.textContent = memberLabel(member);
+      const detail = document.createElement("small");
+      detail.textContent = `${member.primary_email_normalized || "NO EMAIL"} · ${member.user_id}`;
+      identity.append(name, detail);
+      const meta = document.createElement("span");
+      meta.className = "member-row-meta";
+      const role = document.createElement("span");
+      role.textContent = member.tenant_role.toUpperCase();
+      const status = document.createElement("span");
+      status.textContent = member.tenant_status.toUpperCase();
+      meta.append(role, status);
+      row.append(identity, meta);
+      row.addEventListener("click", () => selectMember(member));
+      list.append(row);
+    });
+  }
+
+  function selectMember(member) {
+    state.selectedMember = member;
+    renderMembers();
+    renderMemberDetail();
+    log(`Selected Tenant member ${memberLabel(member)}`);
+  }
+
+  function renderMemberDetail() {
+    const member = state.selectedMember;
+    $("#member-detail-empty").hidden = Boolean(member);
+    $("#member-detail-content").hidden = !member;
+    if (!member) return;
+    const status = $("#member-detail-status");
+    status.textContent = `${member.tenant_status.toUpperCase()} · V${member.tenant_membership_version}`;
+    status.dataset.status = member.tenant_status;
+    $("#member-detail-name").textContent = memberLabel(member);
+    $("#member-detail-email").textContent = member.primary_email_normalized || "NO VERIFIED EMAIL";
+    $("#member-detail-id").textContent = member.user_id;
+    $("#tenant-member-role").value = member.tenant_role === "owner" ? "member" : member.tenant_role;
+    $("#tenant-role-form").querySelector("button").disabled = member.tenant_role === "owner";
+
+    const loginMethods = $("#member-login-methods");
+    loginMethods.replaceChildren();
+    member.login_methods.forEach((method) => {
+      const chip = document.createElement("span");
+      chip.className = "login-method-chip";
+      chip.dataset.verified = String(method.email_verified);
+      chip.textContent = `${method.provider.toUpperCase()} / ${method.status.toUpperCase()} / ${method.email_verified ? "VERIFIED" : "UNVERIFIED"}`;
+      loginMethods.append(chip);
+    });
+    if (!member.login_methods.length) loginMethods.append(governanceEmpty("没有可公开的登录方式姿态。"));
+
+    const statusToggle = $("#tenant-member-status-toggle");
+    statusToggle.textContent = member.tenant_status === "active" ? "SUSPEND TENANT ACCESS" : "RESUME TENANT ACCESS";
+    statusToggle.disabled = member.tenant_role === "owner" || member.tenant_status === "removed";
+    $("#tenant-owner-transfer").disabled =
+      member.user_id === state.actorId || member.tenant_status !== "active" || member.tenant_role === "owner";
+    $("#tenant-member-remove").disabled = member.user_id === state.actorId || member.tenant_role === "owner";
+
+    const spaceList = $("#member-space-access");
+    spaceList.replaceChildren();
+    $("#member-space-label").textContent = `${member.space_access.length} SPACE(S)`;
+    if (!member.space_access.length) {
+      spaceList.append(governanceEmpty("该成员当前没有 Space Membership。"));
+      return;
+    }
+    member.space_access.forEach((access) => {
+      const card = document.createElement("article");
+      card.className = "space-access-card";
+      card.dataset.testid = `member-space-${access.space_id}`;
+      const heading = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = access.space_name;
+      const version = document.createElement("small");
+      version.textContent = `${access.status.toUpperCase()} · V${access.version}`;
+      heading.append(name, version);
+      const actions = document.createElement("div");
+      actions.className = "space-access-actions";
+      const role = document.createElement("select");
+      role.dataset.testid = `member-space-role-${access.space_id}`;
+      ["admin", "operator", "member", "viewer"].forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value.toUpperCase();
+        option.selected = value === access.role;
+        role.append(option);
+      });
+      role.disabled = access.role === "owner";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.textContent = "SET ROLE";
+      save.disabled = access.role === "owner";
+      save.addEventListener("click", () => void updateSpaceRole(member, access, role.value));
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.textContent = access.status === "active" ? "SUSPEND" : "RESUME";
+      toggle.disabled = access.role === "owner" || access.status === "removed";
+      toggle.addEventListener("click", () => void mutateSpaceStatus(member, access));
+      actions.append(role, save, toggle);
+      card.append(heading, actions);
+      spaceList.append(card);
+    });
+  }
+
+  async function loadMembers() {
+    const revision = ++state.memberLoadRevision;
+    const actorId = state.actorId;
+    const tenantId = state.tenantId;
+    const selectedId = state.selectedMember?.user_id || "";
+    const query = $("#tenant-member-search").value.trim();
+    const status = $("#tenant-member-status").value;
+    const parameters = new URLSearchParams({ limit: "100" });
+    if (query) parameters.set("query", query);
+    if (status) parameters.set("status", status);
+    try {
+      const result = await api(tenantPath(`/members?${parameters}`));
+      if (revision !== state.memberLoadRevision || actorId !== state.actorId || tenantId !== state.tenantId) return;
+      state.members = result.items;
+      state.selectedMember = state.members.find((value) => value.user_id === selectedId) || null;
+      renderMembers();
+      renderMemberDetail();
+      log(`Loaded ${state.members.length} Tenant member(s)`, "success");
+    } catch (error) {
+      if (revision !== state.memberLoadRevision || actorId !== state.actorId || tenantId !== state.tenantId) return;
+      state.members = [];
+      state.selectedMember = null;
+      renderMembers("当前角色无 Tenant 成员目录读取权限。");
+      log(error.message, "warning");
+    }
+  }
+
+  function renderInvitations(message = "当前 Tenant 没有邀请记录。") {
+    const list = $("#invitation-list");
+    list.replaceChildren();
+    if (!state.invitations.length) return list.append(governanceEmpty(message));
+    state.invitations.forEach((invitation) => {
+      const card = document.createElement("article");
+      card.className = "invitation-card";
+      card.dataset.testid = `invitation-${invitation.invitation_id}`;
+      const heading = document.createElement("div");
+      const email = document.createElement("strong");
+      email.textContent = invitation.email_normalized;
+      const status = document.createElement("span");
+      status.className = "status-chip";
+      status.textContent = invitation.status.toUpperCase();
+      heading.append(email, status);
+      const meta = document.createElement("p");
+      meta.textContent = `${invitation.tenant_role.toUpperCase()}${invitation.space_name ? ` · ${invitation.space_name} / ${invitation.space_role.toUpperCase()}` : " · TENANT ONLY"} · V${invitation.version} · EXPIRES ${formatDate(invitation.expires_at)}`;
+      card.append(heading, meta);
+      if (["pending", "expired"].includes(invitation.status)) {
+        const actions = document.createElement("div");
+        actions.className = "invitation-actions";
+        const reissue = document.createElement("button");
+        reissue.type = "button";
+        reissue.textContent = "ROTATE + REISSUE";
+        reissue.addEventListener("click", () => void reissueInvitation(invitation));
+        const revoke = document.createElement("button");
+        revoke.type = "button";
+        revoke.className = "danger-button";
+        revoke.textContent = "REVOKE";
+        revoke.addEventListener("click", () => void revokeInvitation(invitation));
+        actions.append(reissue, revoke);
+        card.append(actions);
+      }
+      list.append(card);
+    });
+  }
+
+  async function loadInvitations() {
+    const revision = ++state.invitationLoadRevision;
+    const actorId = state.actorId;
+    const tenantId = state.tenantId;
+    try {
+      const result = await api(tenantPath("/membership-invitations?limit=100"));
+      if (revision !== state.invitationLoadRevision || actorId !== state.actorId || tenantId !== state.tenantId) return;
+      state.invitations = result.items;
+      renderInvitations();
+    } catch (error) {
+      if (revision !== state.invitationLoadRevision || actorId !== state.actorId || tenantId !== state.tenantId) return;
+      state.invitations = [];
+      renderInvitations("当前角色无邀请台账读取权限。");
+      log(error.message, "warning");
+    }
+  }
+
+  async function loadMemberWorkspace() {
+    if (!state.contextSnapshot) return;
+    await Promise.all([loadMembers(), loadInvitations()]);
   }
 
   function operationLabel(value) {
@@ -447,13 +686,19 @@
   }
 
   function showView(view, options = {}) {
+    if (state.view === "members" && view !== "members") hideOneTimeToken();
     state.view = view;
     const approvals = view === "approvals";
-    $("#project-board").hidden = approvals;
-    $("#inspector").hidden = approvals;
+    const members = view === "members";
+    const projects = view === "projects";
+    $("#project-board").hidden = !projects;
+    $("#inspector").hidden = !projects;
+    $("#member-board").hidden = !members;
     $("#approval-board").hidden = !approvals;
-    $("#view-projects").classList.toggle("active", !approvals);
+    $("#view-projects").classList.toggle("active", projects);
+    $("#view-members").classList.toggle("active", members);
     $("#view-approvals").classList.toggle("active", approvals);
+    if (members && options.load !== false) void loadMemberWorkspace();
     if (approvals && options.load !== false) void loadApprovalWorkspace();
   }
 
@@ -581,6 +826,232 @@
     }
   }
 
+  async function updateTenantRole() {
+    const member = state.selectedMember;
+    if (!member) return;
+    const role = $("#tenant-member-role").value;
+    if (role === member.tenant_role) return log("membership_unchanged: Tenant Role is already active", "warning");
+    const reason = await openActionDialog({
+      title: "更新 Tenant Role",
+      operation: role === "admin" ? "HIGH RISK / FRESH AUTH REQUIRED" : "TENANT MEMBERSHIP / ROLE",
+      target: memberLabel(member),
+      version: member.tenant_membership_version,
+      summary: { current_role: member.tenant_role, next_role: role, current_status: member.tenant_status },
+      confirm: "APPLY VERSIONED ROLE",
+      warning: role === "admin" ? "Admin 提权仅允许 Tenant Owner 在最近 5 分钟认证后执行，并会撤销目标用户全部会话。" : "角色变更使用 CAS 版本并撤销目标用户全部会话。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/members/${member.user_id}/role`), {
+        method: "PUT",
+        headers: { "Idempotency-Key": idempotency("ui-tenant-member-role") },
+        body: JSON.stringify({ role, expected_version: member.tenant_membership_version, reason }),
+      });
+      log(`Tenant Role changed at V${result.membership_version}; ${result.revoked_session_count} session(s) revoked`, "success");
+      await loadMembers();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function mutateTenantStatus() {
+    const member = state.selectedMember;
+    if (!member) return;
+    const action = member.tenant_status === "active" ? "suspend" : "resume";
+    const reason = await openActionDialog({
+      title: action === "suspend" ? "暂停 Tenant 访问" : "恢复 Tenant 访问",
+      operation: `TENANT MEMBERSHIP / ${action.toUpperCase()}`,
+      target: memberLabel(member),
+      version: member.tenant_membership_version,
+      summary: { current_status: member.tenant_status, next_status: action === "suspend" ? "suspended" : "active" },
+      confirm: `${action.toUpperCase()} TENANT ACCESS`,
+      warning: action === "suspend" ? "暂停将提升用户 Security Version 并撤销其全部会话。" : "恢复不会复活旧会话，用户必须重新认证。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/members/${member.user_id}/${action}`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency(`ui-tenant-member-${action}`) },
+        body: JSON.stringify({ expected_version: member.tenant_membership_version, reason }),
+      });
+      log(`Tenant access ${action}d at V${result.membership_version}`, "success");
+      await loadMembers();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function updateSpaceRole(member, access, role) {
+    if (role === access.role) return log("membership_unchanged: Space Role is already active", "warning");
+    const reason = await openActionDialog({
+      title: "更新 Space Role",
+      operation: role === "admin" ? "HIGH RISK / FRESH AUTH REQUIRED" : "SPACE MEMBERSHIP / ROLE",
+      target: `${memberLabel(member)} / ${access.space_name}`,
+      version: access.version,
+      summary: { current_role: access.role, next_role: role, current_status: access.status },
+      confirm: "APPLY SPACE ROLE",
+      warning: "服务端会重新验证 Tenant 与 Space 管理权限，CAS 成功后撤销目标用户全部会话。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/spaces/${access.space_id}/members/${member.user_id}/role`), {
+        method: "PUT",
+        headers: { "Idempotency-Key": idempotency("ui-space-member-role") },
+        body: JSON.stringify({ role, expected_version: access.version, reason }),
+      });
+      log(`Space Role changed at V${result.membership_version}`, "success");
+      await loadMembers();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function mutateSpaceStatus(member, access) {
+    const action = access.status === "active" ? "suspend" : "resume";
+    const reason = await openActionDialog({
+      title: action === "suspend" ? "暂停 Space 访问" : "恢复 Space 访问",
+      operation: `SPACE MEMBERSHIP / ${action.toUpperCase()}`,
+      target: `${memberLabel(member)} / ${access.space_name}`,
+      version: access.version,
+      summary: { current_status: access.status, next_status: action === "suspend" ? "suspended" : "active" },
+      confirm: `${action.toUpperCase()} SPACE ACCESS`,
+      warning: "Space 访问变更同样提升 Security Version，旧会话不会继续生效。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/spaces/${access.space_id}/members/${member.user_id}/${action}`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency(`ui-space-member-${action}`) },
+        body: JSON.stringify({ expected_version: access.version, reason }),
+      });
+      log(`Space access ${action}d at V${result.membership_version}`, "success");
+      await loadMembers();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function transferTenantOwner() {
+    const target = state.selectedMember;
+    if (!target) return;
+    const reason = await openActionDialog({
+      title: "转移 Tenant Owner",
+      operation: "IRREVERSIBLE AUTHORITY TRANSFER",
+      target: memberLabel(target),
+      version: target.tenant_membership_version,
+      summary: { target_role: target.tenant_role, target_status: target.tenant_status },
+      confirm: "TRANSFER OWNER + END SESSION",
+      warning: "成功后当前 Owner 降为 Admin，目标提升为 Owner，双方会话被撤销，当前控制台立即退出。",
+    });
+    if (!reason) return;
+    try {
+      const unfiltered = await api(tenantPath("/members?limit=100"));
+      const source = unfiltered.items.find((member) => member.user_id === state.actorId);
+      if (!source || source.tenant_role !== "owner") throw new Error("owner_required: current actor is not the Tenant Owner");
+      await api(tenantPath("/ownership-transfers"), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-owner-transfer") },
+        body: JSON.stringify({
+          to_user_id: target.user_id,
+          source_expected_version: source.tenant_membership_version,
+          target_expected_version: target.tenant_membership_version,
+          reason,
+          space_id: null,
+        }),
+      });
+      log(`Tenant Owner transferred to ${memberLabel(target)}; session ended`, "success");
+      setLoggedOut();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function preflightMemberRemoval() {
+    const member = state.selectedMember;
+    if (!member) return;
+    try {
+      const preflight = await api(tenantPath(`/members/${member.user_id}/removal-preflights`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-member-removal-preflight") },
+        body: JSON.stringify({ space_id: null }),
+      });
+      const reason = await openActionDialog({
+        title: preflight.blocking_count ? "移除被依赖阻断" : "执行成员移除",
+        operation: "MEMBER REMOVAL / SERVER IMPACT SNAPSHOT",
+        target: memberLabel(member),
+        version: member.tenant_membership_version,
+        summary: {
+          blocking_count: preflight.blocking_count,
+          snapshot_hash: preflight.snapshot_hash.slice(0, 16),
+          expires_at: formatDate(preflight.expires_at),
+        },
+        confirm: preflight.blocking_count ? "ACKNOWLEDGE BLOCKERS" : "EXECUTE EXACT SNAPSHOT",
+        warning: preflight.blocking_count ? "存在阻断依赖，控制台不会提交删除。请先转移资源所有权后重新预检。" : "服务端执行前会重新验证快照哈希、过期时间、当前权限和最近认证。",
+      });
+      if (!reason || preflight.blocking_count) return;
+      const removed = await api(tenantPath(`/member-removal-preflights/${preflight.preflight_id}/execute`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-member-removal-execute") },
+        body: JSON.stringify({ reason }),
+      });
+      log(`Member removed; ${removed.removed_space_memberships} Space membership(s) closed`, "success");
+      state.selectedMember = null;
+      await loadMembers();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function reissueInvitation(invitation) {
+    const reason = await openActionDialog({
+      title: "旋转 Invitation Token",
+      operation: "INVITATION / ROTATE + REISSUE",
+      target: invitation.email_normalized,
+      version: invitation.version,
+      summary: { status: invitation.status, expires_at: formatDate(invitation.expires_at) },
+      confirm: "INVALIDATE OLD TOKEN",
+      warning: "旧 Token 将立即失效；新 Token 只在本次响应显示一次。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/membership-invitations/${invitation.invitation_id}/reissue`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-invitation-reissue") },
+        body: JSON.stringify({ expected_version: invitation.version, ttl_hours: 168, reason }),
+      });
+      showOneTimeToken(result.one_time_token);
+      log(`Invitation token rotated at V${result.version}`, "success");
+      await loadInvitations();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function revokeInvitation(invitation) {
+    const reason = await openActionDialog({
+      title: "撤销 Invitation",
+      operation: "INVITATION / REVOKE",
+      target: invitation.email_normalized,
+      version: invitation.version,
+      summary: { status: invitation.status, expires_at: formatDate(invitation.expires_at) },
+      confirm: "REVOKE INVITATION",
+      warning: "撤销后 Token 永久失效；如需重新邀请必须生成新 Token。",
+    });
+    if (!reason) return;
+    try {
+      const result = await api(tenantPath(`/membership-invitations/${invitation.invitation_id}/revoke`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-invitation-revoke") },
+        body: JSON.stringify({ expected_version: invitation.version, reason }),
+      });
+      hideOneTimeToken();
+      log(`Invitation revoked at V${result.version}`, "success");
+      await loadInvitations();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
   function showFailure(element, error) {
     element.textContent = error.message;
     element.classList.add("shake");
@@ -589,8 +1060,68 @@
   }
 
   $("#view-projects").addEventListener("click", () => showView("projects"));
+  $("#view-members").addEventListener("click", () => showView("members"));
   $("#view-approvals").addEventListener("click", () => showView("approvals"));
   $("#approval-refresh").addEventListener("click", () => void loadApprovalWorkspace());
+  $("#invitation-refresh").addEventListener("click", () => void loadInvitations());
+  $("#invite-token-dismiss").addEventListener("click", hideOneTimeToken);
+
+  $("#member-filter-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.selectedMember = null;
+    void loadMembers();
+  });
+  $("#tenant-role-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void updateTenantRole();
+  });
+  $("#tenant-member-status-toggle").addEventListener("click", () => void mutateTenantStatus());
+  $("#tenant-owner-transfer").addEventListener("click", () => void transferTenantOwner());
+  $("#tenant-member-remove").addEventListener("click", () => void preflightMemberRemoval());
+  $("#invite-space-enabled").addEventListener("change", () => {
+    $("#invite-space-role").disabled = !$("#invite-space-enabled").checked;
+  });
+
+  $("#invitation-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = $("#invite-email").value.trim();
+    const tenantRole = $("#invite-tenant-role").value;
+    const includeSpace = $("#invite-space-enabled").checked;
+    const reason = await openActionDialog({
+      title: "签发成员邀请",
+      operation: tenantRole === "admin" || (includeSpace && $("#invite-space-role").value === "admin") ? "PRIVILEGED INVITATION / FRESH AUTH" : "MEMBERSHIP INVITATION / ISSUE",
+      target: email,
+      version: 1,
+      summary: {
+        tenant_role: tenantRole,
+        space_role: includeSpace ? $("#invite-space-role").value : "none",
+        ttl_hours: Number($("#invite-ttl").value),
+      },
+      confirm: "ISSUE ONE-TIME TOKEN",
+      warning: "Token 只在成功响应中显示一次；服务端仅持久化摘要，Outbox 不包含明文 Token。",
+    });
+    if (!reason) return;
+    try {
+      const created = await api(tenantPath("/membership-invitations"), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-invitation-create") },
+        body: JSON.stringify({
+          email,
+          tenant_role: tenantRole,
+          space_id: includeSpace ? state.spaceId : null,
+          space_role: includeSpace ? $("#invite-space-role").value : null,
+          ttl_hours: Number($("#invite-ttl").value),
+          reason,
+        }),
+      });
+      $("#invite-email").value = "";
+      showOneTimeToken(created.one_time_token);
+      log(`Invitation ${shortId(created.invitation_id)} issued`, "success");
+      await loadInvitations();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  });
 
   $("#action-dialog-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -688,6 +1219,7 @@
       state.contextSnapshot = context.context_snapshot;
       $("#snapshot-state").textContent = `SIGNED / ${context.max_age_seconds}s`;
       await loadProjects();
+      if (state.view === "members") await loadMemberWorkspace();
       if (state.view === "approvals") await loadApprovalWorkspace();
       document.querySelector(".system-state").classList.add("connected");
       $("#context-state").textContent = `SPACE / ${state.spaceId.slice(0, 8)}`;

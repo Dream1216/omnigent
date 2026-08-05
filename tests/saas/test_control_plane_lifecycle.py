@@ -500,6 +500,32 @@ def test_membership_version_conflict_rolls_back_security_invalidation(
 def test_high_risk_membership_changes_require_dedicated_operations(
     lifecycle: LifecycleFixture,
 ) -> None:
+    with pytest.raises(LifecycleError) as privileged_invitation:
+        lifecycle.service.create_invitation(
+            actor_id=lifecycle.actor_id,
+            tenant_id=lifecycle.tenant_id,
+            email="privileged@example.com",
+            tenant_role="admin",
+            expires_at=NOW + timedelta(hours=1),
+            idempotency_key="admin-invitation-without-fresh-auth",
+            reason="temporary administration coverage",
+            now=NOW,
+        )
+    assert privileged_invitation.value.code == "fresh_authentication_required"
+
+    admin_invitation = lifecycle.service.create_invitation(
+        actor_id=lifecycle.actor_id,
+        tenant_id=lifecycle.tenant_id,
+        email="privileged@example.com",
+        tenant_role="admin",
+        expires_at=NOW + timedelta(hours=1),
+        idempotency_key="admin-invitation-with-fresh-auth",
+        reason="temporary administration coverage",
+        reauthenticated_at=NOW,
+        now=NOW,
+    )
+    assert admin_invitation.token
+
     with pytest.raises(LifecycleError) as elevation:
         lifecycle.service.update_tenant_membership(
             actor_id=lifecycle.actor_id,
@@ -511,7 +537,21 @@ def test_high_risk_membership_changes_require_dedicated_operations(
             idempotency_key="admin-elevation",
             now=NOW,
         )
-    assert elevation.value.code == "privileged_role_operation_required"
+    assert elevation.value.code == "fresh_authentication_required"
+
+    elevated = lifecycle.service.update_tenant_membership(
+        actor_id=lifecycle.actor_id,
+        tenant_id=lifecycle.tenant_id,
+        user_id=lifecycle.target_id,
+        role="admin",
+        status="active",
+        expected_version=1,
+        idempotency_key="admin-elevation-with-fresh-auth",
+        reason="temporary Tenant administration rotation",
+        reauthenticated_at=NOW,
+        now=NOW,
+    )
+    assert elevated.membership_version == 2
 
     with pytest.raises(LifecycleError) as removal:
         lifecycle.service.update_space_membership(

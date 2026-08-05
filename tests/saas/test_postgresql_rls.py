@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Barrier, Lock
 from uuid import UUID, uuid4
@@ -19,7 +20,9 @@ from saas.control_plane import (
     IdentityManagementService,
     LifecycleError,
     MembershipGovernanceService,
+    MembershipLifecycleService,
     OutboxDispatcher,
+    TenantMemberAdministrationService,
 )
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.outbox_worker import verify_dispatcher_database_role
@@ -235,6 +238,405 @@ def test_real_postgresql_rls_denies_cross_tenant_and_missing_context() -> None:
             {"id": event_id},
         )
         assert result.rowcount == 1
+
+    engine.dispose()
+
+
+def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(_postgres_url())
+    tenant_a, tenant_b = uuid4(), uuid4()
+    space_a, space_b = uuid4(), uuid4()
+    owner_a, member_a, invitee_a, owner_b, member_b = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    invitation_a, rotatable_a, invitation_b = uuid4(), uuid4(), uuid4()
+    raw_invitation_token = "pg-member-invitation-token-a-000000000000"
+    invitation_token_hash = sha256(raw_invitation_token.encode()).hexdigest()
+    governance_role = "saas_rls_member_admin_login"
+    authenticator_role = "saas_rls_member_auth_login"
+
+    with engine.begin() as connection:
+        _migrate(connection, root)
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql(
+            f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{governance_role}') THEN
+                    CREATE ROLE {governance_role} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{authenticator_role}') THEN
+                    CREATE ROLE {authenticator_role} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+                END IF;
+            END
+            $$;
+            ALTER ROLE {governance_role} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            ALTER ROLE {authenticator_role} NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            GRANT saas_governance TO {governance_role};
+            GRANT saas_authenticator TO {authenticator_role};
+            """
+        )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_global_users "
+                "(id, status, display_name, primary_email_normalized, security_version) "
+                "VALUES (:id, 'active', :display_name, :email, 1)"
+            ),
+            [
+                {"id": owner_a, "display_name": "Owner A", "email": "owner-a@example.test"},
+                {"id": member_a, "display_name": "Member A", "email": "member-a@example.test"},
+                {
+                    "id": invitee_a,
+                    "display_name": "Invitee A",
+                    "email": "invitee-a@example.test",
+                },
+                {"id": owner_b, "display_name": "Owner B", "email": "owner-b@example.test"},
+                {"id": member_b, "display_name": "Member B", "email": "member-b@example.test"},
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_identity_connections "
+                "(id, user_id, provider, issuer, subject, email_normalized, "
+                "email_verified, status) VALUES "
+                "(:id, :user_id, 'oidc', :issuer, :subject, :email, true, 'active')"
+            ),
+            [
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "issuer": f"https://idp-{index}.example.test",
+                    "subject": f"sensitive-subject-{index}-{user_id}",
+                    "email": email,
+                }
+                for index, (user_id, email) in enumerate(
+                    (
+                        (owner_a, "owner-a@example.test"),
+                        (member_a, "member-a@example.test"),
+                        (invitee_a, "invitee-a@example.test"),
+                        (owner_b, "owner-b@example.test"),
+                        (member_b, "member-b@example.test"),
+                    )
+                )
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_tenants "
+                "(id, slug, name, status, plan, home_region) VALUES "
+                "(:id, :slug, :name, 'active', 'team', 'cn-east-1')"
+            ),
+            [
+                {"id": tenant_a, "slug": f"members-a-{tenant_a.hex}", "name": "Members A"},
+                {"id": tenant_b, "slug": f"members-b-{tenant_b.hex}", "name": "Members B"},
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_spaces (id, tenant_id, slug, name, status) "
+                "VALUES (:id, :tenant_id, :slug, :name, 'active')"
+            ),
+            [
+                {
+                    "id": space_a,
+                    "tenant_id": tenant_a,
+                    "slug": "engineering",
+                    "name": "Engineering A",
+                },
+                {
+                    "id": space_b,
+                    "tenant_id": tenant_b,
+                    "slug": "engineering",
+                    "name": "Engineering B",
+                },
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_tenant_memberships "
+                "(tenant_id, user_id, role, status, version) "
+                "VALUES (:tenant_id, :user_id, :role, 'active', 1)"
+            ),
+            [
+                {"tenant_id": tenant_a, "user_id": owner_a, "role": "owner"},
+                {"tenant_id": tenant_a, "user_id": member_a, "role": "member"},
+                {"tenant_id": tenant_b, "user_id": owner_b, "role": "owner"},
+                {"tenant_id": tenant_b, "user_id": member_b, "role": "member"},
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_space_memberships "
+                "(tenant_id, space_id, user_id, role, status, version) "
+                "VALUES (:tenant_id, :space_id, :user_id, :role, 'active', 1)"
+            ),
+            [
+                {"tenant_id": tenant_a, "space_id": space_a, "user_id": owner_a, "role": "owner"},
+                {
+                    "tenant_id": tenant_a,
+                    "space_id": space_a,
+                    "user_id": member_a,
+                    "role": "viewer",
+                },
+                {"tenant_id": tenant_b, "space_id": space_b, "user_id": owner_b, "role": "owner"},
+                {
+                    "tenant_id": tenant_b,
+                    "space_id": space_b,
+                    "user_id": member_b,
+                    "role": "viewer",
+                },
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_membership_invitations "
+                "(id, tenant_id, space_id, email_normalized, tenant_role, space_role, "
+                "token_hash, status, expires_at, created_by, version) VALUES "
+                "(:id, :tenant_id, :space_id, :email, 'member', 'viewer', "
+                ":token_hash, 'pending', now() + interval '1 day', :created_by, 1)"
+            ),
+            [
+                {
+                    "id": invitation_a,
+                    "tenant_id": tenant_a,
+                    "space_id": space_a,
+                    "email": "invitee-a@example.test",
+                    "token_hash": invitation_token_hash,
+                    "created_by": owner_a,
+                },
+                {
+                    "id": rotatable_a,
+                    "tenant_id": tenant_a,
+                    "space_id": space_a,
+                    "email": "rotate-a@example.test",
+                    "token_hash": "a" * 64,
+                    "created_by": owner_a,
+                },
+                {
+                    "id": invitation_b,
+                    "tenant_id": tenant_b,
+                    "space_id": space_b,
+                    "email": "invite-b@example.test",
+                    "token_hash": "b" * 64,
+                    "created_by": owner_b,
+                },
+            ],
+        )
+
+    sessions = sessionmaker(engine, expire_on_commit=False)
+
+    @sa.event.listens_for(sessions, "after_begin")
+    def _use_member_admin_role(
+        _session: Session, _transaction: object, connection: sa.Connection
+    ) -> None:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {governance_role}")
+
+    service = TenantMemberAdministrationService(sessions)
+    members = service.list_members(actor_id=owner_a, tenant_id=tenant_a, limit=100)
+    assert {member.user_id for member in members} == {owner_a, member_a}
+    assert {method.provider for member in members for method in member.login_methods} == {"oidc"}
+    assert {access.space_id for member in members for access in member.space_access} == {space_a}
+    assert all(
+        not hasattr(method, "subject") and not hasattr(method, "issuer")
+        for member in members
+        for method in member.login_methods
+    )
+    invitations = service.list_invitations(actor_id=owner_a, tenant_id=tenant_a, limit=100)
+    assert {value.invitation_id for value in invitations} == {invitation_a, rotatable_a}
+
+    with pytest.raises(LifecycleError) as ordinary_member:
+        service.list_members(actor_id=member_a, tenant_id=tenant_a)
+    assert ordinary_member.value.code == "forbidden"
+    with pytest.raises(LifecycleError) as cross_tenant_actor:
+        service.list_members(actor_id=owner_b, tenant_id=tenant_a)
+    assert cross_tenant_actor.value.code == "forbidden"
+
+    changed = service.reissue_invitation(
+        actor_id=owner_a,
+        tenant_id=tenant_a,
+        invitation_id=rotatable_a,
+        expected_version=1,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=2),
+        reason="rotate after delivery channel change",
+        idempotency_key=f"pg-member-reissue-{rotatable_a}",
+    )
+    assert changed.token and changed.version == 2
+    revoked = service.revoke_invitation(
+        actor_id=owner_a,
+        tenant_id=tenant_a,
+        invitation_id=rotatable_a,
+        expected_version=2,
+        reason="requester changed teams",
+        idempotency_key=f"pg-member-revoke-{rotatable_a}",
+    )
+    assert revoked.version == 3
+
+    authentication_sessions = sessionmaker(engine, expire_on_commit=False)
+
+    @sa.event.listens_for(authentication_sessions, "after_begin")
+    def _use_authenticator_role(
+        _session: Session, _transaction: object, connection: sa.Connection
+    ) -> None:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {authenticator_role}")
+
+    accepted = MembershipLifecycleService(authentication_sessions).accept_invitation(
+        actor_id=invitee_a,
+        token=raw_invitation_token,
+    )
+    assert accepted.tenant_membership_version == 1
+    assert accepted.space_membership_version == 1
+    assert accepted.replayed is False
+
+    members_after_acceptance = service.list_members(
+        actor_id=owner_a,
+        tenant_id=tenant_a,
+        limit=100,
+    )
+    assert {member.user_id for member in members_after_acceptance} == {
+        owner_a,
+        member_a,
+        invitee_a,
+    }
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {governance_role}")
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_tenant_memberships")) == 0
+        connection.execute(
+            sa.text("SELECT set_config('app.tenant_id', :tenant, true)"),
+            {"tenant": str(tenant_a)},
+        )
+        assert set(
+            connection.execute(sa.text("SELECT user_id FROM saas_tenant_memberships")).scalars()
+        ) == {owner_a, member_a, invitee_a}
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_global_users")) >= 5
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT count(*) FROM saas_membership_invitations "
+                    "WHERE id = :invitation AND status = 'accepted' AND accepted_by = :actor"
+                ),
+                {"invitation": invitation_a, "actor": invitee_a},
+            )
+            == 1
+        )
+        event_payloads = connection.execute(
+            sa.text(
+                "SELECT payload FROM saas_control_plane_outbox "
+                "WHERE tenant_id = :tenant AND event_type LIKE 'membership.invitation.%'"
+            ),
+            {"tenant": tenant_a},
+        ).scalars()
+        assert all(
+            "one_time_token" not in payload and "token_hash" not in payload
+            for payload in event_payloads
+        )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {authenticator_role}")
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_membership_invitations")) == 0
+        connection.execute(
+            sa.text("SELECT set_config('app.invitation_token_hash', :token_hash, true)"),
+            {"token_hash": invitation_token_hash},
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_membership_invitations")) == 1
+        assert (
+            connection.scalar(sa.text("SELECT id FROM saas_membership_invitations"))
+            == invitation_a
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_tenant_memberships")) == 0
+
+    with engine.connect() as connection:
+        role_facts = connection.execute(
+            sa.text(
+                "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles "
+                "WHERE rolname IN (:governance_role, :authenticator_role)"
+            ),
+            {
+                "governance_role": governance_role,
+                "authenticator_role": authenticator_role,
+            },
+        ).mappings()
+        assert {
+            (value["rolname"], value["rolsuper"], value["rolbypassrls"]) for value in role_facts
+        } == {
+            (governance_role, False, False),
+            (authenticator_role, False, False),
+        }
+        assert connection.scalar(
+            sa.text(
+                "SELECT has_column_privilege(:role, 'saas_membership_invitations', "
+                "'status', 'UPDATE')"
+            ),
+            {"role": authenticator_role},
+        )
+        assert not connection.scalar(
+            sa.text(
+                "SELECT has_column_privilege(:role, 'saas_membership_invitations', "
+                "'email_normalized', 'UPDATE')"
+            ),
+            {"role": authenticator_role},
+        )
+        assert not connection.scalar(
+            sa.text(
+                "SELECT has_column_privilege(:role, 'saas_membership_invitations', "
+                "'tenant_role', 'UPDATE')"
+            ),
+            {"role": authenticator_role},
+        )
+
+    engine.dispose()
+
+
+def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed() -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(_postgres_url())
+
+    with engine.begin() as connection:
+        _migrate(connection, root)
+        config = Config(root / "saas/control_plane/alembic.ini")
+        config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
+        config.attributes["connection"] = connection
+
+        def _policy() -> tuple[str, str]:
+            value = connection.execute(
+                sa.text(
+                    "SELECT qual, with_check FROM pg_policies "
+                    "WHERE schemaname = 'public' "
+                    "AND tablename = 'saas_membership_invitations' "
+                    "AND policyname = 'rls_saas_membership_invitations_tenant'"
+                )
+            ).one()
+            return str(value.qual), str(value.with_check)
+
+        head_policy = " ".join(_policy())
+        assert "invitation_token_hash" in head_policy
+        assert "saas_authenticator" in head_policy
+
+        command.downgrade(config, "p6a000000006")
+        downgraded_policy = " ".join(_policy())
+        assert "invitation_token_hash" not in downgraded_policy
+        assert "saas_authenticator" not in downgraded_policy
+
+        command.upgrade(config, "p6a000000007")
+        restored_policy = " ".join(_policy())
+        assert "invitation_token_hash" in restored_policy
+        assert "saas_authenticator" in restored_policy
+        assert connection.scalar(
+            sa.text(
+                "SELECT relforcerowsecurity FROM pg_class "
+                "WHERE oid = 'saas_membership_invitations'::regclass"
+            )
+        )
 
     engine.dispose()
 

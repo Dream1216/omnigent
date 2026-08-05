@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <title>Omnigent · Project Control Plane</title>
+    <title>Omnigent · SaaS Control Plane</title>
     <link rel="stylesheet" href="/saas/admin/assets/project-admin.css">
     <script src="/saas/admin/assets/project-admin.js" defer></script>
   </head>
@@ -72,8 +72,11 @@
             <button class="active" data-testid="view-projects" id="view-projects" type="button">
               <span>02</span> PROJECTS
             </button>
+            <button data-testid="view-members" id="view-members" type="button">
+              <span>03</span> TENANT MEMBERS <strong id="member-nav-count">00</strong>
+            </button>
             <button data-testid="view-approvals" id="view-approvals" type="button">
-              <span>03</span> APPROVAL DESK <strong id="approval-nav-count">00</strong>
+              <span>04</span> APPROVAL DESK <strong id="approval-nav-count">00</strong>
             </button>
           </nav>
         </aside>
@@ -104,10 +107,111 @@
           <div class="project-list" data-testid="project-list" id="project-list" aria-live="polite"></div>
         </section>
 
+        <section class="member-board" data-testid="member-board" id="member-board" hidden>
+          <div class="member-heading">
+            <div>
+              <p class="eyebrow">03 / TENANT DIRECTORY</p>
+              <h1>成员控制台</h1>
+              <p>租户成员、登录方式姿态与 Space 访问统一从服务端投影。身份 Subject、Issuer、凭据摘要和跨租户账号不会下发浏览器。</p>
+            </div>
+            <div class="member-total"><span>可见成员</span><strong id="member-count">00</strong></div>
+          </div>
+
+          <div class="member-workbench">
+            <section class="directory-module">
+              <div class="module-heading">
+                <div><span>01</span><h2>MEMBER DIRECTORY</h2></div>
+                <small>membership.read</small>
+              </div>
+              <form class="member-filter" id="member-filter-form">
+                <input data-testid="tenant-member-search" id="tenant-member-search" maxlength="128" placeholder="姓名 / 邮箱 / User ID">
+                <select data-testid="tenant-member-status" id="tenant-member-status">
+                  <option value="">ALL STATUS</option>
+                  <option value="active">ACTIVE</option>
+                  <option value="suspended">SUSPENDED</option>
+                  <option value="removed">REMOVED</option>
+                </select>
+                <button type="submit">FILTER ↗</button>
+              </form>
+              <div class="member-list" data-testid="tenant-member-list" id="tenant-member-list"></div>
+            </section>
+
+            <aside class="member-detail" data-testid="member-detail" id="member-detail">
+              <div class="member-detail-empty" id="member-detail-empty">
+                <strong>SELECT MEMBER</strong>
+                <p>选择成员后管理 Tenant Role、当前 Space Access、Owner 转移和移除影响预检。</p>
+              </div>
+              <div id="member-detail-content" hidden>
+                <div class="member-identity">
+                  <span class="status-chip" id="member-detail-status">—</span>
+                  <h2 id="member-detail-name">—</h2>
+                  <p id="member-detail-email">—</p>
+                  <code id="member-detail-id">—</code>
+                </div>
+                <div class="login-methods" id="member-login-methods"></div>
+
+                <form class="member-action-form" id="tenant-role-form">
+                  <label>
+                    <span>Tenant Role</span>
+                    <select data-testid="tenant-member-role" id="tenant-member-role">
+                      <option value="admin">ADMIN</option>
+                      <option value="billing_admin">BILLING ADMIN</option>
+                      <option value="security_auditor">SECURITY AUDITOR</option>
+                      <option value="operator">OPERATOR</option>
+                      <option value="member">MEMBER</option>
+                    </select>
+                  </label>
+                  <button data-testid="tenant-member-role-save" type="submit">UPDATE TENANT ROLE</button>
+                </form>
+                <div class="member-action-stack">
+                  <button data-testid="tenant-member-status-toggle" id="tenant-member-status-toggle" type="button">SUSPEND TENANT ACCESS</button>
+                  <button data-testid="tenant-owner-transfer" id="tenant-owner-transfer" type="button">TRANSFER TENANT OWNER</button>
+                  <button class="danger-button" data-testid="tenant-member-remove" id="tenant-member-remove" type="button">PREFLIGHT MEMBER REMOVAL</button>
+                </div>
+
+                <div class="space-access-heading">
+                  <span>CURRENT SPACE ACCESS</span><small id="member-space-label">—</small>
+                </div>
+                <div class="space-access-list" data-testid="member-space-access" id="member-space-access"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="invitation-workbench">
+            <section class="invitation-create-module">
+              <div class="module-heading">
+                <div><span>02</span><h2>ISSUE INVITATION</h2></div>
+                <small>ONE-TIME BEARER TOKEN</small>
+              </div>
+              <form class="invitation-form" id="invitation-form">
+                <label><span>Verified Email</span><input data-testid="invite-email" id="invite-email" type="email" maxlength="320" required></label>
+                <label><span>Tenant Role</span><select data-testid="invite-tenant-role" id="invite-tenant-role"><option value="member">MEMBER</option><option value="operator">OPERATOR</option><option value="billing_admin">BILLING ADMIN</option><option value="security_auditor">SECURITY AUDITOR</option><option value="admin">ADMIN</option></select></label>
+                <label><span>TTL</span><select id="invite-ttl"><option value="24">24 HOURS</option><option value="168" selected>7 DAYS</option><option value="720">30 DAYS</option></select></label>
+                <label class="space-invite-toggle"><input data-testid="invite-space-enabled" id="invite-space-enabled" type="checkbox" checked><span>同时加入当前 Space</span></label>
+                <label><span>Space Role</span><select data-testid="invite-space-role" id="invite-space-role"><option value="viewer">VIEWER</option><option value="member">MEMBER</option><option value="operator">OPERATOR</option><option value="admin">ADMIN</option></select></label>
+                <button data-testid="invite-submit" type="submit">ISSUE INVITATION +</button>
+              </form>
+              <div class="one-time-token" data-testid="invite-token-card" id="invite-token-card" hidden>
+                <div><strong>仅显示一次</strong><button id="invite-token-dismiss" type="button">DISMISS ×</button></div>
+                <code data-testid="invite-one-time-token" id="invite-one-time-token"></code>
+                <p>刷新、切换视图或关闭卡片后无法再次读取；需要时请旋转生成新 Token。</p>
+              </div>
+            </section>
+
+            <section class="invitation-list-module">
+              <div class="module-heading">
+                <div><span>03</span><h2>INVITATION LEDGER</h2></div>
+                <button class="refresh-button" data-testid="invitation-refresh" id="invitation-refresh" type="button">REFRESH ↻</button>
+              </div>
+              <div class="invitation-list" data-testid="invitation-list" id="invitation-list"></div>
+            </section>
+          </div>
+        </section>
+
         <section class="approval-board" data-testid="approval-board" id="approval-board" hidden>
           <div class="approval-heading">
             <div>
-              <p class="eyebrow">03 / ENTERPRISE ACCESS</p>
+              <p class="eyebrow">04 / ENTERPRISE ACCESS</p>
               <h1>双人审批台</h1>
               <p>发起人与批准人必须是不同且当前仍获授权的主体。这里只展示服务端生成的影响摘要，完整快照不会下发浏览器。</p>
             </div>
@@ -243,7 +347,7 @@
     <footer class="event-tape">
       <span>EVENT TAPE</span>
       <ol data-testid="event-log" id="event-log" aria-live="polite">
-        <li><time>BOOT</time><span>Project Control Plane assets verified</span></li>
+        <li><time>BOOT</time><span>SaaS Control Plane assets verified</span></li>
       </ol>
     </footer>
   </body>

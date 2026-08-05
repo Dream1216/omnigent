@@ -377,6 +377,13 @@ class TenantMembership(SaasBase):
         ),
         sa.CheckConstraint(f"role IN ({_values(TENANT_ROLES)})", name="ck_tenant_membership_role"),
         sa.CheckConstraint("version > 0", name="ck_tenant_membership_version"),
+        sa.Index(
+            "ix_tenant_membership_directory",
+            "tenant_id",
+            "status",
+            "role",
+            "user_id",
+        ),
     )
 
 
@@ -411,6 +418,13 @@ class SpaceMembership(SaasBase):
         ),
         sa.CheckConstraint(f"role IN ({_values(SPACE_ROLES)})", name="ck_space_membership_role"),
         sa.CheckConstraint("version > 0", name="ck_space_membership_version"),
+        sa.Index(
+            "ix_space_membership_member_directory",
+            "tenant_id",
+            "user_id",
+            "status",
+            "space_id",
+        ),
     )
 
 
@@ -781,6 +795,13 @@ class MembershipInvitation(SaasBase):
             "space_id",
             "email_normalized",
             "status",
+        ),
+        sa.Index(
+            "ix_invitation_tenant_status_expiry",
+            "tenant_id",
+            "status",
+            "expires_at",
+            "id",
         ),
     )
 

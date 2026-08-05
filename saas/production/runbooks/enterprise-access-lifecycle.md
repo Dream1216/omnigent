@@ -6,7 +6,7 @@ cover directory synchronization or prove SSO/SCIM production readiness.
 
 ## Production prerequisites
 
-1. Run migrations through `p6a000000005` as the owner of the affected tables before
+1. Run migrations through `p6a000000007` as the owner of the affected tables before
    serving the new routes. `p6a000000003` keeps RLS enabled, temporarily
    removes `FORCE` only for that table owner while holding the migration lock, restores
    `FORCE`, and then commits. Do not run application traffic with a partially applied
@@ -17,7 +17,9 @@ cover directory synchronization or prove SSO/SCIM production readiness.
    attribution rather than proof of the original operator.
    `p6a000000004` adds the hash-bound approval record and enables and forces RLS before
    commit. `p6a000000005` adds the Tenant/requester and scope/status indexes used by the
-   bounded approval inboxes without widening their RLS policy.
+   bounded approval inboxes without widening their RLS policy. `p6a000000006` adds
+   Tenant Member, per-user Space access, and invitation-expiry indexes without changing
+   either lifecycle state machine.
 2. Reapply `saas/control_plane/postgresql_roles.sql` and confirm all 57 control-plane
    and 17 Runtime tables still use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
    LEVEL SECURITY`. Governance logins must remain `NOSUPERUSER NOBYPASSRLS`.
@@ -99,12 +101,15 @@ and lifecycle changes before access is considered revoked. The
 CI restore contract is not production PITR or cross-failure-domain evidence.
 
 Application rollback may stop serving the new routes only while Schema
-`p6a000000005` remains application-backward-compatible with `p6a000000004`; its downgrade
-only removes inbox indexes. Downgrading further to `p6a000000003` drops all
-pending, rejected, approved and executed impact/approval history; downgrading further
-to `p6a000000002` removes lifecycle audit columns. Either is destructive; do it only from a
-verified pre-migration backup during an approved rollback window. Never reactivate an
-archived group or retired role by direct SQL.
+`p6a000000007` keeps the schema application-backward-compatible with `p6a000000006`;
+its downgrade removes exact-token authenticator access, so invitation acceptance must
+be disabled before rollback. Downgrading from `p6a000000006` to `p6a000000005`
+removes Tenant Members indexes, downgrading to `p6a000000004` removes approval-inbox
+indexes, and downgrading to `p6a000000003` drops all pending, rejected, approved and
+executed impact/approval history. Downgrading further to `p6a000000002` removes
+lifecycle audit columns. These steps are destructive; perform them only from a verified
+pre-migration backup during an approved rollback window. Never reactivate an archived
+group or retired role by direct SQL.
 
 ## Acceptance evidence
 

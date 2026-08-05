@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -28,6 +28,9 @@ from saas.control_plane.db_models import (
     TenantMembership,
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.rls import RlsContext, apply_rls_context
+
+_FRESH_AUTH_WINDOW = timedelta(minutes=5)
 
 
 class LifecycleError(RuntimeError):
@@ -271,6 +274,8 @@ class MembershipLifecycleService:
         idempotency_key: str,
         space_id: UUID | None = None,
         space_role: str | None = None,
+        reason: str | None = None,
+        reauthenticated_at: datetime | None = None,
         now: datetime | None = None,
     ) -> InvitationCreated:
         """Create an email- and scope-bound invitation, returning its secret once."""
@@ -281,8 +286,9 @@ class MembershipLifecycleService:
         _validate_idempotency_key(idempotency_key)
         normalized_email = normalize_email(email)
         self._validate_invitation_roles(tenant_role, space_id, space_role)
-        if expires_at <= created_at:
-            raise LifecycleError("invalid_expiry", "invitation must expire in the future")
+        cleaned_reason = self._optional_reason(reason)
+        if expires_at <= created_at or expires_at > created_at + timedelta(days=30):
+            raise LifecycleError("invalid_expiry", "invitation expiry must be within 30 days")
 
         request: dict[str, object] = {
             "actor_id": str(actor_id),
@@ -292,12 +298,33 @@ class MembershipLifecycleService:
             "tenant_role": tenant_role,
             "space_role": space_role,
             "expires_at": expires_at.isoformat(),
+            "reason": cleaned_reason,
         }
         request_digest = _request_hash(request)
         raw_token = secrets.token_urlsafe(32)
         invitation_id = uuid4()
 
         with self._session_factory.begin() as db:
+            apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
+            self._authorize_invitation(
+                db,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                tenant_role=tenant_role,
+                space_id=space_id,
+                space_role=space_role,
+            )
+            self._authorize_privileged_invitation(
+                db,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                tenant_role=tenant_role,
+                space_id=space_id,
+                space_role=space_role,
+                reason=cleaned_reason,
+                reauthenticated_at=reauthenticated_at,
+                changed_at=created_at,
+            )
             replay = self._load_receipt(
                 db,
                 tenant_id,
@@ -312,14 +339,6 @@ class MembershipLifecycleService:
                     replayed=True,
                 )
 
-            self._authorize_invitation(
-                db,
-                actor_id=actor_id,
-                tenant_id=tenant_id,
-                tenant_role=tenant_role,
-                space_id=space_id,
-                space_role=space_role,
-            )
             invitation = MembershipInvitation(
                 id=invitation_id,
                 tenant_id=tenant_id,
@@ -351,6 +370,7 @@ class MembershipLifecycleService:
                     "space_role": space_role,
                     "expires_at": expires_at.isoformat(),
                     "created_by": str(actor_id),
+                    "reason": cleaned_reason,
                 },
             )
 
@@ -369,15 +389,29 @@ class MembershipLifecycleService:
         _require_aware(accepted_at, "now")
         if not token:
             raise LifecycleError("invalid_invitation", "invitation is invalid or expired")
+        token_hash = _secret_hash(token)
 
         with self._session_factory.begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=actor_id, invitation_token_hash=token_hash),
+            )
             invitation = db.execute(
                 sa.select(MembershipInvitation).where(
-                    MembershipInvitation.token_hash == _secret_hash(token)
+                    MembershipInvitation.token_hash == token_hash
                 )
             ).scalar_one_or_none()
             if invitation is None:
                 raise LifecycleError("invalid_invitation", "invitation is invalid or expired")
+            apply_rls_context(
+                db,
+                RlsContext(
+                    actor_id=actor_id,
+                    tenant_id=invitation.tenant_id,
+                    space_id=invitation.space_id,
+                    invitation_token_hash=token_hash,
+                ),
+            )
             if invitation.status == "accepted" and invitation.accepted_by == actor_id:
                 return self._accepted_invitation_result(db, invitation, replayed=True)
             if (
@@ -529,6 +563,8 @@ class MembershipLifecycleService:
         status: str,
         expected_version: int,
         idempotency_key: str,
+        reason: str | None = None,
+        reauthenticated_at: datetime | None = None,
         now: datetime | None = None,
     ) -> MembershipChanged:
         """CAS-update one Tenant membership and invalidate all user sessions."""
@@ -547,6 +583,7 @@ class MembershipLifecycleService:
             )
         if expected_version < 1:
             raise LifecycleError("invalid_membership_version", "expected version must be positive")
+        cleaned_reason = self._optional_reason(reason)
 
         request_digest = _request_hash(
             {
@@ -556,15 +593,17 @@ class MembershipLifecycleService:
                 "role": role,
                 "status": status,
                 "expected_version": expected_version,
+                "reason": cleaned_reason,
             }
         )
         event_type = "tenant.membership.updated"
         with self._session_factory.begin() as db:
+            apply_rls_context(db, RlsContext(actor_id=actor_id, tenant_id=tenant_id))
+            actor_membership = self._active_tenant_admin(db, tenant_id, actor_id)
             replay = self._load_receipt(db, tenant_id, idempotency_key, request_digest, event_type)
             if replay is not None:
                 return self._membership_result(replay, replayed=True)
 
-            actor_membership = self._active_tenant_admin(db, tenant_id, actor_id)
             target = db.get(TenantMembership, (tenant_id, user_id))
             if target is None:
                 raise LifecycleError("membership_not_found", "Tenant membership does not exist")
@@ -583,14 +622,14 @@ class MembershipLifecycleService:
                     "ownership_transfer_required",
                     "Tenant Owner changes require the ownership-transfer workflow",
                 )
-            if role == "admin" and target.role != "admin":
-                raise LifecycleError(
-                    "privileged_role_operation_required",
-                    "Tenant admin elevation requires fresh authentication "
-                    "and an audited operation",
-                )
             if (target.role == "admin" or role == "admin") and actor_membership.role != "owner":
                 raise LifecycleError("forbidden", "only a Tenant Owner can change admin roles")
+            if role == "admin" and target.role != "admin":
+                self._require_fresh_auth(reauthenticated_at, changed_at)
+                if cleaned_reason is None:
+                    raise LifecycleError(
+                        "reason_required", "Tenant admin elevation requires an audit reason"
+                    )
             if target.role == role and target.status == status:
                 raise LifecycleError("membership_unchanged", "membership already has these values")
 
@@ -625,6 +664,7 @@ class MembershipLifecycleService:
                 "security_version": security_version,
                 "revoked_session_count": revoked_count,
                 "changed_by": str(actor_id),
+                "reason": cleaned_reason,
             }
             self._add_outbox_event(
                 db,
@@ -649,6 +689,8 @@ class MembershipLifecycleService:
         status: str,
         expected_version: int,
         idempotency_key: str,
+        reason: str | None = None,
+        reauthenticated_at: datetime | None = None,
         now: datetime | None = None,
     ) -> MembershipChanged:
         """CAS-update one Space membership and invalidate all user sessions."""
@@ -667,6 +709,7 @@ class MembershipLifecycleService:
             )
         if expected_version < 1:
             raise LifecycleError("invalid_membership_version", "expected version must be positive")
+        cleaned_reason = self._optional_reason(reason)
 
         request_digest = _request_hash(
             {
@@ -677,14 +720,15 @@ class MembershipLifecycleService:
                 "role": role,
                 "status": status,
                 "expected_version": expected_version,
+                "reason": cleaned_reason,
             }
         )
         event_type = "space.membership.updated"
         with self._session_factory.begin() as db:
-            replay = self._load_receipt(db, tenant_id, idempotency_key, request_digest, event_type)
-            if replay is not None:
-                return self._membership_result(replay, replayed=True)
-
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=actor_id, tenant_id=tenant_id, space_id=space_id),
+            )
             actor_tenant = db.get(TenantMembership, (tenant_id, actor_id))
             tenant_admin = (
                 actor_tenant is not None
@@ -699,6 +743,10 @@ class MembershipLifecycleService:
             )
             if not tenant_admin and not space_admin:
                 raise LifecycleError("forbidden", "active Space administrator is required")
+
+            replay = self._load_receipt(db, tenant_id, idempotency_key, request_digest, event_type)
+            if replay is not None:
+                return self._membership_result(replay, replayed=True)
 
             target = db.get(SpaceMembership, (tenant_id, space_id, user_id))
             if target is None:
@@ -718,17 +766,18 @@ class MembershipLifecycleService:
                     "ownership_transfer_required",
                     "Space Owner changes require the ownership-transfer workflow",
                 )
-            if role == "admin" and target.role != "admin":
-                raise LifecycleError(
-                    "privileged_role_operation_required",
-                    "Space admin elevation requires fresh authentication and an audited operation",
-                )
             if (
                 (target.role == "admin" or role == "admin")
                 and not tenant_admin
                 and (actor_space is None or actor_space.role != "owner")
             ):
                 raise LifecycleError("forbidden", "Space Owner or Tenant admin is required")
+            if role == "admin" and target.role != "admin":
+                self._require_fresh_auth(reauthenticated_at, changed_at)
+                if cleaned_reason is None:
+                    raise LifecycleError(
+                        "reason_required", "Space admin elevation requires an audit reason"
+                    )
             if status == "active":
                 tenant_target = db.get(TenantMembership, (tenant_id, user_id))
                 if tenant_target is None or tenant_target.status != "active":
@@ -772,6 +821,7 @@ class MembershipLifecycleService:
                 "security_version": security_version,
                 "revoked_session_count": revoked_count,
                 "changed_by": str(actor_id),
+                "reason": cleaned_reason,
             }
             self._add_outbox_event(
                 db,
@@ -798,6 +848,28 @@ class MembershipLifecycleService:
         if tenant_role == "owner" or space_role == "owner":
             raise LifecycleError(
                 "ownership_transfer_required", "Owner roles cannot be granted by invitation"
+            )
+
+    @staticmethod
+    def _optional_reason(reason: str | None) -> str | None:
+        if reason is None:
+            return None
+        cleaned = reason.strip()
+        if not cleaned or len(cleaned) > 1024:
+            raise LifecycleError("reason_invalid", "reason must contain 1 to 1024 characters")
+        return cleaned
+
+    @staticmethod
+    def _require_fresh_auth(reauthenticated_at: datetime | None, changed_at: datetime) -> None:
+        if reauthenticated_at is None:
+            raise LifecycleError(
+                "fresh_authentication_required", "recent authentication is required"
+            )
+        _require_aware(reauthenticated_at, "reauthenticated_at")
+        age = changed_at - reauthenticated_at
+        if age < timedelta(0) or age > _FRESH_AUTH_WINDOW:
+            raise LifecycleError(
+                "fresh_authentication_required", "recent authentication is required"
             )
 
     @staticmethod
@@ -844,6 +916,50 @@ class MembershipLifecycleService:
             or space_membership.role not in ("owner", "admin")
         ):
             raise LifecycleError("forbidden", "active Space administrator is required")
+
+    @classmethod
+    def _authorize_privileged_invitation(
+        cls,
+        db: Session,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        tenant_role: str,
+        space_id: UUID | None,
+        space_role: str | None,
+        reason: str | None,
+        reauthenticated_at: datetime | None,
+        changed_at: datetime,
+    ) -> None:
+        if tenant_role != "admin" and space_role != "admin":
+            return
+        cls._require_fresh_auth(reauthenticated_at, changed_at)
+        if reason is None:
+            raise LifecycleError(
+                "reason_required", "privileged invitation requires an audit reason"
+            )
+        tenant_actor = db.get(TenantMembership, (tenant_id, actor_id))
+        if tenant_role == "admin" and (
+            tenant_actor is None or tenant_actor.status != "active" or tenant_actor.role != "owner"
+        ):
+            raise LifecycleError("forbidden", "only a Tenant Owner can invite an admin")
+        if space_role != "admin":
+            return
+        if (
+            tenant_actor is not None
+            and tenant_actor.status == "active"
+            and tenant_actor.role
+            in (
+                "owner",
+                "admin",
+            )
+        ):
+            return
+        space_actor = db.get(SpaceMembership, (tenant_id, space_id, actor_id))
+        if space_actor is None or space_actor.status != "active" or space_actor.role != "owner":
+            raise LifecycleError(
+                "forbidden", "Space Owner or Tenant administrator can invite a Space admin"
+            )
 
     @staticmethod
     def _active_tenant_admin(db: Session, tenant_id: UUID, actor_id: UUID) -> TenantMembership:

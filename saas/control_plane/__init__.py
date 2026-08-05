@@ -181,6 +181,20 @@ from saas.control_plane.lifecycle import (
     ValidatedAuthSession,
     normalize_email,
 )
+from saas.control_plane.member_admin import (
+    InvitationReissued,
+    InvitationRevoked,
+    MemberLoginMethodView,
+    MembershipInvitationView,
+    MemberSpaceAccessView,
+    TenantMemberAdministrationService,
+    TenantMemberView,
+)
+from saas.control_plane.member_http import (
+    MEMBER_ADMIN_ROUTE_PERMISSIONS,
+    create_member_admin_router,
+    validate_member_admin_route_permissions,
+)
 from saas.control_plane.oidc import (
     OidcAuthorizationCompleted,
     OidcAuthorizationService,
@@ -286,6 +300,7 @@ from saas.control_plane.worktrees import (
 
 __all__ = [
     "ENTERPRISE_ADMIN_ROUTE_PERMISSIONS",
+    "MEMBER_ADMIN_ROUTE_PERMISSIONS",
     "PERMISSION_CATALOG",
     "POLICY_VERSION",
     "PROJECT_ADMIN_ROUTE_PERMISSIONS",
@@ -358,6 +373,8 @@ __all__ = [
     "IdentityManagementService",
     "InvitationAccepted",
     "InvitationCreated",
+    "InvitationReissued",
+    "InvitationRevoked",
     "IsolationControlPlane",
     "IsolationControlPlaneError",
     "IssuedApiCredential",
@@ -366,11 +383,14 @@ __all__ = [
     "IssuedIsolationGrant",
     "IssuedPreviewLease",
     "LifecycleError",
+    "MemberLoginMethodView",
     "MemberRemovalPreflightRecord",
     "MemberRemoved",
+    "MemberSpaceAccessView",
     "MembershipChanged",
     "MembershipGovernanceService",
     "MembershipInvitation",
+    "MembershipInvitationView",
     "MembershipLifecycleService",
     "OidcAuthorizationCompleted",
     "OidcAuthorizationService",
@@ -470,6 +490,8 @@ __all__ = [
     "SystemWebhookHostnameResolver",
     "TaskRecord",
     "Tenant",
+    "TenantMemberAdministrationService",
+    "TenantMemberView",
     "TenantMembership",
     "TenantQueueShareRecord",
     "TlsPinnedWebhookHttpSender",
@@ -504,6 +526,7 @@ __all__ = [
     "WorktreeRemovalImpactProvider",
     "apply_rls_context",
     "create_enterprise_admin_router",
+    "create_member_admin_router",
     "create_project_admin_router",
     "create_saas_auth_router",
     "create_saas_http_integration",
@@ -511,5 +534,6 @@ __all__ = [
     "normalize_email",
     "permission_catalog_payload",
     "validate_enterprise_admin_route_permissions",
+    "validate_member_admin_route_permissions",
     "validate_project_admin_route_permissions",
 ]

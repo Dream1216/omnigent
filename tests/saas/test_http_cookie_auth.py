@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from saas.compatibility import current_runtime_context
 from saas.control_plane import (
+    MEMBER_ADMIN_ROUTE_PERMISSIONS,
     PERMISSION_CATALOG,
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
     ContextSnapshotPolicy,
@@ -33,6 +34,7 @@ from saas.control_plane import (
     SpaceMembership,
     SqlAlchemyContextResolver,
     Tenant,
+    TenantMemberAdministrationService,
     TenantMembership,
     VerifiedIdentityAssertion,
     create_saas_http_integration,
@@ -75,6 +77,24 @@ def _build_fastapi_app(
             email_verified=True,
         )
     )
+    viewer_id = identities.provision_identity(
+        VerifiedIdentityAssertion(
+            provider="oidc",
+            issuer="https://idp.example.com",
+            subject="http-viewer",
+            email="viewer@example.com",
+            email_verified=True,
+        )
+    )
+    invitee_id = identities.provision_identity(
+        VerifiedIdentityAssertion(
+            provider="oidc",
+            issuer="https://idp.example.com",
+            subject="http-invitee",
+            email="invitee@example.com",
+            email_verified=True,
+        )
+    )
     passwords.set_password(
         user_id=user_id,
         new_password="initial-http-password",
@@ -86,6 +106,18 @@ def _build_fastapi_app(
         new_password="initial-member-password",
         expected_version=None,
         idempotency_key="http-member-initial-password",
+    )
+    passwords.set_password(
+        user_id=viewer_id,
+        new_password="initial-viewer-password",
+        expected_version=None,
+        idempotency_key="http-viewer-initial-password",
+    )
+    passwords.set_password(
+        user_id=invitee_id,
+        new_password="initial-invitee-password",
+        expected_version=None,
+        idempotency_key="http-invitee-initial-password",
     )
 
     tenant_id, space_id, placement_id, partition_id = uuid4(), uuid4(), uuid4(), uuid4()
@@ -122,6 +154,15 @@ def _build_fastapi_app(
         db.add(
             TenantMembership(
                 tenant_id=tenant_id,
+                user_id=viewer_id,
+                role="member",
+                status="active",
+                version=1,
+            )
+        )
+        db.add(
+            TenantMembership(
+                tenant_id=tenant_id,
                 user_id=member_id,
                 role="admin",
                 status="active",
@@ -136,6 +177,14 @@ def _build_fastapi_app(
                     space_id=space_id,
                     user_id=user_id,
                     role="owner",
+                    status="active",
+                    version=1,
+                ),
+                SpaceMembership(
+                    tenant_id=tenant_id,
+                    space_id=space_id,
+                    user_id=viewer_id,
+                    role="viewer",
                     status="active",
                     version=1,
                 ),
@@ -190,6 +239,12 @@ def _build_fastapi_app(
                 ),
                 RuntimeIdentityAliasRecord(
                     runtime_partition_id=partition_id,
+                    user_id=viewer_id,
+                    runtime_user_key="runtime_http_viewer",
+                    status="active",
+                ),
+                RuntimeIdentityAliasRecord(
+                    runtime_partition_id=partition_id,
                     user_id=member_id,
                     runtime_user_key="runtime_http_member",
                     status="active",
@@ -224,6 +279,8 @@ def _build_fastapi_app(
         project_authorizer=project_authorizer,
         runtime_bindings=runtime_bindings,
         enterprise_access=EnterpriseAccessService(sessions, project_authorizer),
+        member_admin=TenantMemberAdministrationService(sessions),
+        member_lifecycle=lifecycle,
         context_snapshots=ContextSnapshotService(
             ContextSnapshotPolicy(
                 active_key_id="fixture-v1",
@@ -254,6 +311,8 @@ def _build_fastapi_app(
         "space_id": str(space_id),
         "user_id": str(user_id),
         "member_id": str(member_id),
+        "viewer_id": str(viewer_id),
+        "invitee_id": str(invitee_id),
         "partition_id": str(partition_id),
     }
 
@@ -581,3 +640,162 @@ def test_project_admin_http_permission_and_binding_matrix() -> None:
     )
     assert retired.status_code == 200
     assert retired.json()["status"] == "retired"
+
+
+def test_tenant_member_admin_http_is_private_scoped_and_lifecycle_complete() -> None:
+    client, scope = _build_app()
+    csrf = _login(client)
+    tenant_base = f"/saas/tenants/{scope['tenant_id']}"
+    headers = {"Origin": "http://testserver", "X-CSRF-Token": csrf}
+
+    catalog = client.get("/saas/admin/permissions").json()
+    catalog_names = {item["name"] for item in catalog["permissions"]}
+    assert set(MEMBER_ADMIN_ROUTE_PERMISSIONS.values()) <= catalog_names
+
+    listed = client.get(f"{tenant_base}/members?limit=100")
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "private, no-store"
+    assert {item["user_id"] for item in listed.json()["items"]} == {
+        scope["user_id"],
+        scope["member_id"],
+        scope["viewer_id"],
+    }
+    serialized = listed.text
+    for secret_field in ("subject", "issuer", "token_hash", "security_version"):
+        assert secret_field not in serialized
+
+    viewer = TestClient(client.app)
+    viewer_login = viewer.post(
+        "/saas/auth/login",
+        json={"email": "viewer@example.com", "password": "initial-viewer-password"},
+    )
+    assert viewer_login.status_code == 200
+    denied = viewer.get(f"{tenant_base}/members")
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "forbidden"
+    assert "http@example.com" not in denied.text
+
+    invitation = client.post(
+        f"{tenant_base}/membership-invitations",
+        json={
+            "email": "invitee@example.com",
+            "tenant_role": "member",
+            "space_id": scope["space_id"],
+            "space_role": "viewer",
+            "ttl_hours": 24,
+        },
+        headers={**headers, "Idempotency-Key": "http-member-invite-create"},
+    )
+    assert invitation.status_code == 201
+    assert invitation.headers["cache-control"] == "private, no-store"
+    first_token = invitation.json()["one_time_token"]
+    invitation_id = invitation.json()["invitation_id"]
+
+    invitation_list = client.get(f"{tenant_base}/membership-invitations?status=pending")
+    assert invitation_list.status_code == 200
+    assert invitation_list.headers["cache-control"] == "private, no-store"
+    assert invitation_list.json()["items"][0]["email_normalized"] == "invitee@example.com"
+    assert "one_time_token" not in invitation_list.text
+
+    reissued = client.post(
+        f"{tenant_base}/membership-invitations/{invitation_id}/reissue",
+        json={
+            "expected_version": 1,
+            "ttl_hours": 48,
+            "reason": "rotate token after delivery channel changed",
+        },
+        headers={**headers, "Idempotency-Key": "http-member-invite-reissue"},
+    )
+    assert reissued.status_code == 200
+    second_token = reissued.json()["one_time_token"]
+    assert second_token and second_token != first_token
+    assert reissued.json()["version"] == 2
+
+    invitee = TestClient(client.app)
+    invitee_login = invitee.post(
+        "/saas/auth/login",
+        json={"email": "invitee@example.com", "password": "initial-invitee-password"},
+    )
+    invitee_csrf = invitee_login.json()["csrf_token"]
+    old_token = invitee.post(
+        "/saas/membership-invitations/accept",
+        json={"token": first_token},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": invitee_csrf},
+    )
+    assert old_token.status_code == 409
+    assert old_token.json()["detail"]["code"] == "invalid_invitation"
+    accepted = invitee.post(
+        "/saas/membership-invitations/accept",
+        json={"token": second_token},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": invitee_csrf},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["tenant_id"] == scope["tenant_id"]
+    assert accepted.json()["space_id"] == scope["space_id"]
+
+    revocable = client.post(
+        f"{tenant_base}/membership-invitations",
+        json={"email": "revocable@example.com", "tenant_role": "member"},
+        headers={**headers, "Idempotency-Key": "http-member-invite-revocable"},
+    )
+    revoked = client.post(
+        f"{tenant_base}/membership-invitations/{revocable.json()['invitation_id']}/revoke",
+        json={"expected_version": 1, "reason": "requester changed teams"},
+        headers={**headers, "Idempotency-Key": "http-member-invite-revoke"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["version"] == 2
+
+    viewer_id = scope["viewer_id"]
+    promoted = client.put(
+        f"{tenant_base}/members/{viewer_id}/role",
+        json={
+            "role": "admin",
+            "expected_version": 1,
+            "reason": "on-call Tenant administration rotation",
+        },
+        headers={**headers, "Idempotency-Key": "http-member-promote-admin"},
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["membership_version"] == 2
+
+    demoted = client.put(
+        f"{tenant_base}/members/{viewer_id}/role",
+        json={
+            "role": "member",
+            "expected_version": 2,
+            "reason": "on-call rotation ended",
+        },
+        headers={**headers, "Idempotency-Key": "http-member-demote-admin"},
+    )
+    assert demoted.status_code == 200
+
+    space_role = client.put(
+        f"{tenant_base}/spaces/{scope['space_id']}/members/{viewer_id}/role",
+        json={
+            "role": "operator",
+            "expected_version": 1,
+            "reason": "grant deployment operations access",
+        },
+        headers={**headers, "Idempotency-Key": "http-member-space-operator"},
+    )
+    assert space_role.status_code == 200
+
+    suspended = client.post(
+        f"{tenant_base}/members/{viewer_id}/suspend",
+        json={"expected_version": 3, "reason": "temporary access hold"},
+        headers={**headers, "Idempotency-Key": "http-member-suspend"},
+    )
+    assert suspended.status_code == 200
+    resumed = client.post(
+        f"{tenant_base}/members/{viewer_id}/resume",
+        json={"expected_version": 4, "reason": "access review completed"},
+        headers={**headers, "Idempotency-Key": "http-member-resume"},
+    )
+    assert resumed.status_code == 200
+
+    filtered = client.get(f"{tenant_base}/members?query=viewer%40example.com")
+    assert filtered.status_code == 200
+    assert [item["user_id"] for item in filtered.json()["items"]] == [viewer_id]
+    assert filtered.json()["items"][0]["tenant_status"] == "active"
+    assert filtered.json()["items"][0]["space_access"][0]["role"] == "operator"

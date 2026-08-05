@@ -80,14 +80,23 @@ GRANT SELECT ON
     saas_space_memberships
 TO saas_authenticator;
 GRANT UPDATE (last_used_at, last_used_ip) ON saas_api_credentials TO saas_authenticator;
+GRANT SELECT ON saas_membership_invitations TO saas_authenticator;
+GRANT UPDATE (status, accepted_by, accepted_at, version, updated_at)
+ON saas_membership_invitations TO saas_authenticator;
+GRANT INSERT (tenant_id, user_id, role, status, version, joined_at)
+ON saas_tenant_memberships TO saas_authenticator;
+GRANT INSERT (tenant_id, space_id, user_id, role, status, version, joined_at)
+ON saas_space_memberships TO saas_authenticator;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_global_users,
+    saas_identity_connections,
     saas_auth_sessions,
     saas_tenants,
     saas_spaces,
     saas_tenant_memberships,
     saas_space_memberships,
+    saas_membership_invitations,
     saas_projects,
     saas_project_memberships,
     saas_resource_grants,

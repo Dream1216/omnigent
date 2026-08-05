@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-05.p6-groups"
+POLICY_VERSION: Final = "2026-08-06.p6-members"
 
 
 class PermissionScope(StrEnum):
@@ -77,6 +77,7 @@ _DEFINITIONS = (
         fresh_auth_required=True,
     ),
     _permission("membership.invite", PermissionScope.TENANT, PermissionRisk.MEDIUM),
+    _permission("membership.read", PermissionScope.TENANT, PermissionRisk.LOW),
     _permission("membership.role.update", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("membership.suspend", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("membership.remove", PermissionScope.TENANT, PermissionRisk.HIGH),
@@ -198,6 +199,7 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "tenant.delete",
                 "tenant.ownership.transfer",
                 "membership.invite",
+                "membership.read",
                 "membership.role.update",
                 "membership.suspend",
                 "membership.remove",
@@ -220,6 +222,7 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "tenant.read",
                 "tenant.update",
                 "membership.invite",
+                "membership.read",
                 "membership.role.update",
                 "membership.suspend",
                 "membership.remove",
@@ -240,6 +243,7 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
         "security_auditor": frozenset(
             {
                 "tenant.read",
+                "membership.read",
                 "group.read",
                 "audit.read",
                 "audit.export",

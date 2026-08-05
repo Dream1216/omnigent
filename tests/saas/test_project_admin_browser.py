@@ -80,7 +80,7 @@ def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
     page.get_by_test_id("login-password").fill("initial-http-password")
     page.get_by_test_id("login-submit").click()
     expect(page.get_by_test_id("scope-connect")).to_be_visible()
-    expect(page.locator("#permission-count")).to_contain_text("2026-08-05.p6")
+    expect(page.locator("#permission-count")).to_contain_text("2026-08-06.p6")
 
     page.get_by_test_id("scope-connect").click()
     expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")
@@ -275,4 +275,123 @@ def test_real_browser_enterprise_approval_desk_separates_request_decision_and_ex
         .filter(has_text="Retire Candidate")
     ).to_contain_text("RETIRED")
     expect(page.get_by_test_id("event-log")).to_contain_text("executed")
+    assert browser_errors == [], failed_responses
+
+
+def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
+    page: Page,
+    project_admin_server: BrowserFixture,
+) -> None:
+    fixture = project_admin_server
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(f"{fixture.origin}/saas/admin/projects")
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          let delayFirstMemberRead = true;
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const method = (init.method || "GET").toUpperCase();
+            if (delayFirstMemberRead && method === "GET" && url.includes("/members?limit=100")) {
+              delayFirstMemberRead = false;
+              const staleResponse = await nativeFetch(input, init);
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+              return staleResponse;
+            }
+            return nativeFetch(input, init);
+          };
+        }
+        """
+    )
+    page.get_by_test_id("view-members").click()
+    expect(page.get_by_test_id("member-board")).to_be_visible()
+    page.get_by_test_id("tenant-member-search").fill("viewer@example.com")
+    page.get_by_test_id("tenant-member-search").press("Enter")
+    expect(page.get_by_test_id("tenant-member-list")).to_contain_text("viewer@example.com")
+    page.wait_for_timeout(900)
+    expect(page.get_by_test_id("tenant-member-list")).not_to_contain_text("http@example.com")
+
+    page.get_by_test_id("tenant-member-search").fill("")
+    page.get_by_test_id("tenant-member-search").press("Enter")
+    expect(page.locator("#member-count")).to_have_text("03")
+    viewer_row = page.get_by_test_id(f"tenant-member-{fixture.scope['viewer_id']}")
+    viewer_row.click()
+    expect(page.get_by_test_id("member-detail")).to_contain_text("viewer@example.com")
+
+    page.get_by_test_id("tenant-member-role").select_option("operator")
+    page.get_by_test_id("tenant-member-role-save").click()
+    _confirm_dialog(page, "grant Tenant operations for release coverage")
+    expect(page.get_by_test_id("tenant-member-role")).to_have_value("operator")
+
+    space_role = page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")
+    space_role.select_option("operator")
+    space_role.locator("xpath=..").get_by_role("button", name="SET ROLE").click()
+    _confirm_dialog(page, "grant current Space deployment operations")
+    expect(page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")).to_have_value(
+        "operator"
+    )
+
+    page.get_by_test_id("tenant-member-status-toggle").click()
+    _confirm_dialog(page, "pause access during credential review")
+    expect(page.locator("#member-detail-status")).to_contain_text("SUSPENDED")
+    page.get_by_test_id("tenant-member-status-toggle").click()
+    _confirm_dialog(page, "credential review completed")
+    expect(page.locator("#member-detail-status")).to_contain_text("ACTIVE")
+
+    page.get_by_test_id("invite-email").fill("revocable@example.com")
+    page.get_by_test_id("invite-submit").click()
+    _confirm_dialog(page, "invite release observer into current Space")
+    expect(page.get_by_test_id("invite-token-card")).to_be_visible()
+    first_token = page.get_by_test_id("invite-one-time-token").text_content()
+    invitation = (
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    )
+    expect(invitation).to_contain_text("PENDING")
+
+    invitation.get_by_role("button", name="ROTATE + REISSUE").click()
+    _confirm_dialog(page, "rotate token after changing the delivery channel")
+    expect(page.get_by_test_id("invite-one-time-token")).not_to_have_text(first_token or "")
+    invitation = (
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    )
+    expect(invitation).to_contain_text("V2")
+    invitation.get_by_role("button", name="REVOKE").click()
+    _confirm_dialog(page, "requester no longer needs access")
+    expect(
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    ).to_contain_text("REVOKED")
+
+    page.get_by_test_id("tenant-member-remove").click()
+    _confirm_dialog(page, "remove temporary release operator")
+    expect(page.get_by_test_id(f"tenant-member-{fixture.scope['viewer_id']}")).to_contain_text(
+        "REMOVED"
+    )
+
+    page.get_by_test_id(f"tenant-member-{fixture.scope['member_id']}").click()
+    page.get_by_test_id("tenant-owner-transfer").click()
+    _confirm_dialog(page, "rotate Tenant ownership to the primary administrator")
+    expect(page.get_by_test_id("login-submit")).to_be_visible()
     assert browser_errors == [], failed_responses

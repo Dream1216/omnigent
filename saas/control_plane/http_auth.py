@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from saas.control_plane.authorization import ProjectAuthorizer
     from saas.control_plane.bindings import RuntimeBindingService
     from saas.control_plane.enterprise_access import EnterpriseAccessService
+    from saas.control_plane.member_admin import TenantMemberAdministrationService
     from saas.control_plane.projects import ProjectAdministrationService
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -236,8 +237,7 @@ class SaasAuthProvider(AuthProvider):
         """Return whether a token belongs to the distinct machine namespace."""
 
         return bool(
-            self._api_credentials is not None
-            and self._api_credentials.is_api_credential(token)
+            self._api_credentials is not None and self._api_credentials.is_api_credential(token)
         )
 
     def validate_machine_token(
@@ -249,9 +249,7 @@ class SaasAuthProvider(AuthProvider):
             raise ApiCredentialError("invalid_api_credential", "API credential is invalid")
         return self._api_credentials.authenticate(token, source_ip=source_ip)
 
-    def get_machine_principal(
-        self, connection: HTTPConnection
-    ) -> SaasMachinePrincipal | None:
+    def get_machine_principal(self, connection: HTTPConnection) -> SaasMachinePrincipal | None:
         """Return only middleware-validated Service Account state."""
 
         state = connection.scope.get("state")
@@ -1123,6 +1121,8 @@ def create_saas_http_integration(
     degraded_read_paths: frozenset[str] = frozenset(),
     api_credentials: ApiCredentialService | None = None,
     enterprise_access: EnterpriseAccessService | None = None,
+    member_admin: TenantMemberAdministrationService | None = None,
+    member_lifecycle: MembershipLifecycleService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1160,6 +1160,19 @@ def create_saas_http_integration(
                 auth_provider=auth_provider,
                 resolver=context_resolver,
                 enterprise_access=enterprise_access,
+            )
+        )
+    if (member_admin is None) != (member_lifecycle is None):
+        raise ValueError("Tenant Member Admin and Member Lifecycle must be configured together")
+    if member_admin is not None and member_lifecycle is not None:
+        from saas.control_plane.member_http import create_member_admin_router
+
+        router.include_router(
+            create_member_admin_router(
+                auth_provider=auth_provider,
+                lifecycle=member_lifecycle,
+                members=member_admin,
+                invitation_acceptance=lifecycle,
             )
         )
     public_api_router = None
