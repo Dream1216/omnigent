@@ -1083,6 +1083,20 @@ gate. The official user workspace and SaaS Admin modules continue to share one p
 and authentication plane, with server authorization—not a separate deployment—deciding
 which management surfaces and actions are available.
 
+Exact run `31030826038` at
+`67d53a11c54f1fa0715f000f3f18a13b12366d12` passes all 861 PostgreSQL/Chromium
+compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
+Pyrefly with zero errors, the `p6a000000005` migration round trip, both patch
+replays, and the 159-artifact implementation wheel. Its PostgreSQL 16 logical
+restore completes in 2.916 seconds with 57/17 forced-RLS inventories, two
+preflight rows, cross-Tenant denial, and post-backup approval replay. The
+8-file/449-line/two-patch/0.9945 intrusion result remains within budget. This is
+evidence for the still-pending
+`p6-enterprise-identity-audit-api-platform-console-privacy` aggregate gate; it
+does not close that gate, complete Tenant Members management, or change the eleven
+pending aggregate gates and release `NO-GO`. The evidence-successor wheel requires
+160 artifacts.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO

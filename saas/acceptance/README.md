@@ -485,6 +485,36 @@ evidence-successor wheel requires 158 artifacts. The production approval inbox a
 confirmation UI, directory federation, commercial proof, all eleven aggregate gates
 and release `NO-GO` remain open.
 
+The fifth P6 slice productizes the approval boundary inside the existing
+`/saas/admin/projects` control plane. Bounded requester, Tenant Group decision, and
+selected-Project custom-role decision queues use opaque UUID keyset pagination,
+exclude the requester and expired pending records, and expose only server-derived
+target labels and impact counts. Full impact snapshots remain server-only. The
+Approval Desk requires reasons for prepare, approve, reject, and execute; only a
+different authorized principal may decide, and only the original requester may
+execute an approval.
+
+Exact run `31030826038` at
+`67d53a11c54f1fa0715f000f3f18a13b12366d12` passes 861 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly with zero errors,
+the `p6a000000005` migration round trip, both patch replays, and the 159-artifact
+implementation wheel. Its PostgreSQL 16 restore takes 2.916 seconds with 57/17
+forced-RLS inventories and approval replay. A two-principal Chromium chain proves
+approve, reject, requester-only execute, Archive/Retire terminal state, and zero
+browser console errors. Run `31030351743` first failed closed because the real
+PostgreSQL assertion had not yet admitted both same-Tenant Group and role preflights;
+the successful revision corrected that assertion without weakening the cross-Tenant
+denial. The intrusion result remains 8 files, 449 lines, two patches, and 0.9945
+isolated custom code.
+
+This evidence is attached to the still-pending
+`p6-enterprise-identity-audit-api-platform-console-privacy` aggregate gate. It does
+not turn official server-level `/settings/members` into Tenant administration, nor
+does it complete a Tenant Members module for invitation, Tenant/Space roles,
+suspension/removal, identity connections, Owner transfer, and impact preflight. The
+evidence-successor wheel requires 160 artifacts; eleven aggregate gates and release
+`NO-GO` remain unchanged.
+
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run
 `31011047850` verifies that first current P6-era sync. A second strictly later
