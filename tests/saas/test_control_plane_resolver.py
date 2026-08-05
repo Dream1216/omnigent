@@ -31,7 +31,7 @@ from saas.control_plane.db_models import ProjectRecord
 COMPATIBILITY_POLICY = RuntimeCompatibilityPolicy(
     runtime_type="omnigent",
     allowed_runtime_versions=frozenset(("0.9.0.dev0",)),
-    allowed_source_revisions=frozenset(("d794ef4f9f641f5b1f07dd586fae9ecac505a733",)),
+    allowed_source_revisions=frozenset(("8c191ac06b55cde1ce2f299170595975bdd5cd52",)),
     allowed_schema_revisions=frozenset(("c4d5e6f7a8b9",)),
     adapter_contract_version="0.2.0",
 )
@@ -182,7 +182,7 @@ def control_plane() -> tuple[sessionmaker[Session], SeededScope]:
                 runtime_version="0.9.0.dev0",
                 physical_partition_key="41",
                 placement_generation=4,
-                source_revision="d794ef4f9f641f5b1f07dd586fae9ecac505a733",
+                source_revision="8c191ac06b55cde1ce2f299170595975bdd5cd52",
                 adapter_contract_version="0.2.0",
                 status="active",
             )
