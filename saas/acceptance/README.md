@@ -565,6 +565,18 @@ slice, not SCIM/directory sync, enterprise federation, bulk/delegated lifecycle,
 billing, full audit/API/privacy, production recovery, the pending P6 aggregate, any
 of the eleven aggregate gates, or release `NO-GO`.
 
+The evidence successor `04bb33a1` passes exact run `31043445834` with the same
+865/57/36+22 matrix, a 3.049-second restore, Pyrefly, `p6a000000007`, two patches,
+the 167-artifact wheel, and the unchanged intrusion result. Manually dispatched
+image run `31043457794` then tests 864 cases with one platform skip and builds the
+Server and Host targets twice for both `linux/amd64` and `linux/arm64`. All four
+platform Manifest/Config pairs match across repeated builds, and every image labels
+the exact product revision `04bb33a1`, upstream `8c191ac0`, schema
+`p6a000000007`, and adapter `0.2.0`. The image-evidence successor wheel requires
+168 artifacts. These are unpublished candidate archives, not signed, scanned,
+registry-pinned, canaried, or N-1-rollback production images; P0 and P6 remain
+pending and release remains `NO-GO`.
+
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run
 `31011047850` verifies that first current P6-era sync. A second strictly later

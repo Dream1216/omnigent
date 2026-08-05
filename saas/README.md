@@ -1147,6 +1147,20 @@ federation, bulk/delegated lifecycle, billing, full audit/API/privacy, productio
 topology or recovery, the pending P6 enterprise aggregate, any of the eleven
 aggregate gates, or release `NO-GO`.
 
+Evidence successor `04bb33a1` is revalidated by compatibility run `31043445834`:
+865 tests, a 3.049-second restore, 57 official tests, the 36/22 Linux matrix,
+Pyrefly, migration round trip, two patches, 167 wheel artifacts, and the unchanged
+8/449/0.9947 intrusion result all pass. Image run `31043457794` then passes 864
+regressions with one platform skip and builds Server/Host twice for `linux/amd64`
+and `linux/arm64`. Each repeated platform Manifest/Config pair matches, with exact
+`04bb33a1` product, `8c191ac0` upstream, `p6a000000007` schema, and `0.2.0`
+adapter labels. The image-evidence successor wheel requires 168 artifacts.
+
+The image result remains an unpublished candidate archive: it has no registry-
+immutable digest, verified keyless signature, protected production workflow,
+vulnerability/license admission, digest-pinned canary, or N-1 rollback. It therefore
+does not close the P0 image gate, the P6 aggregate, or release `NO-GO`.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO
