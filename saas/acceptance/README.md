@@ -531,7 +531,39 @@ Exact run `31032344986` at
 `p6a000000005` round trip, both patch replays, and the 160-artifact wheel. The
 8-file/449-line/two-patch/0.9945 intrusion result is unchanged. Its evidence-successor
 wheel requires 161 artifacts. This remains evidence under the pending enterprise
-console aggregate; it does not complete Tenant user management or change `NO-GO`.
+console aggregate; at that revision Tenant user management was still incomplete and
+`NO-GO` was unchanged.
+
+The next P6 slice productizes Tenant user administration as `Tenant Members` inside
+the same `/saas/admin/projects` control plane. It adds privacy-bounded member search,
+status filtering, login-method summaries, Tenant and all-Space memberships, CAS role
+and suspend/resume actions, invitation create/list/reissue/revoke/accept, Owner
+transfer, and server-snapshot-bound member removal. One-time invitation tokens are
+returned only in `no-store` responses and never enter Outbox payloads. Every Cookie
+mutation rebinds actor/Tenant/Space, checks Origin and CSRF, reauthorizes the action,
+and requires reason, expected version, and idempotency. Admin elevation requires the
+current Owner plus fresh authentication. `saas_authenticator` and `saas_governance`
+remain separate least-privilege lifecycles, and `p6a000000007` lets the authenticator
+see only an exact invitation token hash under forced RLS.
+
+Runs `31041546256` and `31041546082` correctly failed closed when Chromium exposed a
+real governance race: the Space Role action could outrun the preceding Tenant Role
+refresh. The correction locks the entire selected-member surface until the server
+mutation and member reload finish, and browser assertions wait for server-confirmed
+Tenant/Space version advances. It was validated locally in five consecutive delayed-
+read Chromium runs and remotely without rerun or timeout inflation.
+
+Exact run `31042515162` at
+`17e3f6b4d3156ee22049fb6aaaac306be25d3cf4` passes 865 compatibility tests in
+154.34 seconds, a 3.498-second PostgreSQL 16 logical restore with 57/17 forced-RLS
+inventories, 57 official tests in 39.48 seconds, the 36/22 Linux matrix in 17.19
+seconds, Pyrefly with zero errors, the `p6a000000007` migration round trip, both
+patch replays, and the 166-artifact implementation wheel. The intrusion result is
+8 files, 449 lines, two patches, and 0.9947 isolated custom code. Its evidence-
+successor wheel requires 167 artifacts. This closes the Tenant Members product
+slice, not SCIM/directory sync, enterprise federation, bulk/delegated lifecycle,
+billing, full audit/API/privacy, production recovery, the pending P6 aggregate, any
+of the eleven aggregate gates, or release `NO-GO`.
 
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run

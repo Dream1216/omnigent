@@ -1093,9 +1093,9 @@ preflight rows, cross-Tenant denial, and post-backup approval replay. The
 8-file/449-line/two-patch/0.9945 intrusion result remains within budget. This is
 evidence for the still-pending
 `p6-enterprise-identity-audit-api-platform-console-privacy` aggregate gate; it
-does not close that gate, complete Tenant Members management, or change the eleven
-pending aggregate gates and release `NO-GO`. The evidence-successor wheel requires
-160 artifacts.
+did not close that gate or, at that revision, complete Tenant Members management.
+The eleven pending aggregate gates and release `NO-GO` were unchanged. The
+evidence-successor wheel requires 160 artifacts.
 
 The first evidence-successor run then failed closed on a real browser ordering race:
 an initial empty Group response could arrive after the post-create refresh and erase
@@ -1110,8 +1110,42 @@ Exact corrective run `31032344986` at
 the 57 official regressions, the 36/22 Linux matrix, Pyrefly, migration round trip,
 both patches, the 160-artifact wheel, and the unchanged 8-file/449-line/0.9945
 intrusion result. The evidence-successor wheel now requires 161 artifacts. Eleven
-aggregate gates, complete Tenant Members management, and release `NO-GO` remain
-unchanged.
+aggregate gates and release `NO-GO` remain unchanged; at that revision complete
+Tenant Members management was still open.
+
+The sixth P6 contract slice now exposes `Tenant Members` in the existing
+`/saas/admin/projects` control plane. It is not a second backend or a repurposed
+official `/settings/members` page. Authorized administrators can search and filter
+Tenant members, inspect privacy-bounded login-method summaries and every Space
+membership, change Tenant/Space roles, suspend or resume access, create/list/reissue/
+revoke/accept invitations, transfer Owner, and execute removal only after a fresh
+server impact preflight. Role and status changes use CAS versions and revoke affected
+sessions; high-risk Admin elevation additionally requires current-Owner authority,
+fresh authentication, and a reason. Invitation tokens are one-time, `no-store`,
+hash-bound under exact-token PostgreSQL RLS, and absent from Outbox.
+
+The HTTP integration fails closed unless the member-directory and membership-
+lifecycle services are configured together. `saas_authenticator` handles login and
+invitation acceptance while `saas_governance` handles explicit membership changes;
+neither gets the other's broad table authority. All Cookie writes bind actor,
+Tenant, and Space and enforce Origin/CSRF, action permission, reason, expected
+version, and Tenant-scoped idempotency.
+
+Runs `31041546256` and `31041546082` first failed on a real Chromium ordering race:
+the Space Role action could overtake the preceding Tenant Role refresh. The fix at
+`17e3f6b4` serializes all selected-member governance actions until the server write
+and list reload complete, and tests wait for server-confirmed version advancement.
+Exact run `31042515162` then passes 865 compatibility tests in 154.34 seconds, a
+3.498-second PostgreSQL 16 restore with 57/17 forced-RLS inventories, 57 official
+tests in 39.48 seconds, the 36/22 Linux matrix in 17.19 seconds, Pyrefly, the
+`p6a000000007` migration round trip, both patches, the 166-artifact wheel, and the
+8-file/449-line/0.9947 intrusion result. The evidence-successor wheel requires 167
+artifacts.
+
+This closes the Tenant Members product slice but not SCIM/directory sync, enterprise
+federation, bulk/delegated lifecycle, billing, full audit/API/privacy, production
+topology or recovery, the pending P6 enterprise aggregate, any of the eleven
+aggregate gates, or release `NO-GO`.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

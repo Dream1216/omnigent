@@ -687,12 +687,21 @@
             "saas/admin_ui/project_admin.html",
             "saas/admin_ui/project_admin.css",
             "saas/admin_ui/project_admin.js",
+            "saas/control_plane/member_admin.py",
+            "saas/control_plane/member_http.py",
             "saas/control_plane/migrations/versions/p6a000000005_enterprise_approval_inbox.py",
+            "saas/control_plane/migrations/versions/p6a000000006_tenant_member_directory.py",
+            "saas/control_plane/migrations/versions/p6a000000007_invitation_acceptance_rls.py",
+            "saas/production/runbooks/tenant-members.md",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_identity_outbox_governance.py",
+            "tests/saas/test_postgresql_rls.py",
             "tests/saas/test_enterprise_access.py",
             "tests/saas/test_enterprise_http.py",
             "tests/saas/test_project_admin_browser.py",
             "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json",
-            "saas/acceptance/p6-enterprise-approval-stale-read-ci-31032344986.json"
+            "saas/acceptance/p6-enterprise-approval-stale-read-ci-31032344986.json",
+            "saas/acceptance/p6-tenant-members-admin-console-ci-31042515162.json"
           ]
         },
         {
