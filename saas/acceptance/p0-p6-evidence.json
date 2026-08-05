@@ -540,6 +540,17 @@
           ]
         },
         {
+          "id": "p5-isolated-postgresql-logical-restore-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/rls_inventory.py",
+            "saas/production/postgresql_restore.py",
+            "saas/scripts/run_postgresql_restore_contract.py",
+            "tests/saas/test_postgresql_restore_contract.py",
+            "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json"
+          ]
+        },
+        {
           "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",
           "evidence": []

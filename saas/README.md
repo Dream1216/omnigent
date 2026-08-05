@@ -764,6 +764,17 @@ arguments. The report is explicitly `ci_contract_not_production_drill`: it prove
 logical restore compatibility only, not WAL/PITR, multi-AZ, another failure domain,
 external KMS/object lock/signing, or production RPO/RTO.
 
+Exact Linux/PostgreSQL 16 run `30986200469` verifies the implementation at
+`470105a68a9992ba12258c3be96b600ca4e0ae28`: 809 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, and the 36/22 Linux security matrix
+pass; the 2.961-second restore contract reports matching selected-table hashes,
+50/17 forced-RLS inventories, both cross-scope negative probes, and complete
+post-backup revocation/deletion-marker replay. Pyrefly reports zero errors, p5a
+migrations round trip, the wheel contains 128 required artifacts, both patches
+replay, and source intrusion remains 8 files/443 lines with a 0.9931 isolated-code
+ratio. This closes only the isolated logical-restore contract subgate; production
+recovery evidence remains absent and the aggregate gate remains pending.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

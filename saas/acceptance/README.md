@@ -306,3 +306,12 @@ revocation/deletion-marker replay, cross-scope negative probes, and selected-tab
 content hashes. The databases and archive are destroyed after the report. Its
 evidence kind is permanently `ci_contract_not_production_drill`; passing it does not
 claim PITR, WAL continuity, multi-AZ, a second failure domain, or production recovery.
+
+Exact run `30986200469` at
+`470105a68a9992ba12258c3be96b600ca4e0ae28` passes 809 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 128-artifact wheel, both patch replays, and the 8-file/443-line intrusion result.
+Its PostgreSQL 16 restore report completes in 2.961 seconds with matching hashes,
+50/17 forced-RLS inventories, both cross-scope probes, and post-backup revocation and
+deletion-marker replay. It closes only the CI logical-restore contract subgate;
+eleven production gates and the release-level `NO-GO` are unchanged.
