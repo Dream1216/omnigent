@@ -465,18 +465,25 @@ only `p6-enterprise-access-lifecycle-contract`; the evidence-successor wheel req
 federation, billing, complete audit/API/console/privacy capability, production proof,
 all eleven aggregate gates, and release `NO-GO` remain pending.
 
-The next P6 code-contract slice advances the downstream head to `p6a000000004`
+The fourth P6 contract slice advances the downstream head to `p6a000000004`
 and makes Cookie Admin Group Archive/custom-role Retire require a persisted,
 15-minute impact snapshot plus a different-principal approval. The snapshot binds
 the requester, target/version/reason and exact affected membership, assignment,
 session/security and Project-authorization facts. Approval and execution re-evaluate
 permissions and the hash; fresh-auth expiry, self approval, stale impact, approver
-permission loss, cross-scope reuse and concurrent decision losers fail closed. The
-57/17 FORCE-RLS restore contract now preserves two preflight rows and replays one
-approved record to `executed`. Exact-revision CI evidence must still be attached
-before this subgate is represented as immutable acceptance evidence; the production
-approval UI, directory federation, commercial proof, all eleven aggregate gates and
-release `NO-GO` remain open.
+permission loss, cross-scope reuse and concurrent decision losers fail closed.
+
+Exact run `31025362985` at
+`7f3350ffad677e7249ef5eda6ad4fb738e617503` passes 859 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly with zero errors,
+the `p6a000000004` migration round trip, both patch replays, and the 157-artifact
+implementation wheel. Its PostgreSQL 16 restore takes 2.948 seconds with 57/17
+FORCE-RLS inventories, preserves two preflight rows, and replays one approved record
+to `executed`. The 8-file/449-line/two-patch/0.9944 intrusion result stays within
+budget. This closes only `p6-enterprise-access-impact-approval-contract`; the
+evidence-successor wheel requires 158 artifacts. The production approval inbox and
+confirmation UI, directory federation, commercial proof, all eleven aggregate gates
+and release `NO-GO` remain open.
 
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run

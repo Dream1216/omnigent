@@ -1048,11 +1048,19 @@ summary enters API responses and secret-free Outbox events.
 The canonical control-plane inventory is now 57 forced-RLS tables. The isolated
 PostgreSQL 16 logical-restore contract preserves two preflight rows and replays an
 approved record to `executed` after the backup point, while its tenant-scoped
-negative probe prevents another Tenant from observing the record. These remain
-code and CI contracts: the productized approval inbox/confirmation UI, directory
-sync/SCIM/federation, high-cardinality production performance, billing, complete
-audit/API/console/privacy capability, production evidence, eleven aggregate gates,
-and release `NO-GO` remain open.
+negative probe prevents another Tenant from observing the record. Exact run
+`31025362985` at `7f3350ffad677e7249ef5eda6ad4fb738e617503` passes 859
+compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
+Pyrefly with zero errors, the migration round trip, both patch replays, and the
+157-artifact implementation wheel. Restore completes in 2.948 seconds and the
+8-file/449-line/two-patch/0.9944 intrusion result remains within budget. This closes
+only `p6-enterprise-access-impact-approval-contract`; the evidence-successor wheel
+requires 158 artifacts.
+
+These remain code and CI contracts: the productized approval inbox/confirmation UI,
+directory sync/SCIM/federation, high-cardinality production performance, billing,
+complete audit/API/console/privacy capability, production evidence, eleven aggregate
+gates, and release `NO-GO` remain open.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
