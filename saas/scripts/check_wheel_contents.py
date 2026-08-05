@@ -36,6 +36,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
     "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
     "saas/acceptance/p4-worktree-ci-30906291765.json",
+    "saas/acceptance/p5-image-supply-chain-contract-ci-30994862629.json",
     "saas/acceptance/p5-image-candidate-ci-30978680569.json",
     "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json",
     "saas/acceptance/p5-recovery-evidence-contract-ci-30983318630.json",

@@ -1,0 +1,126 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30994862629,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30994862629",
+  "job_id": 92269402263,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30994862629/job/92269402263",
+  "head_sha": "0200b00a116bffbf3c722d82fe05c3735f69014a",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "836 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 124.80,
+    "image_supply_chain_contract_tests": "14 passed within the combined suite",
+    "isolated_logical_restore_contract": "passed in 2.784 seconds",
+    "official_zygote_and_query_context_regressions": "56 passed",
+    "official_zygote_and_query_context_seconds": 38.40,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.08,
+    "wheel_required_artifacts": 139,
+    "patches_replayed": 2,
+    "migration_head": "p5a000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "policy_and_revision_contract": {
+    "release_policy_schema_version": 2,
+    "exact_approved_repository_paths_images_targets_smoke_probes_labels_locks_and_regressions_are_required": true,
+    "exact_upstream_adapter_schema_and_product_revisions_are_required": true,
+    "unknown_policy_evidence_and_nested_fields_are_rejected": true,
+    "boolean_integer_substitution_is_rejected": true,
+    "canonical_evidence_sha256_detects_record_mutation": true,
+    "repository_escape_absolute_and_symbolic_link_evidence_paths_are_rejected": true,
+    "maximum_evidence_age_days": 30
+  },
+  "build_and_attestation_contract": {
+    "required_image_count": 2,
+    "required_platforms": ["linux/amd64", "linux/arm64"],
+    "repeat_build_count": 2,
+    "base_images_and_registry_images_must_be_digest_pinned": true,
+    "spdx_and_cyclonedx_sbom_subjects_and_immutable_oci_uris_are_required": true,
+    "slsa_v1_max_provenance_subject_source_builder_and_workflow_are_bound": true,
+    "keyless_signature_issuer_workflow_oidc_subject_and_image_subject_are_exact": true,
+    "transparency_log_entry_and_bundle_hashes_are_required": true,
+    "protected_main_workflow_and_production_image_environment_are_required": true
+  },
+  "security_and_license_admission_contract": {
+    "maximum_scanner_database_age_hours": 24,
+    "maximum_scan_to_release_age_hours": 24,
+    "critical_vulnerability_count_allowed": 0,
+    "high_vulnerability_count_allowed": 0,
+    "vulnerability_exceptions_in_release_evidence_allowed": false,
+    "license_policy_id": "omnigent-saas-license-admission-v1",
+    "denied_license_count_allowed": 0,
+    "unknown_license_count_allowed": 0,
+    "license_exceptions_in_release_evidence_allowed": false,
+    "admission_must_complete_after_scan_and_before_canary": true
+  },
+  "promotion_and_rollback_contract": {
+    "allowed_registry_hosts": ["ghcr.io"],
+    "registry_immutability_receipt_is_required": true,
+    "floating_tag_may_authorize_deployment": false,
+    "canary_environment": "production-canary",
+    "minimum_canary_observation_seconds": 3600,
+    "canary_slo_and_security_gates_are_required": true,
+    "n_minus_one_target_must_be_different_digest_pinned_and_signature_provenance_verified": true,
+    "maximum_n_minus_one_rollback_seconds": 900,
+    "rollback_must_start_after_canary_completion": true,
+    "required_distinct_post_operation_approval_roles": [
+      "release-engineering",
+      "security",
+      "site-reliability"
+    ]
+  },
+  "fail_closed_evidence_state": {
+    "policy_image_count": 2,
+    "production_evidence_image_count": 0,
+    "promoted_image_count": 0,
+    "readiness_blocker_count": 1,
+    "blocker": "no immutable signed production image evidence is recorded",
+    "structural_status": "pass",
+    "production_readiness": "blocked",
+    "repeatable_unsigned_candidate_does_not_qualify": true
+  },
+  "negative_matrix": {
+    "floating_material_lock_or_dockerfile_drift_fails": true,
+    "untrusted_workflow_signature_subject_or_missing_transparency_fails": true,
+    "missing_registry_immutability_canary_or_bounded_rollback_fails": true,
+    "stale_scan_different_release_or_record_tampering_fails": true,
+    "license_subject_policy_threshold_or_inline_exception_fails": true,
+    "boolean_integer_substitution_fails": true,
+    "reused_attestor_or_policy_weakening_fails": true,
+    "unsafe_path_symlink_non_object_or_malformed_nested_list_fails_closed": true,
+    "admission_canary_and_rollback_ordering_violation_fails": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9935,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a production image published to an immutable registry",
+    "a real keyless signature transparency-log bundle SBOM provenance vulnerability or license artifact",
+    "a configured protected production-image GitHub environment or production signing workflow execution",
+    "a one-hour production canary or SLO and security result",
+    "a real N-1 rollback or registry immutability receipt",
+    "three human production promotion approvals",
+    "P0 reproducible production image or aggregate P5 production readiness"
+  ],
+  "evidence_successor_policy": "This record verifies the exact fail-closed production-image policy and evidence schemas, revision and digest binding, fresh vulnerability and license admission, exact workflow and signature identities, transparency metadata, immutable-registry, canary, rollback, approval, path-safety, ordering, negative, packaging, and compatibility contracts. It deliberately records zero signed or promoted production images and a blocked readiness result. It does not prove external signing, registry publication, protected-environment operation, canary, rollback, or human approval. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, or plan documentation does not alter the verified implementation."
+}

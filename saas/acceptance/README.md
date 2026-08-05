@@ -360,3 +360,25 @@ replays, and the 8-file/449-line intrusion result. Its SLO/capacity report remai
 deliberately blocked with six inactive dashboards and no qualifying production
 record. It closes only `p5-production-slo-capacity-evidence-verifier-contract`;
 eleven aggregate gates and the release-level `NO-GO` remain unchanged.
+
+Image supply-chain readiness now uses the strict v2 policy and
+`python -m saas.scripts.check_image_supply_chain`. It pins the approved repository
+paths, Server/Host targets, dual-architecture smoke matrix, labels, locks, regression
+suites, exact main-workflow/OIDC/builder/environment identity, SBOM and provenance
+subjects, signature subject and transparency metadata, fresh zero-Critical/High
+vulnerability result, and zero-denied/unknown license policy. Admission must precede
+the one-hour SLO/security canary; a different verified N-1 digest must then roll back
+within 900 seconds before three distinct roles attest. Strict schemas and the safe
+loader reject weakening, unknown fields, type substitution, stale or reordered facts,
+canonical-record tampering, absolute/escaping paths, symlinks, and non-object JSON.
+
+Exact run `30994862629` at
+`0200b00a116bffbf3c722d82fe05c3735f69014a` passes 836 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, a 2.784-second logical restore,
+Pyrefly, migration round trip, the 139-artifact wheel, both patch replays, and the
+8-file/449-line/0.9935 intrusion result. The report records two policy images, zero
+production evidence images, zero promotions, and one blocker. It closes only
+`p5-image-supply-chain-evidence-verifier-contract`; external registry, signature,
+scan/SBOM/provenance artifacts, protected workflow execution, canary, rollback, and
+approvals remain unproven. The evidence-successor wheel requires 140 artifacts;
+eleven aggregate gates and the release-level `NO-GO` remain unchanged.

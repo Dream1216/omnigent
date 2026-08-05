@@ -832,6 +832,29 @@ scenarios, zero production records, zero qualified records, and seven readiness
 blockers. This closes only the fail-closed verifier-contract subgate; the actual
 production SLO/capacity and aggregate gates remain pending.
 
+The strict image-supply-chain v2 contract now rejects policy weakening as well as
+malformed evidence. Approved image names/targets, smoke probes, labels, dependency
+locks, official regressions, repository paths, workflow/OIDC identity, dual SBOM,
+provenance, signature subject, and transparency metadata are exact. Vulnerability
+and license admission must bind the candidate digest, contain no Critical/High,
+denied, unknown, or inline exception result, and complete before canary. Only an
+immutable allowlisted-registry digest with a receipt may enter a one-hour SLO/security
+canary; a distinct signed/provenanced N-1 digest must then recover within 900 seconds
+before three independent approvals. Absolute, escaping, symlinked, malformed, stale,
+different-release, reordered, or boolean-for-integer evidence fails closed.
+
+Exact Linux/PostgreSQL 16 run `30994862629` verifies this contract at
+`0200b00a116bffbf3c722d82fe05c3735f69014a`: 836 compatibility tests, 56 official
+regressions, the 36/22 Linux safety matrix, a 2.784-second disposable logical restore,
+Pyrefly with zero errors, migration round trip, the 139-artifact wheel, both patch
+replays, and the 8-file/449-line intrusion result with a 0.9935 isolated-code ratio.
+Its supply-chain report intentionally contains two policy images but zero evidenced or
+promoted images and one blocker. This closes only
+`p5-image-supply-chain-evidence-verifier-contract`; no registry publication,
+signature, protected-environment execution, canary, N-1 rollback, human approval,
+P0 production-image gate, or aggregate P5 gate is proven. The evidence-successor wheel
+requires 140 artifacts and the release stays `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly
@@ -899,10 +922,10 @@ replay, production baseline checks, and source-intrusion enforcement):
 
 P4 multi-failure-domain execution and Worktree isolation remain partially
 implemented. P5 has passed Webhook/SSRF, recovery-verifier, isolated-restore,
-tenant-deletion-verifier, and SLO/capacity-verifier contract subgates; real
-production recovery, capacity/SLO, deletion, and supply-chain evidence remains
-pending. P6 commercial governance has not started. None may be inferred from a
-code-contract or CI-only subgate.
+tenant-deletion-verifier, SLO/capacity-verifier, and image-supply-chain-verifier
+contract subgates; real production recovery, capacity/SLO, deletion, and signed
+image evidence remains pending. P6 commercial governance has not started. None
+may be inferred from a code-contract or CI-only subgate.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
