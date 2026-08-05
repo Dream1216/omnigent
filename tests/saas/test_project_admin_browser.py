@@ -163,12 +163,34 @@ def test_real_browser_enterprise_approval_desk_separates_request_decision_and_ex
     page.get_by_test_id("member-grant").click()
     expect(page.locator("#project-version")).to_have_text("V2")
 
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          let delayFirstGroupRead = true;
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const method = (init.method || "GET").toUpperCase();
+            if (delayFirstGroupRead && method === "GET" && url.includes("/groups?limit=100")) {
+              delayFirstGroupRead = false;
+              const staleResponse = await nativeFetch(input, init);
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+              return staleResponse;
+            }
+            return nativeFetch(input, init);
+          };
+        }
+        """
+    )
     page.get_by_test_id("view-approvals").click()
     expect(page.get_by_test_id("approval-board")).to_be_visible()
     for name in ("Archive Candidate", "Rejected Candidate"):
         page.get_by_test_id("group-name").fill(name)
         page.get_by_test_id("group-create").click()
         expect(page.get_by_test_id("group-list")).to_contain_text(name)
+    page.wait_for_timeout(900)
+    expect(page.get_by_test_id("group-list")).to_contain_text("Archive Candidate")
+    expect(page.get_by_test_id("group-list")).to_contain_text("Rejected Candidate")
     page.get_by_test_id("role-name").fill("Retire Candidate")
     page.get_by_test_id("role-create").click()
     expect(page.get_by_test_id("role-list")).to_contain_text("Retire Candidate")

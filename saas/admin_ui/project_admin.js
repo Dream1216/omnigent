@@ -15,6 +15,9 @@
     roles: [],
     approvalInbox: [],
     myPreflights: [],
+    groupLoadRevision: 0,
+    roleLoadRevision: 0,
+    approvalLoadRevision: 0,
     view: "projects",
   };
 
@@ -72,6 +75,9 @@
   }
 
   function setLoggedOut() {
+    state.groupLoadRevision += 1;
+    state.roleLoadRevision += 1;
+    state.approvalLoadRevision += 1;
     state.actorId = "";
     state.csrf = "";
     state.contextSnapshot = "";
@@ -344,11 +350,14 @@
   }
 
   async function loadGroups() {
+    const revision = ++state.groupLoadRevision;
     try {
       const result = await api(tenantPath("/groups?limit=100"));
+      if (revision !== state.groupLoadRevision) return;
       state.groups = result.items;
       renderGroups();
     } catch (error) {
+      if (revision !== state.groupLoadRevision) return;
       state.groups = [];
       renderGroups("当前角色无 Tenant Group 读取权限。");
       log(error.message, "warning");
@@ -356,6 +365,8 @@
   }
 
   async function loadRoles() {
+    const revision = ++state.roleLoadRevision;
+    const projectId = state.selectedProject?.project_id || "";
     if (!state.selectedProject) {
       state.roles = [];
       renderRoles();
@@ -363,9 +374,11 @@
     }
     try {
       const result = await api(scopePath(`/projects/${state.selectedProject.project_id}/custom-roles?limit=100`));
+      if (revision !== state.roleLoadRevision || state.selectedProject?.project_id !== projectId) return;
       state.roles = result.items;
       renderRoles(state.roles.length ? "" : "当前 Project 尚无 Custom Role。");
     } catch (error) {
+      if (revision !== state.roleLoadRevision || state.selectedProject?.project_id !== projectId) return;
       state.roles = [];
       renderRoles("当前角色无此 Project 的 Custom Role 读取权限。");
       log(error.message, "warning");
@@ -373,20 +386,31 @@
   }
 
   async function loadApprovals() {
+    const revision = ++state.approvalLoadRevision;
+    const actorId = state.actorId;
+    const tenantId = state.tenantId;
+    const spaceId = state.spaceId;
+    const projectId = state.selectedProject?.project_id || "";
+    const isCurrent = () =>
+      revision === state.approvalLoadRevision &&
+      actorId === state.actorId &&
+      tenantId === state.tenantId &&
+      spaceId === state.spaceId &&
+      projectId === (state.selectedProject?.project_id || "");
+    let myItems = [];
     let groupItems = [];
     let roleItems = [];
     try {
       const mine = await api(tenantPath("/enterprise-access-preflights/mine?limit=100"));
-      state.myPreflights = mine.items;
+      myItems = mine.items;
     } catch (error) {
-      state.myPreflights = [];
-      log(error.message, "error");
+      if (isCurrent()) log(error.message, "error");
     }
     try {
       const groups = await api(tenantPath("/enterprise-access-preflights/group-archive-inbox?limit=100"));
       groupItems = groups.items;
     } catch (error) {
-      log(error.message, "warning");
+      if (isCurrent()) log(error.message, "warning");
     }
     if (state.selectedProject) {
       try {
@@ -397,10 +421,12 @@
         );
         roleItems = roles.items;
       } catch (error) {
-        log(error.message, "warning");
+        if (isCurrent()) log(error.message, "warning");
       }
     }
+    if (!isCurrent()) return;
     const seen = new Set();
+    state.myPreflights = myItems;
     state.approvalInbox = [...groupItems, ...roleItems].filter((value) => {
       if (seen.has(value.preflight_id)) return false;
       seen.add(value.preflight_id);
