@@ -58,7 +58,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
     suffix = uuid4().hex[:12]
     governance_role = f"saas_enterprise_governance_{suffix}"
     app_role = f"saas_enterprise_app_{suffix}"
-    owner_a, member_a, owner_b, member_b = (uuid4() for _ in range(4))
+    owner_a, approver_a, member_a, owner_b, member_b = (uuid4() for _ in range(5))
     tenant_a, tenant_b, space_a, space_b, project_a, project_b = (uuid4() for _ in range(6))
 
     with engine.begin() as connection:
@@ -78,11 +78,13 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
         connection.execute(
             sa.text(
                 "INSERT INTO saas_global_users (id, status, security_version) VALUES "
-                "(:owner_a, 'active', 1), (:member_a, 'active', 1), "
+                "(:owner_a, 'active', 1), (:approver_a, 'active', 1), "
+                "(:member_a, 'active', 1), "
                 "(:owner_b, 'active', 1), (:member_b, 'active', 1)"
             ),
             {
                 "owner_a": owner_a,
+                "approver_a": approver_a,
                 "member_a": member_a,
                 "owner_b": owner_b,
                 "member_b": member_b,
@@ -107,6 +109,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "INSERT INTO saas_tenant_memberships "
                 "(tenant_id, user_id, role, status, version) VALUES "
                 "(:tenant_a, :owner_a, 'owner', 'active', 1), "
+                "(:tenant_a, :approver_a, 'admin', 'active', 1), "
                 "(:tenant_a, :member_a, 'member', 'active', 1), "
                 "(:tenant_b, :owner_b, 'owner', 'active', 1), "
                 "(:tenant_b, :member_b, 'member', 'active', 1)"
@@ -115,6 +118,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "tenant_a": tenant_a,
                 "tenant_b": tenant_b,
                 "owner_a": owner_a,
+                "approver_a": approver_a,
                 "member_a": member_a,
                 "owner_b": owner_b,
                 "member_b": member_b,
@@ -138,6 +142,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "INSERT INTO saas_space_memberships "
                 "(tenant_id, space_id, user_id, role, status, version) VALUES "
                 "(:tenant_a, :space_a, :owner_a, 'owner', 'active', 1), "
+                "(:tenant_a, :space_a, :approver_a, 'member', 'active', 1), "
                 "(:tenant_a, :space_a, :member_a, 'member', 'active', 1), "
                 "(:tenant_b, :space_b, :owner_b, 'owner', 'active', 1), "
                 "(:tenant_b, :space_b, :member_b, 'member', 'active', 1)"
@@ -148,6 +153,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "space_a": space_a,
                 "space_b": space_b,
                 "owner_a": owner_a,
+                "approver_a": approver_a,
                 "member_a": member_a,
                 "owner_b": owner_b,
                 "member_b": member_b,
@@ -181,6 +187,8 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "created_by, version) VALUES "
                 "(:tenant_a, :space_a, :project_a, 'user', :owner_a, 'owner', 'active', "
                 ":owner_a, 1), "
+                "(:tenant_a, :space_a, :project_a, 'user', :approver_a, 'manage', 'active', "
+                ":owner_a, 1), "
                 "(:tenant_b, :space_b, :project_b, 'user', :owner_b, 'owner', 'active', "
                 ":owner_b, 1)"
             ),
@@ -192,6 +200,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
                 "project_a": project_a,
                 "project_b": project_b,
                 "owner_a": owner_a,
+                "approver_a": approver_a,
                 "owner_b": owner_b,
             },
         )
@@ -210,6 +219,9 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
     )
     owner_context_b = _context(
         actor=owner_b, tenant=tenant_b, space=space_b, trace="pg-enterprise-owner-b"
+    )
+    approver_context_a = _context(
+        actor=approver_a, tenant=tenant_a, space=space_a, trace="pg-enterprise-approver-a"
     )
 
     def _provision(
@@ -250,6 +262,50 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
 
     group_a, role_a = _provision(owner_context_a, project_a, member_a, "a")
     group_b, role_b = _provision(owner_context_b, project_b, member_b, "b")
+    preflight_a = service.create_group_archive_preflight(
+        owner_context_a,
+        group_id=group_a,
+        expected_version=1,
+        reason="replace group after approval",
+        reauthenticated_at=_NOW,
+        idempotency_key=f"pg-group-preflight-a-{suffix}",
+        now=_NOW,
+    )
+    preflight_b = service.create_group_archive_preflight(
+        owner_context_b,
+        group_id=group_b,
+        expected_version=1,
+        reason="replace group after approval",
+        reauthenticated_at=_NOW,
+        idempotency_key=f"pg-group-preflight-b-{suffix}",
+        now=_NOW,
+    )
+
+    def _approve_preflight(key: str) -> str:
+        try:
+            return service.decide_enterprise_access_preflight(
+                approver_context_a,
+                preflight_id=preflight_a.preflight_id,
+                operation_type="group_archive",
+                target_id=group_a,
+                decision="approve",
+                reason="replacement verified",
+                reauthenticated_at=_NOW,
+                idempotency_key=key,
+                now=_NOW,
+            ).status
+        except LifecycleError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        approval_outcomes = list(
+            pool.map(
+                _approve_preflight,
+                (f"pg-approve-preflight-a-{suffix}", f"pg-approve-preflight-b-{suffix}"),
+            )
+        )
+    assert approval_outcomes.count("approved") == 1
+    assert set(approval_outcomes) <= {"approved", "enterprise_preflight_not_pending"}
 
     member_context_a = _context(
         actor=member_a, tenant=tenant_a, space=space_a, trace="pg-enterprise-member-a"
@@ -285,7 +341,13 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
         assert set(
             connection.execute(sa.text("SELECT id FROM saas_enterprise_custom_roles")).scalars()
         ) == {role_a}
+        assert set(
+            connection.execute(
+                sa.text("SELECT id FROM saas_enterprise_access_preflights")
+            ).scalars()
+        ) == {preflight_a.preflight_id}
         assert group_b != group_a and role_b != role_a
+        assert preflight_b.preflight_id != preflight_a.preflight_id
 
     with pytest.raises(DBAPIError):
         with engine.begin() as connection:
@@ -343,9 +405,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
     assert outcomes.count("removed") == 1
     assert set(outcomes) <= {"removed", "group_membership_not_active"}
 
-    archive_group, _archive_role = _provision(
-        owner_context_a, project_a, member_a, "archive-a"
-    )
+    archive_group, _archive_role = _provision(owner_context_a, project_a, member_a, "archive-a")
     archive_session = lifecycle.issue_auth_session(
         user_id=member_a,
         authn_method="password",
@@ -377,9 +437,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
     assert archive_outcomes.count("archived") == 1
     assert set(archive_outcomes) <= {"archived", "group_not_active"}
 
-    _retire_group, retire_role = _provision(
-        owner_context_a, project_a, member_a, "retire-a"
-    )
+    _retire_group, retire_role = _provision(owner_context_a, project_a, member_a, "retire-a")
 
     def _retire(key: str) -> str:
         try:
@@ -431,9 +489,7 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
         ).status
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        cross_lifecycle_outcomes = list(
-            pool.map(_cross_lifecycle, ("archive", "retire"))
-        )
+        cross_lifecycle_outcomes = list(pool.map(_cross_lifecycle, ("archive", "retire")))
     assert set(cross_lifecycle_outcomes) == {"archived", "retired"}
 
     with engine.begin() as connection:

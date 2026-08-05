@@ -1034,6 +1034,26 @@ privacy capability, production evidence, eleven aggregate gates, and release
 `NO-GO` remain open. With the two immutable evidence records, the evidence-successor
 wheel requires 155 artifacts.
 
+The fourth P6 contract slice adds the dedicated downstream migration
+`p6a000000004` and a fifth enterprise table for Group Archive and custom-role
+Retire impact/approval records. Cookie Admin callers must create a 15-minute,
+SHA-256-bound server snapshot, obtain a decision from a different currently
+authorized principal, and execute with the same target version, reason, requester,
+fresh authentication and approved preflight ID. Approval and execution re-collect
+the exact affected memberships, assignments, user/session versions and Project
+authorization versions; drift, expiry, self-approval, approver permission loss,
+cross-scope reuse and concurrent losing decisions fail closed. Only the impact
+summary enters API responses and secret-free Outbox events.
+
+The canonical control-plane inventory is now 57 forced-RLS tables. The isolated
+PostgreSQL 16 logical-restore contract preserves two preflight rows and replays an
+approved record to `executed` after the backup point, while its tenant-scoped
+negative probe prevents another Tenant from observing the record. These remain
+code and CI contracts: the productized approval inbox/confirmation UI, directory
+sync/SCIM/federation, high-cardinality production performance, billing, complete
+audit/API/console/privacy capability, production evidence, eleven aggregate gates,
+and release `NO-GO` remain open.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO

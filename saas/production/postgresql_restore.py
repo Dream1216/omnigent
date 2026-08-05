@@ -50,6 +50,7 @@ _SELECTED_HASH_TABLES = (
     "saas_enterprise_group_memberships",
     "saas_enterprise_custom_roles",
     "saas_enterprise_group_role_assignments",
+    "saas_enterprise_access_preflights",
     "saas_control_plane_outbox",
 )
 
@@ -176,6 +177,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
     identifiers: dict[str, str | int] = {
         "actor_a": "10000000-0000-4000-8000-000000000001",
         "actor_b": "10000000-0000-4000-8000-000000000002",
+        "approver_a": "10000000-0000-4000-8000-000000000003",
+        "approver_b": "10000000-0000-4000-8000-000000000004",
         "tenant_a": "20000000-0000-4000-8000-000000000001",
         "tenant_b": "20000000-0000-4000-8000-000000000002",
         "space_a": "30000000-0000-4000-8000-000000000001",
@@ -188,6 +191,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "custom_role_b": "92000000-0000-4000-8000-000000000002",
         "group_role_assignment_a": "93000000-0000-4000-8000-000000000001",
         "group_role_assignment_b": "93000000-0000-4000-8000-000000000002",
+        "enterprise_preflight_a": "94000000-0000-4000-8000-000000000001",
+        "enterprise_preflight_b": "94000000-0000-4000-8000-000000000002",
         "identity_a": "40000000-0000-4000-8000-000000000001",
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
@@ -216,7 +221,9 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "INSERT INTO saas_global_users "
                     "(id, status, security_version, display_name, primary_email_normalized) "
                     "VALUES (:actor_a, 'active', 1, 'Recovery A', 'a@example.test'), "
-                    "(:actor_b, 'active', 1, 'Recovery B', 'b@example.test')"
+                    "(:actor_b, 'active', 1, 'Recovery B', 'b@example.test'), "
+                    "(:approver_a, 'active', 1, 'Approver A', 'approver-a@example.test'), "
+                    "(:approver_b, 'active', 1, 'Approver B', 'approver-b@example.test')"
                 ),
                 identifiers,
             )
@@ -242,7 +249,9 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "INSERT INTO saas_tenant_memberships "
                     "(tenant_id, user_id, role, status, version, joined_at) VALUES "
                     "(:tenant_a, :actor_a, 'owner', 'active', 1, now()), "
-                    "(:tenant_b, :actor_b, 'owner', 'active', 1, now())"
+                    "(:tenant_b, :actor_b, 'owner', 'active', 1, now()), "
+                    "(:tenant_a, :approver_a, 'admin', 'active', 1, now()), "
+                    "(:tenant_b, :approver_b, 'admin', 'active', 1, now())"
                 ),
                 identifiers,
             )
@@ -251,7 +260,9 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "INSERT INTO saas_space_memberships "
                     "(tenant_id, space_id, user_id, role, status, version, joined_at) VALUES "
                     "(:tenant_a, :space_a, :actor_a, 'owner', 'active', 1, now()), "
-                    "(:tenant_b, :space_b, :actor_b, 'owner', 'active', 1, now())"
+                    "(:tenant_b, :space_b, :actor_b, 'owner', 'active', 1, now()), "
+                    "(:tenant_a, :space_a, :approver_a, 'member', 'active', 1, now()), "
+                    "(:tenant_b, :space_b, :approver_b, 'member', 'active', 1, now())"
                 ),
                 identifiers,
             )
@@ -308,6 +319,38 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     ":custom_role_b, 'active', NULL, 1, :actor_b)"
                 ),
                 identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_access_preflights "
+                    "(id, tenant_id, space_id, project_id, operation_type, target_id, "
+                    "target_version, requested_by, reason, approval_policy, impact_snapshot, "
+                    "snapshot_hash, status, approved_by, approval_reason, approved_at, "
+                    "executed_at, expires_at) VALUES "
+                    "(:enterprise_preflight_a, :tenant_a, NULL, NULL, 'group_archive', "
+                    ":group_a, 1, :actor_a, 'recovery group preflight', "
+                    "'different_principal', CAST(:group_snapshot AS jsonb), :group_hash, "
+                    "'pending_approval', NULL, NULL, NULL, NULL, now() + interval '1 day'), "
+                    "(:enterprise_preflight_b, :tenant_b, :space_b, :project_b, "
+                    "'custom_role_retire', :custom_role_b, 1, :actor_b, "
+                    "'recovery role preflight', 'different_principal', "
+                    "CAST(:role_snapshot AS jsonb), :role_hash, 'approved', :approver_b, "
+                    "'replacement verified', now(), NULL, now() + interval '1 day')"
+                ),
+                {
+                    **identifiers,
+                    "group_snapshot": json.dumps(
+                        {"operation_type": "group_archive", "summary": {"members": 1}}
+                    ),
+                    "role_snapshot": json.dumps(
+                        {
+                            "operation_type": "custom_role_retire",
+                            "summary": {"assignments": 1},
+                        }
+                    ),
+                    "group_hash": "a" * 64,
+                    "role_hash": "b" * 64,
+                },
             )
             connection.execute(
                 sa.text(
@@ -481,6 +524,14 @@ def _apply_post_backup_replay(
             )
             connection.execute(
                 sa.text(
+                    "UPDATE saas_enterprise_access_preflights "
+                    "SET status = 'executed', executed_at = :replay_at "
+                    "WHERE id = :enterprise_preflight_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
                     "UPDATE saas_tenants SET status = 'pending_deletion' WHERE id = :tenant_b"
                 ),
                 identifiers,
@@ -584,7 +635,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000003":
+            if saas_head != "p6a000000004":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -614,9 +665,16 @@ def _verify_restored_database(
                     sa.text("SELECT id::text FROM saas_enterprise_custom_roles")
                 ).scalars()
             )
-            if visible_groups != {identifiers["group_a"]} or visible_custom_roles != {
-                identifiers["custom_role_a"]
-            }:
+            visible_preflights = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_access_preflights")
+                ).scalars()
+            )
+            if (
+                visible_groups != {identifiers["group_a"]}
+                or visible_custom_roles != {identifiers["custom_role_a"]}
+                or visible_preflights != {identifiers["enterprise_preflight_a"]}
+            ):
                 raise PostgreSqlRestoreContractError(
                     "restored enterprise access RLS exposed another tenant"
                 )
@@ -684,6 +742,22 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "post-backup revocation/deletion replay is incomplete"
                 )
+            preflight_replay = connection.execute(
+                sa.text(
+                    "SELECT status, approved_by::text, executed_at IS NOT NULL "
+                    "FROM saas_enterprise_access_preflights "
+                    "WHERE id = :enterprise_preflight_b"
+                ),
+                identifiers,
+            ).one()
+            if tuple(preflight_replay) != (
+                "executed",
+                identifiers["approver_b"],
+                True,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "post-backup enterprise approval replay is incomplete"
+                )
         return {
             "saas_migration_head": saas_head,
             "official_migration_heads": official_heads,
@@ -693,6 +767,7 @@ def _verify_restored_database(
             "cross_workspace_negative_probe": "passed",
             "post_backup_revocation_and_deletion_marker_replay": "passed",
             "post_backup_enterprise_lifecycle_replay": "passed",
+            "post_backup_enterprise_approval_replay": "passed",
         }
     finally:
         engine.dispose()

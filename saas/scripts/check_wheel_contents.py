@@ -102,6 +102,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p6a000000001_api_service_accounts.py",
     "saas/control_plane/migrations/versions/p6a000000002_enterprise_groups_roles.py",
     "saas/control_plane/migrations/versions/p6a000000003_enterprise_access_lifecycle.py",
+    "saas/control_plane/migrations/versions/p6a000000004_enterprise_access_preflights.py",
     "saas/control_plane/outbox.py",
     "saas/control_plane/placement_models.py",
     "saas/control_plane/placements.py",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -26,6 +26,7 @@ from saas.control_plane.db_models import (
     TenantMembership,
 )
 from saas.control_plane.enterprise_models import (
+    EnterpriseAccessPreflightRecord,
     EnterpriseCustomRoleRecord,
     EnterpriseGroupMembershipRecord,
     EnterpriseGroupRecord,
@@ -40,6 +41,9 @@ from saas.control_plane.permissions import (
     PermissionScope,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+
+_FRESH_AUTH_WINDOW = timedelta(minutes=5)
+_ENTERPRISE_PREFLIGHT_TTL = timedelta(minutes=15)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +116,22 @@ class EnterpriseGroupMembershipBatchView:
 
 
 @dataclass(frozen=True, slots=True)
+class EnterpriseAccessPreflightView:
+    preflight_id: UUID
+    operation_type: str
+    target_id: UUID
+    target_version: int
+    status: str
+    requested_by: UUID
+    approved_by: UUID | None
+    approval_policy: str
+    impact_summary: dict[str, object]
+    snapshot_hash: str
+    expires_at: datetime
+    replayed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class EnterpriseGroupArchiveView:
     group_id: UUID
     status: str
@@ -167,6 +187,17 @@ def _idempotency(value: str) -> None:
 
 def _hash(payload: dict[str, object]) -> str:
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _comparable(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _require_fresh_auth(reauthenticated_at: datetime, now: datetime) -> None:
+    authenticated = _comparable(reauthenticated_at)
+    current = _comparable(now)
+    if authenticated > current or current - authenticated > _FRESH_AUTH_WINDOW:
+        raise LifecycleError("fresh_auth_required", "recent authentication is required")
 
 
 class EnterpriseAccessService:
@@ -261,6 +292,232 @@ class EnterpriseAccessService:
             groups = db.execute(statement).scalars()
             return tuple(self._group(group) for group in groups)
 
+    def create_group_archive_preflight(
+        self,
+        request: RequestContext,
+        *,
+        group_id: UUID,
+        expected_version: int,
+        reason: str,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseAccessPreflightView:
+        """Persist an exact Group archive impact snapshot pending a second principal."""
+
+        created_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        _require_fresh_auth(reauthenticated_at, created_at)
+        cleaned_reason = _clean_text(reason, maximum=512, code="group_archive_reason_invalid")
+        request_payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "operation_type": "group_archive",
+            "target_id": str(group_id),
+            "target_version": expected_version,
+            "reason": cleaned_reason,
+        }
+        digest = _hash(request_payload)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            receipt = self._receipt(
+                db,
+                request.tenant_id,
+                idempotency_key,
+                "group.archive.preflighted",
+                digest,
+            )
+            if receipt is not None:
+                return self._preflight_result(receipt.payload, replayed=True)
+            self._require_tenant_group_admin(db, request)
+            snapshot = self._group_archive_snapshot(
+                db,
+                request,
+                group_id=group_id,
+                expected_version=expected_version,
+                lock=True,
+            )
+            return self._persist_preflight(
+                db,
+                request=request,
+                operation_type="group_archive",
+                target_id=group_id,
+                target_version=expected_version,
+                reason=cleaned_reason,
+                snapshot=snapshot,
+                created_at=created_at,
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                event_type="group.archive.preflighted",
+            )
+
+    def create_custom_role_retire_preflight(
+        self,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        custom_role_id: UUID,
+        expected_version: int,
+        reason: str,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseAccessPreflightView:
+        """Persist an exact custom-role retirement impact snapshot pending approval."""
+
+        created_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        _require_fresh_auth(reauthenticated_at, created_at)
+        cleaned_reason = _clean_text(reason, maximum=512, code="custom_role_retire_reason_invalid")
+        request_payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "space_id": str(request.space_id),
+            "project_id": str(project_id),
+            "operation_type": "custom_role_retire",
+            "target_id": str(custom_role_id),
+            "target_version": expected_version,
+            "reason": cleaned_reason,
+        }
+        digest = _hash(request_payload)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            receipt = self._receipt(
+                db,
+                request.tenant_id,
+                idempotency_key,
+                "custom_role.retire.preflighted",
+                digest,
+            )
+            if receipt is not None:
+                return self._preflight_result(receipt.payload, replayed=True)
+            self._active_project(db, request, project_id, lock=True)
+            self._require_project_permissions(
+                db, request, project_id, ("grant.manage", "custom_role.manage")
+            )
+            snapshot = self._custom_role_retire_snapshot(
+                db,
+                request,
+                project_id=project_id,
+                custom_role_id=custom_role_id,
+                expected_version=expected_version,
+                lock=True,
+            )
+            return self._persist_preflight(
+                db,
+                request=request,
+                operation_type="custom_role_retire",
+                target_id=custom_role_id,
+                target_version=expected_version,
+                reason=cleaned_reason,
+                snapshot=snapshot,
+                created_at=created_at,
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                event_type="custom_role.retire.preflighted",
+                project_id=project_id,
+            )
+
+    def decide_enterprise_access_preflight(
+        self,
+        request: RequestContext,
+        *,
+        preflight_id: UUID,
+        operation_type: str,
+        target_id: UUID,
+        project_id: UUID | None = None,
+        decision: str,
+        reason: str,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseAccessPreflightView:
+        """Approve or reject as a currently authorized, distinct principal."""
+
+        decided_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        _require_fresh_auth(reauthenticated_at, decided_at)
+        if decision not in {"approve", "reject"}:
+            raise LifecycleError("approval_decision_invalid", "approval decision is invalid")
+        cleaned_reason = _clean_text(reason, maximum=512, code="approval_reason_invalid")
+        request_payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "preflight_id": str(preflight_id),
+            "operation_type": operation_type,
+            "target_id": str(target_id),
+            "project_id": str(project_id) if project_id is not None else None,
+            "decision": decision,
+            "reason": cleaned_reason,
+        }
+        digest = _hash(request_payload)
+        event_type = (
+            "enterprise_access_preflight.approved"
+            if decision == "approve"
+            else "enterprise_access_preflight.rejected"
+        )
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            preflight = db.execute(
+                sa.select(EnterpriseAccessPreflightRecord)
+                .where(
+                    EnterpriseAccessPreflightRecord.id == preflight_id,
+                    EnterpriseAccessPreflightRecord.tenant_id == request.tenant_id,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if preflight is None:
+                raise LifecycleError(
+                    "enterprise_preflight_not_found", "enterprise access preflight does not exist"
+                )
+            if (
+                preflight.operation_type != operation_type
+                or preflight.target_id != target_id
+                or preflight.project_id != project_id
+            ):
+                raise LifecycleError(
+                    "enterprise_preflight_mismatch", "preflight is bound to another operation"
+                )
+            self._require_preflight_permission(db, request, preflight)
+            receipt = self._receipt(db, request.tenant_id, idempotency_key, event_type, digest)
+            if receipt is not None:
+                return self._preflight_result(receipt.payload, replayed=True)
+            if preflight.requested_by == request.actor_id:
+                raise LifecycleError(
+                    "approval_separation_required",
+                    "requester cannot approve or reject their own operation",
+                )
+            if preflight.status != "pending_approval":
+                raise LifecycleError(
+                    "enterprise_preflight_not_pending", "preflight is not pending approval"
+                )
+            if _comparable(preflight.expires_at) <= decided_at:
+                raise LifecycleError("enterprise_preflight_expired", "preflight has expired")
+            current_snapshot = self._snapshot_for_preflight(db, request, preflight, lock=True)
+            if _hash(current_snapshot) != preflight.snapshot_hash:
+                raise LifecycleError(
+                    "enterprise_preflight_stale", "enterprise access impact changed"
+                )
+            preflight.status = "approved" if decision == "approve" else "rejected"
+            preflight.approved_by = request.actor_id
+            preflight.approval_reason = cleaned_reason
+            preflight.approved_at = decided_at
+            event_payload = self._preflight_payload(preflight)
+            self._event(
+                db,
+                request.tenant_id,
+                aggregate_type="enterprise_access_preflight",
+                aggregate_key=str(preflight.id),
+                event_type=event_type,
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                payload=event_payload,
+            )
+            return self._preflight_view(preflight)
+
     def archive_group(
         self,
         request: RequestContext,
@@ -269,10 +526,16 @@ class EnterpriseAccessService:
         expected_version: int,
         reason: str,
         idempotency_key: str,
+        approval_preflight_id: UUID | None = None,
+        reauthenticated_at: datetime | None = None,
         now: datetime | None = None,
     ) -> EnterpriseGroupArchiveView:
         changed_at = now or _utcnow()
         _idempotency(idempotency_key)
+        if approval_preflight_id is not None:
+            if reauthenticated_at is None:
+                raise LifecycleError("fresh_auth_required", "recent authentication is required")
+            _require_fresh_auth(reauthenticated_at, changed_at)
         cleaned_reason = _clean_text(reason, maximum=512, code="group_archive_reason_invalid")
         payload: dict[str, object] = {
             "actor_id": str(request.actor_id),
@@ -280,6 +543,9 @@ class EnterpriseAccessService:
             "group_id": str(group_id),
             "expected_version": expected_version,
             "reason": cleaned_reason,
+            "approval_preflight_id": (
+                str(approval_preflight_id) if approval_preflight_id is not None else None
+            ),
         }
         digest = _hash(payload)
         with self._session_factory.begin() as db:
@@ -294,6 +560,18 @@ class EnterpriseAccessService:
             group = self._active_group(db, request.tenant_id, group_id, lock=True)
             if group.version != expected_version:
                 raise LifecycleError("group_version_conflict", "group changed")
+            approval = None
+            if approval_preflight_id is not None:
+                approval = self._require_approved_preflight(
+                    db,
+                    request,
+                    preflight_id=approval_preflight_id,
+                    operation_type="group_archive",
+                    target_id=group_id,
+                    target_version=expected_version,
+                    reason=cleaned_reason,
+                    now=changed_at,
+                )
             memberships = tuple(
                 db.execute(
                     sa.select(EnterpriseGroupMembershipRecord)
@@ -341,6 +619,9 @@ class EnterpriseAccessService:
                 )
                 revoked_sessions += count
             self._increment_project_versions(db, affected_projects)
+            if approval is not None:
+                approval.status = "executed"
+                approval.executed_at = changed_at
             event_payload = {
                 **payload,
                 "status": group.status,
@@ -706,9 +987,7 @@ class EnterpriseAccessService:
                         "user_id": str(result.user_id),
                         "action": value.action,
                         "status": result.status,
-                        "expires_at": result.expires_at.isoformat()
-                        if result.expires_at
-                        else None,
+                        "expires_at": result.expires_at.isoformat() if result.expires_at else None,
                         "version": result.version,
                         "security_version": result.security_version,
                         "revoked_session_count": result.revoked_session_count,
@@ -908,10 +1187,16 @@ class EnterpriseAccessService:
         expected_version: int,
         reason: str,
         idempotency_key: str,
+        approval_preflight_id: UUID | None = None,
+        reauthenticated_at: datetime | None = None,
         now: datetime | None = None,
     ) -> EnterpriseCustomRoleRetirementView:
         changed_at = now or _utcnow()
         _idempotency(idempotency_key)
+        if approval_preflight_id is not None:
+            if reauthenticated_at is None:
+                raise LifecycleError("fresh_auth_required", "recent authentication is required")
+            _require_fresh_auth(reauthenticated_at, changed_at)
         cleaned_reason = _clean_text(reason, maximum=512, code="custom_role_retire_reason_invalid")
         payload: dict[str, object] = {
             "actor_id": str(request.actor_id),
@@ -921,6 +1206,9 @@ class EnterpriseAccessService:
             "custom_role_id": str(custom_role_id),
             "expected_version": expected_version,
             "reason": cleaned_reason,
+            "approval_preflight_id": (
+                str(approval_preflight_id) if approval_preflight_id is not None else None
+            ),
         }
         digest = _hash(payload)
         with self._session_factory.begin() as db:
@@ -938,6 +1226,18 @@ class EnterpriseAccessService:
             role = self._active_role(db, request, project_id, custom_role_id, lock=True)
             if role.version != expected_version:
                 raise LifecycleError("custom_role_version_conflict", "custom role changed")
+            approval = None
+            if approval_preflight_id is not None:
+                approval = self._require_approved_preflight(
+                    db,
+                    request,
+                    preflight_id=approval_preflight_id,
+                    operation_type="custom_role_retire",
+                    target_id=custom_role_id,
+                    target_version=expected_version,
+                    reason=cleaned_reason,
+                    now=changed_at,
+                )
             assignments = tuple(
                 db.execute(
                     sa.select(EnterpriseGroupRoleAssignmentRecord)
@@ -962,6 +1262,9 @@ class EnterpriseAccessService:
                 assignment.expires_at = None
                 assignment.version += 1
             project.authorization_version += 1
+            if approval is not None:
+                approval.status = "executed"
+                approval.executed_at = changed_at
             event_payload = {
                 **payload,
                 "status": role.status,
@@ -1155,6 +1458,485 @@ class EnterpriseAccessService:
                 payload=event_payload,
             )
             return self._assignment(assignment, project.authorization_version)
+
+    def _persist_preflight(
+        self,
+        db: Session,
+        *,
+        request: RequestContext,
+        operation_type: str,
+        target_id: UUID,
+        target_version: int,
+        reason: str,
+        snapshot: dict[str, object],
+        created_at: datetime,
+        idempotency_key: str,
+        request_hash: str,
+        event_type: str,
+        project_id: UUID | None = None,
+    ) -> EnterpriseAccessPreflightView:
+        record = EnterpriseAccessPreflightRecord(
+            id=uuid4(),
+            tenant_id=request.tenant_id,
+            space_id=request.space_id if project_id is not None else None,
+            project_id=project_id,
+            operation_type=operation_type,
+            target_id=target_id,
+            target_version=target_version,
+            requested_by=request.actor_id,
+            reason=reason,
+            approval_policy="different_principal",
+            impact_snapshot=snapshot,
+            snapshot_hash=_hash(snapshot),
+            status="pending_approval",
+            expires_at=created_at + _ENTERPRISE_PREFLIGHT_TTL,
+        )
+        db.add(record)
+        db.flush()
+        payload = self._preflight_payload(record)
+        self._event(
+            db,
+            request.tenant_id,
+            aggregate_type="enterprise_access_preflight",
+            aggregate_key=str(record.id),
+            event_type=event_type,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            payload=payload,
+        )
+        return self._preflight_view(record)
+
+    def _group_archive_snapshot(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        group_id: UUID,
+        expected_version: int,
+        lock: bool,
+    ) -> dict[str, object]:
+        group = self._active_group(db, request.tenant_id, group_id, lock=lock)
+        if group.version != expected_version:
+            raise LifecycleError("group_version_conflict", "group changed")
+        membership_statement = (
+            sa.select(EnterpriseGroupMembershipRecord)
+            .where(
+                EnterpriseGroupMembershipRecord.tenant_id == request.tenant_id,
+                EnterpriseGroupMembershipRecord.group_id == group_id,
+                EnterpriseGroupMembershipRecord.status == "active",
+            )
+            .order_by(EnterpriseGroupMembershipRecord.user_id)
+        )
+        assignment_statement = (
+            sa.select(EnterpriseGroupRoleAssignmentRecord)
+            .where(
+                EnterpriseGroupRoleAssignmentRecord.tenant_id == request.tenant_id,
+                EnterpriseGroupRoleAssignmentRecord.group_id == group_id,
+                EnterpriseGroupRoleAssignmentRecord.status == "active",
+            )
+            .order_by(EnterpriseGroupRoleAssignmentRecord.id)
+        )
+        if lock:
+            membership_statement = membership_statement.with_for_update()
+            assignment_statement = assignment_statement.with_for_update()
+        memberships = tuple(db.execute(membership_statement).scalars())
+        assignments = tuple(db.execute(assignment_statement).scalars())
+        user_ids = tuple(sorted({row.user_id for row in memberships}, key=str))
+        project_ids = tuple(sorted({row.project_id for row in assignments}, key=str))
+        users = (
+            db.execute(
+                sa.select(GlobalUser.id, GlobalUser.security_version)
+                .where(GlobalUser.id.in_(user_ids))
+                .order_by(GlobalUser.id)
+            ).all()
+            if user_ids
+            else []
+        )
+        session_counts: dict[UUID, int] = {}
+        if user_ids:
+            for user_id, count in db.execute(
+                sa.select(AuthSessionRecord.user_id, sa.func.count(AuthSessionRecord.id))
+                .where(
+                    AuthSessionRecord.user_id.in_(user_ids),
+                    AuthSessionRecord.revoked_at.is_(None),
+                )
+                .group_by(AuthSessionRecord.user_id)
+            ):
+                session_counts[user_id] = count
+        projects = (
+            db.execute(
+                sa.select(ProjectRecord.id, ProjectRecord.authorization_version)
+                .where(ProjectRecord.id.in_(project_ids))
+                .order_by(ProjectRecord.id)
+            ).all()
+            if project_ids
+            else []
+        )
+        return {
+            "operation_type": "group_archive",
+            "tenant_id": str(request.tenant_id),
+            "target_id": str(group_id),
+            "target_version": group.version,
+            "group": {"name": group.name, "status": group.status},
+            "memberships": [
+                {
+                    "user_id": str(row.user_id),
+                    "version": row.version,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                }
+                for row in memberships
+            ],
+            "assignments": [
+                {
+                    "id": str(row.id),
+                    "space_id": str(row.space_id),
+                    "project_id": str(row.project_id),
+                    "custom_role_id": str(row.custom_role_id),
+                    "version": row.version,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                }
+                for row in assignments
+            ],
+            "users": [
+                {
+                    "user_id": str(user_id),
+                    "security_version": security_version,
+                    "revocable_session_count": session_counts.get(user_id, 0),
+                }
+                for user_id, security_version in users
+            ],
+            "projects": [
+                {"project_id": str(project_id), "authorization_version": version}
+                for project_id, version in projects
+            ],
+            "summary": {
+                "removed_membership_count": len(memberships),
+                "revoked_assignment_count": len(assignments),
+                "invalidated_user_count": len(user_ids),
+                "revoked_session_count": sum(session_counts.values()),
+                "affected_project_count": len(project_ids),
+                "affected_project_ids": [str(value) for value in project_ids],
+            },
+        }
+
+    def _custom_role_retire_snapshot(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        custom_role_id: UUID,
+        expected_version: int,
+        lock: bool,
+    ) -> dict[str, object]:
+        project = self._active_project(db, request, project_id, lock=lock)
+        role = self._active_role(db, request, project_id, custom_role_id, lock=lock)
+        if role.version != expected_version:
+            raise LifecycleError("custom_role_version_conflict", "custom role changed")
+        assignment_statement = (
+            sa.select(EnterpriseGroupRoleAssignmentRecord)
+            .where(
+                EnterpriseGroupRoleAssignmentRecord.tenant_id == request.tenant_id,
+                EnterpriseGroupRoleAssignmentRecord.space_id == request.space_id,
+                EnterpriseGroupRoleAssignmentRecord.project_id == project_id,
+                EnterpriseGroupRoleAssignmentRecord.custom_role_id == custom_role_id,
+                EnterpriseGroupRoleAssignmentRecord.status == "active",
+            )
+            .order_by(EnterpriseGroupRoleAssignmentRecord.id)
+        )
+        if lock:
+            assignment_statement = assignment_statement.with_for_update()
+        assignments = tuple(db.execute(assignment_statement).scalars())
+        group_ids = tuple(sorted({row.group_id for row in assignments}, key=str))
+        membership_statement = (
+            sa.select(EnterpriseGroupMembershipRecord)
+            .where(
+                EnterpriseGroupMembershipRecord.tenant_id == request.tenant_id,
+                EnterpriseGroupMembershipRecord.group_id.in_(group_ids),
+                EnterpriseGroupMembershipRecord.status == "active",
+            )
+            .order_by(
+                EnterpriseGroupMembershipRecord.group_id,
+                EnterpriseGroupMembershipRecord.user_id,
+            )
+        )
+        if lock:
+            membership_statement = membership_statement.with_for_update()
+        memberships = tuple(db.execute(membership_statement).scalars()) if group_ids else ()
+        affected_users = tuple(sorted({row.user_id for row in memberships}, key=str))
+        return {
+            "operation_type": "custom_role_retire",
+            "tenant_id": str(request.tenant_id),
+            "space_id": str(request.space_id),
+            "project_id": str(project_id),
+            "target_id": str(custom_role_id),
+            "target_version": role.version,
+            "role": {
+                "name": role.name,
+                "status": role.status,
+                "permissions": sorted(cast(list[str], role.permissions)),
+            },
+            "project_authorization_version": project.authorization_version,
+            "assignments": [
+                {
+                    "id": str(row.id),
+                    "group_id": str(row.group_id),
+                    "version": row.version,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                }
+                for row in assignments
+            ],
+            "memberships": [
+                {
+                    "group_id": str(row.group_id),
+                    "user_id": str(row.user_id),
+                    "version": row.version,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                }
+                for row in memberships
+            ],
+            "summary": {
+                "revoked_assignment_count": len(assignments),
+                "affected_group_count": len(group_ids),
+                "affected_user_count": len(affected_users),
+                "affected_group_ids": [str(value) for value in group_ids],
+                "affected_user_ids": [str(value) for value in affected_users],
+            },
+        }
+
+    def _snapshot_for_preflight(
+        self,
+        db: Session,
+        request: RequestContext,
+        preflight: EnterpriseAccessPreflightRecord,
+        *,
+        lock: bool,
+    ) -> dict[str, object]:
+        if preflight.operation_type == "group_archive":
+            return self._group_archive_snapshot(
+                db,
+                request,
+                group_id=preflight.target_id,
+                expected_version=preflight.target_version,
+                lock=lock,
+            )
+        if preflight.operation_type == "custom_role_retire" and preflight.project_id is not None:
+            return self._custom_role_retire_snapshot(
+                db,
+                request,
+                project_id=preflight.project_id,
+                custom_role_id=preflight.target_id,
+                expected_version=preflight.target_version,
+                lock=lock,
+            )
+        raise LifecycleError("enterprise_preflight_invalid", "preflight scope is invalid")
+
+    def _require_approved_preflight(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        preflight_id: UUID,
+        operation_type: str,
+        target_id: UUID,
+        target_version: int,
+        reason: str,
+        now: datetime,
+    ) -> EnterpriseAccessPreflightRecord:
+        preflight = db.execute(
+            sa.select(EnterpriseAccessPreflightRecord)
+            .where(
+                EnterpriseAccessPreflightRecord.id == preflight_id,
+                EnterpriseAccessPreflightRecord.tenant_id == request.tenant_id,
+            )
+            .with_for_update()
+        ).scalar_one_or_none()
+        if preflight is None:
+            raise LifecycleError(
+                "enterprise_preflight_not_found", "enterprise access preflight does not exist"
+            )
+        if (
+            preflight.operation_type != operation_type
+            or preflight.target_id != target_id
+            or preflight.target_version != target_version
+            or preflight.reason != reason
+        ):
+            raise LifecycleError(
+                "enterprise_preflight_mismatch", "preflight is bound to another operation"
+            )
+        if preflight.requested_by != request.actor_id:
+            raise LifecycleError(
+                "enterprise_preflight_requester_mismatch",
+                "only the requester can execute the approved operation",
+            )
+        if preflight.status != "approved":
+            raise LifecycleError(
+                "enterprise_preflight_not_approved", "approved preflight is required"
+            )
+        if _comparable(preflight.expires_at) <= now:
+            raise LifecycleError("enterprise_preflight_expired", "preflight has expired")
+        self._require_approver_still_authorized(db, request, preflight)
+        current_snapshot = self._snapshot_for_preflight(db, request, preflight, lock=True)
+        if _hash(current_snapshot) != preflight.snapshot_hash:
+            raise LifecycleError("enterprise_preflight_stale", "enterprise access impact changed")
+        return preflight
+
+    def _require_preflight_permission(
+        self,
+        db: Session,
+        request: RequestContext,
+        preflight: EnterpriseAccessPreflightRecord,
+    ) -> None:
+        if preflight.operation_type == "group_archive":
+            self._require_tenant_group_admin(db, request)
+            return
+        if (
+            preflight.operation_type != "custom_role_retire"
+            or preflight.space_id != request.space_id
+            or preflight.project_id is None
+        ):
+            raise LifecycleError("enterprise_preflight_not_found", "preflight is not in scope")
+        self._active_project(db, request, preflight.project_id, lock=False)
+        self._require_project_permissions(
+            db, request, preflight.project_id, ("grant.manage", "custom_role.manage")
+        )
+
+    def _require_approver_still_authorized(
+        self,
+        db: Session,
+        request: RequestContext,
+        preflight: EnterpriseAccessPreflightRecord,
+    ) -> None:
+        approver_id = preflight.approved_by
+        if approver_id is None or approver_id == preflight.requested_by:
+            raise LifecycleError("approval_invalid", "approval principal is invalid")
+        if preflight.operation_type == "group_archive":
+            row = db.execute(
+                sa.select(GlobalUser, TenantMembership)
+                .join(TenantMembership, TenantMembership.user_id == GlobalUser.id)
+                .where(
+                    GlobalUser.id == approver_id,
+                    TenantMembership.tenant_id == request.tenant_id,
+                )
+            ).one_or_none()
+            if row is None:
+                raise LifecycleError("approval_invalidated", "approver is no longer authorized")
+            user, membership = row
+            if (
+                user.status != "active"
+                or membership.status != "active"
+                or "group.manage" not in TENANT_ROLE_PERMISSIONS[membership.role]
+            ):
+                raise LifecycleError("approval_invalidated", "approver is no longer authorized")
+            return
+        if preflight.space_id is None or preflight.project_id is None:
+            raise LifecycleError("approval_invalidated", "approval scope is invalid")
+        approver_context = self._current_actor_context(
+            db,
+            tenant_id=request.tenant_id,
+            space_id=preflight.space_id,
+            actor_id=approver_id,
+            project_id=preflight.project_id,
+            trace_id=f"approval-recheck:{preflight.id}",
+        )
+        self._require_project_permissions(
+            db,
+            approver_context,
+            preflight.project_id,
+            ("grant.manage", "custom_role.manage"),
+        )
+
+    @staticmethod
+    def _current_actor_context(
+        db: Session,
+        *,
+        tenant_id: UUID,
+        space_id: UUID,
+        actor_id: UUID,
+        project_id: UUID,
+        trace_id: str,
+    ) -> RequestContext:
+        row = db.execute(
+            sa.select(GlobalUser, TenantMembership, SpaceMembership)
+            .join(TenantMembership, TenantMembership.user_id == GlobalUser.id)
+            .join(
+                SpaceMembership,
+                sa.and_(
+                    SpaceMembership.tenant_id == TenantMembership.tenant_id,
+                    SpaceMembership.user_id == GlobalUser.id,
+                ),
+            )
+            .where(
+                GlobalUser.id == actor_id,
+                TenantMembership.tenant_id == tenant_id,
+                SpaceMembership.space_id == space_id,
+            )
+        ).one_or_none()
+        if row is None:
+            raise LifecycleError("approval_invalidated", "approver is no longer authorized")
+        user, tenant_membership, space_membership = row
+        if (
+            user.status != "active"
+            or tenant_membership.status != "active"
+            or space_membership.status != "active"
+        ):
+            raise LifecycleError("approval_invalidated", "approver is no longer authorized")
+        return RequestContext(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            user_security_version=user.security_version,
+            tenant_membership_version=tenant_membership.version,
+            space_membership_version=space_membership.version,
+            trace_id=trace_id,
+        )
+
+    @staticmethod
+    def _preflight_payload(record: EnterpriseAccessPreflightRecord) -> dict[str, object]:
+        summary = cast(dict[str, object], record.impact_snapshot.get("summary", {}))
+        return {
+            "preflight_id": str(record.id),
+            "tenant_id": str(record.tenant_id),
+            "space_id": str(record.space_id) if record.space_id else None,
+            "project_id": str(record.project_id) if record.project_id else None,
+            "operation_type": record.operation_type,
+            "target_id": str(record.target_id),
+            "target_version": record.target_version,
+            "status": record.status,
+            "requested_by": str(record.requested_by),
+            "approved_by": str(record.approved_by) if record.approved_by else None,
+            "approval_policy": record.approval_policy,
+            "impact_summary": summary,
+            "snapshot_hash": record.snapshot_hash,
+            "expires_at": record.expires_at.isoformat(),
+        }
+
+    @classmethod
+    def _preflight_view(
+        cls, record: EnterpriseAccessPreflightRecord
+    ) -> EnterpriseAccessPreflightView:
+        return cls._preflight_result(cls._preflight_payload(record), replayed=False)
+
+    @staticmethod
+    def _preflight_result(
+        payload: dict[str, object], *, replayed: bool
+    ) -> EnterpriseAccessPreflightView:
+        approved_by = cast(str | None, payload.get("approved_by"))
+        return EnterpriseAccessPreflightView(
+            preflight_id=UUID(cast(str, payload["preflight_id"])),
+            operation_type=cast(str, payload["operation_type"]),
+            target_id=UUID(cast(str, payload["target_id"])),
+            target_version=cast(int, payload["target_version"]),
+            status=cast(str, payload["status"]),
+            requested_by=UUID(cast(str, payload["requested_by"])),
+            approved_by=UUID(approved_by) if approved_by else None,
+            approval_policy=cast(str, payload["approval_policy"]),
+            impact_summary=cast(dict[str, object], payload["impact_summary"]),
+            snapshot_hash=cast(str, payload["snapshot_hash"]),
+            expires_at=datetime.fromisoformat(cast(str, payload["expires_at"])),
+            replayed=replayed,
+        )
 
     @staticmethod
     def _validate_permissions(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:

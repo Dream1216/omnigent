@@ -14,6 +14,7 @@ from saas.control_plane import (
     AuthSessionRecord,
     CompositeRemovalImpactProvider,
     ControlPlaneOutboxEvent,
+    EnterpriseAccessPreflightRecord,
     EnterpriseAccessRemovalImpactProvider,
     EnterpriseAccessService,
     EnterpriseCustomRoleRecord,
@@ -105,7 +106,7 @@ def enterprise_fixture() -> tuple[sessionmaker[Session], _Ids]:
                 TenantMembership(
                     tenant_id=ids.tenant,
                     user_id=ids.manager,
-                    role="member",
+                    role="admin",
                     status="active",
                     version=1,
                 ),
@@ -287,6 +288,300 @@ def test_group_custom_role_is_additive_explained_versioned_and_immediately_revok
     assert any(source.role_version == 2 for source in denied.sources)
 
 
+def test_enterprise_destructive_preflights_require_fresh_separated_approval_and_exact_impact(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service, group_id, role_id, _assignment_id = _grant_group_role(sessions, ids)
+    owner = _context(ids, ids.owner, "preflight-requester")
+    approver = _context(ids, ids.manager, "preflight-approver")
+
+    with pytest.raises(LifecycleError) as stale_auth:
+        service.create_group_archive_preflight(
+            owner,
+            group_id=group_id,
+            expected_version=1,
+            reason="replace directory group",
+            reauthenticated_at=_NOW - timedelta(minutes=6),
+            idempotency_key="stale-auth-group-preflight",
+            now=_NOW,
+        )
+    assert stale_auth.value.code == "fresh_auth_required"
+
+    group_preflight = service.create_group_archive_preflight(
+        owner,
+        group_id=group_id,
+        expected_version=1,
+        reason="replace directory group",
+        reauthenticated_at=_NOW,
+        idempotency_key="group-archive-preflight",
+        now=_NOW,
+    )
+    assert group_preflight.status == "pending_approval"
+    assert group_preflight.approval_policy == "different_principal"
+    assert group_preflight.impact_summary["removed_membership_count"] == 1
+    assert group_preflight.impact_summary["revoked_assignment_count"] == 1
+    assert service.create_group_archive_preflight(
+        owner,
+        group_id=group_id,
+        expected_version=1,
+        reason="replace directory group",
+        reauthenticated_at=_NOW,
+        idempotency_key="group-archive-preflight",
+        now=_NOW,
+    ).replayed
+    with pytest.raises(LifecycleError) as self_approval:
+        service.decide_enterprise_access_preflight(
+            owner,
+            preflight_id=group_preflight.preflight_id,
+            operation_type="group_archive",
+            target_id=group_id,
+            decision="approve",
+            reason="self approval must fail",
+            reauthenticated_at=_NOW,
+            idempotency_key="self-approve-group",
+            now=_NOW,
+        )
+    assert self_approval.value.code == "approval_separation_required"
+
+    approved = service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=group_preflight.preflight_id,
+        operation_type="group_archive",
+        target_id=group_id,
+        decision="approve",
+        reason="replacement checked",
+        reauthenticated_at=_NOW,
+        idempotency_key="approve-group-archive",
+        now=_NOW,
+    )
+    assert approved.status == "approved"
+    assert service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=group_preflight.preflight_id,
+        operation_type="group_archive",
+        target_id=group_id,
+        decision="approve",
+        reason="replacement checked",
+        reauthenticated_at=_NOW,
+        idempotency_key="approve-group-archive",
+        now=_NOW,
+    ).replayed
+    service.add_group_member(
+        owner,
+        group_id=group_id,
+        user_id=ids.owner,
+        expires_at=None,
+        idempotency_key="change-impact-after-approval",
+        now=_NOW,
+    )
+    with pytest.raises(LifecycleError) as stale_impact:
+        service.archive_group(
+            owner,
+            group_id=group_id,
+            expected_version=1,
+            reason="replace directory group",
+            approval_preflight_id=group_preflight.preflight_id,
+            reauthenticated_at=_NOW,
+            idempotency_key="execute-stale-group-archive",
+            now=_NOW,
+        )
+    assert stale_impact.value.code == "enterprise_preflight_stale"
+
+    role_preflight = service.create_custom_role_retire_preflight(
+        owner,
+        project_id=ids.project,
+        custom_role_id=role_id,
+        expected_version=1,
+        reason="replace custom role",
+        reauthenticated_at=_NOW,
+        idempotency_key="role-retire-preflight",
+        now=_NOW,
+    )
+    approved_role = service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=role_preflight.preflight_id,
+        operation_type="custom_role_retire",
+        target_id=role_id,
+        project_id=ids.project,
+        decision="approve",
+        reason="replacement role checked",
+        reauthenticated_at=_NOW,
+        idempotency_key="approve-role-retire",
+        now=_NOW,
+    )
+    assert approved_role.impact_summary["affected_user_count"] == 2
+    with pytest.raises(LifecycleError) as changed_reason:
+        service.retire_custom_role(
+            owner,
+            project_id=ids.project,
+            custom_role_id=role_id,
+            expected_version=1,
+            reason="different reason",
+            approval_preflight_id=role_preflight.preflight_id,
+            reauthenticated_at=_NOW,
+            idempotency_key="execute-role-wrong-reason",
+            now=_NOW,
+        )
+    assert changed_reason.value.code == "enterprise_preflight_mismatch"
+    retired = service.retire_custom_role(
+        owner,
+        project_id=ids.project,
+        custom_role_id=role_id,
+        expected_version=1,
+        reason="replace custom role",
+        approval_preflight_id=role_preflight.preflight_id,
+        reauthenticated_at=_NOW,
+        idempotency_key="execute-approved-role",
+        now=_NOW,
+    )
+    assert retired.status == "retired"
+    with sessions() as db:
+        persisted = db.get(EnterpriseAccessPreflightRecord, role_preflight.preflight_id)
+        assert persisted is not None
+        assert persisted.status == "executed"
+        assert persisted.executed_at.replace(tzinfo=timezone.utc) == _NOW
+
+
+def test_enterprise_preflight_approval_is_invalidated_when_approver_loses_permission(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service = EnterpriseAccessService(sessions)
+    owner = _context(ids, ids.owner, "approval-invalidation-requester")
+    approver = _context(ids, ids.manager, "approval-invalidation-approver")
+    group = service.create_group(
+        owner,
+        name="Approval Invalidated",
+        description=None,
+        idempotency_key="create-approval-invalidation-group",
+    )
+    preflight = service.create_group_archive_preflight(
+        owner,
+        group_id=group.id,
+        expected_version=1,
+        reason="replace invalidated group",
+        reauthenticated_at=_NOW,
+        idempotency_key="approval-invalidation-preflight",
+        now=_NOW,
+    )
+    service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=preflight.preflight_id,
+        operation_type="group_archive",
+        target_id=group.id,
+        decision="approve",
+        reason="initially authorized",
+        reauthenticated_at=_NOW,
+        idempotency_key="approval-before-role-revocation",
+        now=_NOW,
+    )
+    with sessions.begin() as db:
+        membership = db.get(TenantMembership, (ids.tenant, ids.manager))
+        assert membership is not None
+        membership.role = "member"
+        membership.version += 1
+    with pytest.raises(LifecycleError) as invalidated:
+        service.archive_group(
+            owner,
+            group_id=group.id,
+            expected_version=1,
+            reason="replace invalidated group",
+            approval_preflight_id=preflight.preflight_id,
+            reauthenticated_at=_NOW,
+            idempotency_key="execute-invalidated-approval",
+            now=_NOW,
+        )
+    assert invalidated.value.code == "approval_invalidated"
+
+
+def test_enterprise_preflight_rejection_and_expiry_cannot_execute(enterprise_fixture) -> None:
+    sessions, ids = enterprise_fixture
+    service = EnterpriseAccessService(sessions)
+    owner = _context(ids, ids.owner, "approval-terminal-requester")
+    approver = _context(ids, ids.manager, "approval-terminal-approver")
+
+    rejected_group = service.create_group(
+        owner,
+        name="Rejected Archive",
+        description=None,
+        idempotency_key="create-rejected-archive-group",
+    )
+    rejected = service.create_group_archive_preflight(
+        owner,
+        group_id=rejected_group.id,
+        expected_version=1,
+        reason="replace rejected group",
+        reauthenticated_at=_NOW,
+        idempotency_key="rejected-archive-preflight",
+        now=_NOW,
+    )
+    decision = service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=rejected.preflight_id,
+        operation_type="group_archive",
+        target_id=rejected_group.id,
+        decision="reject",
+        reason="replacement is incomplete",
+        reauthenticated_at=_NOW,
+        idempotency_key="reject-archive-preflight",
+        now=_NOW,
+    )
+    assert decision.status == "rejected"
+    with pytest.raises(LifecycleError) as rejected_execution:
+        service.archive_group(
+            owner,
+            group_id=rejected_group.id,
+            expected_version=1,
+            reason="replace rejected group",
+            approval_preflight_id=rejected.preflight_id,
+            reauthenticated_at=_NOW,
+            idempotency_key="execute-rejected-preflight",
+            now=_NOW,
+        )
+    assert rejected_execution.value.code == "enterprise_preflight_not_approved"
+
+    expired_group = service.create_group(
+        owner,
+        name="Expired Archive",
+        description=None,
+        idempotency_key="create-expired-archive-group",
+    )
+    expiring = service.create_group_archive_preflight(
+        owner,
+        group_id=expired_group.id,
+        expected_version=1,
+        reason="replace expired group",
+        reauthenticated_at=_NOW,
+        idempotency_key="expired-archive-preflight",
+        now=_NOW,
+    )
+    service.decide_enterprise_access_preflight(
+        approver,
+        preflight_id=expiring.preflight_id,
+        operation_type="group_archive",
+        target_id=expired_group.id,
+        decision="approve",
+        reason="replacement initially ready",
+        reauthenticated_at=_NOW,
+        idempotency_key="approve-expiring-preflight",
+        now=_NOW,
+    )
+    expired_at = _NOW + timedelta(minutes=16)
+    with pytest.raises(LifecycleError) as expired_execution:
+        service.archive_group(
+            owner,
+            group_id=expired_group.id,
+            expected_version=1,
+            reason="replace expired group",
+            approval_preflight_id=expiring.preflight_id,
+            reauthenticated_at=expired_at,
+            idempotency_key="execute-expired-preflight",
+            now=expired_at,
+        )
+    assert expired_execution.value.code == "enterprise_preflight_expired"
+
+
 def test_group_member_removal_revokes_sessions_and_all_assigned_project_access(
     enterprise_fixture,
 ) -> None:
@@ -420,12 +715,16 @@ def test_custom_role_retirement_revokes_assignments_and_is_idempotent(
     )
     assert replay.replayed is True
     assert replay.authorization_version == retired.authorization_version
-    assert not ProjectAuthorizer(sessions).evaluate(
-        _context(ids, ids.member, "after-role-retirement"),
-        action="run.create",
-        project_id=ids.project,
-        now=_NOW + timedelta(minutes=2),
-    ).allowed
+    assert (
+        not ProjectAuthorizer(sessions)
+        .evaluate(
+            _context(ids, ids.member, "after-role-retirement"),
+            action="run.create",
+            project_id=ids.project,
+            now=_NOW + timedelta(minutes=2),
+        )
+        .allowed
+    )
     with sessions() as db:
         role = db.get(EnterpriseCustomRoleRecord, role_id)
         assignment = db.get(EnterpriseGroupRoleAssignmentRecord, assignment_id)

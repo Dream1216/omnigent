@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_access import (
+    EnterpriseAccessPreflightView,
     EnterpriseAccessService,
     EnterpriseCustomRoleRetirementView,
     EnterpriseCustomRoleView,
@@ -34,6 +35,10 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
         "POST /tenants/{tenant}/groups": "group.manage",
         "GET /tenants/{tenant}/groups": "group.read",
         "POST /tenants/{tenant}/groups/{group}/archive": "group.manage",
+        "POST /tenants/{tenant}/groups/{group}/archive-preflights": "group.manage",
+        "POST /tenants/{tenant}/groups/{group}/archive-preflights/{preflight}/decisions": (
+            "group.manage"
+        ),
         "PUT /tenants/{tenant}/groups/{group}/members/{user}": "group.manage",
         "DELETE /tenants/{tenant}/groups/{group}/members/{user}": "group.manage",
         "POST /tenants/{tenant}/groups/{group}/membership-batches": "group.manage",
@@ -49,6 +54,10 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
         "POST /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/retire": (
             "custom_role.manage"
         ),
+        "POST /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/"
+        "retire-preflights": "custom_role.manage",
+        "POST /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/"
+        "retire-preflights/{preflight}/decisions": "custom_role.manage",
         "POST /tenants/{tenant}/spaces/{space}/projects/{project}/group-role-assignments": (
             "custom_role.manage"
         ),
@@ -72,7 +81,18 @@ class GroupMembershipRemoveBody(BaseModel):
 
 
 class GroupArchiveBody(BaseModel):
+    approval_preflight_id: UUID
     expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class EnterpriseAccessPreflightBody(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class EnterpriseAccessDecisionBody(BaseModel):
+    decision: Literal["approve", "reject"]
     reason: str = Field(min_length=1, max_length=512)
 
 
@@ -98,6 +118,7 @@ class CustomRoleUpdateBody(CustomRoleBody):
 
 
 class CustomRoleRetireBody(BaseModel):
+    approval_preflight_id: UUID
     expected_version: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=512)
 
@@ -181,6 +202,16 @@ def _tenant_context(
     )
 
 
+def _authenticated_at(request: Request, auth_provider: SaasAuthProvider) -> datetime:
+    principal = auth_provider.get_principal(request)
+    if principal is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "authentication_required", "message": "login required"},
+        )
+    return principal.session.authenticated_at
+
+
 def _http_error(error: Exception, status: int) -> HTTPException:
     return HTTPException(
         status_code=status,
@@ -249,6 +280,23 @@ def _group_payload(value: EnterpriseGroupView) -> dict[str, object]:
         "description": value.description,
         "status": value.status,
         "version": value.version,
+        "replayed": value.replayed,
+    }
+
+
+def _preflight_payload(value: EnterpriseAccessPreflightView) -> dict[str, object]:
+    return {
+        "preflight_id": str(value.preflight_id),
+        "operation_type": value.operation_type,
+        "target_id": str(value.target_id),
+        "target_version": value.target_version,
+        "status": value.status,
+        "requested_by": str(value.requested_by),
+        "approved_by": str(value.approved_by) if value.approved_by else None,
+        "approval_policy": value.approval_policy,
+        "impact_summary": value.impact_summary,
+        "snapshot_hash": value.snapshot_hash,
+        "expires_at": value.expires_at.isoformat(),
         "replayed": value.replayed,
     }
 
@@ -403,6 +451,68 @@ def create_enterprise_admin_router(
             payload=_group_payload,
         )
 
+    @router.post(
+        "/tenants/{tenant_id}/groups/{group_id}/archive-preflights",
+        status_code=201,
+    )
+    def create_group_archive_preflight(
+        tenant_id: UUID,
+        group_id: UUID,
+        body: EnterpriseAccessPreflightBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = enterprise_access.create_group_archive_preflight(
+                context,
+                group_id=group_id,
+                expected_version=body.expected_version,
+                reason=body.reason,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _preflight_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/groups/{group_id}/archive-preflights/{preflight_id}/decisions"
+    )
+    def decide_group_archive_preflight(
+        tenant_id: UUID,
+        group_id: UUID,
+        preflight_id: UUID,
+        body: EnterpriseAccessDecisionBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = enterprise_access.decide_enterprise_access_preflight(
+                context,
+                preflight_id=preflight_id,
+                operation_type="group_archive",
+                target_id=group_id,
+                decision=body.decision,
+                reason=body.reason,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _preflight_payload(value)
+
     @router.post("/tenants/{tenant_id}/groups/{group_id}/archive")
     def archive_group(
         tenant_id: UUID,
@@ -424,6 +534,8 @@ def create_enterprise_admin_router(
                 expected_version=body.expected_version,
                 reason=body.reason,
                 idempotency_key=idempotency_key,
+                approval_preflight_id=body.approval_preflight_id,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
             )
         except LifecycleError as error:
             raise _http_error(error, _status(error)) from error
@@ -617,6 +729,78 @@ def create_enterprise_admin_router(
 
     @router.post(
         "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/"
+        "custom-roles/{custom_role_id}/retire-preflights",
+        status_code=201,
+    )
+    def create_custom_role_retire_preflight(
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        custom_role_id: UUID,
+        body: EnterpriseAccessPreflightBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        try:
+            value = enterprise_access.create_custom_role_retire_preflight(
+                context,
+                project_id=project_id,
+                custom_role_id=custom_role_id,
+                expected_version=body.expected_version,
+                reason=body.reason,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _preflight_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/"
+        "custom-roles/{custom_role_id}/retire-preflights/{preflight_id}/decisions"
+    )
+    def decide_custom_role_retire_preflight(
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        custom_role_id: UUID,
+        preflight_id: UUID,
+        body: EnterpriseAccessDecisionBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        try:
+            value = enterprise_access.decide_enterprise_access_preflight(
+                context,
+                preflight_id=preflight_id,
+                operation_type="custom_role_retire",
+                target_id=custom_role_id,
+                project_id=project_id,
+                decision=body.decision,
+                reason=body.reason,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _preflight_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/"
         "custom-roles/{custom_role_id}/retire"
     )
     def retire_custom_role(
@@ -643,6 +827,8 @@ def create_enterprise_admin_router(
                 expected_version=body.expected_version,
                 reason=body.reason,
                 idempotency_key=idempotency_key,
+                approval_preflight_id=body.approval_preflight_id,
+                reauthenticated_at=_authenticated_at(request, auth_provider),
             )
         except LifecycleError as error:
             raise _http_error(error, _status(error)) from error

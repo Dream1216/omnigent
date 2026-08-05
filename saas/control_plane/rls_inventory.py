@@ -32,6 +32,7 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_enterprise_group_memberships",
         "saas_enterprise_custom_roles",
         "saas_enterprise_group_role_assignments",
+        "saas_enterprise_access_preflights",
         "saas_control_plane_outbox",
         "saas_tasks",
         "saas_execution_sessions",
@@ -63,5 +64,5 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 56:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 56 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 57:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 57 tables")

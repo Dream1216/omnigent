@@ -74,7 +74,7 @@ def _http_fixture() -> tuple[sessionmaker[Session], dict[str, UUID]]:
                 TenantMembership(
                     tenant_id=ids["tenant"],
                     user_id=ids["member"],
-                    role="member",
+                    role="admin",
                     status="active",
                     version=1,
                 ),
@@ -123,18 +123,31 @@ def _http_fixture() -> tuple[sessionmaker[Session], dict[str, UUID]]:
             )
         )
         db.flush()
-        db.add(
-            ProjectMembershipRecord(
-                tenant_id=ids["tenant"],
-                space_id=ids["space"],
-                project_id=ids["project"],
-                subject_type="user",
-                subject_id=ids["owner"],
-                role="owner",
-                status="active",
-                created_by=ids["owner"],
-                version=1,
-            )
+        db.add_all(
+            [
+                ProjectMembershipRecord(
+                    tenant_id=ids["tenant"],
+                    space_id=ids["space"],
+                    project_id=ids["project"],
+                    subject_type="user",
+                    subject_id=ids["owner"],
+                    role="owner",
+                    status="active",
+                    created_by=ids["owner"],
+                    version=1,
+                ),
+                ProjectMembershipRecord(
+                    tenant_id=ids["tenant"],
+                    space_id=ids["space"],
+                    project_id=ids["project"],
+                    subject_type="user",
+                    subject_id=ids["member"],
+                    role="manage",
+                    status="active",
+                    created_by=ids["owner"],
+                    version=1,
+                ),
+            ]
         )
         db.add(
             RuntimePlacementRecord(
@@ -167,13 +180,21 @@ def _http_fixture() -> tuple[sessionmaker[Session], dict[str, UUID]]:
             )
         )
         db.flush()
-        db.add(
-            RuntimeIdentityAliasRecord(
-                runtime_partition_id=ids["partition"],
-                user_id=ids["owner"],
-                runtime_user_key="enterprise-http-owner",
-                status="active",
-            )
+        db.add_all(
+            [
+                RuntimeIdentityAliasRecord(
+                    runtime_partition_id=ids["partition"],
+                    user_id=ids["owner"],
+                    runtime_user_key="enterprise-http-owner",
+                    status="active",
+                ),
+                RuntimeIdentityAliasRecord(
+                    runtime_partition_id=ids["partition"],
+                    user_id=ids["member"],
+                    runtime_user_key="enterprise-http-member",
+                    status="active",
+                ),
+            ]
         )
     return sessions, ids
 
@@ -322,20 +343,84 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
         "active",
     ]
 
+    retire_preflight = client.post(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/custom-roles/{role.json()['id']}/retire-preflights",
+        headers={**mutation_headers, "Idempotency-Key": "retire-role-preflight"},
+        json={"expected_version": 1, "reason": "replaced by managed directory role"},
+    )
+    assert retire_preflight.status_code == 201, retire_preflight.text
+    assert retire_preflight.json()["status"] == "pending_approval"
+    self_approval = client.post(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/custom-roles/{role.json()['id']}/retire-preflights/"
+        f"{retire_preflight.json()['preflight_id']}/decisions",
+        headers={**mutation_headers, "Idempotency-Key": "self-approve-role"},
+        json={"decision": "approve", "reason": "reviewed"},
+    )
+    assert self_approval.status_code == 409
+    assert self_approval.json()["detail"]["code"] == "approval_separation_required"
+
+    approver_issued = lifecycle.issue_auth_session(
+        user_id=ids["member"],
+        authn_method="password",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    client.cookies.set("saas_session", approver_issued.token)
+    approver_headers = {
+        "Origin": "http://testserver",
+        "X-CSRF-Token": approver_issued.csrf_token,
+    }
+    approved_role = client.post(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/custom-roles/{role.json()['id']}/retire-preflights/"
+        f"{retire_preflight.json()['preflight_id']}/decisions",
+        headers={**approver_headers, "Idempotency-Key": "approve-retire-role"},
+        json={"decision": "approve", "reason": "replacement is active"},
+    )
+    assert approved_role.status_code == 200, approved_role.text
+    assert approved_role.json()["status"] == "approved"
+
+    client.cookies.set("saas_session", issued.token)
     retired = client.post(
         f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
         f"{ids['project']}/custom-roles/{role.json()['id']}/retire",
         headers={**mutation_headers, "Idempotency-Key": "retire-role"},
-        json={"expected_version": 1, "reason": "replaced by managed directory role"},
+        json={
+            "approval_preflight_id": retire_preflight.json()["preflight_id"],
+            "expected_version": 1,
+            "reason": "replaced by managed directory role",
+        },
     )
     assert retired.status_code == 200, retired.text
     assert retired.json()["status"] == "retired"
     assert retired.json()["revoked_assignment_count"] == 1
 
+    archive_preflight = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/archive-preflights",
+        headers={**mutation_headers, "Idempotency-Key": "archive-group-preflight"},
+        json={"expected_version": 1, "reason": "replaced by managed directory group"},
+    )
+    assert archive_preflight.status_code == 201, archive_preflight.text
+    client.cookies.set("saas_session", approver_issued.token)
+    approved_group = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/archive-preflights/"
+        f"{archive_preflight.json()['preflight_id']}/decisions",
+        headers={**approver_headers, "Idempotency-Key": "approve-archive-group"},
+        json={"decision": "approve", "reason": "directory group is ready"},
+    )
+    assert approved_group.status_code == 200, approved_group.text
+    assert approved_group.json()["status"] == "approved"
+
+    client.cookies.set("saas_session", issued.token)
     archived = client.post(
         f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/archive",
         headers={**mutation_headers, "Idempotency-Key": "archive-group"},
-        json={"expected_version": 1, "reason": "replaced by managed directory group"},
+        json={
+            "approval_preflight_id": archive_preflight.json()["preflight_id"],
+            "expected_version": 1,
+            "reason": "replaced by managed directory group",
+        },
     )
     assert archived.status_code == 200, archived.text
     assert archived.json()["status"] == "archived"

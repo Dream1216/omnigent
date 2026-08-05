@@ -101,6 +101,7 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_enterprise_group_memberships,
     saas_enterprise_custom_roles,
     saas_enterprise_group_role_assignments,
+    saas_enterprise_access_preflights,
     saas_control_plane_outbox
 TO saas_governance;
 
@@ -134,6 +135,7 @@ GRANT SELECT ON
     saas_enterprise_group_memberships,
     saas_enterprise_custom_roles,
     saas_enterprise_group_role_assignments,
+    saas_enterprise_access_preflights,
     saas_repositories,
     saas_changeset_groups,
     saas_changesets,
@@ -151,6 +153,7 @@ GRANT INSERT, UPDATE ON
     saas_enterprise_group_memberships,
     saas_enterprise_custom_roles,
     saas_enterprise_group_role_assignments,
+    saas_enterprise_access_preflights,
     saas_repositories,
     saas_changeset_groups,
     saas_changesets,
@@ -304,6 +307,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_runtime_binding_sagas,
     saas_ownership_transfers,
     saas_member_removal_preflights,
+    saas_enterprise_access_preflights,
     saas_service_accounts,
     saas_api_credentials,
     saas_tasks,

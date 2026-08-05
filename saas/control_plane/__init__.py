@@ -66,6 +66,7 @@ from saas.control_plane.db_models import (
     TenantMembership,
 )
 from saas.control_plane.enterprise_access import (
+    EnterpriseAccessPreflightView,
     EnterpriseAccessService,
     EnterpriseCustomRoleRetirementView,
     EnterpriseCustomRoleView,
@@ -82,6 +83,7 @@ from saas.control_plane.enterprise_http import (
     validate_enterprise_admin_route_permissions,
 )
 from saas.control_plane.enterprise_models import (
+    EnterpriseAccessPreflightRecord,
     EnterpriseCustomRoleRecord,
     EnterpriseGroupMembershipRecord,
     EnterpriseGroupRecord,
@@ -325,6 +327,8 @@ __all__ = [
     "EffectCallState",
     "EgressPolicyRecord",
     "EnqueuedWebhookDelivery",
+    "EnterpriseAccessPreflightRecord",
+    "EnterpriseAccessPreflightView",
     "EnterpriseAccessRemovalImpactProvider",
     "EnterpriseAccessService",
     "EnterpriseCustomRoleRecord",

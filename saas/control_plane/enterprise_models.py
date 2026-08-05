@@ -258,3 +258,101 @@ class EnterpriseGroupRoleAssignmentRecord(SaasBase):
             "expires_at",
         ),
     )
+
+
+class EnterpriseAccessPreflightRecord(SaasBase):
+    """Hash-bound impact snapshot and two-person approval for destructive access changes."""
+
+    __tablename__ = "saas_enterprise_access_preflights"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    space_id: Mapped[UUID | None] = mapped_column()
+    project_id: Mapped[UUID | None] = mapped_column()
+    operation_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    target_id: Mapped[UUID] = mapped_column(nullable=False)
+    target_version: Mapped[int] = mapped_column(nullable=False)
+    requested_by: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    approval_policy: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, default="different_principal"
+    )
+    impact_snapshot: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending_approval")
+    approved_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    approval_reason: Mapped[str | None] = mapped_column(sa.String(512))
+    approved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    executed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id"),
+            ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
+            ondelete="RESTRICT",
+            name="fk_enterprise_access_preflight_project",
+        ),
+        sa.CheckConstraint(
+            "operation_type IN ('group_archive', 'custom_role_retire')",
+            name="ck_enterprise_access_preflight_operation",
+        ),
+        sa.CheckConstraint(
+            "(operation_type = 'group_archive' AND space_id IS NULL AND project_id IS NULL) OR "
+            "(operation_type = 'custom_role_retire' AND space_id IS NOT NULL AND "
+            "project_id IS NOT NULL)",
+            name="ck_enterprise_access_preflight_scope",
+        ),
+        sa.CheckConstraint(
+            "status IN ('pending_approval', 'approved', 'rejected', 'executed')",
+            name="ck_enterprise_access_preflight_status",
+        ),
+        sa.CheckConstraint(
+            "approval_policy = 'different_principal'",
+            name="ck_enterprise_access_preflight_policy",
+        ),
+        sa.CheckConstraint("target_version > 0", name="ck_enterprise_access_target_version"),
+        sa.CheckConstraint("length(reason) > 0", name="ck_enterprise_access_reason_nonempty"),
+        sa.CheckConstraint(
+            "length(snapshot_hash) = 64", name="ck_enterprise_access_snapshot_hash"
+        ),
+        sa.CheckConstraint(
+            "(status = 'pending_approval' AND approved_by IS NULL AND approved_at IS NULL "
+            "AND approval_reason IS NULL AND executed_at IS NULL) OR "
+            "(status = 'rejected' AND approved_by IS NOT NULL AND approved_at IS NOT NULL "
+            "AND length(approval_reason) > 0 AND executed_at IS NULL) OR "
+            "(status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL "
+            "AND length(approval_reason) > 0 AND executed_at IS NULL) OR "
+            "(status = 'executed' AND approved_by IS NOT NULL AND approved_at IS NOT NULL "
+            "AND length(approval_reason) > 0 AND executed_at IS NOT NULL)",
+            name="ck_enterprise_access_preflight_decision_state",
+        ),
+        sa.CheckConstraint(
+            "approved_by IS NULL OR approved_by <> requested_by",
+            name="ck_enterprise_access_preflight_distinct_approver",
+        ),
+        sa.Index(
+            "ix_enterprise_access_preflight_scope",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "status",
+            "expires_at",
+        ),
+        sa.Index(
+            "ix_enterprise_access_preflight_target",
+            "tenant_id",
+            "operation_type",
+            "target_id",
+            "status",
+        ),
+    )

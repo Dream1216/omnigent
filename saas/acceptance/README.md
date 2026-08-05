@@ -465,6 +465,19 @@ only `p6-enterprise-access-lifecycle-contract`; the evidence-successor wheel req
 federation, billing, complete audit/API/console/privacy capability, production proof,
 all eleven aggregate gates, and release `NO-GO` remain pending.
 
+The next P6 code-contract slice advances the downstream head to `p6a000000004`
+and makes Cookie Admin Group Archive/custom-role Retire require a persisted,
+15-minute impact snapshot plus a different-principal approval. The snapshot binds
+the requester, target/version/reason and exact affected membership, assignment,
+session/security and Project-authorization facts. Approval and execution re-evaluate
+permissions and the hash; fresh-auth expiry, self approval, stale impact, approver
+permission loss, cross-scope reuse and concurrent decision losers fail closed. The
+57/17 FORCE-RLS restore contract now preserves two preflight rows and replays one
+approved record to `executed`. Exact-revision CI evidence must still be attached
+before this subgate is represented as immutable acceptance evidence; the production
+approval UI, directory federation, commercial proof, all eleven aggregate gates and
+release `NO-GO` remain open.
+
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run
 `31011047850` verifies that first current P6-era sync. A second strictly later
