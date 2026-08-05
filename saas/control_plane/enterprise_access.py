@@ -95,6 +95,51 @@ class EnterpriseGroupRoleAssignmentView:
     replayed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class EnterpriseGroupMembershipMutation:
+    user_id: UUID
+    action: str
+    expires_at: datetime | None = None
+    expected_version: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnterpriseGroupMembershipBatchView:
+    group_id: UUID
+    memberships: tuple[EnterpriseGroupMembershipView, ...]
+    affected_project_ids: tuple[UUID, ...]
+    replayed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EnterpriseGroupArchiveView:
+    group_id: UUID
+    status: str
+    version: int
+    archived_at: datetime
+    archived_by: UUID
+    archive_reason: str
+    removed_membership_count: int
+    revoked_assignment_count: int
+    invalidated_user_count: int
+    revoked_session_count: int
+    affected_project_ids: tuple[UUID, ...]
+    replayed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EnterpriseCustomRoleRetirementView:
+    custom_role_id: UUID
+    status: str
+    version: int
+    retired_at: datetime
+    retired_by: UUID
+    retire_reason: str
+    revoked_assignment_count: int
+    authorization_version: int
+    replayed: bool = False
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -155,6 +200,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "group.created", digest
             )
@@ -215,6 +261,121 @@ class EnterpriseAccessService:
             groups = db.execute(statement).scalars()
             return tuple(self._group(group) for group in groups)
 
+    def archive_group(
+        self,
+        request: RequestContext,
+        *,
+        group_id: UUID,
+        expected_version: int,
+        reason: str,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseGroupArchiveView:
+        changed_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        cleaned_reason = _clean_text(reason, maximum=512, code="group_archive_reason_invalid")
+        payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "group_id": str(group_id),
+            "expected_version": expected_version,
+            "reason": cleaned_reason,
+        }
+        digest = _hash(payload)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            receipt = self._receipt(
+                db, request.tenant_id, idempotency_key, "group.archived", digest
+            )
+            if receipt is not None:
+                return self._group_archive_result(receipt.payload, replayed=True)
+            self._require_tenant_group_admin(db, request)
+            group = self._active_group(db, request.tenant_id, group_id, lock=True)
+            if group.version != expected_version:
+                raise LifecycleError("group_version_conflict", "group changed")
+            memberships = tuple(
+                db.execute(
+                    sa.select(EnterpriseGroupMembershipRecord)
+                    .where(
+                        EnterpriseGroupMembershipRecord.tenant_id == request.tenant_id,
+                        EnterpriseGroupMembershipRecord.group_id == group_id,
+                        EnterpriseGroupMembershipRecord.status == "active",
+                    )
+                    .order_by(EnterpriseGroupMembershipRecord.user_id)
+                    .with_for_update()
+                ).scalars()
+            )
+            assignments = tuple(
+                db.execute(
+                    sa.select(EnterpriseGroupRoleAssignmentRecord)
+                    .where(
+                        EnterpriseGroupRoleAssignmentRecord.tenant_id == request.tenant_id,
+                        EnterpriseGroupRoleAssignmentRecord.group_id == group_id,
+                        EnterpriseGroupRoleAssignmentRecord.status == "active",
+                    )
+                    .order_by(EnterpriseGroupRoleAssignmentRecord.id)
+                    .with_for_update()
+                ).scalars()
+            )
+            affected_projects = tuple(
+                sorted({assignment.project_id for assignment in assignments}, key=str)
+            )
+            group.status = "archived"
+            group.version += 1
+            group.archived_at = changed_at
+            group.archived_by = request.actor_id
+            group.archive_reason = cleaned_reason
+            for membership in memberships:
+                membership.status = "removed"
+                membership.expires_at = None
+                membership.version += 1
+            for assignment in assignments:
+                assignment.status = "revoked"
+                assignment.expires_at = None
+                assignment.version += 1
+            revoked_sessions = 0
+            for membership in memberships:
+                _security_version, count = self._invalidate_user(
+                    db, membership.user_id, changed_at
+                )
+                revoked_sessions += count
+            self._increment_project_versions(db, affected_projects)
+            event_payload = {
+                **payload,
+                "status": group.status,
+                "version": group.version,
+                "archived_at": changed_at.isoformat(),
+                "removed_membership_count": len(memberships),
+                "revoked_assignment_count": len(assignments),
+                "invalidated_user_count": len(memberships),
+                "revoked_session_count": revoked_sessions,
+                "affected_project_ids": [str(value) for value in affected_projects],
+            }
+            self._event(
+                db,
+                request.tenant_id,
+                aggregate_type="enterprise_group",
+                aggregate_key=str(group.id),
+                event_type="group.archived",
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                payload=event_payload,
+            )
+            return EnterpriseGroupArchiveView(
+                group_id=group.id,
+                status=group.status,
+                version=group.version,
+                archived_at=changed_at,
+                archived_by=request.actor_id,
+                archive_reason=cleaned_reason,
+                removed_membership_count=len(memberships),
+                revoked_assignment_count=len(assignments),
+                invalidated_user_count=len(memberships),
+                revoked_session_count=revoked_sessions,
+                affected_project_ids=affected_projects,
+            )
+
     def add_group_member(
         self,
         request: RequestContext,
@@ -239,6 +400,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "group.membership.added", digest
             )
@@ -246,6 +408,9 @@ class EnterpriseAccessService:
                 return self._membership_result(receipt.payload, replayed=True)
             self._require_tenant_group_admin(db, request)
             self._active_group(db, request.tenant_id, group_id, lock=True)
+            affected_projects = self._assigned_project_ids(
+                db, request.tenant_id, group_id, changed_at
+            )
             target = db.get(TenantMembership, (request.tenant_id, user_id))
             if target is None or target.status != "active":
                 raise LifecycleError("group_member_invalid", "active Tenant member is required")
@@ -271,10 +436,12 @@ class EnterpriseAccessService:
                 membership.version += 1
                 membership.created_by = request.actor_id
             db.flush()
+            self._increment_project_versions(db, affected_projects)
             event_payload = {
                 **payload,
                 "status": membership.status,
                 "version": membership.version,
+                "affected_project_ids": [str(value) for value in affected_projects],
             }
             self._event(
                 db,
@@ -310,6 +477,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "group.membership.removed", digest
             )
@@ -367,6 +535,208 @@ class EnterpriseAccessService:
                 revoked_session_count=revoked_sessions,
             )
 
+    def change_group_members(
+        self,
+        request: RequestContext,
+        *,
+        group_id: UUID,
+        mutations: list[EnterpriseGroupMembershipMutation]
+        | tuple[EnterpriseGroupMembershipMutation, ...],
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseGroupMembershipBatchView:
+        changed_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        values = tuple(mutations)
+        if not 1 <= len(values) <= 100:
+            raise LifecycleError("group_membership_batch_size_invalid", "batch size is invalid")
+        if len({value.user_id for value in values}) != len(values):
+            raise LifecycleError(
+                "group_membership_batch_duplicate", "each user may appear only once"
+            )
+        for value in values:
+            if value.action not in {"add", "remove"}:
+                raise LifecycleError(
+                    "group_membership_batch_action_invalid", "batch action is invalid"
+                )
+            if value.expected_version is not None and value.expected_version < 1:
+                raise LifecycleError(
+                    "group_membership_version_invalid", "expected version is invalid"
+                )
+            if value.action == "add":
+                if value.expires_at is not None and value.expires_at <= changed_at:
+                    raise LifecycleError(
+                        "group_membership_expiry_invalid", "expiry must be in the future"
+                    )
+            elif value.expires_at is not None or value.expected_version is None:
+                raise LifecycleError(
+                    "group_membership_batch_remove_invalid",
+                    "remove requires expected_version and forbids expires_at",
+                )
+        payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "group_id": str(group_id),
+            "mutations": [
+                {
+                    "user_id": str(value.user_id),
+                    "action": value.action,
+                    "expires_at": value.expires_at.isoformat() if value.expires_at else None,
+                    "expected_version": value.expected_version,
+                }
+                for value in values
+            ],
+        }
+        digest = _hash(payload)
+        user_ids = tuple(value.user_id for value in values)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            receipt = self._receipt(
+                db,
+                request.tenant_id,
+                idempotency_key,
+                "group.membership.batch.changed",
+                digest,
+            )
+            if receipt is not None:
+                return self._membership_batch_result(receipt.payload, replayed=True)
+            self._require_tenant_group_admin(db, request)
+            self._active_group(db, request.tenant_id, group_id, lock=True)
+            tenant_memberships = {
+                record.user_id: record
+                for record in db.execute(
+                    sa.select(TenantMembership)
+                    .where(
+                        TenantMembership.tenant_id == request.tenant_id,
+                        TenantMembership.user_id.in_(user_ids),
+                    )
+                    .with_for_update()
+                ).scalars()
+            }
+            existing = {
+                record.user_id: record
+                for record in db.execute(
+                    sa.select(EnterpriseGroupMembershipRecord)
+                    .where(
+                        EnterpriseGroupMembershipRecord.tenant_id == request.tenant_id,
+                        EnterpriseGroupMembershipRecord.group_id == group_id,
+                        EnterpriseGroupMembershipRecord.user_id.in_(user_ids),
+                    )
+                    .with_for_update()
+                ).scalars()
+            }
+            for value in values:
+                membership = existing.get(value.user_id)
+                if value.action == "add":
+                    tenant_member = tenant_memberships.get(value.user_id)
+                    if tenant_member is None or tenant_member.status != "active":
+                        raise LifecycleError(
+                            "group_member_invalid", "active Tenant member is required"
+                        )
+                    if membership is not None and membership.status == "active":
+                        raise LifecycleError(
+                            "group_membership_exists", "group membership is already active"
+                        )
+                    if (
+                        membership is not None
+                        and value.expected_version is not None
+                        and membership.version != value.expected_version
+                    ):
+                        raise LifecycleError(
+                            "group_membership_version_conflict", "membership changed"
+                        )
+                else:
+                    if membership is None or membership.status != "active":
+                        raise LifecycleError(
+                            "group_membership_not_active", "active membership is required"
+                        )
+                    if membership.version != value.expected_version:
+                        raise LifecycleError(
+                            "group_membership_version_conflict", "membership changed"
+                        )
+            affected_projects = self._assigned_project_ids(
+                db, request.tenant_id, group_id, changed_at
+            )
+            results: list[EnterpriseGroupMembershipView] = []
+            event_items: list[dict[str, object]] = []
+            for value in values:
+                membership = existing.get(value.user_id)
+                if value.action == "add":
+                    if membership is None:
+                        membership = EnterpriseGroupMembershipRecord(
+                            tenant_id=request.tenant_id,
+                            group_id=group_id,
+                            user_id=value.user_id,
+                            status="active",
+                            expires_at=value.expires_at,
+                            version=1,
+                            created_by=request.actor_id,
+                        )
+                        db.add(membership)
+                    else:
+                        membership.status = "active"
+                        membership.expires_at = value.expires_at
+                        membership.version += 1
+                        membership.created_by = request.actor_id
+                    result = self._membership(membership)
+                else:
+                    if membership is None:  # guarded above; keeps the type checker honest
+                        raise LifecycleError(
+                            "group_membership_not_active", "active membership is required"
+                        )
+                    membership.status = "removed"
+                    membership.expires_at = None
+                    membership.version += 1
+                    security_version, revoked_sessions = self._invalidate_user(
+                        db, value.user_id, changed_at
+                    )
+                    result = EnterpriseGroupMembershipView(
+                        group_id=group_id,
+                        user_id=value.user_id,
+                        status="removed",
+                        expires_at=None,
+                        version=membership.version,
+                        security_version=security_version,
+                        revoked_session_count=revoked_sessions,
+                    )
+                results.append(result)
+                event_items.append(
+                    {
+                        "user_id": str(result.user_id),
+                        "action": value.action,
+                        "status": result.status,
+                        "expires_at": result.expires_at.isoformat()
+                        if result.expires_at
+                        else None,
+                        "version": result.version,
+                        "security_version": result.security_version,
+                        "revoked_session_count": result.revoked_session_count,
+                    }
+                )
+            db.flush()
+            self._increment_project_versions(db, affected_projects)
+            event_payload = {
+                **payload,
+                "memberships": event_items,
+                "affected_project_ids": [str(value) for value in affected_projects],
+            }
+            self._event(
+                db,
+                request.tenant_id,
+                aggregate_type="enterprise_group_membership_batch",
+                aggregate_key=str(group_id),
+                event_type="group.membership.batch.changed",
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                payload=event_payload,
+            )
+            return EnterpriseGroupMembershipBatchView(
+                group_id=group_id,
+                memberships=tuple(results),
+                affected_project_ids=affected_projects,
+            )
+
     def create_custom_role(
         self,
         request: RequestContext,
@@ -393,6 +763,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "custom_role.created", digest
             )
@@ -464,6 +835,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "custom_role.updated", digest
             )
@@ -527,6 +899,98 @@ class EnterpriseAccessService:
                 self._role(role, decision.project_authorization_version or 1) for role in roles
             )
 
+    def retire_custom_role(
+        self,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        custom_role_id: UUID,
+        expected_version: int,
+        reason: str,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> EnterpriseCustomRoleRetirementView:
+        changed_at = now or _utcnow()
+        _idempotency(idempotency_key)
+        cleaned_reason = _clean_text(reason, maximum=512, code="custom_role_retire_reason_invalid")
+        payload: dict[str, object] = {
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "space_id": str(request.space_id),
+            "project_id": str(project_id),
+            "custom_role_id": str(custom_role_id),
+            "expected_version": expected_version,
+            "reason": cleaned_reason,
+        }
+        digest = _hash(payload)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
+            receipt = self._receipt(
+                db, request.tenant_id, idempotency_key, "custom_role.retired", digest
+            )
+            if receipt is not None:
+                return self._role_retirement_result(receipt.payload, replayed=True)
+            project = self._active_project(db, request, project_id, lock=True)
+            self._require_project_permissions(
+                db, request, project_id, ("grant.manage", "custom_role.manage")
+            )
+            role = self._active_role(db, request, project_id, custom_role_id, lock=True)
+            if role.version != expected_version:
+                raise LifecycleError("custom_role_version_conflict", "custom role changed")
+            assignments = tuple(
+                db.execute(
+                    sa.select(EnterpriseGroupRoleAssignmentRecord)
+                    .where(
+                        EnterpriseGroupRoleAssignmentRecord.tenant_id == request.tenant_id,
+                        EnterpriseGroupRoleAssignmentRecord.space_id == request.space_id,
+                        EnterpriseGroupRoleAssignmentRecord.project_id == project_id,
+                        EnterpriseGroupRoleAssignmentRecord.custom_role_id == custom_role_id,
+                        EnterpriseGroupRoleAssignmentRecord.status == "active",
+                    )
+                    .order_by(EnterpriseGroupRoleAssignmentRecord.id)
+                    .with_for_update()
+                ).scalars()
+            )
+            role.status = "retired"
+            role.version += 1
+            role.retired_at = changed_at
+            role.retired_by = request.actor_id
+            role.retire_reason = cleaned_reason
+            for assignment in assignments:
+                assignment.status = "revoked"
+                assignment.expires_at = None
+                assignment.version += 1
+            project.authorization_version += 1
+            event_payload = {
+                **payload,
+                "status": role.status,
+                "version": role.version,
+                "retired_at": changed_at.isoformat(),
+                "revoked_assignment_count": len(assignments),
+                "authorization_version": project.authorization_version,
+            }
+            self._event(
+                db,
+                request.tenant_id,
+                aggregate_type="enterprise_custom_role",
+                aggregate_key=str(role.id),
+                event_type="custom_role.retired",
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                payload=event_payload,
+            )
+            return EnterpriseCustomRoleRetirementView(
+                custom_role_id=role.id,
+                status=role.status,
+                version=role.version,
+                retired_at=changed_at,
+                retired_by=request.actor_id,
+                retire_reason=cleaned_reason,
+                revoked_assignment_count=len(assignments),
+                authorization_version=project.authorization_version,
+            )
+
     def assign_group_role(
         self,
         request: RequestContext,
@@ -554,6 +1018,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "group.custom_role.assigned", digest
             )
@@ -639,6 +1104,7 @@ class EnterpriseAccessService:
         digest = _hash(payload)
         with self._session_factory.begin() as db:
             self._apply_context(db, request)
+            self._lock_tenant_writes(db, request.tenant_id)
             receipt = self._receipt(
                 db, request.tenant_id, idempotency_key, "group.custom_role.revoked", digest
             )
@@ -748,6 +1214,20 @@ class EnterpriseAccessService:
                 tenant_id=request.tenant_id,
                 space_id=request.space_id,
             ),
+        )
+
+    @staticmethod
+    def _lock_tenant_writes(db: Session, tenant_id: UUID) -> None:
+        if db.get_bind().dialect.name != "postgresql":
+            return
+        lock_key = int.from_bytes(
+            sha256(f"enterprise-access:{tenant_id}".encode()).digest()[:8],
+            byteorder="big",
+            signed=True,
+        )
+        db.execute(
+            sa.text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": lock_key},
         )
 
     @staticmethod
@@ -884,13 +1364,13 @@ class EnterpriseAccessService:
     def _invalidate_user(db: Session, user_id: UUID, changed_at: datetime) -> tuple[int, int]:
         security_version = db.execute(
             sa.update(GlobalUser)
-            .where(GlobalUser.id == user_id, GlobalUser.status == "active")
+            .where(GlobalUser.id == user_id)
             .values(security_version=GlobalUser.security_version + 1)
             .returning(GlobalUser.security_version)
             .execution_options(synchronize_session=False)
         ).scalar_one_or_none()
         if security_version is None:
-            raise LifecycleError("group_member_invalid", "active user is required")
+            raise LifecycleError("group_member_invalid", "group member user is missing")
         result = cast(
             CursorResult[tuple[object]],
             db.execute(
@@ -1003,6 +1483,50 @@ class EnterpriseAccessService:
             replayed=replayed,
         )
 
+    @classmethod
+    def _membership_batch_result(
+        cls, payload: dict[str, object], *, replayed: bool
+    ) -> EnterpriseGroupMembershipBatchView:
+        memberships = tuple(
+            cls._membership_result(
+                {
+                    "group_id": payload["group_id"],
+                    **item,
+                },
+                replayed=replayed,
+            )
+            for item in cast(list[dict[str, object]], payload["memberships"])
+        )
+        return EnterpriseGroupMembershipBatchView(
+            group_id=UUID(cast(str, payload["group_id"])),
+            memberships=memberships,
+            affected_project_ids=tuple(
+                UUID(value) for value in cast(list[str], payload["affected_project_ids"])
+            ),
+            replayed=replayed,
+        )
+
+    @staticmethod
+    def _group_archive_result(
+        payload: dict[str, object], *, replayed: bool
+    ) -> EnterpriseGroupArchiveView:
+        return EnterpriseGroupArchiveView(
+            group_id=UUID(cast(str, payload["group_id"])),
+            status=cast(str, payload["status"]),
+            version=cast(int, payload["version"]),
+            archived_at=datetime.fromisoformat(cast(str, payload["archived_at"])),
+            archived_by=UUID(cast(str, payload["actor_id"])),
+            archive_reason=cast(str, payload["reason"]),
+            removed_membership_count=cast(int, payload["removed_membership_count"]),
+            revoked_assignment_count=cast(int, payload["revoked_assignment_count"]),
+            invalidated_user_count=cast(int, payload["invalidated_user_count"]),
+            revoked_session_count=cast(int, payload["revoked_session_count"]),
+            affected_project_ids=tuple(
+                UUID(value) for value in cast(list[str], payload["affected_project_ids"])
+            ),
+            replayed=replayed,
+        )
+
     @staticmethod
     def _role(
         record: EnterpriseCustomRoleRecord, authorization_version: int
@@ -1032,6 +1556,22 @@ class EnterpriseAccessService:
             permissions=tuple(cast(list[str], payload["permissions"])),
             status=cast(str, payload["status"]),
             version=cast(int, payload["version"]),
+            authorization_version=cast(int, payload["authorization_version"]),
+            replayed=replayed,
+        )
+
+    @staticmethod
+    def _role_retirement_result(
+        payload: dict[str, object], *, replayed: bool
+    ) -> EnterpriseCustomRoleRetirementView:
+        return EnterpriseCustomRoleRetirementView(
+            custom_role_id=UUID(cast(str, payload["custom_role_id"])),
+            status=cast(str, payload["status"]),
+            version=cast(int, payload["version"]),
+            retired_at=datetime.fromisoformat(cast(str, payload["retired_at"])),
+            retired_by=UUID(cast(str, payload["actor_id"])),
+            retire_reason=cast(str, payload["reason"]),
+            revoked_assignment_count=cast(int, payload["revoked_assignment_count"]),
             authorization_version=cast(int, payload["authorization_version"]),
             replayed=replayed,
         )

@@ -67,7 +67,11 @@ from saas.control_plane.db_models import (
 )
 from saas.control_plane.enterprise_access import (
     EnterpriseAccessService,
+    EnterpriseCustomRoleRetirementView,
     EnterpriseCustomRoleView,
+    EnterpriseGroupArchiveView,
+    EnterpriseGroupMembershipBatchView,
+    EnterpriseGroupMembershipMutation,
     EnterpriseGroupMembershipView,
     EnterpriseGroupRoleAssignmentView,
     EnterpriseGroupView,
@@ -324,7 +328,11 @@ __all__ = [
     "EnterpriseAccessRemovalImpactProvider",
     "EnterpriseAccessService",
     "EnterpriseCustomRoleRecord",
+    "EnterpriseCustomRoleRetirementView",
     "EnterpriseCustomRoleView",
+    "EnterpriseGroupArchiveView",
+    "EnterpriseGroupMembershipBatchView",
+    "EnterpriseGroupMembershipMutation",
     "EnterpriseGroupMembershipRecord",
     "EnterpriseGroupMembershipView",
     "EnterpriseGroupRecord",

@@ -288,3 +288,55 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     assert permissions.json()["policy_version"] == "2026-08-05.p6-groups"
     catalog = {value["name"] for value in permissions.json()["permissions"]}
     assert {"group.manage", "custom_role.manage"} <= catalog
+
+    duplicate_batch = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/membership-batches",
+        headers={**mutation_headers, "Idempotency-Key": "duplicate-batch-members"},
+        json={
+            "mutations": [
+                {"user_id": str(ids["member"]), "action": "add"},
+                {"user_id": str(ids["member"]), "action": "add"},
+            ]
+        },
+    )
+    assert duplicate_batch.status_code == 422
+    assert duplicate_batch.json()["detail"]["code"] == "group_membership_batch_duplicate"
+
+    batch = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/membership-batches",
+        headers={**mutation_headers, "Idempotency-Key": "batch-members"},
+        json={
+            "mutations": [
+                {
+                    "user_id": str(ids["member"]),
+                    "action": "remove",
+                    "expected_version": 1,
+                },
+                {"user_id": str(ids["owner"]), "action": "add"},
+            ]
+        },
+    )
+    assert batch.status_code == 200, batch.text
+    assert [item["status"] for item in batch.json()["memberships"]] == [
+        "removed",
+        "active",
+    ]
+
+    retired = client.post(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/custom-roles/{role.json()['id']}/retire",
+        headers={**mutation_headers, "Idempotency-Key": "retire-role"},
+        json={"expected_version": 1, "reason": "replaced by managed directory role"},
+    )
+    assert retired.status_code == 200, retired.text
+    assert retired.json()["status"] == "retired"
+    assert retired.json()["revoked_assignment_count"] == 1
+
+    archived = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/archive",
+        headers={**mutation_headers, "Idempotency-Key": "archive-group"},
+        json={"expected_version": 1, "reason": "replaced by managed directory group"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["status"] == "archived"
+    assert archived.json()["removed_membership_count"] == 1

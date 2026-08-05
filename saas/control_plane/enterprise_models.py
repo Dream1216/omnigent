@@ -36,10 +36,22 @@ class EnterpriseGroupRecord(SaasBase):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
     )
+    archived_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    archived_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    archive_reason: Mapped[str | None] = mapped_column(sa.String(512))
 
     __table_args__ = (
         sa.CheckConstraint("length(name) > 0", name="ck_enterprise_group_name_nonempty"),
         sa.CheckConstraint("status IN ('active', 'archived')", name="ck_enterprise_group_status"),
+        sa.CheckConstraint(
+            "(status = 'active' AND archived_at IS NULL AND archived_by IS NULL AND "
+            "archive_reason IS NULL) OR "
+            "(status = 'archived' AND archived_at IS NOT NULL AND archived_by IS NOT NULL "
+            "AND length(archive_reason) > 0)",
+            name="ck_enterprise_group_archive_state",
+        ),
         sa.CheckConstraint("version > 0", name="ck_enterprise_group_version"),
         sa.UniqueConstraint("tenant_id", "id", name="uq_enterprise_group_tenant_id"),
         sa.UniqueConstraint("tenant_id", "name", name="uq_enterprise_group_tenant_name"),
@@ -70,7 +82,6 @@ class EnterpriseGroupMembershipRecord(SaasBase):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
     )
-
     __table_args__ = (
         sa.ForeignKeyConstraint(
             ("tenant_id", "group_id"),
@@ -124,6 +135,11 @@ class EnterpriseCustomRoleRecord(SaasBase):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
     )
+    retired_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    retired_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
+    )
+    retire_reason: Mapped[str | None] = mapped_column(sa.String(512))
 
     __table_args__ = (
         sa.ForeignKeyConstraint(
@@ -135,6 +151,13 @@ class EnterpriseCustomRoleRecord(SaasBase):
         sa.CheckConstraint("length(name) > 0", name="ck_enterprise_custom_role_name_nonempty"),
         sa.CheckConstraint(
             "status IN ('active', 'retired')", name="ck_enterprise_custom_role_status"
+        ),
+        sa.CheckConstraint(
+            "(status = 'active' AND retired_at IS NULL AND retired_by IS NULL AND "
+            "retire_reason IS NULL) OR "
+            "(status = 'retired' AND retired_at IS NOT NULL AND retired_by IS NOT NULL "
+            "AND length(retire_reason) > 0)",
+            name="ck_enterprise_custom_role_retire_state",
         ),
         sa.CheckConstraint("version > 0", name="ck_enterprise_custom_role_version"),
         sa.UniqueConstraint(

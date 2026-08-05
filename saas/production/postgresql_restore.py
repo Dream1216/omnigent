@@ -463,6 +463,24 @@ def _apply_post_backup_replay(
             )
             connection.execute(
                 sa.text(
+                    "UPDATE saas_enterprise_groups SET status = 'archived', version = 2, "
+                    "archived_at = :replay_at, archived_by = :actor_b, "
+                    "archive_reason = 'recovery replay group archive' "
+                    "WHERE id = :group_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_enterprise_custom_roles SET status = 'retired', version = 2, "
+                    "retired_at = :replay_at, retired_by = :actor_b, "
+                    "retire_reason = 'recovery replay role retirement' "
+                    "WHERE id = :custom_role_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
                     "UPDATE saas_tenants SET status = 'pending_deletion' WHERE id = :tenant_b"
                 ),
                 identifiers,
@@ -566,7 +584,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000002":
+            if saas_head != "p6a000000003":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -620,7 +638,9 @@ def _verify_restored_database(
                     "SELECT u.security_version, i.status, s.revoked_at IS NOT NULL, "
                     "tm.status, sm.status, t.status, machine.status, "
                     "machine.security_version, credential.status, "
-                    "credential.revoked_at IS NOT NULL, gm.status, gra.status "
+                    "credential.revoked_at IS NOT NULL, gm.status, gra.status, "
+                    "g.status, g.archived_at IS NOT NULL, g.archived_by::text, "
+                    "r.status, r.retired_at IS NOT NULL, r.retired_by::text "
                     "FROM saas_global_users u "
                     "JOIN saas_identity_connections i ON i.user_id = u.id "
                     "JOIN saas_auth_sessions s ON s.user_id = u.id "
@@ -635,6 +655,8 @@ def _verify_restored_database(
                     "ON gm.tenant_id = t.id AND gm.user_id = u.id "
                     "JOIN saas_enterprise_group_role_assignments gra "
                     "ON gra.tenant_id = t.id AND gra.group_id = gm.group_id "
+                    "JOIN saas_enterprise_groups g ON g.id = gm.group_id "
+                    "JOIN saas_enterprise_custom_roles r ON r.id = gra.custom_role_id "
                     "WHERE u.id = :actor_b"
                 ),
                 identifiers,
@@ -652,6 +674,12 @@ def _verify_restored_database(
                 True,
                 "removed",
                 "revoked",
+                "archived",
+                True,
+                identifiers["actor_b"],
+                "retired",
+                True,
+                identifiers["actor_b"],
             ):
                 raise PostgreSqlRestoreContractError(
                     "post-backup revocation/deletion replay is incomplete"
@@ -664,6 +692,7 @@ def _verify_restored_database(
             "cross_tenant_negative_probe": "passed",
             "cross_workspace_negative_probe": "passed",
             "post_backup_revocation_and_deletion_marker_replay": "passed",
+            "post_backup_enterprise_lifecycle_replay": "passed",
         }
     finally:
         engine.dispose()

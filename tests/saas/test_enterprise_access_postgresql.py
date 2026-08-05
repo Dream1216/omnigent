@@ -343,6 +343,99 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
     assert outcomes.count("removed") == 1
     assert set(outcomes) <= {"removed", "group_membership_not_active"}
 
+    archive_group, _archive_role = _provision(
+        owner_context_a, project_a, member_a, "archive-a"
+    )
+    archive_session = lifecycle.issue_auth_session(
+        user_id=member_a,
+        authn_method="password",
+        expires_at=_NOW + timedelta(hours=1),
+        now=_NOW + timedelta(minutes=2),
+    )
+
+    def _archive(key: str) -> str:
+        try:
+            value = service.archive_group(
+                owner_context_a,
+                group_id=archive_group,
+                expected_version=1,
+                reason="directory group became authoritative",
+                idempotency_key=key,
+                now=_NOW + timedelta(minutes=3),
+            )
+            return value.status
+        except LifecycleError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        archive_outcomes = list(
+            pool.map(
+                _archive,
+                (f"pg-archive-a-{suffix}", f"pg-archive-b-{suffix}"),
+            )
+        )
+    assert archive_outcomes.count("archived") == 1
+    assert set(archive_outcomes) <= {"archived", "group_not_active"}
+
+    _retire_group, retire_role = _provision(
+        owner_context_a, project_a, member_a, "retire-a"
+    )
+
+    def _retire(key: str) -> str:
+        try:
+            value = service.retire_custom_role(
+                owner_context_a,
+                project_id=project_a,
+                custom_role_id=retire_role,
+                expected_version=1,
+                reason="role replaced by centrally governed role",
+                idempotency_key=key,
+                now=_NOW + timedelta(minutes=4),
+            )
+            return value.status
+        except LifecycleError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        retire_outcomes = list(
+            pool.map(
+                _retire,
+                (f"pg-retire-a-{suffix}", f"pg-retire-b-{suffix}"),
+            )
+        )
+    assert retire_outcomes.count("retired") == 1
+    assert set(retire_outcomes) <= {"retired", "custom_role_not_active"}
+
+    race_group, race_role = _provision(
+        owner_context_a, project_a, member_a, "archive-retire-race-a"
+    )
+
+    def _cross_lifecycle(action: str) -> str:
+        if action == "archive":
+            return service.archive_group(
+                owner_context_a,
+                group_id=race_group,
+                expected_version=1,
+                reason="group and role are retired together",
+                idempotency_key=f"pg-cross-archive-{suffix}",
+                now=_NOW + timedelta(minutes=5),
+            ).status
+        return service.retire_custom_role(
+            owner_context_a,
+            project_id=project_a,
+            custom_role_id=race_role,
+            expected_version=1,
+            reason="group and role are retired together",
+            idempotency_key=f"pg-cross-retire-{suffix}",
+            now=_NOW + timedelta(minutes=5),
+        ).status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cross_lifecycle_outcomes = list(
+            pool.map(_cross_lifecycle, ("archive", "retire"))
+        )
+    assert set(cross_lifecycle_outcomes) == {"archived", "retired"}
+
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         security_version, revoked_at, project_version = connection.execute(
@@ -354,9 +447,69 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
             ),
             {"project": project_a, "member": member_a, "session": issued.session_id},
         ).one()
-        assert security_version == 2
+        assert security_version == 4
         assert revoked_at is not None
-        assert project_version == 4
+        assert project_version in {13, 14}
+        connection.exec_driver_sql("RESET ROLE")
+        connection.exec_driver_sql(f"SET LOCAL ROLE {governance_role}")
+        connection.execute(
+            sa.text("SELECT set_config('app.actor_id', :value, true)"),
+            {"value": str(owner_a)},
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.tenant_id', :value, true)"),
+            {"value": str(tenant_a)},
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.space_id', :value, true)"),
+            {"value": str(space_a)},
+        )
+        (
+            archive_status,
+            archived_by,
+            archive_reason,
+            archive_membership_status,
+            archive_assignment_status,
+            archive_session_revoked_at,
+        ) = connection.execute(
+            sa.text(
+                "SELECT g.status, g.archived_by, g.archive_reason, m.status, a.status, "
+                "s.revoked_at "
+                "FROM saas_enterprise_groups g "
+                "JOIN saas_enterprise_group_memberships m ON m.group_id = g.id "
+                "JOIN saas_enterprise_group_role_assignments a ON a.group_id = g.id "
+                "JOIN saas_auth_sessions s ON s.id = :session "
+                "WHERE g.id = :group AND m.user_id = :member"
+            ),
+            {
+                "group": archive_group,
+                "member": member_a,
+                "session": archive_session.session_id,
+            },
+        ).one()
+        assert archive_status == "archived"
+        assert archived_by == owner_a
+        assert archive_reason == "directory group became authoritative"
+        assert archive_membership_status == "removed"
+        assert archive_assignment_status == "revoked"
+        assert archive_session_revoked_at is not None
+        retire_state = connection.execute(
+            sa.text(
+                "SELECT r.status, r.retired_by, r.retire_reason, a.status "
+                "FROM saas_enterprise_custom_roles r "
+                "JOIN saas_enterprise_group_role_assignments a ON a.custom_role_id = r.id "
+                "WHERE r.id = :role"
+            ),
+            {"role": retire_role},
+        ).one()
+        assert retire_state == (
+            "retired",
+            owner_a,
+            "role replaced by centrally governed role",
+            "revoked",
+        )
+        connection.exec_driver_sql("RESET ROLE")
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         protected = set(
             connection.execute(
                 sa.text(

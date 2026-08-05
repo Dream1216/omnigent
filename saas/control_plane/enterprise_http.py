@@ -6,7 +6,7 @@ import base64
 from collections.abc import Callable
 from datetime import datetime
 from types import MappingProxyType
-from typing import TypeVar
+from typing import Literal, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -15,7 +15,12 @@ from pydantic import BaseModel, Field
 from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_access import (
     EnterpriseAccessService,
+    EnterpriseCustomRoleRetirementView,
     EnterpriseCustomRoleView,
+    EnterpriseGroupArchiveView,
+    EnterpriseGroupMembershipBatchView,
+    EnterpriseGroupMembershipMutation,
+    EnterpriseGroupMembershipView,
     EnterpriseGroupRoleAssignmentView,
     EnterpriseGroupView,
 )
@@ -28,8 +33,10 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
     {
         "POST /tenants/{tenant}/groups": "group.manage",
         "GET /tenants/{tenant}/groups": "group.read",
+        "POST /tenants/{tenant}/groups/{group}/archive": "group.manage",
         "PUT /tenants/{tenant}/groups/{group}/members/{user}": "group.manage",
         "DELETE /tenants/{tenant}/groups/{group}/members/{user}": "group.manage",
+        "POST /tenants/{tenant}/groups/{group}/membership-batches": "group.manage",
         "POST /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles": (
             "custom_role.manage"
         ),
@@ -37,6 +44,9 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
             "custom_role.read"
         ),
         "PUT /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}": (
+            "custom_role.manage"
+        ),
+        "POST /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/retire": (
             "custom_role.manage"
         ),
         "POST /tenants/{tenant}/spaces/{space}/projects/{project}/group-role-assignments": (
@@ -61,6 +71,22 @@ class GroupMembershipRemoveBody(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class GroupArchiveBody(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class GroupMembershipBatchItemBody(BaseModel):
+    user_id: UUID
+    action: Literal["add", "remove"]
+    expires_at: datetime | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class GroupMembershipBatchBody(BaseModel):
+    mutations: list[GroupMembershipBatchItemBody] = Field(min_length=1, max_length=100)
+
+
 class CustomRoleBody(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=1024)
@@ -69,6 +95,11 @@ class CustomRoleBody(BaseModel):
 
 class CustomRoleUpdateBody(CustomRoleBody):
     expected_version: int = Field(ge=1)
+
+
+class CustomRoleRetireBody(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=512)
 
 
 class GroupRoleAssignmentBody(BaseModel):
@@ -170,7 +201,10 @@ def _status(error: LifecycleError) -> int:
         return 403
     if error.code in {"group_not_active", "custom_role_not_active", "project_not_active"}:
         return 404
-    if error.code.endswith("_invalid") or error.code == "custom_role_permission_not_allowed":
+    if error.code.endswith("_invalid") or error.code in {
+        "custom_role_permission_not_allowed",
+        "group_membership_batch_duplicate",
+    }:
         return 422
     return 409
 
@@ -219,6 +253,45 @@ def _group_payload(value: EnterpriseGroupView) -> dict[str, object]:
     }
 
 
+def _membership_payload(value: EnterpriseGroupMembershipView) -> dict[str, object]:
+    return {
+        "group_id": str(value.group_id),
+        "user_id": str(value.user_id),
+        "status": value.status,
+        "expires_at": value.expires_at.isoformat() if value.expires_at else None,
+        "version": value.version,
+        "security_version": value.security_version,
+        "revoked_session_count": value.revoked_session_count,
+        "replayed": value.replayed,
+    }
+
+
+def _membership_batch_payload(value: EnterpriseGroupMembershipBatchView) -> dict[str, object]:
+    return {
+        "group_id": str(value.group_id),
+        "memberships": [_membership_payload(item) for item in value.memberships],
+        "affected_project_ids": [str(item) for item in value.affected_project_ids],
+        "replayed": value.replayed,
+    }
+
+
+def _group_archive_payload(value: EnterpriseGroupArchiveView) -> dict[str, object]:
+    return {
+        "group_id": str(value.group_id),
+        "status": value.status,
+        "version": value.version,
+        "archived_at": value.archived_at.isoformat(),
+        "archived_by": str(value.archived_by),
+        "archive_reason": value.archive_reason,
+        "removed_membership_count": value.removed_membership_count,
+        "revoked_assignment_count": value.revoked_assignment_count,
+        "invalidated_user_count": value.invalidated_user_count,
+        "revoked_session_count": value.revoked_session_count,
+        "affected_project_ids": [str(item) for item in value.affected_project_ids],
+        "replayed": value.replayed,
+    }
+
+
 def _role_payload(value: EnterpriseCustomRoleView) -> dict[str, object]:
     return {
         "id": str(value.id),
@@ -230,6 +303,22 @@ def _role_payload(value: EnterpriseCustomRoleView) -> dict[str, object]:
         "permissions": list(value.permissions),
         "status": value.status,
         "version": value.version,
+        "authorization_version": value.authorization_version,
+        "replayed": value.replayed,
+    }
+
+
+def _role_retirement_payload(
+    value: EnterpriseCustomRoleRetirementView,
+) -> dict[str, object]:
+    return {
+        "custom_role_id": str(value.custom_role_id),
+        "status": value.status,
+        "version": value.version,
+        "retired_at": value.retired_at.isoformat(),
+        "retired_by": str(value.retired_by),
+        "retire_reason": value.retire_reason,
+        "revoked_assignment_count": value.revoked_assignment_count,
         "authorization_version": value.authorization_version,
         "replayed": value.replayed,
     }
@@ -314,6 +403,32 @@ def create_enterprise_admin_router(
             payload=_group_payload,
         )
 
+    @router.post("/tenants/{tenant_id}/groups/{group_id}/archive")
+    def archive_group(
+        tenant_id: UUID,
+        group_id: UUID,
+        body: GroupArchiveBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = enterprise_access.archive_group(
+                context,
+                group_id=group_id,
+                expected_version=body.expected_version,
+                reason=body.reason,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _group_archive_payload(value)
+
     @router.put("/tenants/{tenant_id}/groups/{group_id}/members/{user_id}")
     def add_group_member(
         tenant_id: UUID,
@@ -339,14 +454,7 @@ def create_enterprise_admin_router(
             )
         except LifecycleError as error:
             raise _http_error(error, _status(error)) from error
-        return {
-            "group_id": str(changed.group_id),
-            "user_id": str(changed.user_id),
-            "status": changed.status,
-            "expires_at": changed.expires_at.isoformat() if changed.expires_at else None,
-            "version": changed.version,
-            "replayed": changed.replayed,
-        }
+        return _membership_payload(changed)
 
     @router.delete("/tenants/{tenant_id}/groups/{group_id}/members/{user_id}")
     def remove_group_member(
@@ -373,15 +481,40 @@ def create_enterprise_admin_router(
             )
         except LifecycleError as error:
             raise _http_error(error, _status(error)) from error
-        return {
-            "group_id": str(changed.group_id),
-            "user_id": str(changed.user_id),
-            "status": changed.status,
-            "version": changed.version,
-            "security_version": changed.security_version,
-            "revoked_session_count": changed.revoked_session_count,
-            "replayed": changed.replayed,
-        }
+        return _membership_payload(changed)
+
+    @router.post("/tenants/{tenant_id}/groups/{group_id}/membership-batches")
+    def change_group_members(
+        tenant_id: UUID,
+        group_id: UUID,
+        body: GroupMembershipBatchBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = enterprise_access.change_group_members(
+                context,
+                group_id=group_id,
+                mutations=[
+                    EnterpriseGroupMembershipMutation(
+                        user_id=item.user_id,
+                        action=item.action,
+                        expires_at=item.expires_at,
+                        expected_version=item.expected_version,
+                    )
+                    for item in body.mutations
+                ],
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _membership_batch_payload(value)
 
     @router.post(
         "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/custom-roles",
@@ -481,6 +614,39 @@ def create_enterprise_admin_router(
         except LifecycleError as error:
             raise _http_error(error, _status(error)) from error
         return _role_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/"
+        "custom-roles/{custom_role_id}/retire"
+    )
+    def retire_custom_role(
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        custom_role_id: UUID,
+        body: CustomRoleRetireBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context = _context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        try:
+            value = enterprise_access.retire_custom_role(
+                context,
+                project_id=project_id,
+                custom_role_id=custom_role_id,
+                expected_version=body.expected_version,
+                reason=body.reason,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _role_retirement_payload(value)
 
     @router.post(
         "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/group-role-assignments",

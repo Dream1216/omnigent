@@ -17,6 +17,7 @@ from saas.control_plane import (
     EnterpriseAccessRemovalImpactProvider,
     EnterpriseAccessService,
     EnterpriseCustomRoleRecord,
+    EnterpriseGroupMembershipMutation,
     EnterpriseGroupMembershipRecord,
     EnterpriseGroupRecord,
     EnterpriseGroupRoleAssignmentRecord,
@@ -330,6 +331,188 @@ def test_group_member_removal_revokes_sessions_and_all_assigned_project_access(
     )
     assert stale.allowed is False
     assert stale.reason == "authorization_snapshot_stale"
+
+
+def test_group_archive_revokes_all_access_sessions_and_records_reason(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service, group_id, _role_id, assignment_id = _grant_group_role(sessions, ids)
+    lifecycle = MembershipLifecycleService(sessions)
+    issued = lifecycle.issue_auth_session(
+        user_id=ids.member,
+        authn_method="password",
+        expires_at=_NOW + timedelta(hours=1),
+        now=_NOW,
+    )
+    with sessions.begin() as db:
+        member = db.get(GlobalUser, ids.member)
+        assert member is not None
+        member.status = "suspended"
+    archived = service.archive_group(
+        _context(ids, ids.owner, "archive-release-group"),
+        group_id=group_id,
+        expected_version=1,
+        reason="release function moved to a managed directory group",
+        idempotency_key="archive-release-group",
+        now=_NOW + timedelta(minutes=1),
+    )
+    assert archived.status == "archived"
+    assert archived.version == 2
+    assert archived.removed_membership_count == 1
+    assert archived.revoked_assignment_count == 1
+    assert archived.invalidated_user_count == 1
+    assert archived.revoked_session_count == 1
+    assert archived.affected_project_ids == (ids.project,)
+    replay = service.archive_group(
+        _context(ids, ids.owner, "archive-release-group-replay"),
+        group_id=group_id,
+        expected_version=1,
+        reason="release function moved to a managed directory group",
+        idempotency_key="archive-release-group",
+        now=_NOW + timedelta(minutes=2),
+    )
+    assert replay.replayed is True
+    assert replay.archived_at == archived.archived_at
+
+    with sessions() as db:
+        group = db.get(EnterpriseGroupRecord, group_id)
+        membership = db.get(EnterpriseGroupMembershipRecord, (group_id, ids.member))
+        assignment = db.get(EnterpriseGroupRoleAssignmentRecord, assignment_id)
+        session = db.get(AuthSessionRecord, issued.session_id)
+        user = db.get(GlobalUser, ids.member)
+        project = db.get(ProjectRecord, ids.project)
+        assert group is not None and group.status == "archived"
+        assert group.archived_by == ids.owner
+        assert group.archive_reason == archived.archive_reason
+        assert membership is not None and membership.status == "removed"
+        assert assignment is not None and assignment.status == "revoked"
+        assert session is not None and session.revoked_at is not None
+        assert user is not None and user.security_version == 2
+        assert project is not None and project.authorization_version == 4
+
+
+def test_custom_role_retirement_revokes_assignments_and_is_idempotent(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service, _group_id, role_id, assignment_id = _grant_group_role(sessions, ids)
+    retired = service.retire_custom_role(
+        _context(ids, ids.owner, "retire-release-role"),
+        project_id=ids.project,
+        custom_role_id=role_id,
+        expected_version=1,
+        reason="role replaced by the audited deployment role",
+        idempotency_key="retire-release-role",
+        now=_NOW + timedelta(minutes=1),
+    )
+    assert retired.status == "retired"
+    assert retired.version == 2
+    assert retired.revoked_assignment_count == 1
+    replay = service.retire_custom_role(
+        _context(ids, ids.owner, "retire-release-role-replay"),
+        project_id=ids.project,
+        custom_role_id=role_id,
+        expected_version=1,
+        reason="role replaced by the audited deployment role",
+        idempotency_key="retire-release-role",
+        now=_NOW + timedelta(minutes=2),
+    )
+    assert replay.replayed is True
+    assert replay.authorization_version == retired.authorization_version
+    assert not ProjectAuthorizer(sessions).evaluate(
+        _context(ids, ids.member, "after-role-retirement"),
+        action="run.create",
+        project_id=ids.project,
+        now=_NOW + timedelta(minutes=2),
+    ).allowed
+    with sessions() as db:
+        role = db.get(EnterpriseCustomRoleRecord, role_id)
+        assignment = db.get(EnterpriseGroupRoleAssignmentRecord, assignment_id)
+        assert role is not None and role.status == "retired"
+        assert role.retired_by == ids.owner
+        assert role.retire_reason == retired.retire_reason
+        assert assignment is not None and assignment.status == "revoked"
+
+
+def test_group_membership_batch_is_atomic_bounded_and_revokes_removed_users(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service, group_id, _role_id, _assignment_id = _grant_group_role(sessions, ids)
+    lifecycle = MembershipLifecycleService(sessions)
+    issued = lifecycle.issue_auth_session(
+        user_id=ids.member,
+        authn_method="password",
+        expires_at=_NOW + timedelta(hours=1),
+        now=_NOW,
+    )
+    changed = service.change_group_members(
+        _context(ids, ids.owner, "batch-members"),
+        group_id=group_id,
+        mutations=(
+            EnterpriseGroupMembershipMutation(
+                user_id=ids.member,
+                action="remove",
+                expected_version=1,
+            ),
+            EnterpriseGroupMembershipMutation(
+                user_id=ids.manager,
+                action="add",
+                expires_at=_NOW + timedelta(days=1),
+            ),
+        ),
+        idempotency_key="batch-swap-release-member",
+        now=_NOW + timedelta(minutes=1),
+    )
+    assert changed.affected_project_ids == (ids.project,)
+    assert [value.status for value in changed.memberships] == ["removed", "active"]
+    assert changed.memberships[0].security_version == 2
+    replay = service.change_group_members(
+        _context(ids, ids.owner, "batch-members-replay"),
+        group_id=group_id,
+        mutations=(
+            EnterpriseGroupMembershipMutation(
+                user_id=ids.member,
+                action="remove",
+                expected_version=1,
+            ),
+            EnterpriseGroupMembershipMutation(
+                user_id=ids.manager,
+                action="add",
+                expires_at=_NOW + timedelta(days=1),
+            ),
+        ),
+        idempotency_key="batch-swap-release-member",
+        now=_NOW + timedelta(minutes=2),
+    )
+    assert replay.replayed is True
+    with sessions() as db:
+        session = db.get(AuthSessionRecord, issued.session_id)
+        manager = db.get(EnterpriseGroupMembershipRecord, (group_id, ids.manager))
+        assert session is not None and session.revoked_at is not None
+        assert manager is not None and manager.status == "active"
+
+    second = service.create_group(
+        _context(ids, ids.owner, "atomic-batch-group"),
+        name="Atomic batch",
+        description=None,
+        idempotency_key="create-atomic-batch-group",
+    )
+    with pytest.raises(LifecycleError) as invalid:
+        service.change_group_members(
+            _context(ids, ids.owner, "invalid-atomic-batch"),
+            group_id=second.id,
+            mutations=(
+                EnterpriseGroupMembershipMutation(user_id=ids.manager, action="add"),
+                EnterpriseGroupMembershipMutation(user_id=ids.outsider, action="add"),
+            ),
+            idempotency_key="invalid-atomic-batch",
+            now=_NOW,
+        )
+    assert invalid.value.code == "group_member_invalid"
+    with sessions() as db:
+        assert db.get(EnterpriseGroupMembershipRecord, (second.id, ids.manager)) is None
 
 
 def test_custom_roles_reject_privilege_escalation_and_cross_tenant_members(
