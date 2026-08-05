@@ -13,6 +13,7 @@
     selectedProject: null,
     members: [],
     selectedMember: null,
+    memberMutationPending: false,
     invitations: [],
     groups: [],
     roles: [],
@@ -95,6 +96,7 @@
     state.selectedProject = null;
     state.members = [];
     state.selectedMember = null;
+    state.memberMutationPending = false;
     state.invitations = [];
     state.groups = [];
     state.roles = [];
@@ -278,7 +280,9 @@
     $("#member-detail-email").textContent = member.primary_email_normalized || "NO VERIFIED EMAIL";
     $("#member-detail-id").textContent = member.user_id;
     $("#tenant-member-role").value = member.tenant_role === "owner" ? "member" : member.tenant_role;
-    $("#tenant-role-form").querySelector("button").disabled = member.tenant_role === "owner";
+    $("#tenant-member-role").disabled = state.memberMutationPending || member.tenant_role === "owner";
+    $("#tenant-role-form").querySelector("button").disabled =
+      state.memberMutationPending || member.tenant_role === "owner";
 
     const loginMethods = $("#member-login-methods");
     loginMethods.replaceChildren();
@@ -293,10 +297,15 @@
 
     const statusToggle = $("#tenant-member-status-toggle");
     statusToggle.textContent = member.tenant_status === "active" ? "SUSPEND TENANT ACCESS" : "RESUME TENANT ACCESS";
-    statusToggle.disabled = member.tenant_role === "owner" || member.tenant_status === "removed";
+    statusToggle.disabled =
+      state.memberMutationPending || member.tenant_role === "owner" || member.tenant_status === "removed";
     $("#tenant-owner-transfer").disabled =
-      member.user_id === state.actorId || member.tenant_status !== "active" || member.tenant_role === "owner";
-    $("#tenant-member-remove").disabled = member.user_id === state.actorId || member.tenant_role === "owner";
+      state.memberMutationPending ||
+      member.user_id === state.actorId ||
+      member.tenant_status !== "active" ||
+      member.tenant_role === "owner";
+    $("#tenant-member-remove").disabled =
+      state.memberMutationPending || member.user_id === state.actorId || member.tenant_role === "owner";
 
     const spaceList = $("#member-space-access");
     spaceList.replaceChildren();
@@ -326,16 +335,17 @@
         option.selected = value === access.role;
         role.append(option);
       });
-      role.disabled = access.role === "owner";
+      role.disabled = state.memberMutationPending || access.role === "owner";
       const save = document.createElement("button");
       save.type = "button";
       save.textContent = "SET ROLE";
-      save.disabled = access.role === "owner";
+      save.disabled = state.memberMutationPending || access.role === "owner";
       save.addEventListener("click", () => void updateSpaceRole(member, access, role.value));
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.textContent = access.status === "active" ? "SUSPEND" : "RESUME";
-      toggle.disabled = access.role === "owner" || access.status === "removed";
+      toggle.disabled =
+        state.memberMutationPending || access.role === "owner" || access.status === "removed";
       toggle.addEventListener("click", () => void mutateSpaceStatus(member, access));
       actions.append(role, save, toggle);
       card.append(heading, actions);
@@ -826,6 +836,21 @@
     }
   }
 
+  function beginMemberMutation() {
+    if (state.memberMutationPending) {
+      log("member_mutation_pending: wait for the current change", "warning");
+      return false;
+    }
+    state.memberMutationPending = true;
+    renderMemberDetail();
+    return true;
+  }
+
+  function endMemberMutation() {
+    state.memberMutationPending = false;
+    renderMemberDetail();
+  }
+
   async function updateTenantRole() {
     const member = state.selectedMember;
     if (!member) return;
@@ -841,6 +866,7 @@
       warning: role === "admin" ? "Admin 提权仅允许 Tenant Owner 在最近 5 分钟认证后执行，并会撤销目标用户全部会话。" : "角色变更使用 CAS 版本并撤销目标用户全部会话。",
     });
     if (!reason) return;
+    if (!beginMemberMutation()) return;
     try {
       const result = await api(tenantPath(`/members/${member.user_id}/role`), {
         method: "PUT",
@@ -851,6 +877,8 @@
       await loadMembers();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 
@@ -868,6 +896,7 @@
       warning: action === "suspend" ? "暂停将提升用户 Security Version 并撤销其全部会话。" : "恢复不会复活旧会话，用户必须重新认证。",
     });
     if (!reason) return;
+    if (!beginMemberMutation()) return;
     try {
       const result = await api(tenantPath(`/members/${member.user_id}/${action}`), {
         method: "POST",
@@ -878,10 +907,13 @@
       await loadMembers();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 
   async function updateSpaceRole(member, access, role) {
+    if (state.memberMutationPending) return log("member_mutation_pending: wait for the current change", "warning");
     if (role === access.role) return log("membership_unchanged: Space Role is already active", "warning");
     const reason = await openActionDialog({
       title: "更新 Space Role",
@@ -893,6 +925,7 @@
       warning: "服务端会重新验证 Tenant 与 Space 管理权限，CAS 成功后撤销目标用户全部会话。",
     });
     if (!reason) return;
+    if (!beginMemberMutation()) return;
     try {
       const result = await api(tenantPath(`/spaces/${access.space_id}/members/${member.user_id}/role`), {
         method: "PUT",
@@ -903,10 +936,13 @@
       await loadMembers();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 
   async function mutateSpaceStatus(member, access) {
+    if (state.memberMutationPending) return log("member_mutation_pending: wait for the current change", "warning");
     const action = access.status === "active" ? "suspend" : "resume";
     const reason = await openActionDialog({
       title: action === "suspend" ? "暂停 Space 访问" : "恢复 Space 访问",
@@ -918,6 +954,7 @@
       warning: "Space 访问变更同样提升 Security Version，旧会话不会继续生效。",
     });
     if (!reason) return;
+    if (!beginMemberMutation()) return;
     try {
       const result = await api(tenantPath(`/spaces/${access.space_id}/members/${member.user_id}/${action}`), {
         method: "POST",
@@ -928,6 +965,8 @@
       await loadMembers();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 
@@ -944,6 +983,7 @@
       warning: "成功后当前 Owner 降为 Admin，目标提升为 Owner，双方会话被撤销，当前控制台立即退出。",
     });
     if (!reason) return;
+    if (!beginMemberMutation()) return;
     try {
       const unfiltered = await api(tenantPath("/members?limit=100"));
       const source = unfiltered.items.find((member) => member.user_id === state.actorId);
@@ -963,12 +1003,15 @@
       setLoggedOut();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 
   async function preflightMemberRemoval() {
     const member = state.selectedMember;
     if (!member) return;
+    if (!beginMemberMutation()) return;
     try {
       const preflight = await api(tenantPath(`/members/${member.user_id}/removal-preflights`), {
         method: "POST",
@@ -999,6 +1042,8 @@
       await loadMembers();
     } catch (error) {
       log(error.message, "error");
+    } finally {
+      endMemberMutation();
     }
   }
 

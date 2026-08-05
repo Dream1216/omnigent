@@ -338,22 +338,24 @@ def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
     page.get_by_test_id("tenant-member-role").select_option("operator")
     page.get_by_test_id("tenant-member-role-save").click()
     _confirm_dialog(page, "grant Tenant operations for release coverage")
+    expect(page.locator("#member-detail-status")).to_contain_text("V2")
     expect(page.get_by_test_id("tenant-member-role")).to_have_value("operator")
 
     space_role = page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")
     space_role.select_option("operator")
     space_role.locator("xpath=..").get_by_role("button", name="SET ROLE").click()
     _confirm_dialog(page, "grant current Space deployment operations")
+    expect(page.get_by_test_id(f"member-space-{fixture.scope['space_id']}")).to_contain_text("V2")
     expect(page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")).to_have_value(
         "operator"
     )
 
     page.get_by_test_id("tenant-member-status-toggle").click()
     _confirm_dialog(page, "pause access during credential review")
-    expect(page.locator("#member-detail-status")).to_contain_text("SUSPENDED")
+    expect(page.locator("#member-detail-status")).to_contain_text("SUSPENDED · V3")
     page.get_by_test_id("tenant-member-status-toggle").click()
     _confirm_dialog(page, "credential review completed")
-    expect(page.locator("#member-detail-status")).to_contain_text("ACTIVE")
+    expect(page.locator("#member-detail-status")).to_contain_text("ACTIVE · V4")
 
     page.get_by_test_id("invite-email").fill("revocable@example.com")
     page.get_by_test_id("invite-submit").click()
