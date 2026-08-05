@@ -325,3 +325,12 @@ cross-store reconciliation matrix, immutable signed evidence, and independent pr
 security, and data-owner attestations. The empty production evidence directory is
 deliberate: structural validation reports `pass`, production reports `blocked`, and no
 aggregate deletion or production-foundation gate is closed by the validator alone.
+
+Exact run `30988807799` at
+`cd681559684377a5d5b0a25c23c23749eeb85d48` passes 817 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 133-artifact wheel, both patch replays, and the 8-file/446-line intrusion result.
+The deletion validator itself reports thirteen required surfaces, zero production
+records, zero qualified records, and one readiness blocker. It closes only the
+fail-closed verifier-contract subgate; eleven production gates and the release-level
+`NO-GO` remain unchanged.

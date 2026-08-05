@@ -789,6 +789,16 @@ attestations are mandatory. The repository intentionally has zero production del
 records, so structural validation passes while production readiness is blocked. A CI
 fixture, successful worker, database row count, or screenshot cannot close this gate.
 
+Exact Linux/PostgreSQL 16 run `30988807799` verifies the deletion-contract
+implementation at `cd681559684377a5d5b0a25c23c23749eeb85d48`: 817
+PostgreSQL/Chromium compatibility tests, 56 official regressions, and the 36/22 Linux
+security matrix pass; Pyrefly reports zero errors, p5a migrations round trip, the wheel
+contains 133 required artifacts, both patches replay, and source intrusion remains 8
+files/446 lines with a 0.9932 isolated-code ratio. Its report contains thirteen required
+surfaces but zero production records, zero qualified records, and one explicit blocker.
+This closes only the verifier-contract subgate; no production Tenant deletion, purge,
+capacity/SLO, or aggregate P5 gate is proven.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

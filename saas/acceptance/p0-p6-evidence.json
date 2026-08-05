@@ -551,6 +551,18 @@
           ]
         },
         {
+          "id": "p5-tenant-deletion-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/production/deletion-policy.json",
+            "saas/production/deletion.py",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/production/runbooks/tenant-deletion.md",
+            "tests/saas/test_deletion_readiness.py",
+            "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json"
+          ]
+        },
+        {
           "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",
           "evidence": []

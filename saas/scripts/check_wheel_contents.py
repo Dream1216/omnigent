@@ -39,6 +39,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p5-image-candidate-ci-30978680569.json",
     "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json",
     "saas/acceptance/p5-recovery-evidence-contract-ci-30983318630.json",
+    "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json",
     "saas/acceptance/p5-webhook-delivery-ci-30980110086.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",
