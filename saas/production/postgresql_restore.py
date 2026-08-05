@@ -847,7 +847,7 @@ def run_logical_restore_contract(
             "status": "pass",
             "evidence_kind": "ci_contract_not_production_drill",
             "product_revision": product_revision,
-            "upstream_revision": "559504d9fe2c2794e7a1c487dcfc8c47455cb633",
+            "upstream_revision": "d794ef4f9f641f5b1f07dd586fae9ecac505a733",
             "started_at": started.isoformat(),
             "completed_at": completed.isoformat(),
             "duration_seconds": round((completed - started).total_seconds(), 3),
