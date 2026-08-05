@@ -924,9 +924,10 @@ P4 multi-failure-domain execution and Worktree isolation remain partially
 implemented. P5 has passed Webhook/SSRF, recovery-verifier, isolated-restore,
 tenant-deletion-verifier, SLO/capacity-verifier, and image-supply-chain-verifier
 contract subgates; real production recovery, capacity/SLO, deletion, and signed
-image evidence remains pending. P6 is now in progress through machine-identity and
-enterprise group/custom-role code-contract slices; billing, enterprise federation, audit export,
-privacy, the complete API platform, and commercial acceptance remain pending. None
+image evidence remains pending. P6 is now in progress through machine-identity,
+enterprise group/custom-role, and enterprise access-lifecycle code-contract slices;
+billing, enterprise federation, audit export, privacy, the complete API platform,
+and commercial acceptance remain pending. None
 may be inferred from a code-contract or CI-only subgate.
 
 The first P6 slice adds the downstream-only migration `p6a000000001`, explicit
@@ -950,21 +951,18 @@ deletion policies include machine-credential revocation. See
 `saas/production/runbooks/api-credentials.md` for deployment and incident gates.
 
 The reviewed official baseline has also advanced to
-`559504d9fe2c2794e7a1c487dcfc8c47455cb633`. The merge includes upstream named
-database-query sessions and Host/Web changes; the permanent managed-session
-initializer patch was regenerated against that exact tree. Both downstream patches
-replay in order with no content mismatch, while the intrusion budget remains eight
-official files, 449 net added lines, and a 0.9938 isolated-code ratio. Exact run
-`31002035206` at `f5b6d06d16903943028ce0b8f6adf9534e05d3c2` passes 843
-compatibility tests, 57 official Zygote/query-context regressions, the 36/22 Linux
-safety matrix, Pyrefly with zero errors, the p6 migration round trip, both patch
-replays, and the 145-artifact implementation wheel. Its PostgreSQL 16 logical
-restore completes in 2.924 seconds with 52/17 forced-RLS inventories, two restored
-Service Accounts, two restored API Keys, both cross-scope negative probes, and
-post-backup machine-credential revocation replay. It closes only the
-`p6-service-account-api-credential-contract` code subgate; the evidence-successor
-wheel requires 146 artifacts, eleven aggregate gates remain pending, and the
-release-level decision remains `NO-GO`.
+`d794ef4f9f641f5b1f07dd586fae9ecac505a733`. The zero-conflict merge spans eleven
+upstream commits and 27 changed files, including Claude shell-status compatibility,
+the longer idle watchdog, SDK replay redaction, indexed conversation retrieval,
+Host/Web interaction changes, and telemetry-version handling. Both downstream
+patches replay in order with no content mismatch. Exact sync run `31011047850` at
+`bf71e3404ae0df5766e28aac999eae71b345eee6` passes 852 compatibility tests, 57
+official Zygote/query-context regressions, the 36/22 Linux safety matrix, Pyrefly
+with zero errors, the `p6a000000002` round trip, both patch replays, and the
+151-artifact wheel. Its PostgreSQL 16 logical restore completes in 3.15 seconds
+with 56/17 forced-RLS inventories. This is one current P6-era upstream sync, not
+the required second later official advance; the commercial gate and release-level
+decision remain `NO-GO`.
 
 The second P6 slice adds Tenant-owned groups and project-scoped custom roles in
 downstream migration `p6a000000002`. Group membership grants nothing by itself;
@@ -997,6 +995,39 @@ only `p6-enterprise-group-project-custom-role-contract`; directory sync, group
 archive/role retirement/bulk lifecycle, federation/SCIM, complete audit/API/console/
 privacy, billing, production evidence, eleven aggregate gates, and release `NO-GO`
 remain open. The evidence-successor wheel requires 151 artifacts.
+
+The third P6 contract slice adds explicit Group Archive, Project custom-role
+retirement, and bounded atomic group-membership batches in downstream migration
+`p6a000000003`. The Cookie-only Admin API exposes these as POST state transitions
+with trusted Origin/CSRF checks, action-level authorization, expected versions,
+reasons, and Tenant-scoped idempotency. Archive removes all active memberships,
+revokes active role assignments, invalidates affected users and sessions, and bumps
+affected Project authorization versions; retirement revokes assignments and bumps
+its Project version. Batch operations accept 1--100 unique users, prevalidate every
+item, and roll back the whole batch on one invalid target.
+
+Every enterprise write takes a Tenant-scoped PostgreSQL transaction advisory lock,
+so cross-group and cross-role Admin operations serialize without cross-resource
+deadlocks while other Tenants remain independent. Legacy archived/retired rows gain
+an explicit backfill marker instead of invented operator provenance; PostgreSQL
+temporarily relaxes FORCE RLS only for the migration owner inside the migration
+transaction and restores it before commit. The restore drill replays post-backup
+Archive and Retire transitions and verifies terminal actor, time, reason, membership,
+assignment, and RLS state.
+
+Exact run `31016011969` at
+`7578d2d1bcbfae260142bad166a1851ce4168dfa` passes all 856 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, the `p6a000000003` round trip, both patch replays, and the
+153-artifact implementation wheel. PostgreSQL 16 restore completes in 3.086 seconds
+with 56/17 forced-RLS inventories and post-backup enterprise-lifecycle replay. The
+intrusion result remains 8 direct upstream files, 449 net added LOC, two patches,
+and a 0.9942 isolated-code ratio. This closes only
+`p6-enterprise-access-lifecycle-contract`. Dedicated pre-execution impact snapshot
+and approval UI, directory sync/SCIM/federation, billing, complete audit/API/console/
+privacy capability, production evidence, eleven aggregate gates, and release
+`NO-GO` remain open. With the two immutable evidence records, the evidence-successor
+wheel requires 155 artifacts.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

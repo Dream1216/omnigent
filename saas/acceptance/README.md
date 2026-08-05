@@ -441,3 +441,35 @@ two rows in each of the four enterprise tables. It closes only
 requires 151 artifacts. Group archival/role retirement/bulk directory lifecycle,
 federation/SCIM, complete audit/API/console/privacy capability, billing, commercial
 evidence, all eleven aggregate gates, and release `NO-GO` remain pending.
+
+The third P6 contract slice adds terminal Group Archive, Project custom-role
+retirement, and 1--100 item atomic membership batches. Cookie Admin routes retain
+Origin/CSRF and action-level authorization; every transition requires an expected
+version, reason, and Tenant-scoped idempotency key. Archive and retirement revoke
+their dependent grants in the same transaction, invalidate affected user sessions
+and authorization caches, and emit secret-free Outbox facts. A Tenant-scoped
+PostgreSQL transaction advisory lock prevents cross-resource enterprise-write
+deadlocks without serializing different Tenants.
+
+Migration `p6a000000003` preserves truthful legacy provenance with an explicit
+backfill marker and restores FORCE RLS before its PostgreSQL transaction commits.
+Backup/restore now replays post-backup Archive and Retire transitions. Exact run
+`31016011969` at `7578d2d1bcbfae260142bad166a1851ce4168dfa` passes 856
+compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
+Pyrefly with zero errors, the migration round trip, both patch replays, and the
+153-artifact implementation wheel. Its PostgreSQL 16 logical restore takes 3.086
+seconds with 56/17 forced-RLS inventories and enterprise-lifecycle replay. The
+8-file/449-line/two-patch/0.9942 intrusion result remains within budget. This closes
+only `p6-enterprise-access-lifecycle-contract`; the evidence-successor wheel requires
+155 artifacts. Dedicated pre-execution impact approval UI, directory sync/SCIM,
+federation, billing, complete audit/API/console/privacy capability, production proof,
+all eleven aggregate gates, and release `NO-GO` remain pending.
+
+The official baseline was independently advanced from `559504d9` to `d794ef4f`
+through eleven commits and 27 changed files with zero merge conflicts. Exact sync
+run `31011047850` at `bf71e3404ae0df5766e28aac999eae71b345eee6` passes 852
+compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
+Pyrefly, the `p6a000000002` round trip, both patch replays, the 151-artifact wheel,
+and a 3.15-second PostgreSQL restore. It proves one current P6-era sync only; a
+second later upstream advance and the remaining commercial evidence are still
+required by `p6-two-consecutive-upstream-syncs-and-commercial-gate`.
