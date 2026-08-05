@@ -1062,6 +1062,27 @@ directory sync/SCIM/federation, high-cardinality production performance, billing
 complete audit/API/console/privacy capability, production evidence, eleven aggregate
 gates, and release `NO-GO` remain open.
 
+The fifth P6 contract slice advances the downstream head to `p6a000000005` and
+productizes that approval boundary inside the existing `/saas/admin/projects`
+control plane rather than introducing a second Admin application. Three bounded GET
+surfaces expose only the current actor's requests, a Tenant Group decision inbox, and
+the selected visible Project's custom-role decision inbox. Requesters are excluded
+from their own decision queues, expired requests are omitted, full impact snapshots
+remain server-only, and dedicated requester/scope indexes keep pagination bounded.
+The UI renders server-derived impact counts and requires a reason-bearing confirmation
+for prepare, approve, reject, and execute. A real Chromium test signs in two different
+administrators and proves approve, reject, requester-only execution, archived/retired
+terminal state, and absence of browser console errors.
+
+This does not turn the official server-wide `/settings/members` account page into
+Tenant administration. `/saas/admin` currently manages Project memberships plus
+enterprise Group/custom-role approval; a unified Tenant Members module for invitation,
+Tenant/Space role changes, suspension/removal, identity connections, Owner transfer,
+and removal impact preflight remains part of the broader pending enterprise console
+gate. The official user workspace and SaaS Admin modules continue to share one product
+and authentication plane, with server authorization—not a separate deployment—deciding
+which management surfaces and actions are available.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO

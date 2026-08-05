@@ -280,6 +280,35 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
         idempotency_key=f"pg-group-preflight-b-{suffix}",
         now=_NOW,
     )
+    role_preflight_a = service.create_custom_role_retire_preflight(
+        owner_context_a,
+        project_id=project_a,
+        custom_role_id=role_a,
+        expected_version=1,
+        reason="replace role after approval",
+        reauthenticated_at=_NOW,
+        idempotency_key=f"pg-role-preflight-a-{suffix}",
+        now=_NOW,
+    )
+    assert {
+        value.preflight_id
+        for value in service.list_requested_enterprise_access_preflights(owner_context_a)
+    } == {preflight_a.preflight_id, role_preflight_a.preflight_id}
+    assert service.list_group_archive_preflights(owner_context_a, now=_NOW) == ()
+    assert [
+        value.preflight_id
+        for value in service.list_group_archive_preflights(approver_context_a, now=_NOW)
+    ] == [preflight_a.preflight_id]
+    assert (
+        service.list_custom_role_retire_preflights(owner_context_a, project_id=project_a, now=_NOW)
+        == ()
+    )
+    assert [
+        value.preflight_id
+        for value in service.list_custom_role_retire_preflights(
+            approver_context_a, project_id=project_a, now=_NOW
+        )
+    ] == [role_preflight_a.preflight_id]
 
     def _approve_preflight(key: str) -> str:
         try:
@@ -576,6 +605,18 @@ def test_real_postgresql_enterprise_group_role_isolated_and_revoked_atomically()
             ).scalars()
         )
         assert protected == set(CONTROL_PLANE_RLS_TABLES)
+        inbox_indexes = set(
+            connection.execute(
+                sa.text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE tablename = 'saas_enterprise_access_preflights'"
+                )
+            ).scalars()
+        )
+        assert {
+            "ix_enterprise_access_preflight_requester",
+            "ix_enterprise_access_preflight_inbox",
+        } <= inbox_indexes
         posture = connection.execute(
             sa.text(
                 "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles "

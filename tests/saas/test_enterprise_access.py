@@ -443,6 +443,83 @@ def test_enterprise_destructive_preflights_require_fresh_separated_approval_and_
         assert persisted.executed_at.replace(tzinfo=timezone.utc) == _NOW
 
 
+def test_enterprise_preflight_inboxes_are_requester_scope_and_expiry_bounded(
+    enterprise_fixture,
+) -> None:
+    sessions, ids = enterprise_fixture
+    service, group_id, role_id, _assignment_id = _grant_group_role(sessions, ids)
+    owner = _context(ids, ids.owner, "inbox-requester")
+    approver = _context(ids, ids.manager, "inbox-approver")
+    member = _context(ids, ids.member, "inbox-member")
+
+    group_preflight = service.create_group_archive_preflight(
+        owner,
+        group_id=group_id,
+        expected_version=1,
+        reason="replace directory group",
+        reauthenticated_at=_NOW,
+        idempotency_key="inbox-group-preflight",
+        now=_NOW,
+    )
+    role_preflight = service.create_custom_role_retire_preflight(
+        owner,
+        project_id=ids.project,
+        custom_role_id=role_id,
+        expected_version=1,
+        reason="replace custom role",
+        reauthenticated_at=_NOW,
+        idempotency_key="inbox-role-preflight",
+        now=_NOW,
+    )
+    expired_group = service.create_group(
+        owner,
+        name="Expired Inbox Group",
+        description=None,
+        idempotency_key="inbox-expired-group",
+    )
+    expired_preflight = service.create_group_archive_preflight(
+        owner,
+        group_id=expired_group.id,
+        expected_version=1,
+        reason="expired request remains auditable",
+        reauthenticated_at=_NOW - timedelta(minutes=16),
+        idempotency_key="inbox-expired-preflight",
+        now=_NOW - timedelta(minutes=16),
+    )
+
+    mine = service.list_requested_enterprise_access_preflights(owner)
+    assert {value.preflight_id for value in mine} == {
+        group_preflight.preflight_id,
+        role_preflight.preflight_id,
+        expired_preflight.preflight_id,
+    }
+    assert {value.reason for value in mine} == {
+        "replace directory group",
+        "replace custom role",
+        "expired request remains auditable",
+    }
+    assert service.list_group_archive_preflights(owner, now=_NOW) == ()
+    assert (
+        service.list_custom_role_retire_preflights(owner, project_id=ids.project, now=_NOW) == ()
+    )
+
+    group_inbox = service.list_group_archive_preflights(approver, now=_NOW)
+    assert [value.preflight_id for value in group_inbox] == [group_preflight.preflight_id]
+    role_inbox = service.list_custom_role_retire_preflights(
+        approver, project_id=ids.project, now=_NOW
+    )
+    assert [value.preflight_id for value in role_inbox] == [role_preflight.preflight_id]
+    assert group_inbox[0].impact_summary["target_name"] == "Release Engineers"
+    assert role_inbox[0].impact_summary["target_name"] == "Release Runner"
+
+    with pytest.raises(LifecycleError) as group_forbidden:
+        service.list_group_archive_preflights(member, now=_NOW)
+    assert group_forbidden.value.code == "group_manage_forbidden"
+    with pytest.raises(LifecycleError) as project_forbidden:
+        service.list_custom_role_retire_preflights(member, project_id=ids.project, now=_NOW)
+    assert project_forbidden.value.code == "permission_not_granted"
+
+
 def test_enterprise_preflight_approval_is_invalidated_when_approver_loses_permission(
     enterprise_fixture,
 ) -> None:

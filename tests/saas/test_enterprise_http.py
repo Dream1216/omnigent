@@ -351,6 +351,35 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     )
     assert retire_preflight.status_code == 201, retire_preflight.text
     assert retire_preflight.json()["status"] == "pending_approval"
+    assert retire_preflight.json()["tenant_id"] == str(ids["tenant"])
+    assert retire_preflight.json()["space_id"] == str(ids["space"])
+    assert retire_preflight.json()["project_id"] == str(ids["project"])
+    assert retire_preflight.json()["reason"] == "replaced by managed directory role"
+    assert retire_preflight.json()["created_at"].endswith("+00:00")
+    assert retire_preflight.json()["expires_at"].endswith("+00:00")
+    assert retire_preflight.json()["impact_summary"]["target_name"] == "HTTP Runner"
+    assert retire_preflight.json()["impact_summary"]["permission_count"] == 2
+    assert "impact_snapshot" not in retire_preflight.json()
+
+    mine = client.get(
+        f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/mine",
+        params={"status": "pending_approval"},
+    )
+    assert mine.status_code == 200, mine.text
+    assert [item["preflight_id"] for item in mine.json()["items"]] == [
+        retire_preflight.json()["preflight_id"]
+    ]
+    own_project_inbox = client.get(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/enterprise-access-preflights/custom-role-retire-inbox"
+    )
+    assert own_project_inbox.status_code == 200, own_project_inbox.text
+    assert own_project_inbox.json()["items"] == []
+    invalid_status = client.get(
+        f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/mine",
+        params={"status": "expired"},
+    )
+    assert invalid_status.status_code == 422
     self_approval = client.post(
         f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
         f"{ids['project']}/custom-roles/{role.json()['id']}/retire-preflights/"
@@ -371,6 +400,14 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
         "Origin": "http://testserver",
         "X-CSRF-Token": approver_issued.csrf_token,
     }
+    project_inbox = client.get(
+        f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+        f"{ids['project']}/enterprise-access-preflights/custom-role-retire-inbox"
+    )
+    assert project_inbox.status_code == 200, project_inbox.text
+    assert [item["preflight_id"] for item in project_inbox.json()["items"]] == [
+        retire_preflight.json()["preflight_id"]
+    ]
     approved_role = client.post(
         f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
         f"{ids['project']}/custom-roles/{role.json()['id']}/retire-preflights/"
@@ -380,6 +417,15 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     )
     assert approved_role.status_code == 200, approved_role.text
     assert approved_role.json()["status"] == "approved"
+    assert approved_role.json()["approval_reason"] == "replacement is active"
+    assert approved_role.json()["approved_at"]
+    assert (
+        client.get(
+            f"/saas/tenants/{ids['tenant']}/spaces/{ids['space']}/projects/"
+            f"{ids['project']}/enterprise-access-preflights/custom-role-retire-inbox"
+        ).json()["items"]
+        == []
+    )
 
     client.cookies.set("saas_session", issued.token)
     retired = client.post(
@@ -402,7 +448,40 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
         json={"expected_version": 1, "reason": "replaced by managed directory group"},
     )
     assert archive_preflight.status_code == 201, archive_preflight.text
+    rejected_preflight = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[1]}/archive-preflights",
+        headers={**mutation_headers, "Idempotency-Key": "reject-group-preflight"},
+        json={"expected_version": 1, "reason": "group should remain available"},
+    )
+    assert rejected_preflight.status_code == 201, rejected_preflight.text
+    assert archive_preflight.json()["impact_summary"]["target_name"] == "Group 0"
+    assert (
+        client.get(
+            f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/group-archive-inbox"
+        ).json()["items"]
+        == []
+    )
     client.cookies.set("saas_session", approver_issued.token)
+    first_inbox_page = client.get(
+        f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/group-archive-inbox",
+        params={"limit": 1},
+    )
+    assert first_inbox_page.status_code == 200, first_inbox_page.text
+    assert len(first_inbox_page.json()["items"]) == 1
+    assert first_inbox_page.json()["next_cursor"]
+    second_inbox_page = client.get(
+        f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/group-archive-inbox",
+        params={"limit": 1, "cursor": first_inbox_page.json()["next_cursor"]},
+    )
+    assert second_inbox_page.status_code == 200, second_inbox_page.text
+    assert len(second_inbox_page.json()["items"]) == 1
+    assert {
+        first_inbox_page.json()["items"][0]["preflight_id"],
+        second_inbox_page.json()["items"][0]["preflight_id"],
+    } == {
+        archive_preflight.json()["preflight_id"],
+        rejected_preflight.json()["preflight_id"],
+    }
     approved_group = client.post(
         f"/saas/tenants/{ids['tenant']}/groups/{group_ids[0]}/archive-preflights/"
         f"{archive_preflight.json()['preflight_id']}/decisions",
@@ -411,6 +490,14 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     )
     assert approved_group.status_code == 200, approved_group.text
     assert approved_group.json()["status"] == "approved"
+    rejected_group = client.post(
+        f"/saas/tenants/{ids['tenant']}/groups/{group_ids[1]}/archive-preflights/"
+        f"{rejected_preflight.json()['preflight_id']}/decisions",
+        headers={**approver_headers, "Idempotency-Key": "reject-archive-group"},
+        json={"decision": "reject", "reason": "active integration still depends on it"},
+    )
+    assert rejected_group.status_code == 200, rejected_group.text
+    assert rejected_group.json()["status"] == "rejected"
 
     client.cookies.set("saas_session", issued.token)
     archived = client.post(
@@ -425,3 +512,19 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     assert archived.status_code == 200, archived.text
     assert archived.json()["status"] == "archived"
     assert archived.json()["removed_membership_count"] == 1
+    assert (
+        client.get(f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/mine").status_code
+        == 401
+    )
+    refreshed_owner = lifecycle.issue_auth_session(
+        user_id=ids["owner"],
+        authn_method="password",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    client.cookies.set("saas_session", refreshed_owner.token)
+    requested = client.get(f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/mine")
+    assert requested.status_code == 200, requested.text
+    statuses = {item["preflight_id"]: item["status"] for item in requested.json()["items"]}
+    assert statuses[retire_preflight.json()["preflight_id"]] == "executed"
+    assert statuses[archive_preflight.json()["preflight_id"]] == "executed"
+    assert statuses[rejected_preflight.json()["preflight_id"]] == "rejected"

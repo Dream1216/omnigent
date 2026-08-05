@@ -14,6 +14,7 @@ from saas.control_plane import (
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
     ContextSnapshotPolicy,
     ContextSnapshotService,
+    EnterpriseAccessService,
     IdentityManagementService,
     MembershipGovernanceService,
     MembershipLifecycleService,
@@ -80,6 +81,12 @@ def _build_fastapi_app(
         expected_version=None,
         idempotency_key="http-initial-password",
     )
+    passwords.set_password(
+        user_id=member_id,
+        new_password="initial-member-password",
+        expected_version=None,
+        idempotency_key="http-member-initial-password",
+    )
 
     tenant_id, space_id, placement_id, partition_id = uuid4(), uuid4(), uuid4(), uuid4()
     with sessions.begin() as db:
@@ -116,7 +123,7 @@ def _build_fastapi_app(
             TenantMembership(
                 tenant_id=tenant_id,
                 user_id=member_id,
-                role="member",
+                role="admin",
                 status="active",
                 version=1,
             )
@@ -173,13 +180,21 @@ def _build_fastapi_app(
             )
         )
         db.flush()
-        db.add(
-            RuntimeIdentityAliasRecord(
-                runtime_partition_id=partition_id,
-                user_id=user_id,
-                runtime_user_key="runtime_http_user",
-                status="active",
-            )
+        db.add_all(
+            [
+                RuntimeIdentityAliasRecord(
+                    runtime_partition_id=partition_id,
+                    user_id=user_id,
+                    runtime_user_key="runtime_http_user",
+                    status="active",
+                ),
+                RuntimeIdentityAliasRecord(
+                    runtime_partition_id=partition_id,
+                    user_id=member_id,
+                    runtime_user_key="runtime_http_member",
+                    status="active",
+                ),
+            ]
         )
 
     policy = RuntimeCompatibilityPolicy(
@@ -208,6 +223,7 @@ def _build_fastapi_app(
         project_admin=project_admin,
         project_authorizer=project_authorizer,
         runtime_bindings=runtime_bindings,
+        enterprise_access=EnterpriseAccessService(sessions, project_authorizer),
         context_snapshots=ContextSnapshotService(
             ContextSnapshotPolicy(
                 active_key_id="fixture-v1",
@@ -425,7 +441,7 @@ def test_project_admin_http_permission_and_binding_matrix() -> None:
     client, scope = _build_app()
     admin_page = client.get("/saas/admin/projects")
     assert admin_page.status_code == 200
-    assert "PROJECT CONTROL PLANE" in admin_page.text
+    assert "SAAS CONTROL PLANE" in admin_page.text
     assert "script-src 'self'" in admin_page.headers["content-security-policy"]
     assert (
         client.get("/saas/admin/assets/project-admin.css")

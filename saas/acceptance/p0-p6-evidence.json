@@ -683,7 +683,15 @@
         {
           "id": "p6-enterprise-identity-audit-api-platform-console-privacy",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.css",
+            "saas/admin_ui/project_admin.js",
+            "saas/control_plane/migrations/versions/p6a000000005_enterprise_approval_inbox.py",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_http.py",
+            "tests/saas/test_project_admin_browser.py"
+          ]
         },
         {
           "id": "p6-two-consecutive-upstream-syncs-and-commercial-gate",

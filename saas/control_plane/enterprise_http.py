@@ -34,6 +34,8 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
     {
         "POST /tenants/{tenant}/groups": "group.manage",
         "GET /tenants/{tenant}/groups": "group.read",
+        "GET /tenants/{tenant}/enterprise-access-preflights/mine": "tenant.read",
+        "GET /tenants/{tenant}/enterprise-access-preflights/group-archive-inbox": ("group.manage"),
         "POST /tenants/{tenant}/groups/{group}/archive": "group.manage",
         "POST /tenants/{tenant}/groups/{group}/archive-preflights": "group.manage",
         "POST /tenants/{tenant}/groups/{group}/archive-preflights/{preflight}/decisions": (
@@ -48,6 +50,8 @@ ENTERPRISE_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
         "GET /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles": (
             "custom_role.read"
         ),
+        "GET /tenants/{tenant}/spaces/{space}/projects/{project}/"
+        "enterprise-access-preflights/custom-role-retire-inbox": "custom_role.manage",
         "PUT /tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}": (
             "custom_role.manage"
         ),
@@ -134,6 +138,7 @@ class GroupRoleAssignmentRemoveBody(BaseModel):
 
 
 _Item = TypeVar("_Item")
+_PreflightStatus = Literal["pending_approval", "approved", "rejected", "executed"]
 
 
 def _context(
@@ -287,6 +292,9 @@ def _group_payload(value: EnterpriseGroupView) -> dict[str, object]:
 def _preflight_payload(value: EnterpriseAccessPreflightView) -> dict[str, object]:
     return {
         "preflight_id": str(value.preflight_id),
+        "tenant_id": str(value.tenant_id),
+        "space_id": str(value.space_id) if value.space_id else None,
+        "project_id": str(value.project_id) if value.project_id else None,
         "operation_type": value.operation_type,
         "target_id": str(value.target_id),
         "target_version": value.target_version,
@@ -294,9 +302,14 @@ def _preflight_payload(value: EnterpriseAccessPreflightView) -> dict[str, object
         "requested_by": str(value.requested_by),
         "approved_by": str(value.approved_by) if value.approved_by else None,
         "approval_policy": value.approval_policy,
+        "reason": value.reason,
+        "approval_reason": value.approval_reason,
         "impact_summary": value.impact_summary,
         "snapshot_hash": value.snapshot_hash,
         "expires_at": value.expires_at.isoformat(),
+        "created_at": value.created_at.isoformat() if value.created_at else None,
+        "approved_at": value.approved_at.isoformat() if value.approved_at else None,
+        "executed_at": value.executed_at.isoformat() if value.executed_at else None,
         "replayed": value.replayed,
     }
 
@@ -449,6 +462,66 @@ def create_enterprise_admin_router(
             limit=limit,
             identifier=lambda value: value.id,
             payload=_group_payload,
+        )
+
+    @router.get("/tenants/{tenant_id}/enterprise-access-preflights/mine")
+    def list_my_enterprise_access_preflights(
+        tenant_id: UUID,
+        request: Request,
+        status: _PreflightStatus | None = None,
+        cursor: str | None = Query(default=None, max_length=128),
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            values = enterprise_access.list_requested_enterprise_access_preflights(
+                context,
+                status=status,
+                after_id=_decode_cursor(cursor),
+                limit=limit + 1,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _page(
+            values,
+            limit=limit,
+            identifier=lambda value: value.preflight_id,
+            payload=_preflight_payload,
+        )
+
+    @router.get("/tenants/{tenant_id}/enterprise-access-preflights/group-archive-inbox")
+    def list_group_archive_preflight_inbox(
+        tenant_id: UUID,
+        request: Request,
+        status: _PreflightStatus | None = "pending_approval",
+        cursor: str | None = Query(default=None, max_length=128),
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        context = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            values = enterprise_access.list_group_archive_preflights(
+                context,
+                status=status,
+                after_id=_decode_cursor(cursor),
+                limit=limit + 1,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _page(
+            values,
+            limit=limit,
+            identifier=lambda value: value.preflight_id,
+            payload=_preflight_payload,
         )
 
     @router.post(
@@ -690,6 +763,43 @@ def create_enterprise_admin_router(
             limit=limit,
             identifier=lambda value: value.id,
             payload=_role_payload,
+        )
+
+    @router.get(
+        "/tenants/{tenant_id}/spaces/{space_id}/projects/{project_id}/"
+        "enterprise-access-preflights/custom-role-retire-inbox"
+    )
+    def list_custom_role_retire_preflight_inbox(
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        request: Request,
+        status: _PreflightStatus | None = "pending_approval",
+        cursor: str | None = Query(default=None, max_length=128),
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        context = _context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        try:
+            values = enterprise_access.list_custom_role_retire_preflights(
+                context,
+                project_id=project_id,
+                status=status,
+                after_id=_decode_cursor(cursor),
+                limit=limit + 1,
+            )
+        except LifecycleError as error:
+            raise _http_error(error, _status(error)) from error
+        return _page(
+            values,
+            limit=limit,
+            identifier=lambda value: value.preflight_id,
+            payload=_preflight_payload,
         )
 
     @router.put(

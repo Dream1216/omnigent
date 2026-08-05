@@ -118,6 +118,9 @@ class EnterpriseGroupMembershipBatchView:
 @dataclass(frozen=True, slots=True)
 class EnterpriseAccessPreflightView:
     preflight_id: UUID
+    tenant_id: UUID
+    space_id: UUID | None
+    project_id: UUID | None
     operation_type: str
     target_id: UUID
     target_version: int
@@ -125,9 +128,14 @@ class EnterpriseAccessPreflightView:
     requested_by: UUID
     approved_by: UUID | None
     approval_policy: str
+    reason: str | None
+    approval_reason: str | None
     impact_summary: dict[str, object]
     snapshot_hash: str
     expires_at: datetime
+    created_at: datetime | None
+    approved_at: datetime | None
+    executed_at: datetime | None
     replayed: bool = False
 
 
@@ -291,6 +299,101 @@ class EnterpriseAccessService:
                 statement = statement.limit(limit)
             groups = db.execute(statement).scalars()
             return tuple(self._group(group) for group in groups)
+
+    def list_requested_enterprise_access_preflights(
+        self,
+        request: RequestContext,
+        *,
+        status: str | None = None,
+        after_id: UUID | None = None,
+        limit: int | None = None,
+    ) -> tuple[EnterpriseAccessPreflightView, ...]:
+        """List only preflights created by the authenticated Tenant member."""
+
+        self._validate_preflight_list(status=status, limit=limit)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._require_tenant_member_snapshot(db, request)
+            statement = sa.select(EnterpriseAccessPreflightRecord).where(
+                EnterpriseAccessPreflightRecord.tenant_id == request.tenant_id,
+                EnterpriseAccessPreflightRecord.requested_by == request.actor_id,
+            )
+            statement = self._preflight_list_statement(
+                statement,
+                status=status,
+                after_id=after_id,
+                limit=limit,
+                exclude_expired_pending=False,
+            )
+            return tuple(self._preflight_view(value) for value in db.execute(statement).scalars())
+
+    def list_group_archive_preflights(
+        self,
+        request: RequestContext,
+        *,
+        status: str | None = "pending_approval",
+        after_id: UUID | None = None,
+        limit: int | None = None,
+        now: datetime | None = None,
+    ) -> tuple[EnterpriseAccessPreflightView, ...]:
+        """List Tenant-wide Group approvals for a currently authorized administrator."""
+
+        self._validate_preflight_list(status=status, limit=limit)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._require_tenant_group_admin(db, request)
+            statement = sa.select(EnterpriseAccessPreflightRecord).where(
+                EnterpriseAccessPreflightRecord.tenant_id == request.tenant_id,
+                EnterpriseAccessPreflightRecord.operation_type == "group_archive",
+                EnterpriseAccessPreflightRecord.space_id.is_(None),
+                EnterpriseAccessPreflightRecord.project_id.is_(None),
+                EnterpriseAccessPreflightRecord.requested_by != request.actor_id,
+            )
+            statement = self._preflight_list_statement(
+                statement,
+                status=status,
+                after_id=after_id,
+                limit=limit,
+                exclude_expired_pending=True,
+                now=now,
+            )
+            return tuple(self._preflight_view(value) for value in db.execute(statement).scalars())
+
+    def list_custom_role_retire_preflights(
+        self,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        status: str | None = "pending_approval",
+        after_id: UUID | None = None,
+        limit: int | None = None,
+        now: datetime | None = None,
+    ) -> tuple[EnterpriseAccessPreflightView, ...]:
+        """List only the selected Project's custom-role retirement approvals."""
+
+        self._validate_preflight_list(status=status, limit=limit)
+        with self._session_factory.begin() as db:
+            self._apply_context(db, request)
+            self._active_project(db, request, project_id, lock=False)
+            self._require_project_permissions(
+                db, request, project_id, ("grant.manage", "custom_role.manage")
+            )
+            statement = sa.select(EnterpriseAccessPreflightRecord).where(
+                EnterpriseAccessPreflightRecord.tenant_id == request.tenant_id,
+                EnterpriseAccessPreflightRecord.space_id == request.space_id,
+                EnterpriseAccessPreflightRecord.project_id == project_id,
+                EnterpriseAccessPreflightRecord.operation_type == "custom_role_retire",
+                EnterpriseAccessPreflightRecord.requested_by != request.actor_id,
+            )
+            statement = self._preflight_list_statement(
+                statement,
+                status=status,
+                after_id=after_id,
+                limit=limit,
+                exclude_expired_pending=True,
+                now=now,
+            )
+            return tuple(self._preflight_view(value) for value in db.execute(statement).scalars())
 
     def create_group_archive_preflight(
         self,
@@ -1610,6 +1713,7 @@ class EnterpriseAccessService:
                 for project_id, version in projects
             ],
             "summary": {
+                "target_name": group.name,
                 "removed_membership_count": len(memberships),
                 "revoked_assignment_count": len(assignments),
                 "invalidated_user_count": len(user_ids),
@@ -1696,6 +1800,8 @@ class EnterpriseAccessService:
                 for row in memberships
             ],
             "summary": {
+                "target_name": role.name,
+                "permission_count": len(cast(list[str], role.permissions)),
                 "revoked_assignment_count": len(assignments),
                 "affected_group_count": len(group_ids),
                 "affected_user_count": len(affected_users),
@@ -1893,6 +1999,41 @@ class EnterpriseAccessService:
         )
 
     @staticmethod
+    def _validate_preflight_list(*, status: str | None, limit: int | None) -> None:
+        if status is not None and status not in {
+            "pending_approval",
+            "approved",
+            "rejected",
+            "executed",
+        }:
+            raise LifecycleError("enterprise_preflight_status_invalid", "status is invalid")
+        if limit is not None and not 1 <= limit <= 101:
+            raise LifecycleError("page_limit_invalid", "page limit is invalid")
+
+    @staticmethod
+    def _preflight_list_statement(
+        statement: sa.Select[tuple[EnterpriseAccessPreflightRecord]],
+        *,
+        status: str | None,
+        after_id: UUID | None,
+        limit: int | None,
+        exclude_expired_pending: bool,
+        now: datetime | None = None,
+    ) -> sa.Select[tuple[EnterpriseAccessPreflightRecord]]:
+        if status is not None:
+            statement = statement.where(EnterpriseAccessPreflightRecord.status == status)
+        if exclude_expired_pending and status == "pending_approval":
+            statement = statement.where(
+                EnterpriseAccessPreflightRecord.expires_at > (now or _utcnow())
+            )
+        if after_id is not None:
+            statement = statement.where(EnterpriseAccessPreflightRecord.id > after_id)
+        statement = statement.order_by(EnterpriseAccessPreflightRecord.id)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return statement
+
+    @staticmethod
     def _preflight_payload(record: EnterpriseAccessPreflightRecord) -> dict[str, object]:
         summary = cast(dict[str, object], record.impact_snapshot.get("summary", {}))
         return {
@@ -1907,9 +2048,14 @@ class EnterpriseAccessService:
             "requested_by": str(record.requested_by),
             "approved_by": str(record.approved_by) if record.approved_by else None,
             "approval_policy": record.approval_policy,
+            "reason": record.reason,
+            "approval_reason": record.approval_reason,
             "impact_summary": summary,
             "snapshot_hash": record.snapshot_hash,
             "expires_at": record.expires_at.isoformat(),
+            "created_at": record.created_at.isoformat(),
+            "approved_at": record.approved_at.isoformat() if record.approved_at else None,
+            "executed_at": record.executed_at.isoformat() if record.executed_at else None,
         }
 
     @classmethod
@@ -1923,8 +2069,16 @@ class EnterpriseAccessService:
         payload: dict[str, object], *, replayed: bool
     ) -> EnterpriseAccessPreflightView:
         approved_by = cast(str | None, payload.get("approved_by"))
+        space_id = cast(str | None, payload.get("space_id"))
+        project_id = cast(str | None, payload.get("project_id"))
+        created_at = cast(str | None, payload.get("created_at"))
+        approved_at = cast(str | None, payload.get("approved_at"))
+        executed_at = cast(str | None, payload.get("executed_at"))
         return EnterpriseAccessPreflightView(
             preflight_id=UUID(cast(str, payload["preflight_id"])),
+            tenant_id=UUID(cast(str, payload["tenant_id"])),
+            space_id=UUID(space_id) if space_id else None,
+            project_id=UUID(project_id) if project_id else None,
             operation_type=cast(str, payload["operation_type"]),
             target_id=UUID(cast(str, payload["target_id"])),
             target_version=cast(int, payload["target_version"]),
@@ -1932,9 +2086,14 @@ class EnterpriseAccessService:
             requested_by=UUID(cast(str, payload["requested_by"])),
             approved_by=UUID(approved_by) if approved_by else None,
             approval_policy=cast(str, payload["approval_policy"]),
+            reason=cast(str | None, payload.get("reason")),
+            approval_reason=cast(str | None, payload.get("approval_reason")),
             impact_summary=cast(dict[str, object], payload["impact_summary"]),
             snapshot_hash=cast(str, payload["snapshot_hash"]),
-            expires_at=datetime.fromisoformat(cast(str, payload["expires_at"])),
+            expires_at=_comparable(datetime.fromisoformat(cast(str, payload["expires_at"]))),
+            created_at=_comparable(datetime.fromisoformat(created_at)) if created_at else None,
+            approved_at=_comparable(datetime.fromisoformat(approved_at)) if approved_at else None,
+            executed_at=_comparable(datetime.fromisoformat(executed_at)) if executed_at else None,
             replayed=replayed,
         )
 

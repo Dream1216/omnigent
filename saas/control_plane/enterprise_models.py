@@ -355,4 +355,21 @@ class EnterpriseAccessPreflightRecord(SaasBase):
             "target_id",
             "status",
         ),
+        sa.Index(
+            "ix_enterprise_access_preflight_requester",
+            "tenant_id",
+            "requested_by",
+            "id",
+            "status",
+        ),
+        sa.Index(
+            "ix_enterprise_access_preflight_inbox",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "operation_type",
+            "status",
+            "id",
+            "expires_at",
+        ),
     )

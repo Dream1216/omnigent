@@ -6,7 +6,7 @@ cover directory synchronization or prove SSO/SCIM production readiness.
 
 ## Production prerequisites
 
-1. Run migrations through `p6a000000004` as the owner of the affected tables before
+1. Run migrations through `p6a000000005` as the owner of the affected tables before
    serving the new routes. `p6a000000003` keeps RLS enabled, temporarily
    removes `FORCE` only for that table owner while holding the migration lock, restores
    `FORCE`, and then commits. Do not run application traffic with a partially applied
@@ -16,7 +16,8 @@ cover directory synchronization or prove SSO/SCIM production readiness.
    `legacy-state-backfill:p6a000000003`; treat that marker as unknown historical
    attribution rather than proof of the original operator.
    `p6a000000004` adds the hash-bound approval record and enables and forces RLS before
-   commit.
+   commit. `p6a000000005` adds the Tenant/requester and scope/status indexes used by the
+   bounded approval inboxes without widening their RLS policy.
 2. Reapply `saas/control_plane/postgresql_roles.sql` and confirm all 57 control-plane
    and 17 Runtime tables still use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
    LEVEL SECURITY`. Governance logins must remain `NOSUPERUSER NOBYPASSRLS`.
@@ -67,20 +68,26 @@ cover directory synchronization or prove SSO/SCIM production readiness.
 
 ## Operator procedure
 
-1. Read the current group or role, create the scoped preflight, and compare its impact
+1. Open the single SaaS control plane at `/saas/admin/projects`, connect an authorized
+   Tenant/Space context, and select **Approval Desk**. The browser reads only these
+   bounded queues: the current actor's own requests, Tenant Group requests the actor may
+   manage, and custom-role requests for the selected visible Project. The server excludes
+   the requester's own items and expired records from decision queues; the browser never
+   receives `impact_snapshot`.
+2. Read the current group or role, create the scoped preflight, and compare its impact
    summary with the intended replacement. Do not derive the impact only in the browser.
-2. A distinct Owner/Admin or authorized Project manager reviews the replacement and
+3. A distinct Owner/Admin or authorized Project manager reviews the replacement and
    approves or rejects with a non-sensitive reason. The requester cannot reuse another
    operation's preflight or change its target version/reason at execution.
-3. The original requester submits exactly one approved mutation with a new idempotency
+4. The original requester submits exactly one approved mutation with a new idempotency
    key while freshly authenticated. On an unknown transport
    result, retry the identical request with the same key. On a version conflict,
    reread impact and require a new operator decision and key.
-4. Verify the response counts and affected Project IDs, then confirm the matching
+5. Verify the response counts and affected Project IDs, then confirm the matching
    `group.archived`, `custom_role.retired`, or `group.membership.batch.changed` Outbox
    event was dispatched. Confirm removed users' old Cookies fail and authorization
    decisions observe the new Project version.
-5. If a downstream consumer is unavailable, do not modify database rows manually.
+6. If a downstream consumer is unavailable, do not modify database rows manually.
    Repair the dispatcher/consumer and replay the durable event by event ID.
 
 ## Recovery, deletion, and rollback
@@ -92,7 +99,8 @@ and lifecycle changes before access is considered revoked. The
 CI restore contract is not production PITR or cross-failure-domain evidence.
 
 Application rollback may stop serving the new routes only while Schema
-`p6a000000004` remains forward-compatible. Downgrading to `p6a000000003` drops all
+`p6a000000005` remains application-backward-compatible with `p6a000000004`; its downgrade
+only removes inbox indexes. Downgrading further to `p6a000000003` drops all
 pending, rejected, approved and executed impact/approval history; downgrading further
 to `p6a000000002` removes lifecycle audit columns. Either is destructive; do it only from a
 verified pre-migration backup during an approved rollback window. Never reactivate an
@@ -106,7 +114,9 @@ all-or-nothing behavior, concurrent single-winner archive/retire, session revoca
 Project version invalidation, Outbox secret absence, cross-Tenant PostgreSQL RLS,
 fresh-auth expiry, self-approval denial, concurrent approval single-winner, stale impact
 hash, approver-permission invalidation, rejection, legacy-state migration backfill,
-upgrade/check/downgrade, logical restore approval replay, wheel
+scope-safe own/Tenant/Project inbox pagination, UTC expiry serialization, a real-browser
+two-principal approve/reject/execute flow, upgrade/check/downgrade, logical restore
+approval replay, wheel
 contents, upstream patch replay, and source-intrusion budgets. These are code-contract
 gates only; directory federation, production audit export, production restore,
 multi-AZ behavior, SLOs, signed images, and commercial acceptance remain separate

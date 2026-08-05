@@ -13,12 +13,12 @@
     <header class="masthead">
       <a class="wordmark" href="/saas/admin/projects" aria-label="Omnigent Control Plane">
         <span class="wordmark-mark">O</span>
-        <span><strong>OMNIGENT</strong><small>PROJECT CONTROL PLANE</small></span>
+        <span><strong>OMNIGENT</strong><small>SAAS CONTROL PLANE</small></span>
       </a>
       <div class="system-state">
         <span class="pulse" aria-hidden="true"></span>
         <span id="context-state" data-testid="context-state">NO CONTEXT</span>
-        <span class="revision">POLICY / 2026-08-04.P2</span>
+        <span class="revision">POLICY / 2026-08-06.P6</span>
       </div>
       <button class="quiet-button" id="logout-button" type="button" hidden>退出会话</button>
     </header>
@@ -68,9 +68,17 @@
             <div><dt>CSRF</dt><dd id="csrf-state">UNBOUND</dd></div>
             <div><dt>SNAPSHOT</dt><dd id="snapshot-state">UNBOUND</dd></div>
           </dl>
+          <nav class="view-switcher" aria-label="管理后台模块">
+            <button class="active" data-testid="view-projects" id="view-projects" type="button">
+              <span>02</span> PROJECTS
+            </button>
+            <button data-testid="view-approvals" id="view-approvals" type="button">
+              <span>03</span> APPROVAL DESK <strong id="approval-nav-count">00</strong>
+            </button>
+          </nav>
         </aside>
 
-        <section class="project-board">
+        <section class="project-board" id="project-board">
           <div class="board-heading">
             <div>
               <p class="eyebrow">02 / PROJECT INDEX</p>
@@ -96,7 +104,62 @@
           <div class="project-list" data-testid="project-list" id="project-list" aria-live="polite"></div>
         </section>
 
-        <aside class="inspector">
+        <section class="approval-board" data-testid="approval-board" id="approval-board" hidden>
+          <div class="approval-heading">
+            <div>
+              <p class="eyebrow">03 / ENTERPRISE ACCESS</p>
+              <h1>双人审批台</h1>
+              <p>发起人与批准人必须是不同且当前仍获授权的主体。这里只展示服务端生成的影响摘要，完整快照不会下发浏览器。</p>
+            </div>
+            <div class="approval-total"><span>待我处理</span><strong id="approval-count">00</strong></div>
+          </div>
+
+          <div class="governance-grid">
+            <article class="governance-module">
+              <div class="module-heading">
+                <div><span>01</span><h2>TENANT GROUPS</h2></div>
+                <small>group.manage</small>
+              </div>
+              <form class="governance-create" id="group-create-form">
+                <input data-testid="group-name" id="group-name" maxlength="128" placeholder="新 Group 名称" required>
+                <button data-testid="group-create" type="submit">CREATE GROUP +</button>
+              </form>
+              <div class="governance-list" data-testid="group-list" id="group-list"></div>
+            </article>
+
+            <article class="governance-module">
+              <div class="module-heading">
+                <div><span>02</span><h2>PROJECT ROLES</h2></div>
+                <small id="role-project-label">SELECT PROJECT</small>
+              </div>
+              <form class="governance-create role-create" id="role-create-form">
+                <input data-testid="role-name" id="role-name" maxlength="128" placeholder="新 Custom Role 名称" required>
+                <input data-testid="role-permissions" id="role-permissions" value="project.read_metadata,run.read_metadata" aria-label="Custom Role permissions" required>
+                <button data-testid="role-create" type="submit">CREATE ROLE +</button>
+              </form>
+              <div class="governance-list" data-testid="role-list" id="role-list"></div>
+            </article>
+          </div>
+
+          <div class="approval-columns">
+            <section class="approval-module">
+              <div class="queue-heading">
+                <div><span class="hazard-mark">!</span><h2>NEEDS MY DECISION</h2></div>
+                <button class="refresh-button" data-testid="approval-refresh" id="approval-refresh" type="button">REFRESH ↻</button>
+              </div>
+              <p class="queue-copy">仅包含我有权处理、未过期且由其他主体发起的请求。</p>
+              <div class="approval-list" data-testid="approval-inbox" id="approval-inbox"></div>
+            </section>
+
+            <section class="approval-module request-module">
+              <div class="queue-heading"><div><span class="request-mark">→</span><h2>MY REQUESTS</h2></div></div>
+              <p class="queue-copy">批准后仅原始发起人可以按同一原因、版本与快照执行。</p>
+              <div class="approval-list" data-testid="my-preflights" id="my-preflights"></div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="inspector" id="inspector">
           <div class="inspector-heading">
             <p class="eyebrow">03 / AUTHORIZATION LAB</p>
             <span class="version-chip" id="project-version">V—</span>
@@ -158,6 +221,24 @@
         </aside>
       </div>
     </main>
+
+    <dialog class="action-dialog" data-testid="action-dialog" id="action-dialog">
+      <form id="action-dialog-form">
+        <div class="dialog-stripe" aria-hidden="true"></div>
+        <p class="eyebrow" id="action-dialog-kicker">IMPACT CONFIRMATION</p>
+        <h2 id="action-dialog-title">确认管理操作</h2>
+        <div class="dialog-impact" data-testid="action-impact" id="action-impact"></div>
+        <label>
+          <span>审计原因 / 必填</span>
+          <textarea data-testid="action-reason" id="action-reason" maxlength="512" required></textarea>
+        </label>
+        <p class="dialog-warning" id="action-dialog-warning"></p>
+        <div class="dialog-actions">
+          <button class="quiet-action" data-testid="action-cancel" id="action-cancel" type="button">CANCEL</button>
+          <button class="confirm-action" data-testid="action-confirm" id="action-confirm" type="submit">CONFIRM</button>
+        </div>
+      </form>
+    </dialog>
 
     <footer class="event-tape">
       <span>EVENT TAPE</span>
