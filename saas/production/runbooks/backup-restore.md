@@ -55,3 +55,17 @@ backup manifest and DSSE envelope. Structural validation without `--require-read
 is suitable for pull requests and is expected to report `blocked` while either the
 Tenant or cluster production drill is absent. CI fixtures, local databases, and a
 successful backup job are never copied into the production evidence directory.
+
+For a disposable CI-only logical restore compatibility check, run:
+
+```bash
+OMNIGENT_SAAS_TEST_POSTGRES_URL='postgresql+psycopg://...' \
+  uv run python -m saas.scripts.run_postgresql_restore_contract \
+  --allow-disposable-databases \
+  --output artifacts/postgresql-restore-contract.json
+```
+
+This command creates and force-drops two uniquely named databases on the supplied
+test cluster. It must never target a shared or production administrative endpoint.
+Its output is intentionally labelled `ci_contract_not_production_drill` and cannot be
+placed in the production recovery-evidence directory.

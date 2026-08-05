@@ -297,3 +297,12 @@ Exact Linux/PostgreSQL 16 run `30983318630` at
 the 124-artifact wheel check, both patch replays, and intrusion enforcement. It closes
 only the verifier-contract subgate; its own report records zero production evidence,
 zero qualified scopes, and two readiness blockers.
+
+The compatibility workflow also executes
+`python -m saas.scripts.run_postgresql_restore_contract` against PostgreSQL 16. It
+uses two disposable database names, a custom-format `pg_dump`/`pg_restore`, the exact
+official/SaaS migrations, canonical 50/17 forced-RLS inventories, post-backup
+revocation/deletion-marker replay, cross-scope negative probes, and selected-table
+content hashes. The databases and archive are destroyed after the report. Its
+evidence kind is permanently `ci_contract_not_production_drill`; passing it does not
+claim PITR, WAL continuity, multi-AZ, a second failure domain, or production recovery.

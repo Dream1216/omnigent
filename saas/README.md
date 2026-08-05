@@ -751,6 +751,19 @@ lines with a 0.9931 isolated-code ratio. The recovery evidence verifier subgate 
 therefore passed, while the actual multi-AZ/PITR/isolated-recovery gate remains
 pending with zero qualifying records and two missing scopes.
 
+A separate disposable PostgreSQL 16 contract now creates a source database, applies
+the exact official and SaaS migration heads plus both forced-RLS layers, seeds two
+Tenant/workspace scopes, creates a custom-format logical backup, and restores it into
+a separately generated database. It then replays post-backup identity/session
+revocation, membership removal, and Tenant deletion-marker facts; reapplies
+least-privilege roles; verifies the canonical 50-table control-plane and 17-table
+runtime RLS inventories; runs cross-Tenant and cross-workspace negative probes; and
+compares canonical hashes and row counts across eleven selected tables before dropping
+both databases. Client credentials stay in the subprocess environment rather than
+arguments. The report is explicitly `ci_contract_not_production_drill`: it proves
+logical restore compatibility only, not WAL/PITR, multi-AZ, another failure domain,
+external KMS/object lock/signing, or production RPO/RTO.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

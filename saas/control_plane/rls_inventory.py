@@ -1,0 +1,61 @@
+"""Canonical inventory of SaaS control-plane tables protected by forced RLS."""
+
+from __future__ import annotations
+
+CONTROL_PLANE_RLS_TABLES = frozenset(
+    {
+        "saas_global_users",
+        "saas_identity_connections",
+        "saas_identity_conflicts",
+        "saas_oidc_login_transactions",
+        "saas_auth_sessions",
+        "saas_password_credentials",
+        "saas_tenants",
+        "saas_spaces",
+        "saas_tenant_memberships",
+        "saas_space_memberships",
+        "saas_membership_invitations",
+        "saas_projects",
+        "saas_project_memberships",
+        "saas_resource_grants",
+        "saas_authorization_decisions",
+        "saas_runtime_placements",
+        "saas_runtime_partitions",
+        "saas_runtime_identity_aliases",
+        "saas_runtime_resource_bindings",
+        "saas_runtime_binding_sagas",
+        "saas_ownership_transfers",
+        "saas_member_removal_preflights",
+        "saas_control_plane_outbox",
+        "saas_tasks",
+        "saas_execution_sessions",
+        "saas_session_tasks",
+        "saas_runs",
+        "saas_run_events",
+        "saas_admission_quotas",
+        "saas_quota_reservations",
+        "saas_effect_calls",
+        "saas_artifacts",
+        "saas_run_artifacts",
+        "saas_runner_pools",
+        "saas_runner_certificates",
+        "saas_runner_registrations",
+        "saas_runner_tunnel_placements",
+        "saas_preview_gateway_instances",
+        "saas_preview_gateway_certificates",
+        "saas_tenant_queue_shares",
+        "saas_run_dispatches",
+        "saas_capability_tokens",
+        "saas_repositories",
+        "saas_changeset_groups",
+        "saas_changesets",
+        "saas_worktree_quotas",
+        "saas_worktree_instances",
+        "saas_worktree_events",
+        "saas_webhook_endpoints",
+        "saas_webhook_deliveries",
+    }
+)
+
+if len(CONTROL_PLANE_RLS_TABLES) != 50:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 50 tables")

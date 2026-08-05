@@ -94,6 +94,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/removal_impact.py",
     "saas/control_plane/resolver.py",
     "saas/control_plane/rls.py",
+    "saas/control_plane/rls_inventory.py",
     "saas/control_plane/scheduling.py",
     "saas/control_plane/scheduling_models.py",
     "saas/control_plane/webhook_models.py",
@@ -125,6 +126,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/baseline.json",
     "saas/production/recovery.py",
     "saas/production/recovery-policy.json",
+    "saas/production/postgresql_restore.py",
     "saas/production/runbooks/backup-restore.md",
     "saas/production/runbooks/control-plane-degradation.md",
     "saas/production/runbooks/image-release.md",
@@ -132,6 +134,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/scripts/check_image_supply_chain.py",
     "saas/scripts/check_production_baseline.py",
     "saas/scripts/check_recovery_readiness.py",
+    "saas/scripts/run_postgresql_restore_contract.py",
     "saas/scripts/compare_oci_rebuilds.py",
     "saas/supply_chain/release-policy.json",
 )

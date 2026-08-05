@@ -63,6 +63,11 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+      - name: Run isolated PostgreSQL logical restore contract
+        run: >-
+          uv run python -m saas.scripts.run_postgresql_restore_contract
+          --allow-disposable-databases
+          --output artifacts/postgresql-restore-contract.json
       - name: Run official zygote and query-context compatibility tests
         run: >-
           uv run pytest
@@ -139,5 +144,6 @@ jobs:
             artifacts/patch-replay-report.json
             artifacts/production-baseline-report.json
             artifacts/recovery-readiness-report.json
+            artifacts/postgresql-restore-contract.json
             artifacts/image-supply-chain-report.json
           if-no-files-found: error

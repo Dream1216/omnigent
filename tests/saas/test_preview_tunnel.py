@@ -155,7 +155,14 @@ async def _start_preview_process(socket_path: Path) -> multiprocessing.Process:
     context = multiprocessing.get_context("spawn")
     process = context.Process(target=_serve_preview_uds, args=(str(socket_path),))
     process.start()
-    for _ in range(500):
+    # macOS spawn imports the complete test module in a fresh interpreter. Under
+    # concurrent local Docker/PostgreSQL work that cold import can exceed the old
+    # implicit five-second polling budget even though the child is healthy. Keep
+    # the bound explicit and independent from the request-timeout contract being
+    # tested below.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 15.0
+    while loop.time() < deadline:
         if os.path.lexists(socket_path):
             socket_stat = os.lstat(socket_path)
             if stat.S_ISSOCK(socket_stat.st_mode):
