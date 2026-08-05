@@ -449,11 +449,12 @@
         },
         {
           "id": "p4-mtls-preview-gateway-control-plane-transport-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/gateways.py",
             "saas/preview_gateway_control_transport.py",
-            "tests/saas/test_preview_gateway_control_transport.py"
+            "tests/saas/test_preview_gateway_control_transport.py",
+            "saas/acceptance/p4-preview-gateway-control-ci-30967154951.json"
           ]
         },
         {

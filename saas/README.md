@@ -686,12 +686,17 @@ TLS plus PostgreSQL 16 tests traverse separate `saas_platform` and
 certificate activation, durable activation, heartbeat, drain, scoped revocation, and
 release. The process still receives no database credential.
 
-The exact-revision remote CI evidence is not yet attached, so the new p4i transport
-subgate remains pending and the machine ledger temporarily reports twelve pending
-gates. The local wheel now requires 115 SaaS artifacts. External workload issuance,
-CA/HSM and Trust Bundle operations, signed immutable deployment, unique per-Pod
-endpoints, NetworkPolicy allowlists, cross-host partitions, two failure domains, and
-N-1 rollback are not implied; the release remains `NO-GO`.
+Exact implementation run `30967154951` verifies the p4i contract at
+`0516d80ca3dc5a1b1a6e8108bf92fc673074be82`: 781 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the 36/22
+Linux security matrix pass; Pyrefly reports zero errors, p4g migrations round trip,
+the wheel contains 115 required SaaS artifacts, both patches replay, and source
+intrusion remains 8 files/434 lines with a 0.9928 isolated-code ratio. The p4i
+control-plane transport subgate is therefore passed; the evidence-successor wheel
+inventory requires 116 artifacts and eleven aggregate gates remain pending. External
+workload issuance, CA/HSM and Trust Bundle operations, signed immutable deployment,
+unique per-Pod endpoints, NetworkPolicy allowlists, cross-host partitions, two
+failure domains, and N-1 rollback are not implied; the release remains `NO-GO`.
 
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium

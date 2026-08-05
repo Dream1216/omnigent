@@ -236,8 +236,12 @@ authorizer before dispatch, rejects Relay and platform-health identities, prohib
 client-selected authority time, bounds HTTP/JSON framing, disables redirects and
 environment proxies, and returns only non-secret receipts. Local real TLS plus real
 PostgreSQL 16 tests exercise split `saas_platform`/`saas_preview_gateway` roles and
-cross-Gateway revocation denial. The exact-revision CI record is not yet attached, so
-this new contract subgate remains `pending`, the ledger temporarily has twelve
-pending gates, and production remains `NO-GO`. External workload issuance, CA/HSM,
-signed deployment, NetworkPolicy allowlists, cross-host partitions, two failure
-domains, and N-1 rollback remain independent requirements.
+cross-Gateway revocation denial. Exact implementation run `30967154951` at
+`0516d80ca3dc5a1b1a6e8108bf92fc673074be82` passes 781 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, the 36/22 Linux security matrix,
+Pyrefly, p4g migration round trips, the 115-artifact wheel check, both patch replays,
+and the source-intrusion budget. The control transport subgate is therefore `passed`;
+the evidence-successor wheel requires 116 artifacts and eleven aggregate gates remain
+pending. Production remains `NO-GO`: external workload issuance, CA/HSM, signed
+deployment, NetworkPolicy allowlists, cross-host partitions, two failure domains, and
+N-1 rollback remain independent requirements.
