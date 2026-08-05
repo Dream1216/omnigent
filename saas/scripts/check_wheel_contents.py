@@ -44,6 +44,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json",
     "saas/acceptance/p5-webhook-delivery-ci-30980110086.json",
     "saas/acceptance/p6-api-service-account-ci-31002035206.json",
+    "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",
     "saas/admin_ui/project_admin.js",

@@ -413,3 +413,31 @@ revocation replay. It closes only
 146 artifacts. Billing, enterprise federation, complete audit/API/console/privacy
 capability, commercial evidence, all eleven aggregate gates, and the release-level
 `NO-GO` remain pending.
+
+The second P6 contract slice adds Tenant groups and Project custom roles without
+granting permissions from group membership alone. Custom roles are compiled only
+from canonical Project permissions; Critical, cross-scope, `grant.manage`, and
+`custom_role.manage` delegation are rejected, and the delegator must hold every
+permission being delegated. Group membership and role-assignment expiry fail closed,
+and the authorization explanation records the exact group, role ID, and role version.
+
+Cookie Admin routes retain Origin/CSRF enforcement and action-level permission
+registration. Their opaque UUID cursors use bounded keyset queries rather than
+loading a Tenant's full collection. Mutations are Tenant-idempotent and emit
+secret-free Outbox facts. Direct group member removal revokes live sessions and
+increments both user security and affected Project authorization versions; Tenant
+member-removal preflight includes group and assignment facts, rejects snapshot drift,
+and revokes group access atomically. Space-only removal leaves Tenant-wide group
+membership intact.
+
+Exact run `31008792059` at
+`85e4399de928bc7cffb76dbe763f9a2e3b1641a6` passes 852 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, `p6a000000002` migration round trip, the 150-artifact
+wheel, both patch replays, and the 8-file/449-line/0.9941 intrusion result. Its
+PostgreSQL 16 restore takes 2.954 seconds with 56/17 forced-RLS inventories and
+two rows in each of the four enterprise tables. It closes only
+`p6-enterprise-group-project-custom-role-contract`; the evidence-successor wheel
+requires 151 artifacts. Group archival/role retirement/bulk directory lifecycle,
+federation/SCIM, complete audit/API/console/privacy capability, billing, commercial
+evidence, all eleven aggregate gates, and release `NO-GO` remain pending.

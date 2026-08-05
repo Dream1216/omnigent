@@ -624,6 +624,23 @@
           ]
         },
         {
+          "id": "p6-enterprise-group-project-custom-role-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/enterprise_models.py",
+            "saas/control_plane/enterprise_access.py",
+            "saas/control_plane/enterprise_http.py",
+            "saas/control_plane/authorization.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p6a000000002_enterprise_groups_roles.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_access_postgresql.py",
+            "tests/saas/test_enterprise_http.py",
+            "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json"
+          ]
+        },
+        {
           "id": "p6-billing-ledger-entitlement-quota-subscription",
           "status": "pending",
           "evidence": []

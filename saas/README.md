@@ -924,8 +924,8 @@ P4 multi-failure-domain execution and Worktree isolation remain partially
 implemented. P5 has passed Webhook/SSRF, recovery-verifier, isolated-restore,
 tenant-deletion-verifier, SLO/capacity-verifier, and image-supply-chain-verifier
 contract subgates; real production recovery, capacity/SLO, deletion, and signed
-image evidence remains pending. P6 is now in progress through its first
-machine-identity code-contract slice; billing, enterprise federation, audit export,
+image evidence remains pending. P6 is now in progress through machine-identity and
+enterprise group/custom-role code-contract slices; billing, enterprise federation, audit export,
 privacy, the complete API platform, and commercial acceptance remain pending. None
 may be inferred from a code-contract or CI-only subgate.
 
@@ -965,6 +965,38 @@ post-backup machine-credential revocation replay. It closes only the
 `p6-service-account-api-credential-contract` code subgate; the evidence-successor
 wheel requires 146 artifacts, eleven aggregate gates remain pending, and the
 release-level decision remains `NO-GO`.
+
+The second P6 slice adds Tenant-owned groups and project-scoped custom roles in
+downstream migration `p6a000000002`. Group membership grants nothing by itself;
+authorization is added only by a live group-to-role assignment. Custom roles compile
+only canonical Project permissions, reject Critical and delegation-management
+permissions, and require the manager to hold `grant.manage`, `custom_role.manage`,
+and every delegated permission. Membership and assignment expiry fail closed, and
+authorization explanations expose the exact role ID and version.
+
+The enterprise Admin API stays on the existing `/saas` Cookie surface with Origin and
+CSRF enforcement, action-level permission registration, opaque UUID keyset cursors,
+and database-bounded pages. Mutations use Tenant-scoped idempotency and secret-free
+Outbox facts. Direct group-member removal revokes sessions, increments the user's
+security version, and increments every affected Project authorization version;
+Tenant member-removal preflight includes group and role-assignment impact, rejects a
+stale snapshot, and revokes group access in the same transaction. Space-only removal
+does not silently erase Tenant-wide group membership.
+
+The four new tables bring the canonical control-plane inventory to 56 forced-RLS
+tables. Exact run `31008792059` at
+`85e4399de928bc7cffb76dbe763f9a2e3b1641a6` passes 852 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix, Pyrefly
+with zero errors, the `p6a000000002` migration round trip, both patch replays, and the
+150-artifact implementation wheel. PostgreSQL 16 restore completes in 2.954 seconds
+with 56/17 forced-RLS inventories and two restored rows in each enterprise table;
+cross-Tenant reads/writes, missing context, stale authorization, and concurrent
+member-removal losers fail closed. The intrusion result remains 8 direct upstream
+files, 449 net added LOC, two patches, and a 0.9941 isolated-code ratio. This closes
+only `p6-enterprise-group-project-custom-role-contract`; directory sync, group
+archive/role retirement/bulk lifecycle, federation/SCIM, complete audit/API/console/
+privacy, billing, production evidence, eleven aggregate gates, and release `NO-GO`
+remain open. The evidence-successor wheel requires 151 artifacts.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
