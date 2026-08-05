@@ -33,6 +33,19 @@ process is an unprivileged workload; privileged state transitions belong behind 
 authenticated control-plane API with a narrow method policy. Factory loading is a
 deployment-time trust decision and must not be tenant configurable.
 
+The downstream `MutualTlsPreviewGatewayControlClient` implements both narrow Runtime
+authority protocols and is the default transport boundary for that API. Its peer
+`MutualTlsPreviewGatewayControlServer` extracts exactly one URI SAN of the form
+`spiffe://omnigent/preview-gateway-control/{process-generated-gateway-id}`, requires a
+non-CA ClientAuth/digital-signature leaf, and authorizes the exact method before
+reading or dispatching the request. Relay leaves and the platform-health identity do
+not match this profile. Every request repeats the Gateway ID and must match the TLS
+identity; certificate revocation is additionally constrained to a leaf owned by that
+same Gateway. All lifecycle timestamps are selected by the control-plane server.
+The external workload issuer and method authorizer must therefore mint and approve a
+fresh control leaf for the process-generated ID; sharing a wildcard, deployment-wide,
+or Relay certificate is invalid.
+
 `/livez` and `/readyz` are exposed only on the configured loopback IP. Kubernetes uses
 the executable's loopback `--probe` mode, so the health socket is not exposed on the
 Pod network. `/readyz` becomes successful only after the Relay listener, certificate

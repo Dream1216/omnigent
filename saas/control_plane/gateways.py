@@ -893,6 +893,7 @@ class PreviewGatewayCertificateAuthority:
         *,
         fingerprint_sha256: str,
         reason: str,
+        gateway_instance_id: str | None = None,
         now: datetime | None = None,
     ) -> bool:
         revoked_at = _time(now or _utcnow(), field="revocation time")
@@ -909,7 +910,15 @@ class PreviewGatewayCertificateAuthority:
                 .where(PreviewGatewayCertificateRecord.fingerprint_sha256 == fingerprint)
                 .with_for_update()
             )
-            if record is None:
+            if (
+                record is None
+                or (
+                    gateway_instance_id is not None
+                    and record.gateway_instance_id != gateway_instance_id
+                )
+            ):
+                # Missing and cross-Gateway fingerprints are deliberately
+                # indistinguishable to the workload transport.
                 return False
             if record.status == "revoked":
                 return True

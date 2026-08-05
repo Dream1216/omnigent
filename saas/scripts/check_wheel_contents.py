@@ -100,6 +100,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/deployment/preview_gateway/omnigent-saas-preview-gateway@.service",
     "saas/outbox_worker.py",
     "saas/preview_gateway.py",
+    "saas/preview_gateway_control_transport.py",
     "saas/preview_gateway_process.py",
     "saas/preview_gateway_runtime.py",
     "saas/preview_relay_transport.py",

@@ -672,6 +672,27 @@ signed immutable image promotion, control-plane mTLS policy, DNS/LB registration
 NetworkPolicy allowlists, cross-host partitions, two failure domains, and N-1
 rollback remain production blockers. The release stays `NO-GO`.
 
+The next downstream-only p4i candidate replaces the Gateway deployment factory's
+abstract privileged client with a real, bounded TLS 1.3 control transport. A dedicated
+control leaf must contain exactly
+`spiffe://omnigent/preview-gateway-control/{process-generated-gateway-id}` and only
+ClientAuth/digital-signature workload semantics. The server binds that identity to
+every fixed action before reading the JSON body; Relay leaves and the independent
+platform-health identity are rejected. Requests cannot select authority timestamps,
+cannot redirect or use environment proxies, and cannot revoke a certificate owned by
+another Gateway. Only the control-plane service receives PostgreSQL roles: local real
+TLS plus PostgreSQL 16 tests traverse separate `saas_platform` and
+`saas_preview_gateway` session factories through registration, purpose-separated
+certificate activation, durable activation, heartbeat, drain, scoped revocation, and
+release. The process still receives no database credential.
+
+The exact-revision remote CI evidence is not yet attached, so the new p4i transport
+subgate remains pending and the machine ledger temporarily reports twelve pending
+gates. The local wheel now requires 115 SaaS artifacts. External workload issuance,
+CA/HSM and Trust Bundle operations, signed immutable deployment, unique per-Pod
+endpoints, NetworkPolicy allowlists, cross-host partitions, two failure domains, and
+N-1 rollback are not implied; the release remains `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

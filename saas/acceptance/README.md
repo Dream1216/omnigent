@@ -226,3 +226,18 @@ and the source-intrusion budget. The process/deployment contract subgate is ther
 signed deployed image, DNS/LB, NetworkPolicy allowlists, cross-host partitions, two
 failure domains, and N-1 rollback remain separate production blockers. Eleven
 aggregate gates remain pending and the release remains `NO-GO`.
+
+The p4i candidate removes the remaining direct-database temptation from the Gateway
+factory boundary. `MutualTlsPreviewGatewayControlClient/Server` expose only register,
+activate, heartbeat, drain, release, certificate-metadata activation, and
+same-Gateway revocation. The server derives one exact process-generated Gateway ID
+from a dedicated non-CA ClientAuth URI SAN, invokes an injected per-method workload
+authorizer before dispatch, rejects Relay and platform-health identities, prohibits
+client-selected authority time, bounds HTTP/JSON framing, disables redirects and
+environment proxies, and returns only non-secret receipts. Local real TLS plus real
+PostgreSQL 16 tests exercise split `saas_platform`/`saas_preview_gateway` roles and
+cross-Gateway revocation denial. The exact-revision CI record is not yet attached, so
+this new contract subgate remains `pending`, the ledger temporarily has twelve
+pending gates, and production remains `NO-GO`. External workload issuance, CA/HSM,
+signed deployment, NetworkPolicy allowlists, cross-host partitions, two failure
+domains, and N-1 rollback remain independent requirements.
