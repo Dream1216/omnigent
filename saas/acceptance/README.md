@@ -334,3 +334,16 @@ The deletion validator itself reports thirteen required surfaces, zero productio
 records, zero qualified records, and one readiness blocker. It closes only the
 fail-closed verifier-contract subgate; eleven production gates and the release-level
 `NO-GO` remain unchanged.
+
+SLO and capacity readiness has an independent machine-readable contract in
+`saas/production/slo-capacity-policy.json` and
+`python -m saas.scripts.check_slo_capacity_readiness`. It requires active production
+dashboards for all six baseline SLOs, a complete 30-day observation in two failure
+domains, bounded error-budget burn, all seven services under five load and failure
+scenarios, ten resource-dimension checks, six on-call alert drills, immutable signed
+artifacts, and three independent attestations at the exact release revision. Strict
+schemas reject raw Tenant fields, CI evidence kinds, incomplete catalogs, tampered
+records, stale observations, and policy drift. The repository deliberately contains
+no production record and retains six `planned` dashboards, so the structural check
+passes while production readiness reports seven blockers. Passing the verifier's CI
+contract does not close the actual SLO, capacity, multi-AZ, or aggregate P5 gate.

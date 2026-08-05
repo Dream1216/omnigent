@@ -130,6 +130,8 @@ jobs:
             --output artifacts/recovery-readiness-report.json
           uv run python -m saas.scripts.check_deletion_readiness \
             --output artifacts/deletion-readiness-report.json
+          uv run python -m saas.scripts.check_slo_capacity_readiness \
+            --output artifacts/slo-capacity-readiness-report.json
           uv run python -m saas.scripts.check_image_supply_chain \
             --output artifacts/image-supply-chain-report.json
       - name: Enforce source-intrusion budget
@@ -148,5 +150,6 @@ jobs:
             artifacts/recovery-readiness-report.json
             artifacts/postgresql-restore-contract.json
             artifacts/deletion-readiness-report.json
+            artifacts/slo-capacity-readiness-report.json
             artifacts/image-supply-chain-report.json
           if-no-files-found: error

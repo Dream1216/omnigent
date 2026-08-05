@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-saas-slo-capacity-v1",
+  "reviewed_at": "2026-08-05",
+  "revision_contract": {
+    "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "p5a000000001"
+  },
+  "evidence_directory": "saas/production/slo-capacity-evidence",
+  "max_evidence_age_days": 35,
+  "required_slo_ids": [
+    "SLO-AUTH",
+    "SLO-RESOLVE",
+    "SLO-ADMISSION",
+    "SLO-REVOCATION",
+    "SLO-OUTBOX",
+    "SLO-RUN-EVENT"
+  ],
+  "required_service_ids": [
+    "control-plane",
+    "compatibility-adapter",
+    "queue-worker",
+    "runner-sandbox",
+    "billing-metering",
+    "audit",
+    "admin"
+  ],
+  "required_capacity_scenarios": [
+    "steady_state",
+    "hot_tenant",
+    "dependency_degraded",
+    "backlog_recovery",
+    "failure_reserve"
+  ],
+  "required_capacity_dimensions": [
+    "api_replicas",
+    "postgresql_connections",
+    "queue_depth_and_oldest_age",
+    "worker_concurrency",
+    "runner_cpu_and_memory",
+    "runner_disk_and_inodes",
+    "network_egress",
+    "object_and_audit_storage",
+    "tenant_fairness",
+    "retry_budget_and_dlq"
+  ],
+  "required_alert_drills": [
+    "error_budget_exhaustion",
+    "queue_age",
+    "postgresql_pool_saturation",
+    "runner_capacity",
+    "storage_growth",
+    "dependency_degradation"
+  ],
+  "thresholds": {
+    "minimum_headroom_percent": 20.0,
+    "maximum_saturation_percent": 80.0,
+    "minimum_tenant_fairness_ratio": 0.9,
+    "maximum_burn_rate_1h": 14.4,
+    "maximum_burn_rate_6h": 6.0,
+    "maximum_alert_acknowledgement_seconds": 300
+  },
+  "required_attestation_roles": [
+    "site-reliability",
+    "product-owner",
+    "service-owner"
+  ],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ],
+  "verified_workflow_identities": [
+    "spiffe://omnigent/slo-capacity-evidence"
+  ]
+}

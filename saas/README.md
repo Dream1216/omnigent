@@ -799,6 +799,24 @@ surfaces but zero production records, zero qualified records, and one explicit b
 This closes only the verifier-contract subgate; no production Tenant deletion, purge,
 capacity/SLO, or aggregate P5 gate is proven.
 
+Production SLO and capacity proof now has its own fail-closed manifest contract. It
+binds the exact production baseline's six SLOs and seven-service catalog to a complete
+30-day production observation across two failure domains, error-budget and 1-hour/
+6-hour burn-rate limits, secret-free active dashboards, five capacity scenarios for
+every service, ten resource dimensions, six routed alert drills, exact release and
+schema revisions, immutable artifact/DSSE references, and independent SRE,
+product-owner, and service-owner attestations. Capacity testing must run in an isolated
+production-like environment with production traffic disabled, retain at least 20%
+headroom, stay below 80% saturation, and preserve 0.90 Tenant fairness. CI timings,
+health endpoints, synthetic fixtures, and a single replica cannot qualify.
+
+The repository intentionally keeps all six dashboards `planned` and contains zero
+production observation records. Therefore
+`python -m saas.scripts.check_slo_capacity_readiness` reports structural `pass` but
+production `blocked` with seven explicit blockers. This closes only the verifier-
+contract subgate after exact CI acceptance; it does not manufacture capacity, SLO,
+multi-AZ, or aggregate P5 proof.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly
@@ -882,9 +900,12 @@ production promotion workflow:
 ```bash
 uv run python -m saas.scripts.check_production_baseline
 uv run python -m saas.scripts.check_recovery_readiness
+uv run python -m saas.scripts.check_slo_capacity_readiness
 uv run python -m saas.scripts.check_image_supply_chain
 uv run python -m saas.scripts.check_production_baseline --require-ready
 uv run python -m saas.scripts.check_recovery_readiness \
+  --product-revision "$(git rev-parse HEAD)" --require-ready
+uv run python -m saas.scripts.check_slo_capacity_readiness \
   --product-revision "$(git rev-parse HEAD)" --require-ready
 uv run python -m saas.scripts.check_image_supply_chain --require-ready
 ```
