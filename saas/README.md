@@ -659,8 +659,14 @@ constraint, exec health probes, and default-deny networking. The Kubernetes exam
 is deliberately one replica because its endpoint is static; scaling is invalid until
 each Pod receives a server-selected directly routable endpoint and matching name.
 
-This p4h subgate is `pending` until its exact implementation revision passes the full
-PostgreSQL/official/Linux-security/migration/wheel/patch/intrusion workflow. The
+Exact implementation run `30964370004` verifies the p4h contract at
+`742eafd22e82244df89efe7ffc965eb3d5e0bcc0`: 775 PostgreSQL/Chromium
+compatibility tests, 56 official zygote/query-context regressions, and the 36/22
+Linux security matrix pass; Pyrefly reports zero errors, p4g migrations round trip,
+the wheel contains 113 required SaaS artifacts, both patches replay, and source
+intrusion remains 8 files/434 lines with a 0.9925 isolated-code ratio. The p4h
+process/deployment contract subgate is therefore passed; the evidence-successor wheel
+inventory requires 114 artifacts and eleven aggregate gates remain pending. The
 templates are not deployment evidence: external CA/HSM and Trust Bundle operations,
 signed immutable image promotion, control-plane mTLS policy, DNS/LB registration,
 NetworkPolicy allowlists, cross-host partitions, two failure domains, and N-1

@@ -434,7 +434,7 @@
         },
         {
           "id": "p4-preview-gateway-process-and-deployment-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/preview_gateway_process.py",
             "saas/preview_gateway_runtime.py",
@@ -443,7 +443,8 @@
             "saas/deployment/preview_gateway/kubernetes.yaml",
             "saas/deployment/preview_gateway/omnigent-saas-preview-gateway@.service",
             "tests/saas/test_preview_gateway_process.py",
-            "tests/saas/test_preview_gateway_runtime.py"
+            "tests/saas/test_preview_gateway_runtime.py",
+            "saas/acceptance/p4-preview-gateway-process-ci-30964370004.json"
           ]
         },
         {

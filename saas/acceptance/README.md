@@ -202,7 +202,7 @@ This does not provide an external CA, production Trust Bundle distribution,
 deployed DNS/load-balancer registration, cross-host topology, network-partition
 evidence, or two failure domains; production remains `NO-GO`.
 
-The p4h candidate packages that lifecycle as an executable, unprivileged process
+The p4h slice packages that lifecycle as an executable, unprivileged process
 contract. Its strict non-secret JSON configuration rejects symlinks, unsafe file
 ownership/modes, unknown or duplicate fields, static Gateway IDs/tokens, non-loopback
 health sockets, and invalid timing relationships. Every process start creates a new
@@ -217,7 +217,12 @@ and handles SIGTERM/SIGINT during blocked startup without leaving a routable ide
 The wheel includes hardened systemd and Kubernetes templates with non-root/read-only/
 no-capability defaults and default-deny networking. The example intentionally remains
 single-replica until a deployment renderer assigns each Pod a unique directly routable
-endpoint. This is implementation evidence only: the subgate stays `pending` until an
-exact-revision CI run succeeds, and external CA/HSM, signed deployed image, DNS/LB,
-NetworkPolicy allowlists, cross-host partitions, two failure domains, and N-1 rollback
-remain separate production blockers. Twelve aggregate gates are currently pending.
+endpoint. Exact implementation run `30964370004` at
+`742eafd22e82244df89efe7ffc965eb3d5e0bcc0` passes 775 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, the 36/22 Linux security matrix,
+Pyrefly, p4g migration round trips, the 113-artifact wheel check, both patch replays,
+and the source-intrusion budget. The process/deployment contract subgate is therefore
+`passed`; the evidence-successor wheel requires 114 artifacts. External CA/HSM,
+signed deployed image, DNS/LB, NetworkPolicy allowlists, cross-host partitions, two
+failure domains, and N-1 rollback remain separate production blockers. Eleven
+aggregate gates remain pending and the release remains `NO-GO`.

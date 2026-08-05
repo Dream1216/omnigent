@@ -24,6 +24,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
     "saas/acceptance/p4-physical-worktree-ci-30910478415.json",
     "saas/acceptance/p4-preview-gateway-authority-ci-30955223169.json",
+    "saas/acceptance/p4-preview-gateway-process-ci-30964370004.json",
     "saas/acceptance/p4-preview-gateway-runtime-ci-30959947571.json",
     "saas/acceptance/p4-preview-relay-ci-30951270461.json",
     "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
