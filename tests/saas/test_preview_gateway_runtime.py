@@ -33,6 +33,7 @@ from saas.preview_gateway_runtime import (
     PreviewGatewayRuntimeConfig,
     PreviewGatewayRuntimeError,
     PreviewGatewayRuntimeLeaf,
+    run_preview_gateway_runtime,
 )
 
 
@@ -208,6 +209,17 @@ class _Readiness:
         assert not_routable.value.code == "preview_gateway_route_unavailable"
         if self._fail:
             raise RuntimeError("probe failure")
+
+
+class _BlockingReadiness(_Readiness):
+    def __init__(self, directory: PreviewGatewayDirectoryAuthority) -> None:
+        super().__init__(directory)
+        self.started = asyncio.Event()
+
+    async def verify(self, **values: object) -> None:
+        await super().verify(**values)
+        self.started.set()
+        await asyncio.Event().wait()
 
 
 class _DrainObserver:
@@ -481,6 +493,51 @@ async def test_runtime_readiness_failure_closes_listener_and_releases_startup_id
         )
         assert certificate_statuses == {"revoked"}
     assert provider.discarded == provider.installed
+
+
+@pytest.mark.asyncio
+async def test_process_signal_during_startup_releases_identity_certificates_and_listener(
+    runtime_fixture,
+) -> None:
+    _, factory, directory, authority, now = runtime_fixture
+    gateway_id = "gateway-runtime-startup-signal"
+    provider = _Provider(
+        gateway_id,
+        now=now,
+        first_not_after=now + timedelta(hours=1),
+    )
+    relay = _RelayServer(factory, gateway_id)
+    readiness = _BlockingReadiness(directory)
+    runtime = PreviewGatewayRuntime(
+        _config(gateway_id),
+        directory=directory,
+        certificate_authority=authority,
+        certificate_provider=provider,
+        relay_server=relay,
+        readiness_probe=readiness,
+        drain_observer=_DrainObserver(factory),
+        clock=lambda: now,
+    )
+    stop = asyncio.Event()
+    process = asyncio.create_task(run_preview_gateway_runtime(runtime, stop_event=stop))
+    await asyncio.wait_for(readiness.started.wait(), timeout=1)
+
+    stop.set()
+    await asyncio.wait_for(process, timeout=2)
+
+    assert runtime.state == "stopped" and not runtime.ready
+    assert relay.closed and provider.discarded == provider.installed
+    with factory() as db:
+        gateway = db.get(PreviewGatewayInstanceRecord, gateway_id)
+        assert gateway is not None and gateway.status == "released"
+        statuses = set(
+            db.scalars(
+                sa.select(PreviewGatewayCertificateRecord.status).where(
+                    PreviewGatewayCertificateRecord.gateway_instance_id == gateway_id
+                )
+            )
+        )
+        assert statuses == {"revoked"}
 
 
 @pytest.mark.asyncio

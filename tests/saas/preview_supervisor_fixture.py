@@ -10,11 +10,22 @@ import time
 import uvicorn
 from starlette.types import Receive, Scope, Send
 
+_late_mode_broadened = False
+
 
 async def _app(scope: Scope, receive: Receive, send: Send) -> None:
+    global _late_mode_broadened
     health_path = os.environ["OMNIGENT_PREVIEW_HEALTH_PATH"]
     path = str(scope.get("path", ""))
     if path == health_path:
+        if (
+            os.environ.get("PREVIEW_FIXTURE_LATE_BROADEN_SOCKET") == "1"
+            and not _late_mode_broadened
+        ):
+            # Deterministically reproduce servers that broaden their UDS mode
+            # after the listener first becomes visible to the supervisor.
+            os.chmod(os.environ["OMNIGENT_PREVIEW_SOCKET_PATH"], 0o666)
+            _late_mode_broadened = True
         if os.environ.get("PREVIEW_FIXTURE_IGNORE_TERM") == "1":
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
         unhealthy = os.environ.get("PREVIEW_FIXTURE_UNHEALTHY") == "1"

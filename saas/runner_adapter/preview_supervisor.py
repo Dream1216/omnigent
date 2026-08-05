@@ -261,18 +261,59 @@ class RunnerPreviewProcessSupervisor:
             finally:
                 os.close(log_fd)
 
-            await _wait_for_private_socket(
+            identity = await _wait_for_private_socket(
                 process,
                 target.socket_path,
                 route.expires_at,
                 timeout_seconds=spec.startup_timeout_seconds,
             )
-            identity = target.activate()
+            # Some ASGI servers create the UDS and then apply their configured
+            # mode after the listener is already visible.  Under load that late
+            # chmod can race our first hardening pass.  A private, unpublished
+            # health request is therefore only a server-startup barrier; after
+            # it returns, revalidate and harden the exact socket before pinning.
+            try:
+                await _require_healthy(
+                    target.socket_path,
+                    spec.health_path,
+                    timeout_seconds=spec.health_timeout_seconds,
+                )
+            except PreviewProcessSupervisorError:
+                # Preserve an exact cleanup identity even when the unpublished
+                # health check fails after a server-side late chmod.
+                with contextlib.suppress(PreviewProcessSupervisorError):
+                    identity = await _wait_for_private_socket(
+                        process,
+                        target.socket_path,
+                        route.expires_at,
+                        timeout_seconds=spec.startup_timeout_seconds,
+                        expected_identity=identity,
+                    )
+                raise
+            identity = await _wait_for_private_socket(
+                process,
+                target.socket_path,
+                route.expires_at,
+                timeout_seconds=spec.startup_timeout_seconds,
+                expected_identity=identity,
+            )
+            if target.activate() != identity:
+                raise PreviewProcessSupervisorError(
+                    "preview_supervisor_socket_replaced",
+                    "Preview socket identity changed during activation",
+                )
             await _require_healthy(
                 target.socket_path,
                 spec.health_path,
                 timeout_seconds=spec.health_timeout_seconds,
             )
+            # The final health request must not have replaced or mutated the
+            # pinned socket before the route becomes visible.
+            if target.activate() != identity:
+                raise PreviewProcessSupervisorError(
+                    "preview_supervisor_socket_replaced",
+                    "Preview socket identity changed during final health validation",
+                )
             if process.returncode is not None:
                 raise PreviewProcessSupervisorError(
                     "preview_supervisor_process_exited",
@@ -530,7 +571,8 @@ async def _wait_for_private_socket(
     expires_at: datetime,
     *,
     timeout_seconds: float,
-) -> None:
+    expected_identity: UnixSocketIdentity | None = None,
+) -> UnixSocketIdentity:
     deadline = min(
         time.monotonic() + timeout_seconds,
         time.monotonic() + max(0.0, (expires_at - datetime.now(timezone.utc)).total_seconds()),
@@ -547,11 +589,47 @@ async def _wait_for_private_socket(
                     "preview_supervisor_socket_invalid",
                     "Preview process created an invalid socket object",
                 )
+            if expected_identity is not None and (
+                socket_stat.st_dev,
+                socket_stat.st_ino,
+                socket_stat.st_uid,
+            ) != (
+                expected_identity.device,
+                expected_identity.inode,
+                expected_identity.owner_uid,
+            ):
+                raise PreviewProcessSupervisorError(
+                    "preview_supervisor_socket_replaced",
+                    "Preview socket identity changed during startup",
+                )
             # Uvicorn binds with 0666 after umask on some versions. The
             # supervisor owns the private parent and hardens before publish.
             os.chmod(socket_path, 0o600, follow_symlinks=False)
             await asyncio.sleep(0.02)
-            return
+            try:
+                hardened = os.lstat(socket_path)
+            except OSError:
+                continue
+            if (
+                not stat.S_ISSOCK(hardened.st_mode)
+                or hardened.st_uid != os.geteuid()
+                or (hardened.st_dev, hardened.st_ino, hardened.st_uid)
+                != (socket_stat.st_dev, socket_stat.st_ino, socket_stat.st_uid)
+            ):
+                raise PreviewProcessSupervisorError(
+                    "preview_supervisor_socket_replaced",
+                    "Preview socket identity changed during hardening",
+                )
+            if stat.S_IMODE(hardened.st_mode) & 0o077:
+                # A server-side post-bind chmod raced this pass. Retry against
+                # the same inode until the bounded startup deadline.
+                continue
+            return UnixSocketIdentity(
+                device=hardened.st_dev,
+                inode=hardened.st_ino,
+                owner_uid=hardened.st_uid,
+                ctime_ns=hardened.st_ctime_ns,
+            )
         if process.returncode is not None:
             raise PreviewProcessSupervisorError(
                 "preview_supervisor_process_exited",

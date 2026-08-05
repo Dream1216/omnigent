@@ -201,3 +201,23 @@ platform health probe identity rather than the still-disabled Gateway client lea
 This does not provide an external CA, production Trust Bundle distribution,
 deployed DNS/load-balancer registration, cross-host topology, network-partition
 evidence, or two failure domains; production remains `NO-GO`.
+
+The p4h candidate packages that lifecycle as an executable, unprivileged process
+contract. Its strict non-secret JSON configuration rejects symlinks, unsafe file
+ownership/modes, unknown or duplicate fields, static Gateway IDs/tokens, non-loopback
+health sockets, and invalid timing relationships. Every process start creates a new
+opaque Gateway identity and registration token in memory. A trusted deployment-only
+factory supplies narrow mTLS control-plane clients, external CA/HSM key handling, the
+Relay listener, a separately provisioned platform-health identity, and the persistent
+drain observer; the Gateway must never receive a `saas_platform` database credential.
+
+The executable exposes detail-free `/livez` and `/readyz` only on loopback, probes the
+advertised listener with TLS 1.3, hostname validation, and an exact server-leaf pin,
+and handles SIGTERM/SIGINT during blocked startup without leaving a routable identity.
+The wheel includes hardened systemd and Kubernetes templates with non-root/read-only/
+no-capability defaults and default-deny networking. The example intentionally remains
+single-replica until a deployment renderer assigns each Pod a unique directly routable
+endpoint. This is implementation evidence only: the subgate stays `pending` until an
+exact-revision CI run succeeds, and external CA/HSM, signed deployed image, DNS/LB,
+NetworkPolicy allowlists, cross-host partitions, two failure domains, and N-1 rollback
+remain separate production blockers. Twelve aggregate gates are currently pending.

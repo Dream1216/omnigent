@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import re
 import signal
+import ssl
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -22,8 +24,7 @@ from cryptography import x509
 
 from saas.control_plane import (
     ActivatedPreviewGatewayCertificate,
-    PreviewGatewayCertificateAuthority,
-    PreviewGatewayDirectoryAuthority,
+    RegisteredPreviewGateway,
 )
 
 _GATEWAY_INSTANCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -110,6 +111,82 @@ class PreviewGatewayCertificateProvider(Protocol):
     async def discard(self, certificates: PreviewGatewayRuntimeCertificateSet) -> None: ...
 
 
+class PreviewGatewayDirectoryClient(Protocol):
+    """Narrow control-plane client used by an unprivileged Gateway process."""
+
+    def register_gateway(
+        self,
+        *,
+        gateway_instance_id: str,
+        connect_host: str,
+        connect_port: int,
+        server_name: str,
+        failure_domain: str,
+        source_revision: str,
+        adapter_contract_version: str,
+        registration_token: str,
+        lease_duration: timedelta = timedelta(seconds=45),
+        now: datetime | None = None,
+    ) -> RegisteredPreviewGateway: ...
+
+    def activate_gateway(
+        self,
+        *,
+        gateway_instance_id: str,
+        registration_token: str,
+        now: datetime | None = None,
+    ) -> RegisteredPreviewGateway: ...
+
+    def heartbeat_gateway(
+        self,
+        *,
+        gateway_instance_id: str,
+        registration_token: str,
+        lease_duration: timedelta = timedelta(seconds=45),
+        now: datetime | None = None,
+    ) -> RegisteredPreviewGateway: ...
+
+    def begin_draining(
+        self,
+        *,
+        gateway_instance_id: str,
+        registration_token: str,
+        now: datetime | None = None,
+    ) -> bool: ...
+
+    def release_gateway(
+        self,
+        *,
+        gateway_instance_id: str,
+        registration_token: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> bool: ...
+
+
+class PreviewGatewayCertificateLifecycleClient(Protocol):
+    """Narrow certificate metadata client; it never issues or returns private keys."""
+
+    def activate_certificate(
+        self,
+        *,
+        gateway_instance_id: str,
+        purpose: str,
+        certificate_der: bytes,
+        trust_bundle_version: str,
+        rotation_overlap: timedelta = timedelta(minutes=5),
+        now: datetime | None = None,
+    ) -> ActivatedPreviewGatewayCertificate: ...
+
+    def revoke_certificate(
+        self,
+        *,
+        fingerprint_sha256: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> bool: ...
+
+
 class PreviewGatewayRelayServer(Protocol):
     """Bound TLS Relay listener controlled by the process coordinator."""
 
@@ -138,6 +215,82 @@ class PreviewGatewayReadinessProbe(Protocol):
         server_name: str,
         certificates: PreviewGatewayRuntimeCertificateSet,
     ) -> None: ...
+
+
+class MutualTlsPreviewGatewayReadinessProbe:
+    """Verify the exact advertised TLS listener with a platform health identity.
+
+    The supplied client context must carry a separately provisioned platform-health
+    certificate.  It is deliberately not derived from the Gateway certificate set.
+    The server policy remains responsible for accepting only that health identity at
+    the TLS boundary.  A successful probe proves TLS 1.3, hostname validation, and an
+    exact server-leaf pin; it does not authorize ordinary Relay application traffic.
+    """
+
+    def __init__(self, tls_context: ssl.SSLContext) -> None:
+        if (
+            tls_context.minimum_version != ssl.TLSVersion.TLSv1_3
+            or tls_context.maximum_version != ssl.TLSVersion.TLSv1_3
+            or tls_context.verify_mode != ssl.CERT_REQUIRED
+            or not tls_context.check_hostname
+        ):
+            raise ValueError(
+                "Preview Gateway readiness TLS context must require TLS 1.3, "
+                "peer verification, and hostname verification"
+            )
+        self._tls_context = tls_context
+
+    async def verify(
+        self,
+        *,
+        gateway_instance_id: str,
+        connect_host: str,
+        connect_port: int,
+        server_name: str,
+        certificates: PreviewGatewayRuntimeCertificateSet,
+    ) -> None:
+        del gateway_instance_id
+        writer: asyncio.StreamWriter | None = None
+        try:
+            _reader, writer = await asyncio.open_connection(
+                connect_host,
+                connect_port,
+                ssl=self._tls_context,
+                server_hostname=server_name,
+                ssl_handshake_timeout=None,
+            )
+            ssl_object = writer.get_extra_info("ssl_object")
+            peer_der = (
+                ssl_object.getpeercert(binary_form=True)
+                if isinstance(ssl_object, ssl.SSLObject | ssl.SSLSocket)
+                else None
+            )
+            if (
+                ssl_object is None
+                or ssl_object.version() != "TLSv1.3"
+                or not isinstance(peer_der, bytes)
+                or not peer_der
+                or not hmac.compare_digest(
+                    hashlib.sha256(peer_der).digest(),
+                    hashlib.sha256(certificates.server.certificate_der).digest(),
+                )
+            ):
+                raise PreviewGatewayRuntimeError(
+                    "preview_gateway_readiness_identity_mismatch",
+                    "Preview Gateway readiness endpoint identity is invalid",
+                )
+        except PreviewGatewayRuntimeError:
+            raise
+        except (ConnectionError, OSError, ssl.SSLError) as exc:
+            raise PreviewGatewayRuntimeError(
+                "preview_gateway_readiness_unavailable",
+                "Preview Gateway readiness endpoint is unavailable",
+            ) from exc
+        finally:
+            if writer is not None:
+                writer.close()
+                with suppress(ConnectionError, ssl.SSLError):
+                    await writer.wait_closed()
 
 
 class PreviewGatewayDrainObserver(Protocol):
@@ -219,8 +372,8 @@ class PreviewGatewayRuntime:
         self,
         config: PreviewGatewayRuntimeConfig,
         *,
-        directory: PreviewGatewayDirectoryAuthority,
-        certificate_authority: PreviewGatewayCertificateAuthority,
+        directory: PreviewGatewayDirectoryClient,
+        certificate_authority: PreviewGatewayCertificateLifecycleClient,
         certificate_provider: PreviewGatewayCertificateProvider,
         relay_server: PreviewGatewayRelayServer,
         readiness_probe: PreviewGatewayReadinessProbe,
@@ -339,6 +492,20 @@ class PreviewGatewayRuntime:
             if self._state == "new":
                 self._state = "stopped"
                 self._closed.set()
+                return True
+            if self._state == "starting":
+                self._ready = False
+                cleanup_errors = await self._cleanup_resources(
+                    reason=reason,
+                    cancel_maintenance=True,
+                )
+                self._state = "stopped"
+                self._closed.set()
+                if cleanup_errors:
+                    raise PreviewGatewayRuntimeError(
+                        "preview_gateway_runtime_shutdown_failed",
+                        "Preview Gateway startup cancellation cleanup did not complete cleanly",
+                    ) from cleanup_errors[0]
                 return True
             self._ready = False
             self._state = "draining"
@@ -567,11 +734,15 @@ class PreviewGatewayRuntime:
             await self._certificate_provider.discard(certificates)
 
 
-async def run_preview_gateway_runtime(runtime: PreviewGatewayRuntime) -> None:
+async def run_preview_gateway_runtime(
+    runtime: PreviewGatewayRuntime,
+    *,
+    stop_event: asyncio.Event | None = None,
+) -> None:
     """Run until SIGTERM/SIGINT or a fatal maintenance failure."""
 
     loop = asyncio.get_running_loop()
-    stop = asyncio.Event()
+    stop = stop_event or asyncio.Event()
     installed: list[signal.Signals] = []
     for candidate in (signal.SIGTERM, signal.SIGINT):
         try:
@@ -579,11 +750,25 @@ async def run_preview_gateway_runtime(runtime: PreviewGatewayRuntime) -> None:
             installed.append(candidate)
         except (NotImplementedError, RuntimeError):
             continue
+    start_runtime: asyncio.Task[None] | None = None
     wait_for_signal: asyncio.Task[bool] | None = None
     wait_for_runtime: asyncio.Task[None] | None = None
     try:
-        await runtime.start()
         wait_for_signal = asyncio.create_task(stop.wait())
+        start_runtime = asyncio.create_task(runtime.start())
+        startup_done, _ = await asyncio.wait(
+            {start_runtime, wait_for_signal},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if start_runtime not in startup_done:
+            start_runtime.cancel()
+            await asyncio.gather(start_runtime, return_exceptions=True)
+            await runtime.aclose(reason="process_signal_during_start")
+            return
+        await start_runtime
+        if stop.is_set():
+            await runtime.aclose(reason="process_signal_after_start")
+            return
         wait_for_runtime = asyncio.create_task(runtime.wait())
         done, _ = await asyncio.wait(
             {wait_for_signal, wait_for_runtime},
@@ -594,11 +779,15 @@ async def run_preview_gateway_runtime(runtime: PreviewGatewayRuntime) -> None:
         else:
             await runtime.aclose(reason="process_signal")
     finally:
-        for task in (wait_for_signal, wait_for_runtime):
+        for task in (start_runtime, wait_for_signal, wait_for_runtime):
             if task is not None and not task.done():
                 task.cancel()
         await asyncio.gather(
-            *(task for task in (wait_for_signal, wait_for_runtime) if task is not None),
+            *(
+                task
+                for task in (start_runtime, wait_for_signal, wait_for_runtime)
+                if task is not None
+            ),
             return_exceptions=True,
         )
         for candidate in installed:
@@ -606,7 +795,10 @@ async def run_preview_gateway_runtime(runtime: PreviewGatewayRuntime) -> None:
 
 
 __all__ = [
+    "MutualTlsPreviewGatewayReadinessProbe",
+    "PreviewGatewayCertificateLifecycleClient",
     "PreviewGatewayCertificateProvider",
+    "PreviewGatewayDirectoryClient",
     "PreviewGatewayDrainObserver",
     "PreviewGatewayReadinessProbe",
     "PreviewGatewayRelayServer",

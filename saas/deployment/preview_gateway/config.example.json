@@ -1,0 +1,19 @@
+{
+  "adapter_contract_version": "0.2.0",
+  "bind_host": "0.0.0.0",
+  "bind_port": 9443,
+  "connect_host": "preview-gateway-a.internal.example",
+  "connect_port": 9443,
+  "drain_timeout_seconds": 30,
+  "failure_domain": "replace-with-failure-domain",
+  "health_host": "127.0.0.1",
+  "health_port": 9080,
+  "heartbeat_seconds": 15,
+  "instance_id_prefix": "preview-gateway-a",
+  "lease_seconds": 45,
+  "readiness_timeout_seconds": 10,
+  "renewal_before_seconds": 600,
+  "rotation_overlap_seconds": 300,
+  "server_name": "preview-gateway-a.internal.example",
+  "source_revision": "replace-with-exact-source-sha"
+}

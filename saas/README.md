@@ -637,6 +637,35 @@ External CA/HSM deployment, Trust Bundle rollout, DNS/load-balancer health,
 cross-host failure and partition behavior, and two failure domains remain
 production blockers, so this candidate does not change the `NO-GO` decision.
 
+The next downstream-only p4h candidate turns the lifecycle coordinator into a
+packaged `omnigent-saas-preview-gateway` process without adding another official
+source patch. Its closed, non-secret JSON schema rejects unsafe ownership/modes,
+symlinks, unknown or duplicate fields, static identities/tokens, non-loopback health
+binds, booleans masquerading as ports, non-finite durations, and unsafe heartbeat or
+rotation timing. Each process start creates a new Gateway ID and high-entropy
+registration token in memory. Only a trusted deployment-time `module:attribute`
+factory may inject the exact narrow directory/certificate clients, key provider,
+Relay listener, independent mTLS health probe, and persistent drain observer; the
+process contract explicitly excludes a `saas_platform` PostgreSQL credential.
+
+The executable starts a detail-free loopback `/livez` and `/readyz` server before the
+runtime, bounds HTTP headers, and makes readiness depend on the durable active state,
+fatal-error state, real TLS 1.3 advertised-endpoint handshake, hostname validation,
+and exact server-leaf pin. SIGTERM/SIGINT can interrupt blocked startup and still
+close the listener, release/expire the process identity, revoke leaves, and discard
+key material. The wheel packages hardened systemd and Kubernetes templates with a
+dynamic/non-root identity, read-only filesystem, no capabilities, seccomp, topology
+constraint, exec health probes, and default-deny networking. The Kubernetes example
+is deliberately one replica because its endpoint is static; scaling is invalid until
+each Pod receives a server-selected directly routable endpoint and matching name.
+
+This p4h subgate is `pending` until its exact implementation revision passes the full
+PostgreSQL/official/Linux-security/migration/wheel/patch/intrusion workflow. The
+templates are not deployment evidence: external CA/HSM and Trust Bundle operations,
+signed immutable image promotion, control-plane mTLS policy, DNS/LB registration,
+NetworkPolicy allowlists, cross-host partitions, two failure domains, and N-1
+rollback remain production blockers. The release stays `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

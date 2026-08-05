@@ -43,6 +43,7 @@ def _spec(
     ignore_term: bool = False,
     never_binds: bool = False,
     stubborn_child: bool = False,
+    late_broaden_socket: bool = False,
 ) -> PreviewProcessSpec:
     environment = [("PYTHONUNBUFFERED", "1")]
     if unhealthy:
@@ -53,6 +54,8 @@ def _spec(
         environment.append(("PREVIEW_FIXTURE_NEVER_BINDS", "1"))
     if stubborn_child:
         environment.append(("PREVIEW_FIXTURE_STUBBORN_CHILD", "1"))
+    if late_broaden_socket:
+        environment.append(("PREVIEW_FIXTURE_LATE_BROADEN_SOCKET", "1"))
     return PreviewProcessSpec(
         argv=(sys.executable, "-m", "tests.saas.preview_supervisor_fixture"),
         working_directory=Path.cwd().resolve(),
@@ -117,7 +120,7 @@ async def test_supervisor_publishes_only_healthy_uds_and_stops_cleanly(
             connection_generation=route.runner_connection_generation,
         )
 
-        snapshot = await supervisor.start(route, _spec())
+        snapshot = await supervisor.start(route, _spec(late_broaden_socket=True))
         try:
             assert snapshot.pid > 0
             assert stat.S_ISSOCK(os.lstat(snapshot.socket_path).st_mode)

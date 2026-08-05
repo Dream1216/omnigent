@@ -352,6 +352,7 @@ dev = [
 # `omni` ship, internal and OSS alike.)
 omnigent = "omnigent.cli:main"
 omni = "omnigent.cli:main"
+omnigent-saas-preview-gateway = "saas.preview_gateway_process:main"
 
 # uv path-deps for the sibling SDK packages (renamed in Stage 3).
 [tool.uv.sources]
@@ -378,6 +379,7 @@ include = ["omnigent*", "saas*"]
 "saas.acceptance" = ["*.json", "README.md"]
 "saas.admin_ui" = ["*.html", "*.css", "*.js"]
 "saas.production" = ["*.json", "runbooks/*.md"]
+"saas.deployment.preview_gateway" = ["*.json", "*.md", "*.service", "*.yaml"]
 "saas.runtime_rls" = ["postgresql_roles.sql"]
 "saas.supply_chain" = ["*.json"]
 "omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "polly/**/*"]
