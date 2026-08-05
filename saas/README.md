@@ -924,8 +924,30 @@ P4 multi-failure-domain execution and Worktree isolation remain partially
 implemented. P5 has passed Webhook/SSRF, recovery-verifier, isolated-restore,
 tenant-deletion-verifier, SLO/capacity-verifier, and image-supply-chain-verifier
 contract subgates; real production recovery, capacity/SLO, deletion, and signed
-image evidence remains pending. P6 commercial governance has not started. None
+image evidence remains pending. P6 is now in progress through its first
+machine-identity code-contract slice; billing, enterprise federation, audit export,
+privacy, the complete API platform, and commercial acceptance remain pending. None
 may be inferred from a code-contract or CI-only subgate.
+
+The first P6 slice adds the downstream-only migration `p6a000000001`, explicit
+Service Accounts, and hashed API Keys. Service Accounts are non-interactive and
+project-bound; an explicitly selected active Steward is independent from `created_by`,
+so no creator membership or content permission is inherited. Key issuance requires
+the manager to hold both `grant.manage` and every delegated permission. The one-time
+`omk_` token is HMAC-digested with an injected pepper and binds exact permissions,
+canonical network CIDRs, expiry, Project scope, and account security version.
+
+The optional public router is registered at `/api/v1` while internal compatibility
+routes remain under `/saas`. Cookie management calls retain Origin/CSRF protection;
+machine Bearer tokens are accepted only by `/api/v1`, and Cookie plus Bearer is
+rejected as `ambiguous_authentication`. Rotation, revoke, Steward transfer, and
+suspension are transactional and secret-free in Outbox. Revocation is checked on
+every request while `last_used_at` writes are coalesced. The
+`ServiceAccountRemovalImpactProvider` blocks member removal until explicit Steward
+transfer. PostgreSQL uses 52 control-plane forced-RLS tables and an exact
+`app.api_credential_id` lookup for the authenticator role; backup/restore and tenant
+deletion policies include machine-credential revocation. See
+`saas/production/runbooks/api-credentials.md` for deployment and incident gates.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

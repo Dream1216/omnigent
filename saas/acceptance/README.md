@@ -382,3 +382,25 @@ production evidence images, zero promotions, and one blocker. It closes only
 scan/SBOM/provenance artifacts, protected workflow execution, canary, rollback, and
 approvals remain unproven. The evidence-successor wheel requires 140 artifacts;
 eleven aggregate gates and the release-level `NO-GO` remain unchanged.
+
+P6 is now `in_progress` at the implementation level through a first
+machine-identity/API contract slice. Downstream-owned Service Accounts have an
+explicit active human Steward, project scope, a monotonic security version, and
+no implicit creator membership or permission inheritance. API Keys are shown
+once, stored only as HMAC-SHA256 digests with an independently injected pepper,
+and bind exact delegated permissions, canonical network CIDRs, expiry, and
+account security version. Creation, rotation, revocation, Steward transfer, and
+suspension are idempotent, transactional, and publish secret-free Outbox facts;
+member removal is blocked until explicit Steward transfer.
+
+The optional `/api/v1` router separates machine Bearer authentication from the
+existing `/saas` Cookie surface, rejects Cookie/Bearer ambiguity, and never
+authorizes Service Accounts on upstream Runtime routes. The `p6a000000001`
+migration expands the control-plane forced-RLS inventory to 52 tables and limits
+the authenticator to an exact server-derived `app.api_credential_id` plus
+coalesced last-use fields. Backup/restore and deletion contracts now include
+machine-credential revocation. This paragraph records only the unaccepted
+implementation scope: no P6 subgate is closed until an exact-revision CI record
+and evidence-successor run are committed. Billing, enterprise federation,
+complete audit/API/console/privacy capability, commercial evidence, all eleven
+aggregate gates, and the release-level `NO-GO` remain pending.

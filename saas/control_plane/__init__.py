@@ -1,5 +1,15 @@
 """SaaS-owned identity, tenancy, and runtime-placement control plane."""
 
+from saas.control_plane.api_credential_models import ApiCredentialRecord, ServiceAccountRecord
+from saas.control_plane.api_credentials import (
+    ApiCredentialError,
+    ApiCredentialService,
+    ApiCredentialView,
+    CredentialMutation,
+    IssuedApiCredential,
+    ServiceAccountView,
+    ValidatedApiCredential,
+)
 from saas.control_plane.authorization import (
     AuthorizationDecision,
     AuthorizationSource,
@@ -103,6 +113,7 @@ from saas.control_plane.http_auth import (
     SaasAuthProvider,
     SaasCookieConfig,
     SaasHttpIntegration,
+    SaasMachinePrincipal,
     create_saas_auth_router,
     create_saas_http_integration,
 )
@@ -187,6 +198,7 @@ from saas.control_plane.removal_impact import (
     CompositeRemovalImpactProvider,
     ExecutionRemovalImpactProvider,
     ProjectRemovalImpactProvider,
+    ServiceAccountRemovalImpactProvider,
     WorktreeRemovalImpactProvider,
 )
 from saas.control_plane.resolver import (
@@ -258,6 +270,10 @@ __all__ = [
     "ActivatedPreviewGatewayCertificate",
     "ActivatedRunnerCertificate",
     "AdmissionQuotaRecord",
+    "ApiCredentialError",
+    "ApiCredentialRecord",
+    "ApiCredentialService",
+    "ApiCredentialView",
     "ArtifactRecord",
     "ArtifactRegistration",
     "AuthSessionRecord",
@@ -279,6 +295,7 @@ __all__ = [
     "ControlPlaneOutboxEvent",
     "ControlPlaneResolutionError",
     "CreatedChangeSetGroup",
+    "CredentialMutation",
     "DispatchResult",
     "EffectCallRecord",
     "EffectCallState",
@@ -301,6 +318,7 @@ __all__ = [
     "InvitationCreated",
     "IsolationControlPlane",
     "IsolationControlPlaneError",
+    "IssuedApiCredential",
     "IssuedAuthSession",
     "IssuedContextSnapshot",
     "IssuedIsolationGrant",
@@ -390,6 +408,7 @@ __all__ = [
     "SaasBase",
     "SaasCookieConfig",
     "SaasHttpIntegration",
+    "SaasMachinePrincipal",
     "SandboxLaunchContract",
     "SchedulingControlPlane",
     "SchedulingError",
@@ -399,6 +418,9 @@ __all__ = [
     "SecretLeaseReference",
     "SecretMaterial",
     "SecretValueProvider",
+    "ServiceAccountRecord",
+    "ServiceAccountRemovalImpactProvider",
+    "ServiceAccountView",
     "SessionTaskRecord",
     "Space",
     "SpaceMembership",
@@ -412,6 +434,7 @@ __all__ = [
     "ToolPolicy",
     "TrustedRunnerLaunchGrant",
     "UnavailableRemovalImpactProvider",
+    "ValidatedApiCredential",
     "ValidatedAuthSession",
     "VerifiedCapability",
     "VerifiedContextSnapshot",

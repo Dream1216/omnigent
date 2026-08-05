@@ -18,6 +18,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent.server.auth import AuthProvider
 from saas.compatibility import RuntimeContext, bind_runtime_context
+from saas.control_plane.api_credentials import (
+    ApiCredentialError,
+    ApiCredentialService,
+    ValidatedApiCredential,
+)
 from saas.control_plane.context_snapshot import (
     ContextSnapshotError,
     ContextSnapshotService,
@@ -83,6 +88,13 @@ class SaasPrincipal:
 
 
 @dataclass(frozen=True, slots=True)
+class SaasMachinePrincipal:
+    """Authenticated non-interactive Service Account principal."""
+
+    credential: ValidatedApiCredential
+
+
+@dataclass(frozen=True, slots=True)
 class SaasHttpIntegration:
     """Components passed through official `create_app` extension points."""
 
@@ -93,12 +105,22 @@ class SaasHttpIntegration:
     context_snapshots: ContextSnapshotService | None = None
     availability_gate: ControlPlaneAvailabilityGate | None = None
     degraded_read_paths: frozenset[str] = frozenset()
+    public_api_router: APIRouter | None = None
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
         """Official `create_app(extra_routers=...)` registration tuple."""
 
         return self.router, "/saas", ["saas"]
+
+    @property
+    def extra_routers(self) -> tuple[tuple[APIRouter, str, list[str | Enum]], ...]:
+        """Return backward-compatible internal routes plus the stable public API."""
+
+        routers = [self.extra_router]
+        if self.public_api_router is not None:
+            routers.append((self.public_api_router, "/api/v1", ["saas-public-v1"]))
+        return tuple(routers)
 
     def install_middleware(self, app: FastAPI) -> None:
         """Install context binding after official `create_app` returns."""
@@ -160,19 +182,24 @@ class SaasAuthProvider(AuthProvider):
         self,
         lifecycle: MembershipLifecycleService,
         cookie_config: SaasCookieConfig,
+        api_credentials: ApiCredentialService | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._cookie = cookie_config
+        self._api_credentials = api_credentials
 
     def extract_token(self, connection: HTTPConnection) -> tuple[str | None, str | None]:
         """Return opaque token and source (`cookie` or `bearer`)."""
 
         cookie = connection.cookies.get(self._cookie.name)
+        authorization = connection.headers.get("authorization", "")
+        bearer = authorization[7:] if authorization.startswith("Bearer ") else None
+        if cookie and bearer:
+            return bearer, "ambiguous"
         if cookie:
             return cookie, "cookie"
-        authorization = connection.headers.get("authorization", "")
-        if authorization.startswith("Bearer "):
-            return authorization[7:], "bearer"
+        if bearer:
+            return bearer, "bearer"
         return None, None
 
     def get_principal(self, connection: HTTPConnection) -> SaasPrincipal | None:
@@ -183,8 +210,10 @@ class SaasAuthProvider(AuthProvider):
             principal = state.get("saas_principal")
             if isinstance(principal, SaasPrincipal):
                 return principal
-        token, _ = self.extract_token(connection)
-        if token is None:
+        token, source = self.extract_token(connection)
+        if token is None or source == "ambiguous":
+            return None
+        if self.is_machine_token(token):
             return None
         try:
             session = self._lifecycle.validate_auth_session(token)
@@ -201,6 +230,35 @@ class SaasAuthProvider(AuthProvider):
         """Validate the browser's CSRF header for this session."""
 
         self._lifecycle.validate_csrf(token, csrf_token)
+
+    def is_machine_token(self, token: str) -> bool:
+        """Return whether a token belongs to the distinct machine namespace."""
+
+        return bool(
+            self._api_credentials is not None
+            and self._api_credentials.is_api_credential(token)
+        )
+
+    def validate_machine_token(
+        self, token: str, *, source_ip: str | None
+    ) -> ValidatedApiCredential:
+        """Validate a machine bearer token without trusting forwarded IP headers."""
+
+        if self._api_credentials is None:
+            raise ApiCredentialError("invalid_api_credential", "API credential is invalid")
+        return self._api_credentials.authenticate(token, source_ip=source_ip)
+
+    def get_machine_principal(
+        self, connection: HTTPConnection
+    ) -> SaasMachinePrincipal | None:
+        """Return only middleware-validated Service Account state."""
+
+        state = connection.scope.get("state")
+        if isinstance(state, dict):
+            principal = state.get("saas_machine_principal")
+            if isinstance(principal, SaasMachinePrincipal):
+                return principal
+        return None
 
     def get_user_id(self, request: HTTPConnection) -> str | None:
         """Project Global User to the official runtime alias when context is bound."""
@@ -266,6 +324,21 @@ class SaasAuthContextMiddleware:
         if token is None:
             await self._app(scope, receive, send)
             return
+        if token_source == "ambiguous":
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=400,
+                error=LifecycleError(
+                    "ambiguous_authentication",
+                    "send either a session Cookie or Authorization Bearer token, not both",
+                ),
+            )
+            return
+        if token_source == "bearer" and self._auth.is_machine_token(token):
+            await self._authenticate_machine(connection, token, scope, receive, send)
+            return
         try:
             self._availability.require_available()
             session = self._auth.validate_token(token)
@@ -319,6 +392,44 @@ class SaasAuthContextMiddleware:
             return
         with bind_runtime_context(runtime_context):
             await self._app(scope, receive, send)
+
+    async def _authenticate_machine(
+        self,
+        connection: HTTPConnection,
+        token: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Authenticate Service Accounts only on the stable external API surface."""
+
+        if scope["type"] != "http" or not connection.url.path.startswith("/api/v1/"):
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=403,
+                error=ApiCredentialError(
+                    "machine_token_route_forbidden",
+                    "Service Account credentials are accepted only by /api/v1",
+                ),
+            )
+            return
+        try:
+            self._availability.require_available()
+            source_ip = connection.client.host if connection.client is not None else None
+            credential = self._auth.validate_machine_token(token, source_ip=source_ip)
+        except (ControlPlaneDependencyUnavailable, OperationalError, SqlAlchemyTimeoutError):
+            await self._reject_dependency(scope, receive, send)
+            return
+        except (ApiCredentialError, ValueError) as error:
+            status = 401 if getattr(error, "code", "") == "invalid_api_credential" else 403
+            await self._reject(scope, receive, send, status=status, error=error)
+            return
+        state = scope.setdefault("state", {})
+        state["saas_machine_principal"] = SaasMachinePrincipal(credential=credential)
+        state["saas_actor_kind"] = "service_account"
+        await self._app(scope, receive, send)
 
     async def _degraded_or_reject(
         self,
@@ -528,9 +639,11 @@ class SaasAuthContextMiddleware:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008, "reason": code})
             return
+        path = str(scope.get("path", ""))
+        envelope = "detail" if path == "/api/v1" or path.startswith("/api/v1/") else "error"
         await JSONResponse(
             status_code=status,
-            content={"error": {"code": code, "message": str(error)}},
+            content={envelope: {"code": code, "message": str(error)}},
             headers={"Cache-Control": "no-store"},
         )(scope, receive, send)
 
@@ -1000,10 +1113,11 @@ def create_saas_http_integration(
     context_snapshots: ContextSnapshotService | None = None,
     availability_gate: ControlPlaneAvailabilityGate | None = None,
     degraded_read_paths: frozenset[str] = frozenset(),
+    api_credentials: ApiCredentialService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
-    auth_provider = SaasAuthProvider(lifecycle, cookie_config)
+    auth_provider = SaasAuthProvider(lifecycle, cookie_config, api_credentials)
     router = create_saas_auth_router(
         auth_provider=auth_provider,
         lifecycle=lifecycle,
@@ -1029,6 +1143,14 @@ def create_saas_http_integration(
                 bindings=runtime_bindings,
             )
         )
+    public_api_router = None
+    if api_credentials is not None:
+        from saas.control_plane.api_http import create_public_api_router
+
+        public_api_router = create_public_api_router(
+            auth_provider=auth_provider,
+            api_credentials=api_credentials,
+        )
     return SaasHttpIntegration(
         auth_provider=auth_provider,
         router=router,
@@ -1037,6 +1159,7 @@ def create_saas_http_integration(
         context_snapshots=context_snapshots,
         availability_gate=availability_gate,
         degraded_read_paths=degraded_read_paths,
+        public_api_router=public_api_router,
     )
 
 

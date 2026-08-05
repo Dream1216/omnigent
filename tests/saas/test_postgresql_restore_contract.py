@@ -58,7 +58,9 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
         )
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_fifty_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 50
+def test_canonical_control_plane_rls_inventory_has_exactly_fifty_two_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 52
+    assert "saas_service_accounts" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_api_credentials" in CONTROL_PLANE_RLS_TABLES
     assert "saas_webhook_endpoints" in CONTROL_PLANE_RLS_TABLES
     assert "saas_webhook_deliveries" in CONTROL_PLANE_RLS_TABLES

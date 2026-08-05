@@ -71,7 +71,7 @@ def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
     page.get_by_test_id("login-password").fill("initial-http-password")
     page.get_by_test_id("login-submit").click()
     expect(page.get_by_test_id("scope-connect")).to_be_visible()
-    expect(page.locator("#permission-count")).to_contain_text("2026-08-04.p4")
+    expect(page.locator("#permission-count")).to_contain_text("2026-08-05.p6")
 
     page.get_by_test_id("scope-connect").click()
     expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")

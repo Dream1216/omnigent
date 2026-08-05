@@ -9,6 +9,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.api_credential_models import ApiCredentialRecord, ServiceAccountRecord
 from saas.control_plane.db_models import ProjectMembershipRecord, ResourceGrantRecord
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
 from saas.control_plane.governance import RemovalImpact, RemovalImpactProvider
@@ -230,6 +231,88 @@ class ProjectRemovalImpactProvider:
             "resource_grant_ids": sorted(str(grant.id) for grant in grants),
         }
         return RemovalImpact(facts=facts, blocking_count=len(owned_projects))
+
+    @staticmethod
+    def _comparable(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+class ServiceAccountRemovalImpactProvider:
+    """Block removal until explicit Service Account stewardship is transferred."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def collect(
+        self,
+        *,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> RemovalImpact:
+        with self._session_factory.begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=user_id, tenant_id=tenant_id, space_id=space_id),
+            )
+            filters = [
+                ServiceAccountRecord.tenant_id == tenant_id,
+                ServiceAccountRecord.steward_user_id == user_id,
+                ServiceAccountRecord.status.in_(("active", "suspended")),
+            ]
+            if space_id is not None:
+                filters.append(ServiceAccountRecord.space_id == space_id)
+            accounts = tuple(
+                db.execute(
+                    sa.select(ServiceAccountRecord).where(*filters).order_by(ServiceAccountRecord.id)
+                ).scalars()
+            )
+            account_ids = [account.id for account in accounts]
+            credential_rows = (
+                tuple(
+                    db.execute(
+                        sa.select(
+                            ApiCredentialRecord.id,
+                            ApiCredentialRecord.service_account_id,
+                            ApiCredentialRecord.status,
+                            ApiCredentialRecord.expires_at,
+                        )
+                        .where(
+                            ApiCredentialRecord.tenant_id == tenant_id,
+                            ApiCredentialRecord.service_account_id.in_(account_ids),
+                        )
+                        .order_by(ApiCredentialRecord.service_account_id, ApiCredentialRecord.id)
+                    ).all()
+                )
+                if account_ids
+                else ()
+            )
+        credentials_by_account: dict[UUID, list[dict[str, object]]] = {
+            account_id: [] for account_id in account_ids
+        }
+        for credential_id, account_id, status, expires_at in credential_rows:
+            credentials_by_account[account_id].append(
+                {
+                    "credential_id": str(credential_id),
+                    "status": status,
+                    "expires_at": self._comparable(expires_at).isoformat(),
+                }
+            )
+        facts: dict[str, object] = {
+            "stewarded_service_accounts": [
+                {
+                    "service_account_id": str(account.id),
+                    "space_id": str(account.space_id) if account.space_id else None,
+                    "project_id": str(account.project_id) if account.project_id else None,
+                    "status": account.status,
+                    "credentials": credentials_by_account[account.id],
+                }
+                for account in accounts
+            ]
+        }
+        return RemovalImpact(facts=facts, blocking_count=len(accounts))
 
     @staticmethod
     def _comparable(value: datetime) -> datetime:

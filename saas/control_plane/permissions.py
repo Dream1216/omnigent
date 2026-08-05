@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-04.p4"
+POLICY_VERSION: Final = "2026-08-05.p6"
 
 
 class PermissionScope(StrEnum):
@@ -97,7 +97,12 @@ _DEFINITIONS = (
         fresh_auth_required=True,
     ),
     _permission("project.create", PermissionScope.SPACE, PermissionRisk.MEDIUM),
-    _permission("project.read_metadata", PermissionScope.PROJECT, PermissionRisk.LOW),
+    _permission(
+        "project.read_metadata",
+        PermissionScope.PROJECT,
+        PermissionRisk.LOW,
+        service_account_allowed=True,
+    ),
     _permission(
         "project.content.read",
         PermissionScope.PROJECT,
@@ -128,16 +133,37 @@ _DEFINITIONS = (
     _permission("audit.read", PermissionScope.TENANT, PermissionRisk.MEDIUM),
     _permission("audit.export", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("security.policy.update", PermissionScope.TENANT, PermissionRisk.CRITICAL),
-    _permission("run.create", PermissionScope.PROJECT, PermissionRisk.MEDIUM),
-    _permission("run.read_metadata", PermissionScope.PROJECT, PermissionRisk.LOW),
+    _permission(
+        "run.create",
+        PermissionScope.PROJECT,
+        PermissionRisk.MEDIUM,
+        service_account_allowed=True,
+    ),
+    _permission(
+        "run.read_metadata",
+        PermissionScope.PROJECT,
+        PermissionRisk.LOW,
+        service_account_allowed=True,
+    ),
     _permission(
         "run.read_content",
         PermissionScope.PROJECT,
         PermissionRisk.MEDIUM,
         reads_content=True,
+        service_account_allowed=True,
     ),
-    _permission("run.cancel", PermissionScope.PROJECT, PermissionRisk.HIGH),
-    _permission("run.retry", PermissionScope.PROJECT, PermissionRisk.HIGH),
+    _permission(
+        "run.cancel",
+        PermissionScope.PROJECT,
+        PermissionRisk.HIGH,
+        service_account_allowed=True,
+    ),
+    _permission(
+        "run.retry",
+        PermissionScope.PROJECT,
+        PermissionRisk.HIGH,
+        service_account_allowed=True,
+    ),
     _permission("runtime.binding.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("environment.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("egress.policy.manage", PermissionScope.PROJECT, PermissionRisk.CRITICAL),
@@ -152,6 +178,7 @@ _DEFINITIONS = (
         PermissionScope.PROJECT,
         PermissionRisk.MEDIUM,
         reads_content=True,
+        service_account_allowed=True,
     ),
 )
 

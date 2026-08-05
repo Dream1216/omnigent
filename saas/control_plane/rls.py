@@ -16,6 +16,7 @@ class RlsContext:
     actor_id: UUID | None = None
     tenant_id: UUID | None = None
     space_id: UUID | None = None
+    api_credential_id: UUID | None = None
 
 
 def apply_rls_context(session: Session, context: RlsContext) -> None:
@@ -35,4 +36,8 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     session.execute(
         sa.text("SELECT set_config('app.space_id', :value, true)"),
         {"value": str(context.space_id) if context.space_id else ""},
+    )
+    session.execute(
+        sa.text("SELECT set_config('app.api_credential_id', :value, true)"),
+        {"value": str(context.api_credential_id) if context.api_credential_id else ""},
     )

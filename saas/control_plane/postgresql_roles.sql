@@ -67,6 +67,20 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_control_plane_outbox
 TO saas_authenticator;
 
+-- Machine-token authentication is constrained by the exact credential ID
+-- derived from the opaque token. The authenticator may update only coalesced
+-- usage metadata; it cannot create, rotate, revoke, or inspect other keys.
+GRANT SELECT ON
+    saas_api_credentials,
+    saas_service_accounts,
+    saas_tenants,
+    saas_spaces,
+    saas_projects,
+    saas_tenant_memberships,
+    saas_space_memberships
+TO saas_authenticator;
+GRANT UPDATE (last_used_at, last_used_ip) ON saas_api_credentials TO saas_authenticator;
+
 GRANT SELECT, INSERT, UPDATE ON
     saas_global_users,
     saas_auth_sessions,
@@ -81,6 +95,8 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_runtime_binding_sagas,
     saas_ownership_transfers,
     saas_member_removal_preflights,
+    saas_service_accounts,
+    saas_api_credentials,
     saas_control_plane_outbox
 TO saas_governance;
 
@@ -272,6 +288,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_runtime_binding_sagas,
     saas_ownership_transfers,
     saas_member_removal_preflights,
+    saas_service_accounts,
+    saas_api_credentials,
     saas_tasks,
     saas_execution_sessions,
     saas_session_tasks,

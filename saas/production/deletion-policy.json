@@ -5,7 +5,7 @@
   "revision_contract": {
     "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p5a000000001"
+    "control_plane_schema_revision": "p6a000000001"
   },
   "evidence_directory": "saas/production/deletion-evidence",
   "max_evidence_age_days": 90,
@@ -13,7 +13,7 @@
     "tenant_pending_deletion",
     "new_admission_disabled",
     "active_runs_terminal_or_quarantined",
-    "sessions_tokens_and_grants_revoked",
+    "sessions_api_credentials_and_grants_revoked",
     "memberships_removed",
     "deletion_request_persisted_in_outbox"
   ],
@@ -80,6 +80,7 @@
     "cache_namespaces_invalidated",
     "queue_and_dlq_payloads_cleared",
     "webhook_endpoints_disabled_and_secrets_destroyed",
+    "service_accounts_suspended_or_deleted_and_keys_revoked",
     "provider_and_connector_access_revoked",
     "runner_worktree_and_recovery_material_destroyed",
     "kms_grants_and_data_keys_revoked",

@@ -79,7 +79,7 @@ _REQUIRED_PRECONDITIONS = {
     "tenant_pending_deletion",
     "new_admission_disabled",
     "active_runs_terminal_or_quarantined",
-    "sessions_tokens_and_grants_revoked",
+    "sessions_api_credentials_and_grants_revoked",
     "memberships_removed",
     "deletion_request_persisted_in_outbox",
 }
@@ -92,6 +92,7 @@ _REQUIRED_CHECKS = {
     "cache_namespaces_invalidated",
     "queue_and_dlq_payloads_cleared",
     "webhook_endpoints_disabled_and_secrets_destroyed",
+    "service_accounts_suspended_or_deleted_and_keys_revoked",
     "provider_and_connector_access_revoked",
     "runner_worktree_and_recovery_material_destroyed",
     "kms_grants_and_data_keys_revoked",

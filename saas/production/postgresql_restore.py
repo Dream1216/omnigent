@@ -43,6 +43,8 @@ _SELECTED_HASH_TABLES = (
     "saas_spaces",
     "saas_tenant_memberships",
     "saas_space_memberships",
+    "saas_service_accounts",
+    "saas_api_credentials",
     "saas_control_plane_outbox",
 )
 
@@ -177,6 +179,10 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
         "session_b": "50000000-0000-4000-8000-000000000002",
+        "service_account_a": "70000000-0000-4000-8000-000000000001",
+        "service_account_b": "70000000-0000-4000-8000-000000000002",
+        "api_credential_a": "80000000-0000-4000-8000-000000000001",
+        "api_credential_b": "80000000-0000-4000-8000-000000000002",
         "outbox_seed": "60000000-0000-4000-8000-000000000001",
         "outbox_replay": "60000000-0000-4000-8000-000000000002",
         "workspace_a": 11001,
@@ -263,6 +269,38 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_service_accounts "
+                    "(id, tenant_id, space_id, name, steward_user_id, created_by, status, "
+                    "security_version) VALUES "
+                    "(:service_account_a, :tenant_a, :space_a, 'Recovery Bot A', :actor_a, "
+                    ":actor_a, 'active', 1), "
+                    "(:service_account_b, :tenant_b, :space_b, 'Recovery Bot B', :actor_b, "
+                    ":actor_b, 'active', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_api_credentials "
+                    "(id, tenant_id, service_account_id, name, token_hash, display_prefix, "
+                    "permission_scopes, allowed_networks, account_security_version, status, "
+                    "expires_at, created_by) VALUES "
+                    "(:api_credential_a, :tenant_a, :service_account_a, 'Recovery Key A', "
+                    ":token_hash_a, 'omk_recovery_a', CAST(:scopes AS jsonb), '[]'::jsonb, 1, "
+                    "'active', now() + interval '1 day', :actor_a), "
+                    "(:api_credential_b, :tenant_b, :service_account_b, 'Recovery Key B', "
+                    ":token_hash_b, 'omk_recovery_b', CAST(:scopes AS jsonb), '[]'::jsonb, 1, "
+                    "'active', now() + interval '1 day', :actor_b)"
+                ),
+                {
+                    **identifiers,
+                    "token_hash_a": "e" * 64,
+                    "token_hash_b": "f" * 64,
+                    "scopes": json.dumps(["project.read_metadata"]),
+                },
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_control_plane_outbox "
                     "(id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
                     "idempotency_key, request_hash, attempt_count, available_at) VALUES "
@@ -312,6 +350,21 @@ def _apply_post_backup_replay(
             )
             connection.execute(
                 sa.text(
+                    "UPDATE saas_service_accounts SET status = 'suspended', "
+                    "security_version = 2, updated_at = :replay_at "
+                    "WHERE id = :service_account_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_api_credentials SET status = 'revoked', "
+                    "revoked_at = :replay_at WHERE id = :api_credential_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
                     "UPDATE saas_tenant_memberships SET status = 'removed', version = 2 "
                     "WHERE tenant_id = :tenant_b AND user_id = :actor_b"
                 ),
@@ -345,6 +398,8 @@ def _apply_post_backup_replay(
                     "payload": json.dumps(
                         {
                             "identity_revoked": True,
+                            "service_account_suspended": True,
+                            "api_credential_revoked": True,
                             "membership_removed": True,
                             "tenant_pending_deletion": True,
                         }
@@ -428,7 +483,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p5a000000001":
+            if saas_head != "p6a000000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -463,13 +518,19 @@ def _verify_restored_database(
             replay = connection.execute(
                 sa.text(
                     "SELECT u.security_version, i.status, s.revoked_at IS NOT NULL, "
-                    "tm.status, sm.status, t.status "
+                    "tm.status, sm.status, t.status, machine.status, "
+                    "machine.security_version, credential.status, "
+                    "credential.revoked_at IS NOT NULL "
                     "FROM saas_global_users u "
                     "JOIN saas_identity_connections i ON i.user_id = u.id "
                     "JOIN saas_auth_sessions s ON s.user_id = u.id "
                     "JOIN saas_tenant_memberships tm ON tm.user_id = u.id "
                     "JOIN saas_space_memberships sm ON sm.user_id = u.id "
                     "JOIN saas_tenants t ON t.id = tm.tenant_id "
+                    "JOIN saas_service_accounts machine ON machine.steward_user_id = u.id "
+                    "AND machine.tenant_id = t.id "
+                    "JOIN saas_api_credentials credential "
+                    "ON credential.service_account_id = machine.id "
                     "WHERE u.id = :actor_b"
                 ),
                 identifiers,
@@ -481,6 +542,10 @@ def _verify_restored_database(
                 "removed",
                 "removed",
                 "pending_deletion",
+                "suspended",
+                2,
+                "revoked",
+                True,
             ):
                 raise PostgreSqlRestoreContractError(
                     "post-backup revocation/deletion replay is incomplete"

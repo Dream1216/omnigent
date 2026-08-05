@@ -6,7 +6,7 @@
     "upstream_manifest": "saas/upstream-baseline.json",
     "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p5a000000001",
+    "control_plane_schema_revision": "p6a000000001",
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {
@@ -82,8 +82,8 @@
       "title": "API, webhook, connector, and SSRF baseline",
       "owner": "control-plane",
       "status": "proposed",
-      "decision": "Expose versioned public contracts with idempotency and deprecation windows; sign and deduplicate webhooks; bind connector identities to authorized resources; resolve and filter every outbound target against metadata, loopback, link-local, private, and control-plane networks.",
-      "verification_gate": "Signature rotation, replay, reordering, redirect, DNS rebinding, repository transfer, and app-uninstall tests must pass."
+      "decision": "Expose versioned public contracts with idempotency and deprecation windows; keep Service Accounts non-interactive; store only peppered API Key digests; bind machine permissions, network policy, expiry, and project scope explicitly; sign and deduplicate webhooks; bind connector identities to authorized resources; resolve and filter every outbound target against metadata, loopback, link-local, private, and control-plane networks.",
+      "verification_gate": "One-time Key disclosure, rotate/revoke, no privilege inheritance or escalation, network and scope denial, signature rotation, replay, reordering, redirect, DNS rebinding, repository transfer, and app-uninstall tests must pass."
     },
     {
       "id": "ADR-009",
@@ -98,8 +98,8 @@
       "title": "Identity and management-web security",
       "owner": "security",
       "status": "proposed",
-      "decision": "Use strict OIDC Code plus S256 PKCE, explicit identity linking, server-side revocable cookies, CSRF and Origin enforcement, independent Platform Console origin and identity source, MFA for privileged production roles, and fail-closed recovery.",
-      "verification_gate": "Session fixation, CSRF, CORS, redirect, cache, history, logout replay, account recovery, and privileged MFA browser tests must pass."
+      "decision": "Use strict OIDC Code plus S256 PKCE, explicit identity linking, server-side revocable cookies, CSRF and Origin enforcement, distinct human and machine token namespaces, rejection of Cookie plus Bearer ambiguity, independent Platform Console origin and identity source, MFA for privileged production roles, and fail-closed recovery.",
+      "verification_gate": "Session fixation, CSRF, CORS, redirect, cache, history, logout replay, machine-token interactive-login denial, account recovery, and privileged MFA browser tests must pass."
     },
     {
       "id": "ADR-011",
@@ -121,7 +121,7 @@
       "capacity": "Size API replicas and PostgreSQL pools for normal, hot-tenant, and dependency-degraded loads; admission rejects before pool exhaustion.",
       "runbook": "saas/production/runbooks/control-plane-degradation.md",
       "schema_migration_owner": "control-plane-data",
-      "secret_kms": "Region KMS encrypts identity verifier, OIDC transaction, and credential material; services receive least-privilege decrypt grants.",
+      "secret_kms": "Region KMS encrypts identity verifier and OIDC transaction material and injects an independent API-credential HMAC pepper; services receive least-privilege decrypt grants.",
       "backup_data_class": "T0",
       "exit_plan": "Drain writes, export versioned identity and authorization facts, preserve revocation and audit ledgers, then revoke service and database credentials."
     },
@@ -214,10 +214,10 @@
     {
       "id": "SLO-AUTH",
       "service_ids": ["control-plane", "admin"],
-      "sli": "Successful valid Auth, Context, and ordinary management requests divided by eligible requests",
+      "sli": "Successful valid user-session, API-Key, Context, and ordinary management requests divided by eligible requests",
       "objective": ">=99.9%",
       "window_days": 30,
-      "measurement": "Exclude authorization denials and valid client errors; split login dependencies from established-session requests.",
+      "measurement": "Exclude authorization denials and valid client errors; split login, established-session, and API-Key validation dependencies and latency.",
       "error_budget_action": "Stop feature and upstream promotions when the rolling budget is exhausted.",
       "dashboard_state": "planned"
     },
@@ -247,7 +247,7 @@
       "sli": "Sensitive authorization revocation propagation",
       "objective": "healthy=immediate,degraded<=60s",
       "window_days": 30,
-      "measurement": "Probe healthy live revalidation, Outbox invalidation, and maximum snapshot age independently.",
+      "measurement": "Probe healthy user-session and API-Key live revalidation, Outbox invalidation, and maximum snapshot age independently.",
       "error_budget_action": "Fail closed sensitive operations and declare a security incident on any excess.",
       "dashboard_state": "planned"
     },
@@ -315,7 +315,7 @@
       "runtime-mapping"
     ],
     "trust_boundaries": [
-      "browser-to-control-plane",
+      "browser-and-api-client-to-control-plane",
       "control-plane-to-placement",
       "queue-to-runner",
       "runner-to-sandbox",
@@ -329,10 +329,10 @@
         "id": "TM-001",
         "stride": "S",
         "asset": "identity-and-session",
-        "boundary": "browser-to-control-plane",
-        "scenario": "Stolen, fixed, forged, or cross-origin browser credentials impersonate a user.",
-        "controls": ["opaque revocable sessions", "secure host cookie", "CSRF and Origin checks", "OIDC state nonce and PKCE", "session rotation"],
-        "verification": "Browser fixation, CSRF, Origin, logout replay, and OIDC negative E2E",
+        "boundary": "browser-and-api-client-to-control-plane",
+        "scenario": "Stolen, fixed, forged, cross-origin, or ambiguously supplied browser or API credentials impersonate a user or Service Account.",
+        "controls": ["opaque revocable sessions", "secure host cookie", "CSRF and Origin checks", "OIDC state nonce and PKCE", "session rotation", "peppered one-time API Keys with exact scope and immediate revocation"],
+        "verification": "Browser fixation, CSRF, Origin, logout replay, OIDC, API Key, network, ambiguity, and interactive-login negative E2E",
         "owner": "security",
         "residual_risk": "medium"
       },
@@ -340,7 +340,7 @@
         "id": "TM-002",
         "stride": "T",
         "asset": "tenant-authorization",
-        "boundary": "browser-to-control-plane",
+        "boundary": "browser-and-api-client-to-control-plane",
         "scenario": "A client tampers with Tenant, Space, Project, Placement, physical workspace, or snapshot values.",
         "controls": ["server scope enumeration", "opaque signed snapshot", "live membership validation", "dual forced RLS", "binding generation"],
         "verification": "Cross-tenant HTTP, PostgreSQL RLS, selector conflict, and stale generation tests",
