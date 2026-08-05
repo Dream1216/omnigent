@@ -443,6 +443,7 @@ class PreviewGatewayRuntime:
                     adapter_contract_version=self._config.adapter_contract_version,
                     registration_token=self._config.registration_token,
                     lease_duration=self._config.lease_duration,
+                    now=self._clock(),
                 )
                 self._registered = True
                 await self._activate_certificates(certificates)
@@ -460,6 +461,7 @@ class PreviewGatewayRuntime:
                     self._directory.activate_gateway,
                     gateway_instance_id=self._config.gateway_instance_id,
                     registration_token=self._config.registration_token,
+                    now=self._clock(),
                 )
             except Exception as exc:
                 await self._cleanup_failed_start()
@@ -517,6 +519,7 @@ class PreviewGatewayRuntime:
                         self._directory.begin_draining,
                         gateway_instance_id=self._config.gateway_instance_id,
                         registration_token=self._config.registration_token,
+                        now=self._clock(),
                     )
                     drain_started = True
                 if drain_started:
@@ -557,6 +560,7 @@ class PreviewGatewayRuntime:
                     gateway_instance_id=self._config.gateway_instance_id,
                     registration_token=self._config.registration_token,
                     lease_duration=self._config.lease_duration,
+                    now=self._clock(),
                 )
                 certificates = self._certificates
                 if (
@@ -608,6 +612,7 @@ class PreviewGatewayRuntime:
                     certificate_der=leaf.certificate_der,
                     trust_bundle_version=leaf.trust_bundle_version,
                     rotation_overlap=self._config.rotation_overlap,
+                    now=self._clock(),
                 )
                 activated.append(receipt)
         except Exception:
@@ -694,6 +699,7 @@ class PreviewGatewayRuntime:
                     self._certificate_authority.revoke_certificate,
                     fingerprint_sha256=leaf.fingerprint_sha256,
                     reason=reason,
+                    now=self._clock(),
                 )
 
     async def _revoke_receipts(
@@ -708,6 +714,7 @@ class PreviewGatewayRuntime:
                     self._certificate_authority.revoke_certificate,
                     fingerprint_sha256=receipt.fingerprint_sha256,
                     reason=reason,
+                    now=self._clock(),
                 )
 
     async def _release_registration(self, *, reason: str) -> None:
@@ -719,6 +726,7 @@ class PreviewGatewayRuntime:
                 gateway_instance_id=self._config.gateway_instance_id,
                 registration_token=self._config.registration_token,
                 reason=reason,
+                now=self._clock(),
             )
         except Exception:  # noqa: BLE001 - listener is already closed; lease expiry is fallback
             # Listener closure is authoritative during a database outage; the durable

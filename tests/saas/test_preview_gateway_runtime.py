@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -239,11 +240,22 @@ class _DrainObserver:
 
 
 class _HeartbeatFailureDirectory:
-    def __init__(self, delegate: PreviewGatewayDirectoryAuthority) -> None:
+    def __init__(
+        self,
+        delegate: PreviewGatewayDirectoryAuthority,
+        *,
+        registration_delay: float = 0,
+    ) -> None:
         self._delegate = delegate
+        self._registration_delay = registration_delay
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._delegate, name)
+
+    def register_gateway(self, **values: object):
+        registered = self._delegate.register_gateway(**values)  # type: ignore[arg-type]
+        time.sleep(self._registration_delay)
+        return registered
 
     def heartbeat_gateway(self, **_values: object):
         raise RuntimeError("database heartbeat failed")
@@ -553,7 +565,9 @@ async def test_runtime_renews_both_leaves_before_expiry(runtime_fixture) -> None
     runtime = PreviewGatewayRuntime(
         _config(
             gateway_id,
-            lease_duration=timedelta(milliseconds=300),
+            # This test advances the authoritative clock by ten seconds to force
+            # certificate renewal; keep the unrelated gateway lease valid.
+            lease_duration=timedelta(seconds=30),
             heartbeat_interval=timedelta(milliseconds=50),
             renewal_before=timedelta(seconds=15),
             rotation_overlap=timedelta(seconds=5),
@@ -601,7 +615,10 @@ async def test_runtime_heartbeat_failure_removes_readiness_and_closes_listener(
         first_not_after=now + timedelta(hours=1),
     )
     relay = _RelayServer(factory, gateway_id)
-    failing_directory = _HeartbeatFailureDirectory(directory)
+    # The logical authority clock is deliberately fixed while real scheduling is
+    # delayed beyond the tiny lease. Runtime must never mix this injected clock
+    # with wall-clock calls in Directory or Certificate Authority operations.
+    failing_directory = _HeartbeatFailureDirectory(directory, registration_delay=0.35)
     runtime = PreviewGatewayRuntime(
         _config(
             gateway_id,
