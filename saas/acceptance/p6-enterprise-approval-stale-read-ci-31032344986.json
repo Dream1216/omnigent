@@ -1,0 +1,74 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31032344986,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31032344986",
+  "job_id": 92395877527,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31032344986/job/92395877527",
+  "head_sha": "1382f2032c9f804e3ce702af03b0c3953e13fe9d",
+  "upstream_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "861 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 124.91,
+    "isolated_logical_restore_contract": "passed in 7.982 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 29.62 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 12.73 seconds",
+    "wheel_required_artifacts": 160,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000005",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "stale_read_fencing_contract": {
+    "group_list_latest_request_wins": true,
+    "custom_role_list_latest_request_wins": true,
+    "approval_lists_latest_request_wins": true,
+    "logout_invalidates_in_flight_admin_reads": true,
+    "approval_reads_bind_actor_tenant_space_and_selected_project": true,
+    "role_reads_bind_selected_project": true,
+    "deterministic_browser_probe": "the first empty Group GET is completed before create but delayed in the browser until after the post-create GET",
+    "delayed_empty_response_overwrites_created_group": false,
+    "browser_console_errors": 0
+  },
+  "fail_closed_predecessor": {
+    "run_id": 31031605442,
+    "head_sha": "48efe7c8154cd0523f5c79585ac75e64cf67a69f",
+    "conclusion": "failure",
+    "failure": "a delayed initial empty Group response overwrote a newer post-create list in the Approval Desk",
+    "security_relevance": "an in-flight response from an older actor Scope or Project must never render after context changes",
+    "test_timeout_or_rerun_used_as_resolution": false
+  },
+  "related_approval_desk_evidence": {
+    "run_id": 31030826038,
+    "head_sha": "67d53a11c54f1fa0715f000f3f18a13b12366d12",
+    "evidence_file": "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json"
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9945,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "complete Tenant Members user administration",
+    "production browser topology latency or high-cardinality approval performance",
+    "directory synchronization SCIM enterprise federation billing audit export privacy public API or SDK",
+    "production recovery SLO capacity signed image deletion or commercial acceptance",
+    "completion of the aggregate P6 enterprise console gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies stale-read fencing for Group, custom-role, and approval lists on the exact Approval Desk implementation at 1382f2032c9f804e3ce702af03b0c3953e13fe9d. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, tests that assert the ledger, or plan documentation does not alter the verified implementation. It deliberately does not prove complete Tenant user management, production operation, the aggregate enterprise console gate, or release GO."
+}

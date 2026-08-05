@@ -515,6 +515,24 @@ suspension/removal, identity connections, Owner transfer, and impact preflight. 
 evidence-successor wheel requires 160 artifacts; eleven aggregate gates and release
 `NO-GO` remain unchanged.
 
+The first evidence-successor run `31031605442` correctly failed on a browser ordering
+race: its initial empty Group GET could resolve after the post-create refresh and
+overwrite the newer render. The corrective implementation does not mask the race with
+a longer timeout or a rerun. It gives Group, custom-role, and approval reads monotonic
+revisions, invalidates them on logout, and binds the approval result to the captured
+actor, Tenant, Space, and selected Project. A deterministic Chromium probe delays a
+completed empty response until after create and verifies that it cannot replace the
+new state.
+
+Exact run `31032344986` at
+`1382f2032c9f804e3ce702af03b0c3953e13fe9d` passes 861 compatibility tests in
+124.91 seconds, a 7.982-second PostgreSQL 16 logical restore, 57 official tests in
+29.62 seconds, the 36/22 Linux matrix in 12.73 seconds, Pyrefly, the
+`p6a000000005` round trip, both patch replays, and the 160-artifact wheel. The
+8-file/449-line/two-patch/0.9945 intrusion result is unchanged. Its evidence-successor
+wheel requires 161 artifacts. This remains evidence under the pending enterprise
+console aggregate; it does not complete Tenant user management or change `NO-GO`.
+
 The official baseline was first advanced from `559504d9` to `d794ef4f` through
 eleven commits and 27 changed files with zero merge conflicts. Exact sync run
 `31011047850` verifies that first current P6-era sync. A second strictly later

@@ -1097,6 +1097,22 @@ does not close that gate, complete Tenant Members management, or change the elev
 pending aggregate gates and release `NO-GO`. The evidence-successor wheel requires
 160 artifacts.
 
+The first evidence-successor run then failed closed on a real browser ordering race:
+an initial empty Group response could arrive after the post-create refresh and erase
+the newer render. The console now assigns monotonically increasing read revisions to
+Group, custom-role, and approval lists; logout invalidates every in-flight revision,
+and role/approval responses must still match the captured actor, Tenant, Space, and
+selected Project. The Chromium test deterministically delays a previously completed
+empty GET until after create and proves that the stale response is discarded.
+
+Exact corrective run `31032344986` at
+`1382f2032c9f804e3ce702af03b0c3953e13fe9d` passes 861 compatibility tests,
+the 57 official regressions, the 36/22 Linux matrix, Pyrefly, migration round trip,
+both patches, the 160-artifact wheel, and the unchanged 8-file/449-line/0.9945
+intrusion result. The evidence-successor wheel now requires 161 artifacts. Eleven
+aggregate gates, complete Tenant Members management, and release `NO-GO` remain
+unchanged.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO

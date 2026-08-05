@@ -691,7 +691,8 @@
             "tests/saas/test_enterprise_access.py",
             "tests/saas/test_enterprise_http.py",
             "tests/saas/test_project_admin_browser.py",
-            "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json"
+            "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json",
+            "saas/acceptance/p6-enterprise-approval-stale-read-ci-31032344986.json"
           ]
         },
         {

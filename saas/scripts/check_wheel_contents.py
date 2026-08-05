@@ -45,6 +45,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p5-webhook-delivery-ci-30980110086.json",
     "saas/acceptance/p6-api-service-account-ci-31002035206.json",
     "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json",
+    "saas/acceptance/p6-enterprise-approval-stale-read-ci-31032344986.json",
     "saas/acceptance/p6-enterprise-access-preflight-ci-31025362985.json",
     "saas/acceptance/p6-enterprise-access-lifecycle-ci-31016011969.json",
     "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json",
