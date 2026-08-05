@@ -47,6 +47,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p6-enterprise-access-lifecycle-ci-31016011969.json",
     "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json",
     "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
+    "saas/acceptance/p6-upstream-sync-ci-31019511803.json",
     "saas/admin_ui/project_admin.css",
     "saas/admin_ui/project_admin.html",
     "saas/admin_ui/project_admin.js",

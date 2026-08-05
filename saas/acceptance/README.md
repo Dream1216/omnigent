@@ -465,11 +465,21 @@ only `p6-enterprise-access-lifecycle-contract`; the evidence-successor wheel req
 federation, billing, complete audit/API/console/privacy capability, production proof,
 all eleven aggregate gates, and release `NO-GO` remain pending.
 
-The official baseline was independently advanced from `559504d9` to `d794ef4f`
-through eleven commits and 27 changed files with zero merge conflicts. Exact sync
-run `31011047850` at `bf71e3404ae0df5766e28aac999eae71b345eee6` passes 852
-compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
-Pyrefly, the `p6a000000002` round trip, both patch replays, the 151-artifact wheel,
-and a 3.15-second PostgreSQL restore. It proves one current P6-era sync only; a
-second later upstream advance and the remaining commercial evidence are still
-required by `p6-two-consecutive-upstream-syncs-and-commercial-gate`.
+The official baseline was first advanced from `559504d9` to `d794ef4f` through
+eleven commits and 27 changed files with zero merge conflicts. Exact sync run
+`31011047850` verifies that first current P6-era sync. A second strictly later
+official advance to `8c191ac0` then merged two commits and five files without a
+conflict. Run `31018890417` correctly failed because several current Runtime and
+production-policy Revision Contracts still named the prior baseline; they were
+advanced together rather than weakening the checks.
+
+Exact corrected run `31019511803` at
+`6121663028d8d5501b1a41f284146ec8ce3b4e40` passes 856 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly, the
+`p6a000000003` round trip, both patch replays, the 155-artifact wheel, and a
+2.923-second PostgreSQL restore. Both exact runs stay within the 8-file/449-line/
+two-patch intrusion budget, satisfying the two-consecutive-sync condition. The
+combined `p6-two-consecutive-upstream-syncs-and-commercial-gate` remains pending
+because pricing, billing reconciliation, customer acceptance, and other commercial
+evidence are absent. The evidence-successor wheel requires 156 artifacts, and the
+release remains `NO-GO`.

@@ -950,19 +950,24 @@ transfer. PostgreSQL uses 52 control-plane forced-RLS tables and an exact
 deletion policies include machine-credential revocation. See
 `saas/production/runbooks/api-credentials.md` for deployment and incident gates.
 
-The reviewed official baseline has also advanced to
-`d794ef4f9f641f5b1f07dd586fae9ecac505a733`. The zero-conflict merge spans eleven
-upstream commits and 27 changed files, including Claude shell-status compatibility,
-the longer idle watchdog, SDK replay redaction, indexed conversation retrieval,
-Host/Web interaction changes, and telemetry-version handling. Both downstream
-patches replay in order with no content mismatch. Exact sync run `31011047850` at
-`bf71e3404ae0df5766e28aac999eae71b345eee6` passes 852 compatibility tests, 57
-official Zygote/query-context regressions, the 36/22 Linux safety matrix, Pyrefly
-with zero errors, the `p6a000000002` round trip, both patch replays, and the
-151-artifact wheel. Its PostgreSQL 16 logical restore completes in 3.15 seconds
-with 56/17 forced-RLS inventories. This is one current P6-era upstream sync, not
-the required second later official advance; the commercial gate and release-level
-decision remain `NO-GO`.
+The reviewed official baseline has advanced through two current P6-era syncs. The
+first zero-conflict sync to `d794ef4f9f641f5b1f07dd586fae9ecac505a733` spans
+eleven commits and 27 changed files and is verified by exact run `31011047850`.
+The second strictly later sync to `8c191ac06b55cde1ce2f299170595975bdd5cd52`
+spans two commits and five files with zero conflicts. Its first run `31018890417`
+failed closed because the Runtime and production-policy Revision Contracts still
+named `d794ef4f`; those contracts were advanced atomically before rerun.
+
+Exact second-sync run `31019511803` at
+`6121663028d8d5501b1a41f284146ec8ce3b4e40` passes 856 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, the `p6a000000003` round trip, both patch replays, and
+the 155-artifact implementation wheel. PostgreSQL 16 logical restore completes in
+2.923 seconds with 56/17 forced-RLS inventories. The two-consecutive-sync condition
+is now satisfied, but pricing, billing reconciliation, customer acceptance, and the
+other production evidence remain missing; the combined commercial gate and release
+decision therefore remain `NO-GO`. The evidence-successor wheel requires 156
+artifacts.
 
 The second P6 slice adds Tenant-owned groups and project-scoped custom roles in
 downstream migration `p6a000000002`. Group membership grants nothing by itself;

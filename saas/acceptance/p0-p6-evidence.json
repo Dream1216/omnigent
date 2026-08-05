@@ -671,7 +671,8 @@
           "id": "p6-two-consecutive-upstream-syncs-and-commercial-gate",
           "status": "pending",
           "evidence": [
-            "saas/acceptance/p6-upstream-sync-ci-31011047850.json"
+            "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
+            "saas/acceptance/p6-upstream-sync-ci-31019511803.json"
           ]
         }
       ]
