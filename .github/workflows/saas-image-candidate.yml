@@ -136,7 +136,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p4b000000001
+            CONTROL_PLANE_SCHEMA_REVISION=p5a000000001
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build server candidate attempt 2
@@ -157,7 +157,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p4b000000001
+            CONTROL_PLANE_SCHEMA_REVISION=p5a000000001
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build host candidate attempt 1
@@ -179,7 +179,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p4b000000001
+            CONTROL_PLANE_SCHEMA_REVISION=p5a000000001
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build host candidate attempt 2
@@ -200,7 +200,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p4b000000001
+            CONTROL_PLANE_SCHEMA_REVISION=p5a000000001
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Compare repeated executable image facts

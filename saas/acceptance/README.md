@@ -245,3 +245,18 @@ the evidence-successor wheel requires 116 artifacts and eleven aggregate gates r
 pending. Production remains `NO-GO`: external workload issuance, CA/HSM, signed
 deployment, NetworkPolicy allowlists, cross-host partitions, two failure domains, and
 N-1 rollback remain independent requirements.
+
+The first P5 candidate implements a durable outbound Webhook delivery contract without
+claiming the P5 production aggregate. Tenant-scoped endpoint metadata stores only Secret
+references and rotation versions. Every delivery attempt resolves all A/AAAA answers,
+rejects the complete target if any answer is non-public, pins one validated IP for the
+TLS connection, verifies the original hostname through SNI, never follows redirects,
+and persists only bounded response metadata. Versioned HMAC signatures retain stable
+Delivery/Event identities across retries and authorized manual DLQ replay. PostgreSQL
+forced RLS separates tenant registration/enqueue from the least-privilege global
+`saas_webhook_dispatcher`; `SKIP LOCKED` leases, immutable event facts, a replay guard,
+and an Outbox audit record cover replica races and operator actions. This subgate remains
+`pending` until an exact implementation revision passes CI. Production DNS policy,
+egress proxy/firewall enforcement, external Secret/KMS operation, receiver conformance,
+capacity/SLO evidence, deletion workflows, and multi-AZ recovery remain independent
+P5 `NO-GO` requirements.

@@ -513,8 +513,19 @@
     },
     {
       "id": "P5",
-      "status": "not_started",
+      "status": "in_progress",
       "gates": [
+        {
+          "id": "p5-signed-webhook-delivery-and-ssrf-contract",
+          "status": "pending",
+          "evidence": [
+            "saas/control_plane/webhook_models.py",
+            "saas/control_plane/webhooks.py",
+            "saas/control_plane/migrations/versions/p5a000000001_webhook_delivery.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_webhook_delivery.py"
+          ]
+        },
         {
           "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",

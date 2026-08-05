@@ -23,6 +23,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_preview_gateway') THEN
         CREATE ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_webhook_dispatcher') THEN
+        CREATE ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
         CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
@@ -36,11 +39,23 @@ ALTER ROLE saas_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
-    saas_secret_broker, saas_preview_gateway, saas_platform;
+    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_platform;
+
+GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
+GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
+GRANT INSERT ON saas_control_plane_outbox TO saas_webhook_dispatcher;
+
+GRANT SELECT, INSERT, UPDATE ON saas_webhook_endpoints TO saas_app;
+GRANT SELECT, INSERT ON saas_webhook_deliveries TO saas_app;
+GRANT SELECT, INSERT, UPDATE ON
+    saas_webhook_endpoints,
+    saas_webhook_deliveries
+TO saas_platform;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_global_users,
