@@ -742,6 +742,15 @@ contains neither, so the structural check passes while production readiness rema
 blocked. CI fixtures, backup-job success, screenshots, and local restores cannot close
 the gate.
 
+Exact implementation run `30983318630` verifies this fail-closed contract at
+`689d364ca809d762cfe1d21232c5f50739cc9be2`: 801 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, and the 36/22 Linux security matrix
+pass; Pyrefly reports zero errors, p5a migrations round trip, the wheel contains 124
+required artifacts, both patches replay, and source intrusion remains 8 files/437
+lines with a 0.9931 isolated-code ratio. The recovery evidence verifier subgate is
+therefore passed, while the actual multi-AZ/PITR/isolated-recovery gate remains
+pending with zero qualifying records and two missing scopes.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

@@ -529,6 +529,17 @@
           ]
         },
         {
+          "id": "p5-recovery-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/production/recovery-policy.json",
+            "saas/production/recovery.py",
+            "saas/scripts/check_recovery_readiness.py",
+            "tests/saas/test_recovery_readiness.py",
+            "saas/acceptance/p5-recovery-evidence-contract-ci-30983318630.json"
+          ]
+        },
+        {
           "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",
           "evidence": []

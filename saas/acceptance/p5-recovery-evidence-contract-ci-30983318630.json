@@ -1,0 +1,94 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30983318630,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30983318630",
+  "job_id": 92232375262,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30983318630/job/92232375262",
+  "head_sha": "689d364ca809d762cfe1d21232c5f50739cc9be2",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "801 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 125.92,
+    "recovery_contract_tests": "6 passed within the combined suite",
+    "official_zygote_and_query_context_regressions": "56 passed",
+    "official_zygote_and_query_context_seconds": 39.92,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.24,
+    "wheel_required_artifacts": 124,
+    "patches_replayed": 2,
+    "migration_head": "p5a000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "policy_contract": {
+    "exact_upstream_adapter_and_schema_revision_required": true,
+    "exact_downstream_product_revision_required_at_promotion": true,
+    "current_tenant_and_cluster_drills_are_both_required": true,
+    "maximum_evidence_age_is_90_days": true,
+    "t0_t1_numeric_rpo_and_rto_and_t2_latest_durable_point_are_enforced": true,
+    "encrypted_deletion_protected_backup_must_be_outside_source_failure_domains": true,
+    "source_must_prove_at_least_two_failure_domains": true
+  },
+  "isolation_and_integrity_contract": {
+    "restore_traffic_remains_disabled_until_validation": true,
+    "shared_restore_environments_are_rejected": true,
+    "account_network_kms_object_prefix_search_index_and_runner_pool_must_all_differ": true,
+    "control_plane_forced_rls_50_and_runtime_forced_rls_17_are_mandatory_checks": true,
+    "cross_tenant_tombstone_revocation_binding_ledger_object_key_and_canary_checks_are_mandatory": true,
+    "canonical_record_sha256_detects_record_mutation": true,
+    "signed_immutable_artifact_and_verified_workflow_identity_are_required": true,
+    "site_reliability_security_and_data_owner_attestations_are_required": true
+  },
+  "fail_closed_evidence_state": {
+    "production_evidence_record_count": 0,
+    "qualified_scope_count": 0,
+    "required_scope_count": 2,
+    "readiness_blocker_count": 2,
+    "structural_status": "pass",
+    "production_readiness": "blocked",
+    "empty_directory_does_not_manufacture_production_proof": true,
+    "ci_local_or_synthetic_records_are_not_accepted_as_production_drills": true
+  },
+  "negative_matrix": {
+    "policy_revision_drift_fails": true,
+    "unsafe_evidence_directory_fails": true,
+    "record_tampering_fails": true,
+    "stale_or_different_release_record_is_blocked": true,
+    "reused_isolation_boundary_is_blocked": true,
+    "rpo_or_rto_overrun_is_blocked": true,
+    "missing_attestation_or_safety_check_is_blocked": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 437,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9931,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a deployed multi-AZ PostgreSQL control plane or automatic failover",
+    "PITR backup creation WAL continuity or restore against a production database",
+    "an isolated production Tenant or cluster restore",
+    "measured production T0 T1 or T2 RPO and RTO",
+    "external KMS object lock backup retention or DSSE signature verification infrastructure",
+    "tombstone revocation ledger and object reconciliation against restored production data",
+    "production canary expansion rollback or regional recovery",
+    "P5 aggregate recovery or production foundation readiness"
+  ],
+  "evidence_successor_policy": "This record verifies the exact fail-closed recovery policy, immutable evidence schema, structural validator, negative matrix, wheel packaging, and compatibility gate. It deliberately records zero production recovery evidence and a blocked readiness result. It does not prove multi-AZ, PITR, isolated production restore, measured RPO/RTO, external immutable storage or signing, or any production recovery. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, or plan documentation does not alter the verified implementation."
+}

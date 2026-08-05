@@ -290,3 +290,10 @@ incomplete safety checks, and RPO/RTO overruns. An empty evidence directory is a
 valid repository state but reports production `blocked`; it cannot be converted to
 `ready` without one current, exact-revision production Tenant drill and one cluster
 drill. This closes no multi-AZ, PITR, or recovery aggregate gate by itself.
+
+Exact Linux/PostgreSQL 16 run `30983318630` at
+`689d364ca809d762cfe1d21232c5f50739cc9be2` passes 801 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 124-artifact wheel check, both patch replays, and intrusion enforcement. It closes
+only the verifier-contract subgate; its own report records zero production evidence,
+zero qualified scopes, and two readiness blockers.
