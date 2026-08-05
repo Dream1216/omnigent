@@ -1181,11 +1181,21 @@ permission, idempotency, and optimistic concurrency checks.
 
 The PostgreSQL logical-restore fixture now contains non-empty facts in all ten billing
 tables and proves post-backup Subscription suspension and mismatch-resolution replay.
-The implementation still does **not** close P6: non-human metering identity, actual Run/
-Provider integration, Pricing-window exclusion, projection rebuild, period rollover,
-Provider webhook ordering/signature/replay, real Provider invoice reconciliation,
-payment/invoice/tax boundaries, production SLO and commercial acceptance remain open.
-See `saas/production/runbooks/billing-ledger.md`; release remains `NO-GO`.
+Pricing creation now serializes by Tenant and rejects overlapping plan windows. A
+content-blind audit compares the mutable Balance projection with immutable ledger
+deltas, and a versioned operator-only repair rebuilds only that projection while
+publishing its Before/After receipt. Exact compatibility run `31055362434` at
+`7f985c1c1aebdff5370500a7175ce151f9a5d5bb` passes 877 tests, a 3.814-second
+PostgreSQL 16 logical restore with 67/17 forced-RLS inventories, 57 official tests,
+the 36/22 Linux matrix, Pyrefly, the `p6a000000008` migration round trip, both patch
+replays, the 173-artifact implementation wheel, and the unchanged 8-file/449-line/
+two-patch intrusion budget. The evidence-successor wheel requires 174 artifacts.
+
+The implementation still does **not** close P6: non-human metering identity, actual
+Run/Provider integration, period rollover, Provider webhook ordering/signature/replay,
+real Provider invoice reconciliation, payment/invoice/tax boundaries, production SLO,
+and commercial acceptance remain open. See
+`saas/production/runbooks/billing-ledger.md`; release remains `NO-GO`.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

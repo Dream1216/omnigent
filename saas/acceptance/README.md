@@ -595,3 +595,32 @@ combined `p6-two-consecutive-upstream-syncs-and-commercial-gate` remains pending
 because pricing, billing reconciliation, customer acceptance, and other commercial
 evidence are absent. The evidence-successor wheel requires 156 artifacts, and the
 release remains `NO-GO`.
+
+The seventh P6 contract slice introduces ten Tenant billing tables at migration
+`p6a000000008`: Subscription, immutable versioned Pricing, scoped Entitlement,
+immutable Usage, a rebuildable Balance projection, Reservation, append-only Customer
+and Provider ledgers, and immutable Reconciliation batches with one-way mismatch
+resolution. Money uses integer minor units and quantities use bounded Decimal values;
+database checks enforce conservation and PostgreSQL triggers reject fact mutation.
+Pricing-window creation is serialized per Tenant, and the Balance projection is
+auditable and version-rebuildable only from immutable ledger deltas.
+
+The dedicated `saas_billing` role has no content, Secret, credential, Run, or Project
+access. The existing `/saas/admin/projects` page gains a content-blind Billing module;
+its Cookie routes expose configuration and inspection but deliberately provide no
+Credit, Reserve, Usage, Settlement, Refund, or Provider-cost ingestion endpoint.
+Exact run `31055362434` at
+`7f985c1c1aebdff5370500a7175ce151f9a5d5bb` passes 877 compatibility tests in
+167.78 seconds, a 3.814-second PostgreSQL 16 logical restore with nonempty rows in all
+ten billing tables and 67/17 forced-RLS inventories, 57 official tests in 41.58
+seconds, the 36/22 Linux matrix in 17.83 seconds, Pyrefly, migration round trip, both
+patch replays, and the 173-artifact implementation wheel. The intrusion result remains
+8 files, 449 lines, two patches, and 0.9951 isolated custom code. The evidence-successor
+wheel requires 174 artifacts.
+
+This evidence is attached to the still-pending
+`p6-billing-ledger-entitlement-quota-subscription` aggregate gate. Non-human metering
+identity, authenticated internal ingestion, real Run/Provider integration, period
+rollover, signed and ordered Provider webhooks, real invoices, payment/tax boundaries,
+production operations, commercial acceptance, all eleven aggregate gates, and release
+`NO-GO` remain open.

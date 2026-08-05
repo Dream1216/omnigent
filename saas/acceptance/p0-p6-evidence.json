@@ -678,7 +678,22 @@
         {
           "id": "p6-billing-ledger-entitlement-quota-subscription",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/control_plane/billing_models.py",
+            "saas/control_plane/billing.py",
+            "saas/control_plane/billing_http.py",
+            "saas/control_plane/migrations/versions/p6a000000008_billing_authority.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/production/postgresql_restore.py",
+            "saas/production/runbooks/billing-ledger.md",
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.js",
+            "tests/saas/test_billing_control_plane.py",
+            "tests/saas/test_billing_http.py",
+            "tests/saas/test_billing_postgresql.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p6-billing-ledger-ci-31055362434.json"
+          ]
         },
         {
           "id": "p6-enterprise-identity-audit-api-platform-console-privacy",
