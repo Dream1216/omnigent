@@ -61,8 +61,18 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_worktree_events",
         "saas_webhook_endpoints",
         "saas_webhook_deliveries",
+        "saas_billing_subscriptions",
+        "saas_pricing_snapshots",
+        "saas_billing_entitlements",
+        "saas_usage_events",
+        "saas_billing_balances",
+        "saas_billing_reservations",
+        "saas_customer_ledger_entries",
+        "saas_provider_cost_entries",
+        "saas_billing_reconciliation_batches",
+        "saas_billing_reconciliation_mismatches",
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 57:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 57 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 67:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 67 tables")

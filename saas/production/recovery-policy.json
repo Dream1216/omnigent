@@ -5,7 +5,7 @@
   "revision_contract": {
     "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p6a000000007"
+    "control_plane_schema_revision": "p6a000000008"
   },
   "evidence_directory": "saas/production/recovery-evidence",
   "max_evidence_age_days": 90,
@@ -32,7 +32,7 @@
     "restore_completed",
     "source_schema_exact",
     "source_revision_exact",
-    "forced_rls_control_plane_56",
+    "forced_rls_control_plane_67",
     "forced_rls_runtime_17",
     "cross_tenant_negative",
     "tombstone_replay",

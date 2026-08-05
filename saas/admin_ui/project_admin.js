@@ -19,11 +19,17 @@
     roles: [],
     approvalInbox: [],
     myPreflights: [],
+    billing: null,
+    billingUsage: [],
+    billingLedger: [],
+    billingReconciliations: [],
+    tenantRole: "",
     groupLoadRevision: 0,
     roleLoadRevision: 0,
     approvalLoadRevision: 0,
     memberLoadRevision: 0,
     invitationLoadRevision: 0,
+    billingLoadRevision: 0,
     view: "projects",
   };
 
@@ -86,6 +92,7 @@
     state.approvalLoadRevision += 1;
     state.memberLoadRevision += 1;
     state.invitationLoadRevision += 1;
+    state.billingLoadRevision += 1;
     state.actorId = "";
     state.csrf = "";
     state.contextSnapshot = "";
@@ -102,6 +109,11 @@
     state.roles = [];
     state.approvalInbox = [];
     state.myPreflights = [];
+    state.billing = null;
+    state.billingUsage = [];
+    state.billingLedger = [];
+    state.billingReconciliations = [];
+    state.tenantRole = "";
     sessionStorage.removeItem("omnigent.saas.csrf");
     loginDeck.hidden = false;
     workspace.hidden = true;
@@ -205,6 +217,253 @@
 
   function formatDate(value) {
     return value ? new Date(value).toLocaleString() : "—";
+  }
+
+  function localDateTime(value) {
+    const date = new Date(value);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function inputIso(selector) {
+    const value = $(selector).value;
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) throw new Error("billing_time_invalid: provide a valid time");
+    return date.toISOString();
+  }
+
+  function setBillingDefaults() {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const queryStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const queryEnd = new Date(now.getTime() + 60 * 60 * 1000);
+    const defaults = {
+      "#billing-period-start": monthStart,
+      "#billing-period-end": monthEnd,
+      "#billing-pricing-effective": now,
+      "#billing-pricing-until": monthEnd,
+      "#billing-entitlement-start": monthStart,
+      "#billing-entitlement-end": monthEnd,
+      "#billing-query-start": queryStart,
+      "#billing-query-end": queryEnd,
+    };
+    Object.entries(defaults).forEach(([selector, value]) => {
+      if (!$(selector).value) $(selector).value = localDateTime(value);
+    });
+  }
+
+  function billingCanManage() {
+    return state.tenantRole === "owner" || state.tenantRole === "billing_admin";
+  }
+
+  function billingEmpty(message) {
+    const empty = document.createElement("div");
+    empty.className = "billing-empty";
+    empty.textContent = message;
+    return empty;
+  }
+
+  function billingRecord({ title, detail, badge, status = "" }) {
+    const row = document.createElement("article");
+    row.className = "billing-record";
+    if (status) row.dataset.status = status;
+    const copy = document.createElement("div");
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const metadata = document.createElement("p");
+    metadata.textContent = detail;
+    const chip = document.createElement("span");
+    chip.textContent = badge;
+    copy.append(heading, metadata);
+    row.append(copy, chip);
+    return row;
+  }
+
+  function renderBillingOverview() {
+    const overview = state.billing || {};
+    const subscription = overview.subscription;
+    const balance = overview.balance;
+    const latest = overview.latest_reconciliation;
+    const stateCard = $("#billing-state");
+    stateCard.dataset.status = subscription?.status || "unconfigured";
+    stateCard.querySelector("strong").textContent = subscription?.status?.toUpperCase() || "UNCONFIGURED";
+    $("#billing-nav-status").textContent = subscription?.status?.toUpperCase() || "—";
+    $("#billing-available").textContent = balance ? String(balance.available_minor) : "—";
+    $("#billing-reserved").textContent = balance ? String(balance.reserved_minor) : "—";
+    $("#billing-consumed").textContent = balance ? String(balance.consumed_minor) : "—";
+    $("#billing-currency").textContent = balance ? `${balance.currency} / MINOR UNITS` : "MINOR UNITS";
+    $("#billing-reconciliation-state").textContent = latest?.status?.toUpperCase() || "NONE";
+    $("#billing-reconciliation-count").textContent = `${latest?.mismatch_count || 0} EXCEPTIONS`;
+
+    if (subscription) {
+      $("#billing-plan-key").value = subscription.plan_key;
+      $("#billing-pricing-plan").value = subscription.plan_key;
+      $("#billing-subscription-status").value = subscription.status;
+      $("#billing-period-start").value = localDateTime(subscription.current_period_start);
+      $("#billing-period-end").value = localDateTime(subscription.current_period_end);
+      $("#billing-provider").value = subscription.provider || "";
+      $("#billing-customer-ref").value = subscription.provider_customer_ref || "";
+      $("#billing-subscription-ref").value = subscription.provider_subscription_ref || "";
+    }
+    document.querySelectorAll("#billing-board form button[type='submit']").forEach((button) => {
+      button.disabled = !billingCanManage();
+      button.title = billingCanManage() ? "" : "当前 Tenant Role 仅允许 billing.read";
+    });
+
+    const entitlementList = $("#billing-entitlement-list");
+    entitlementList.replaceChildren();
+    const entitlements = overview.entitlements || [];
+    if (!entitlements.length) entitlementList.append(billingEmpty("NO ENTITLEMENT FACTS IN THIS TENANT"));
+    entitlements.forEach((value) => {
+      entitlementList.append(
+        billingRecord({
+          title: `${value.scope_type} / ${value.meter}`,
+          detail: `${value.scope_key} · ${value.consumed_quantity} consumed + ${value.reserved_quantity} reserved / ${value.limit_quantity || "unlimited"} ${value.unit} · V${value.version}`,
+          badge: value.status.toUpperCase(),
+          status: value.status,
+        })
+      );
+    });
+  }
+
+  function renderBillingEvidence() {
+    const usageList = $("#billing-usage-list");
+    usageList.replaceChildren();
+    if (!state.billingUsage.length) usageList.append(billingEmpty("NO USAGE FACTS IN SELECTED PERIOD"));
+    state.billingUsage.forEach((value) => {
+      usageList.append(
+        billingRecord({
+          title: value.meter,
+          detail: `${value.quantity} ${value.unit} · ${value.provider}/${value.provider_request_id} · ${formatDate(value.occurred_at)}`,
+          badge: `${value.currency} ${value.customer_charge_minor}`,
+        })
+      );
+    });
+
+    const ledgerList = $("#billing-ledger-list");
+    ledgerList.replaceChildren();
+    if (!state.billingLedger.length) ledgerList.append(billingEmpty("NO CUSTOMER LEDGER MOVEMENTS IN SELECTED PERIOD"));
+    state.billingLedger.forEach((value) => {
+      ledgerList.append(
+        billingRecord({
+          title: value.operation_type,
+          detail: `AVAILABLE ${value.delta_available_minor} · RESERVED ${value.delta_reserved_minor} · CONSUMED ${value.delta_consumed_minor} · ${formatDate(value.occurred_at)}`,
+          badge: `${value.currency} ${value.amount_minor}`,
+        })
+      );
+    });
+  }
+
+  function renderBillingReconciliations() {
+    const list = $("#billing-reconciliation-list");
+    list.replaceChildren();
+    if (!state.billingReconciliations.length) list.append(billingEmpty("NO RECONCILIATION BATCHES"));
+    state.billingReconciliations.forEach((value) => {
+      const row = billingRecord({
+        title: `${value.status} / ${shortId(value.batch_id)}`,
+        detail: `${formatDate(value.period_start)} → ${formatDate(value.period_end)} · usage ${value.usage_event_count} · customer ${value.customer_settled_minor} · provider ${value.provider_cost_minor} · ${value.evidence_sha256}`,
+        badge: `${value.mismatch_count} EXCEPTIONS`,
+        status: value.status,
+      });
+      if (value.mismatch_count) {
+        const inspect = document.createElement("button");
+        inspect.type = "button";
+        inspect.textContent = "INSPECT RECONCILIATION EXCEPTIONS";
+        inspect.addEventListener("click", () => void loadBillingMismatches(value, row));
+        row.append(inspect);
+      }
+      list.append(row);
+    });
+  }
+
+  async function loadBillingMismatches(batch, row) {
+    try {
+      const result = await api(tenantPath(`/billing/reconciliations/${batch.batch_id}/mismatches?limit=100`));
+      row.querySelectorAll(".billing-mismatch").forEach((value) => value.remove());
+      result.items.forEach((value) => {
+        const mismatch = billingRecord({
+          title: value.mismatch_type,
+          detail: `EXPECTED ${value.expected_minor ?? "—"} / ACTUAL ${value.actual_minor ?? "—"} ${value.currency} · ${value.resolution || "unresolved"}`,
+          badge: value.status.toUpperCase(),
+          status: value.status,
+        });
+        mismatch.classList.add("billing-mismatch");
+        if (value.status === "open" && billingCanManage()) {
+          const resolve = document.createElement("button");
+          resolve.type = "button";
+          resolve.textContent = "RESOLVE WITH AUDIT REASON";
+          resolve.addEventListener("click", () => void resolveBillingMismatch(value));
+          mismatch.append(resolve);
+        }
+        row.append(mismatch);
+      });
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function resolveBillingMismatch(value) {
+    const reason = await openActionDialog({
+      title: "解决对账异常",
+      operation: "BILLING RECONCILIATION / RESOLVE",
+      target: value.mismatch_type,
+      version: 1,
+      summary: { expected_minor: value.expected_minor, actual_minor: value.actual_minor, currency: value.currency },
+      confirm: "RESOLVE EXCEPTION",
+      warning: "异常事实不可修改；此操作只追加解决主体、时间与审计原因。",
+    });
+    if (!reason) return;
+    try {
+      await api(tenantPath(`/billing/reconciliation-mismatches/${value.id}/resolve`), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-billing-mismatch-resolve") },
+        body: JSON.stringify({ resolution: reason }),
+      });
+      log(`Billing mismatch ${shortId(value.id)} resolved`, "success");
+      await loadBillingWorkspace();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  }
+
+  async function loadBillingWorkspace() {
+    if (!state.contextSnapshot) return;
+    setBillingDefaults();
+    const revision = ++state.billingLoadRevision;
+    const tenantId = state.tenantId;
+    try {
+      const parameters = new URLSearchParams({
+        period_start: inputIso("#billing-query-start"),
+        period_end: inputIso("#billing-query-end"),
+        limit: "100",
+      });
+      const [overview, reconciliations, usage, ledger] = await Promise.all([
+        api(tenantPath("/billing")),
+        api(tenantPath("/billing/reconciliations?limit=50")),
+        api(tenantPath(`/billing/usage-events?${parameters}`)),
+        api(tenantPath(`/billing/ledger?${parameters}`)),
+      ]);
+      if (revision !== state.billingLoadRevision || tenantId !== state.tenantId) return;
+      state.billing = overview;
+      state.billingReconciliations = reconciliations.items;
+      state.billingUsage = usage.items;
+      state.billingLedger = ledger.items;
+      renderBillingOverview();
+      renderBillingReconciliations();
+      renderBillingEvidence();
+      log(`Loaded Tenant Billing authority for ${shortId(state.tenantId)}`, "success");
+    } catch (error) {
+      if (revision !== state.billingLoadRevision || tenantId !== state.tenantId) return;
+      state.billing = null;
+      state.billingReconciliations = [];
+      state.billingUsage = [];
+      state.billingLedger = [];
+      renderBillingOverview();
+      renderBillingReconciliations();
+      renderBillingEvidence();
+      log(error.message, "error");
+    }
   }
 
   function memberLabel(member) {
@@ -700,16 +959,21 @@
     state.view = view;
     const approvals = view === "approvals";
     const members = view === "members";
+    const billing = view === "billing";
     const projects = view === "projects";
     $("#project-board").hidden = !projects;
     $("#inspector").hidden = !projects;
     $("#member-board").hidden = !members;
     $("#approval-board").hidden = !approvals;
+    $("#billing-board").hidden = !billing;
     $("#view-projects").classList.toggle("active", projects);
     $("#view-members").classList.toggle("active", members);
     $("#view-approvals").classList.toggle("active", approvals);
+    $("#view-billing").classList.toggle("active", billing);
     if (members && options.load !== false) void loadMemberWorkspace();
     if (approvals && options.load !== false) void loadApprovalWorkspace();
+    if (billing) syncBillingEntitlementTarget();
+    if (billing && options.load !== false) void loadBillingWorkspace();
   }
 
   function finishDialog(value) {
@@ -1107,9 +1371,142 @@
   $("#view-projects").addEventListener("click", () => showView("projects"));
   $("#view-members").addEventListener("click", () => showView("members"));
   $("#view-approvals").addEventListener("click", () => showView("approvals"));
+  $("#view-billing").addEventListener("click", () => showView("billing"));
   $("#approval-refresh").addEventListener("click", () => void loadApprovalWorkspace());
+  $("#billing-refresh").addEventListener("click", () => void loadBillingWorkspace());
   $("#invitation-refresh").addEventListener("click", () => void loadInvitations());
   $("#invite-token-dismiss").addEventListener("click", hideOneTimeToken);
+
+  function syncBillingEntitlementTarget() {
+    const scope = $("#billing-entitlement-scope").value;
+    const target = $("#billing-entitlement-target");
+    target.disabled = scope === "tenant" || scope === "space" || scope === "project";
+    if (scope === "tenant") target.value = state.tenantId;
+    if (scope === "space") target.value = state.spaceId;
+    if (scope === "project") target.value = state.selectedProject?.project_id || "SELECT PROJECT";
+    if (scope === "user" || scope === "model") {
+      if ([state.tenantId, state.spaceId, "SELECT PROJECT"].includes(target.value)) target.value = "";
+      target.placeholder = scope === "user" ? "User UUID" : "Provider model key";
+    }
+  }
+
+  $("#billing-entitlement-scope").addEventListener("change", syncBillingEntitlementTarget);
+
+  $("#billing-subscription-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const provider = $("#billing-provider").value.trim();
+    try {
+      const result = await api(tenantPath("/billing/subscription"), {
+        method: "PUT",
+        headers: { "Idempotency-Key": idempotency("ui-billing-subscription") },
+        body: JSON.stringify({
+          plan_key: $("#billing-plan-key").value.trim(),
+          status: $("#billing-subscription-status").value,
+          current_period_start: inputIso("#billing-period-start"),
+          current_period_end: inputIso("#billing-period-end"),
+          provider: provider || null,
+          provider_customer_ref: provider ? $("#billing-customer-ref").value.trim() || null : null,
+          provider_subscription_ref: provider ? $("#billing-subscription-ref").value.trim() || null : null,
+          expected_version: state.billing?.subscription?.version || null,
+        }),
+      });
+      log(`Billing subscription committed at V${result.version}`, "success");
+      await loadBillingWorkspace();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  });
+
+  $("#billing-pricing-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const meter = $("#billing-pricing-meter").value.trim();
+    try {
+      const result = await api(tenantPath("/billing/pricing-snapshots"), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-billing-pricing") },
+        body: JSON.stringify({
+          plan_key: $("#billing-pricing-plan").value.trim(),
+          currency: $("#billing-pricing-currency").value.trim().toUpperCase(),
+          rates: {
+            [meter]: {
+              unit: $("#billing-pricing-unit").value.trim(),
+              unit_size: $("#billing-pricing-unit-size").value.trim(),
+              minor_per_unit: Number($("#billing-pricing-minor").value),
+            },
+          },
+          effective_from: inputIso("#billing-pricing-effective"),
+          effective_until: inputIso("#billing-pricing-until"),
+        }),
+      });
+      log(`Pricing snapshot V${result.version} sealed`, "success");
+      await loadBillingWorkspace();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  });
+
+  $("#billing-entitlement-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const scope = $("#billing-entitlement-scope").value;
+    const target = $("#billing-entitlement-target").value.trim();
+    const meter = $("#billing-entitlement-meter").value.trim();
+    if (scope === "project" && !state.selectedProject) return log("project_required: select a Project", "error");
+    const scopeKey = {
+      tenant: state.tenantId,
+      space: state.spaceId,
+      project: state.selectedProject?.project_id,
+      user: target,
+      model: target,
+    }[scope];
+    const existing = (state.billing?.entitlements || []).find(
+      (value) => value.scope_type === scope && value.scope_key === scopeKey && value.meter === meter
+    );
+    try {
+      const result = await api(tenantPath("/billing/entitlements"), {
+        method: "PUT",
+        headers: { "Idempotency-Key": idempotency("ui-billing-entitlement") },
+        body: JSON.stringify({
+          scope_type: scope,
+          space_id: scope === "space" || scope === "project" ? state.spaceId : null,
+          project_id: scope === "project" ? state.selectedProject.project_id : null,
+          user_id: scope === "user" ? target : null,
+          model_key: scope === "model" ? target : null,
+          meter,
+          unit: $("#billing-entitlement-unit").value.trim(),
+          limit_quantity: $("#billing-entitlement-limit").value.trim() || null,
+          concurrency_limit: $("#billing-entitlement-concurrency").value ? Number($("#billing-entitlement-concurrency").value) : null,
+          hard_limit: true,
+          period: "month",
+          period_start: inputIso("#billing-entitlement-start"),
+          period_end: inputIso("#billing-entitlement-end"),
+          status: "active",
+          expected_version: existing?.version || null,
+        }),
+      });
+      log(`Entitlement ${result.meter} committed at V${result.version}`, "success");
+      await loadBillingWorkspace();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  });
+
+  $("#billing-reconcile-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const result = await api(tenantPath("/billing/reconciliations"), {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotency("ui-billing-reconciliation") },
+        body: JSON.stringify({
+          period_start: inputIso("#billing-query-start"),
+          period_end: inputIso("#billing-query-end"),
+        }),
+      });
+      log(`Billing reconciliation ${shortId(result.batch_id)} finished as ${result.status}`, result.status === "completed" ? "success" : "warning");
+      await loadBillingWorkspace();
+    } catch (error) {
+      log(error.message, "error");
+    }
+  });
 
   $("#member-filter-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1256,6 +1653,12 @@
     if (!selected) return log("scope_not_authorized: select an available scope", "error");
     state.tenantId = selected.tenant_id;
     state.spaceId = selected.space_id;
+    state.tenantRole = selected.tenant_role;
+    state.billing = null;
+    state.billingUsage = [];
+    state.billingLedger = [];
+    state.billingReconciliations = [];
+    state.billingLoadRevision += 1;
     try {
       const context = await api("/context/snapshots", {
         method: "POST",
@@ -1266,6 +1669,10 @@
       await loadProjects();
       if (state.view === "members") await loadMemberWorkspace();
       if (state.view === "approvals") await loadApprovalWorkspace();
+      if (state.view === "billing") {
+        syncBillingEntitlementTarget();
+        await loadBillingWorkspace();
+      }
       document.querySelector(".system-state").classList.add("connected");
       $("#context-state").textContent = `SPACE / ${state.spaceId.slice(0, 8)}`;
       log(`Signed Context Snapshot issued for ${selected.tenant_name} / ${selected.space_name}`, "success");

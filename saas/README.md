@@ -1161,6 +1161,32 @@ immutable digest, verified keyless signature, protected production workflow,
 vulnerability/license admission, digest-pinned canary, or N-1 rollback. It therefore
 does not close the P0 image gate, the P6 aggregate, or release `NO-GO`.
 
+The seventh P6 contract slice advances the downstream schema to
+`p6a000000008` and introduces a dedicated billing authority without modifying official
+Runtime tables. It separates Subscription, immutable Pricing Snapshot, fixed-point
+Entitlement, immutable Usage, rebuildable Balance, Reservation, append-only Customer
+Ledger, append-only Provider Cost Ledger, and immutable Reconciliation facts. Monetary
+amounts use integer minor units and quantities use bounded Decimal values; the database
+enforces Reservation and ledger conservation, immutable-fact triggers, Tenant scope,
+unique external identities, and `ENABLE + FORCE RLS`.
+
+The `saas_billing` role receives the minimum billing and Outbox privileges and read-only
+Tenant/member metadata. It cannot read Prompt, code, Project content, Runs, Secrets, or
+credentials; `saas_app` and `saas_governance` receive no temporary billing-table access.
+The existing `/saas/admin/projects` console gains one content-blind Tenant Billing view
+for Subscription, Pricing, Entitlement, Usage/Ledger inspection, and Reconciliation.
+It deliberately exposes no Credit, Usage, Reserve, Settlement, Refund, or Provider Cost
+ingestion route. Cookie writes retain authenticated actor, Tenant scope, Origin/CSRF,
+permission, idempotency, and optimistic concurrency checks.
+
+The PostgreSQL logical-restore fixture now contains non-empty facts in all ten billing
+tables and proves post-backup Subscription suspension and mismatch-resolution replay.
+The implementation still does **not** close P6: non-human metering identity, actual Run/
+Provider integration, Pricing-window exclusion, projection rebuild, period rollover,
+Provider webhook ordering/signature/replay, real Provider invoice reconciliation,
+payment/invoice/tax boundaries, production SLO and commercial acceptance remain open.
+See `saas/production/runbooks/billing-ledger.md`; release remains `NO-GO`.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO

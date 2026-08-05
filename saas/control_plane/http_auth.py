@@ -42,6 +42,7 @@ from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyC
 
 if TYPE_CHECKING:
     from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.control_plane.billing import BillingControlPlane
     from saas.control_plane.bindings import RuntimeBindingService
     from saas.control_plane.enterprise_access import EnterpriseAccessService
     from saas.control_plane.member_admin import TenantMemberAdministrationService
@@ -1123,6 +1124,7 @@ def create_saas_http_integration(
     enterprise_access: EnterpriseAccessService | None = None,
     member_admin: TenantMemberAdministrationService | None = None,
     member_lifecycle: MembershipLifecycleService | None = None,
+    billing: BillingControlPlane | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1174,6 +1176,12 @@ def create_saas_http_integration(
                 members=member_admin,
                 invitation_acceptance=lifecycle,
             )
+        )
+    if billing is not None:
+        from saas.control_plane.billing_http import create_billing_admin_router
+
+        router.include_router(
+            create_billing_admin_router(auth_provider=auth_provider, billing=billing)
         )
     public_api_router = None
     if api_credentials is not None:

@@ -51,6 +51,16 @@ _SELECTED_HASH_TABLES = (
     "saas_enterprise_custom_roles",
     "saas_enterprise_group_role_assignments",
     "saas_enterprise_access_preflights",
+    "saas_billing_subscriptions",
+    "saas_pricing_snapshots",
+    "saas_billing_entitlements",
+    "saas_usage_events",
+    "saas_billing_balances",
+    "saas_billing_reservations",
+    "saas_customer_ledger_entries",
+    "saas_provider_cost_entries",
+    "saas_billing_reconciliation_batches",
+    "saas_billing_reconciliation_mismatches",
     "saas_control_plane_outbox",
 )
 
@@ -201,6 +211,26 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "service_account_b": "70000000-0000-4000-8000-000000000002",
         "api_credential_a": "80000000-0000-4000-8000-000000000001",
         "api_credential_b": "80000000-0000-4000-8000-000000000002",
+        "billing_subscription_a": "a0000000-0000-4000-8000-000000000001",
+        "billing_subscription_b": "a0000000-0000-4000-8000-000000000002",
+        "pricing_snapshot_a": "a1000000-0000-4000-8000-000000000001",
+        "pricing_snapshot_b": "a1000000-0000-4000-8000-000000000002",
+        "billing_entitlement_a": "a2000000-0000-4000-8000-000000000001",
+        "billing_entitlement_b": "a2000000-0000-4000-8000-000000000002",
+        "usage_event_a": "a3000000-0000-4000-8000-000000000001",
+        "usage_event_b": "a3000000-0000-4000-8000-000000000002",
+        "billing_reservation_a": "a4000000-0000-4000-8000-000000000001",
+        "billing_reservation_b": "a4000000-0000-4000-8000-000000000002",
+        "customer_credit_a": "a5000000-0000-4000-8000-000000000001",
+        "customer_credit_b": "a5000000-0000-4000-8000-000000000002",
+        "customer_reserve_a": "a5000000-0000-4000-8000-000000000003",
+        "customer_reserve_b": "a5000000-0000-4000-8000-000000000004",
+        "provider_cost_a": "a6000000-0000-4000-8000-000000000001",
+        "provider_cost_b": "a6000000-0000-4000-8000-000000000002",
+        "billing_reconciliation_a": "a7000000-0000-4000-8000-000000000001",
+        "billing_reconciliation_b": "a7000000-0000-4000-8000-000000000002",
+        "billing_mismatch_a": "a8000000-0000-4000-8000-000000000001",
+        "billing_mismatch_b": "a8000000-0000-4000-8000-000000000002",
         "outbox_seed": "60000000-0000-4000-8000-000000000001",
         "outbox_replay": "60000000-0000-4000-8000-000000000002",
         "workspace_a": 11001,
@@ -411,6 +441,158 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_billing_subscriptions "
+                    "(id, tenant_id, plan_key, status, current_period_start, "
+                    "current_period_end, cancel_at_period_end, version, updated_by) VALUES "
+                    "(:billing_subscription_a, :tenant_a, 'recovery-v1', 'active', now(), "
+                    "now() + interval '30 days', false, 1, :actor_a), "
+                    "(:billing_subscription_b, :tenant_b, 'recovery-v1', 'active', now(), "
+                    "now() + interval '30 days', false, 1, :actor_b)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_pricing_snapshots "
+                    "(id, tenant_id, plan_key, currency, rates, version, effective_from, "
+                    "created_by) VALUES "
+                    "(:pricing_snapshot_a, :tenant_a, 'recovery-v1', 'USD', "
+                    "CAST(:rates AS jsonb), 1, now(), :actor_a), "
+                    "(:pricing_snapshot_b, :tenant_b, 'recovery-v1', 'USD', "
+                    "CAST(:rates AS jsonb), 1, now(), :actor_b)"
+                ),
+                {
+                    **identifiers,
+                    "rates": json.dumps(
+                        {
+                            "llm.input_tokens": {
+                                "unit": "tokens",
+                                "unit_size": "1",
+                                "minor_per_unit": 25,
+                            }
+                        }
+                    ),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_entitlements "
+                    "(id, tenant_id, subscription_id, scope_type, scope_key, meter, unit, "
+                    "limit_quantity, reserved_quantity, consumed_quantity, concurrency_limit, "
+                    "active_reservations, hard_limit, period, period_start, period_end, status, "
+                    "version, updated_by) VALUES "
+                    "(:billing_entitlement_a, :tenant_a, :billing_subscription_a, 'tenant', "
+                    ":scope_key_a, 'llm.input_tokens', 'tokens', 100, 1, 0, 2, 1, "
+                    "true, 'month', now(), now() + interval '30 days', 'active', 1, :actor_a), "
+                    "(:billing_entitlement_b, :tenant_b, :billing_subscription_b, 'tenant', "
+                    ":scope_key_b, 'llm.input_tokens', 'tokens', 100, 1, 0, 2, 1, "
+                    "true, 'month', now(), now() + interval '30 days', 'active', 1, :actor_b)"
+                ),
+                {
+                    **identifiers,
+                    "scope_key_a": str(identifiers["tenant_a"]),
+                    "scope_key_b": str(identifiers["tenant_b"]),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_usage_events "
+                    "(id, tenant_id, meter, quantity, unit, provider, provider_request_id, "
+                    "idempotency_key, pricing_snapshot_id, currency, customer_charge_minor, "
+                    "attributes, occurred_at) VALUES "
+                    "(:usage_event_a, :tenant_a, 'llm.input_tokens', 1, 'tokens', 'recovery', "
+                    "'recovery-request-a', 'recovery-usage-a', :pricing_snapshot_a, 'USD', 25, "
+                    "CAST(:attributes AS jsonb), now()), "
+                    "(:usage_event_b, :tenant_b, 'llm.input_tokens', 1, 'tokens', 'recovery', "
+                    "'recovery-request-b', 'recovery-usage-b', :pricing_snapshot_b, 'USD', 25, "
+                    "CAST(:attributes AS jsonb), now())"
+                ),
+                {**identifiers, "attributes": json.dumps({"model": "recovery-model"})},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_balances "
+                    "(tenant_id, currency, available_minor, reserved_minor, consumed_minor, "
+                    "version) VALUES (:tenant_a, 'USD', 90, 10, 0, 1), "
+                    "(:tenant_b, 'USD', 90, 10, 0, 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_reservations "
+                    "(id, tenant_id, entitlement_id, operation_key, meter, unit, "
+                    "reserved_quantity, settled_quantity, reserved_minor, settled_minor, "
+                    "released_minor, refunded_minor, currency, status, version, created_by) "
+                    "VALUES (:billing_reservation_a, :tenant_a, :billing_entitlement_a, "
+                    "'recovery-run-a', 'llm.input_tokens', 'tokens', 1, 0, 10, 0, 0, 0, "
+                    "'USD', 'reserved', 1, :actor_a), "
+                    "(:billing_reservation_b, :tenant_b, :billing_entitlement_b, "
+                    "'recovery-run-b', 'llm.input_tokens', 'tokens', 1, 0, 10, 0, 0, 0, "
+                    "'USD', 'reserved', 1, :actor_b)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_customer_ledger_entries "
+                    "(id, tenant_id, reservation_id, operation_type, amount_minor, "
+                    "delta_available_minor, delta_reserved_minor, delta_consumed_minor, "
+                    "currency, idempotency_key, request_hash, created_by, occurred_at) VALUES "
+                    "(:customer_credit_a, :tenant_a, NULL, 'credit', 100, 100, 0, 0, 'USD', "
+                    "'recovery-credit-a', :credit_hash, :actor_a, now()), "
+                    "(:customer_reserve_a, :tenant_a, :billing_reservation_a, 'reserve', 10, "
+                    "-10, 10, 0, 'USD', 'recovery-reserve-a', :reserve_hash, :actor_a, now()), "
+                    "(:customer_credit_b, :tenant_b, NULL, 'credit', 100, 100, 0, 0, 'USD', "
+                    "'recovery-credit-b', :credit_hash, :actor_b, now()), "
+                    "(:customer_reserve_b, :tenant_b, :billing_reservation_b, 'reserve', 10, "
+                    "-10, 10, 0, 'USD', 'recovery-reserve-b', :reserve_hash, :actor_b, now())"
+                ),
+                {**identifiers, "credit_hash": "1" * 64, "reserve_hash": "2" * 64},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_provider_cost_entries "
+                    "(id, tenant_id, usage_event_id, provider, provider_receipt_id, kind, "
+                    "amount_minor, currency, idempotency_key, request_hash, recorded_by, "
+                    "occurred_at) VALUES "
+                    "(:provider_cost_a, :tenant_a, :usage_event_a, 'recovery', "
+                    "'recovery-receipt-a', 'final', 5, 'USD', 'recovery-cost-a', :cost_hash, "
+                    ":actor_a, now()), "
+                    "(:provider_cost_b, :tenant_b, :usage_event_b, 'recovery', "
+                    "'recovery-receipt-b', 'final', 5, 'USD', 'recovery-cost-b', :cost_hash, "
+                    ":actor_b, now())"
+                ),
+                {**identifiers, "cost_hash": "3" * 64},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_reconciliation_batches "
+                    "(id, tenant_id, period_start, period_end, status, usage_event_count, "
+                    "customer_settlement_count, provider_cost_count, customer_charge_minor, "
+                    "customer_settled_minor, provider_cost_minor, mismatch_count, "
+                    "evidence_sha256, created_by) VALUES "
+                    "(:billing_reconciliation_a, :tenant_a, now() - interval '1 day', now(), "
+                    "'exception', 1, 0, 1, 25, 0, 5, 1, :evidence_hash, :actor_a), "
+                    "(:billing_reconciliation_b, :tenant_b, now() - interval '1 day', now(), "
+                    "'exception', 1, 0, 1, 25, 0, 5, 1, :evidence_hash, :actor_b)"
+                ),
+                {**identifiers, "evidence_hash": "4" * 64},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_reconciliation_mismatches "
+                    "(id, tenant_id, batch_id, usage_event_id, mismatch_type, expected_minor, "
+                    "actual_minor, currency, status) VALUES "
+                    "(:billing_mismatch_a, :tenant_a, :billing_reconciliation_a, "
+                    ":usage_event_a, 'missing_customer_settlement', 25, NULL, 'USD', 'open'), "
+                    "(:billing_mismatch_b, :tenant_b, :billing_reconciliation_b, "
+                    ":usage_event_b, 'missing_customer_settlement', 25, NULL, 'USD', 'open')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_control_plane_outbox "
                     "(id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
                     "idempotency_key, request_hash, attempt_count, available_at) VALUES "
@@ -470,6 +652,22 @@ def _apply_post_backup_replay(
                 sa.text(
                     "UPDATE saas_api_credentials SET status = 'revoked', "
                     "revoked_at = :replay_at WHERE id = :api_credential_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_billing_subscriptions SET status = 'suspended', version = 2, "
+                    "updated_at = :replay_at WHERE id = :billing_subscription_b"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_billing_reconciliation_mismatches "
+                    "SET status = 'resolved', resolution = 'recovery replay verified', "
+                    "resolved_by = :actor_b, resolved_at = :replay_at "
+                    "WHERE id = :billing_mismatch_b"
                 ),
                 replay_parameters,
             )
@@ -635,7 +833,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000007":
+            if saas_head != "p6a000000008":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -758,6 +956,35 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "post-backup enterprise approval replay is incomplete"
                 )
+            billing_replay = connection.execute(
+                sa.text(
+                    "SELECT subscription.status, subscription.version, mismatch.status, "
+                    "mismatch.resolution, mismatch.resolved_by::text, "
+                    "mismatch.resolved_at IS NOT NULL, balance.available_minor, "
+                    "balance.reserved_minor "
+                    "FROM saas_billing_subscriptions subscription "
+                    "JOIN saas_billing_reconciliation_mismatches mismatch "
+                    "ON mismatch.tenant_id = subscription.tenant_id "
+                    "JOIN saas_billing_balances balance "
+                    "ON balance.tenant_id = subscription.tenant_id "
+                    "WHERE subscription.id = :billing_subscription_b "
+                    "AND mismatch.id = :billing_mismatch_b"
+                ),
+                identifiers,
+            ).one()
+            if tuple(billing_replay) != (
+                "suspended",
+                2,
+                "resolved",
+                "recovery replay verified",
+                identifiers["actor_b"],
+                True,
+                90,
+                10,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "post-backup billing authority replay is incomplete"
+                )
         return {
             "saas_migration_head": saas_head,
             "official_migration_heads": official_heads,
@@ -768,6 +995,7 @@ def _verify_restored_database(
             "post_backup_revocation_and_deletion_marker_replay": "passed",
             "post_backup_enterprise_lifecycle_replay": "passed",
             "post_backup_enterprise_approval_replay": "passed",
+            "post_backup_billing_authority_replay": "passed",
         }
     finally:
         engine.dispose()
@@ -952,9 +1180,9 @@ def run_logical_restore_contract(
             "evidence_kind": "ci_contract_not_production_drill",
             "product_revision": product_revision,
             "upstream_revision": str(
-                json.loads(
-                    (repo / "saas/upstream-baseline.json").read_text(encoding="utf-8")
-                )["upstream_revision"]
+                json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))[
+                    "upstream_revision"
+                ]
             ),
             "started_at": started.isoformat(),
             "completed_at": completed.isoformat(),

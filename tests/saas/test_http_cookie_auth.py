@@ -6,13 +6,13 @@ import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from saas.compatibility import current_runtime_context
 from saas.control_plane import (
     MEMBER_ADMIN_ROUTE_PERMISSIONS,
     PERMISSION_CATALOG,
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
+    BillingControlPlane,
     ContextSnapshotPolicy,
     ContextSnapshotService,
     EnterpriseAccessService,
@@ -48,12 +48,27 @@ class _NoRemovalImpact:
 
 def _build_fastapi_app(
     trusted_origin: str = "http://testserver",
+    database_url: str | None = None,
 ) -> tuple[FastAPI, dict[str, str]]:
-    engine = sa.create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    database = database_url or (
+        f"sqlite+pysqlite:///file:omnigent-http-{uuid4().hex}?mode=memory&cache=shared&uri=true"
     )
+    engine = sa.create_engine(
+        database,
+        connect_args={"check_same_thread": False},
+    )
+
+    @sa.event.listens_for(engine, "connect")
+    def _sqlite_connection(dbapi_connection: object, _record: object) -> None:
+        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            if "mode=memory" not in database:
+                cursor.execute("PRAGMA journal_mode=WAL")
+        finally:
+            cursor.close()
+
     SaasBase.metadata.create_all(engine)
     sessions = sessionmaker(engine, expire_on_commit=False)
     lifecycle = MembershipLifecycleService(sessions)
@@ -122,24 +137,25 @@ def _build_fastapi_app(
 
     tenant_id, space_id, placement_id, partition_id = uuid4(), uuid4(), uuid4(), uuid4()
     with sessions.begin() as db:
-        db.add_all(
-            [
-                Tenant(
-                    id=tenant_id,
-                    slug="http-tenant",
-                    name="HTTP Tenant",
-                    status="active",
-                    plan="team",
-                    home_region="cn-east-1",
-                ),
-                Space(
-                    id=space_id,
-                    tenant_id=tenant_id,
-                    slug="engineering",
-                    name="Engineering",
-                    status="active",
-                ),
-            ]
+        db.add(
+            Tenant(
+                id=tenant_id,
+                slug="http-tenant",
+                name="HTTP Tenant",
+                status="active",
+                plan="team",
+                home_region="cn-east-1",
+            )
+        )
+        db.flush()
+        db.add(
+            Space(
+                id=space_id,
+                tenant_id=tenant_id,
+                slug="engineering",
+                name="Engineering",
+                status="active",
+            )
         )
         db.flush()
         db.add(
@@ -279,6 +295,7 @@ def _build_fastapi_app(
         project_authorizer=project_authorizer,
         runtime_bindings=runtime_bindings,
         enterprise_access=EnterpriseAccessService(sessions, project_authorizer),
+        billing=BillingControlPlane(sessions),
         member_admin=TenantMemberAdministrationService(sessions),
         member_lifecycle=lifecycle,
         context_snapshots=ContextSnapshotService(
@@ -293,6 +310,7 @@ def _build_fastapi_app(
     )
     auth = integration.auth_provider
     app = FastAPI()
+    app.state.saas_test_engine = engine
     router, prefix, tags = integration.extra_router
     app.include_router(router, prefix=prefix, tags=tags)
 

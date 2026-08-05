@@ -26,6 +26,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_webhook_dispatcher') THEN
         CREATE ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_billing') THEN
+        CREATE ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
         CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
@@ -40,11 +43,13 @@ ALTER ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
-    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_platform;
+    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
+    saas_platform;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
@@ -293,6 +298,48 @@ GRANT SELECT, UPDATE ON saas_preview_leases TO saas_preview_gateway;
 
 GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
 
+-- Billing owns commercial state but never customer prompts, code, secrets, or
+-- runtime workspace content. Immutable facts have INSERT and SELECT only.
+-- Revoke first so reapplying this file also removes stale grants from an older
+-- deployment rather than only adding the current posture.
+REVOKE ALL PRIVILEGES ON
+    saas_billing_subscriptions,
+    saas_pricing_snapshots,
+    saas_billing_entitlements,
+    saas_usage_events,
+    saas_billing_balances,
+    saas_billing_reservations,
+    saas_customer_ledger_entries,
+    saas_provider_cost_entries,
+    saas_billing_reconciliation_batches,
+    saas_billing_reconciliation_mismatches
+FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
+    saas_executor, saas_secret_broker, saas_preview_gateway,
+    saas_webhook_dispatcher, saas_billing, saas_platform;
+
+GRANT SELECT, INSERT, UPDATE ON
+    saas_billing_subscriptions,
+    saas_billing_entitlements,
+    saas_billing_balances,
+    saas_billing_reservations,
+    saas_billing_reconciliation_mismatches
+TO saas_billing;
+
+GRANT SELECT, INSERT ON
+    saas_pricing_snapshots,
+    saas_usage_events,
+    saas_customer_ledger_entries,
+    saas_provider_cost_entries,
+    saas_billing_reconciliation_batches,
+    saas_control_plane_outbox
+TO saas_billing;
+
+GRANT SELECT ON
+    saas_global_users,
+    saas_tenants,
+    saas_tenant_memberships
+TO saas_billing;
+
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_global_users,
     saas_identity_connections,
@@ -350,5 +397,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_run_isolation_grants,
     saas_secret_access_leases,
     saas_preview_leases,
+    saas_billing_subscriptions,
+    saas_pricing_snapshots,
+    saas_billing_entitlements,
+    saas_usage_events,
+    saas_billing_balances,
+    saas_billing_reservations,
+    saas_customer_ledger_entries,
+    saas_provider_cost_entries,
+    saas_billing_reconciliation_batches,
+    saas_billing_reconciliation_mismatches,
     saas_control_plane_outbox
 TO saas_platform;

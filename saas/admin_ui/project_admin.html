@@ -58,7 +58,7 @@
                 <option value="">等待服务端解析作用域…</option>
               </select>
             </label>
-            <button class="scope-button" data-testid="scope-connect" type="submit">
+            <button class="scope-button" data-testid="scope-connect" id="scope-connect" type="submit">
               ISSUE SIGNED CONTEXT
             </button>
           </form>
@@ -77,6 +77,9 @@
             </button>
             <button data-testid="view-approvals" id="view-approvals" type="button">
               <span>04</span> APPROVAL DESK <strong id="approval-nav-count">00</strong>
+            </button>
+            <button data-testid="view-billing" id="view-billing" type="button">
+              <span>05</span> TENANT BILLING <strong id="billing-nav-status">—</strong>
             </button>
           </nav>
         </aside>
@@ -259,6 +262,94 @@
               <div class="queue-heading"><div><span class="request-mark">→</span><h2>MY REQUESTS</h2></div></div>
               <p class="queue-copy">批准后仅原始发起人可以按同一原因、版本与快照执行。</p>
               <div class="approval-list" data-testid="my-preflights" id="my-preflights"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="billing-board" data-testid="billing-board" id="billing-board" hidden>
+          <div class="billing-heading">
+            <div>
+              <p class="eyebrow">05 / COMMERCIAL AUTHORITY</p>
+              <h1>计费账本</h1>
+              <p>价格快照、权益额度、客户账本与供应商成本相互独立。后台只读取计量元数据，不提供 Usage、Credit、Reserve、Settlement 或 Refund 的人工写入口。</p>
+            </div>
+            <div class="billing-state" data-testid="billing-state" id="billing-state" data-status="unconfigured">
+              <span>SUBSCRIPTION</span><strong>UNCONFIGURED</strong><small>billing.read</small>
+            </div>
+          </div>
+
+          <div class="billing-metrics" aria-label="计费账户摘要">
+            <article><span>AVAILABLE</span><strong data-testid="billing-available" id="billing-available">—</strong><small id="billing-currency">MINOR UNITS</small></article>
+            <article><span>RESERVED</span><strong data-testid="billing-reserved" id="billing-reserved">—</strong><small>ACTIVE HOLDS</small></article>
+            <article><span>CONSUMED</span><strong data-testid="billing-consumed" id="billing-consumed">—</strong><small>CUSTOMER LEDGER</small></article>
+            <article><span>RECONCILIATION</span><strong data-testid="billing-reconciliation-state" id="billing-reconciliation-state">NONE</strong><small id="billing-reconciliation-count">0 EXCEPTIONS</small></article>
+          </div>
+
+          <div class="billing-control-grid">
+            <section class="billing-module">
+              <div class="module-heading"><div><span>01</span><h2>SUBSCRIPTION</h2></div><small>billing.manage</small></div>
+              <form class="billing-form" id="billing-subscription-form">
+                <label><span>Plan Key</span><input data-testid="billing-plan-key" id="billing-plan-key" maxlength="128" required></label>
+                <label><span>Status</span><select data-testid="billing-subscription-status" id="billing-subscription-status"><option value="trialing">TRIALING</option><option value="active">ACTIVE</option><option value="past_due">PAST DUE</option><option value="suspended">SUSPENDED</option><option value="canceled">CANCELED</option></select></label>
+                <label><span>Period Start</span><input data-testid="billing-period-start" id="billing-period-start" type="datetime-local" required></label>
+                <label><span>Period End</span><input data-testid="billing-period-end" id="billing-period-end" type="datetime-local" required></label>
+                <label><span>Provider / Optional</span><input id="billing-provider" maxlength="64" placeholder="stripe"></label>
+                <label><span>Customer Ref / Optional</span><input id="billing-customer-ref" maxlength="256"></label>
+                <label><span>Subscription Ref / Optional</span><input id="billing-subscription-ref" maxlength="256"></label>
+                <button data-testid="billing-subscription-save" type="submit">COMMIT SUBSCRIPTION ↗</button>
+              </form>
+            </section>
+
+            <section class="billing-module pricing-module">
+              <div class="module-heading"><div><span>02</span><h2>PRICING SNAPSHOT</h2></div><small>APPEND ONLY</small></div>
+              <form class="billing-form" id="billing-pricing-form">
+                <label><span>Plan Key</span><input data-testid="billing-pricing-plan" id="billing-pricing-plan" maxlength="128" required></label>
+                <label><span>Currency</span><input data-testid="billing-pricing-currency" id="billing-pricing-currency" value="USD" minlength="3" maxlength="3" required></label>
+                <label><span>Meter</span><input data-testid="billing-pricing-meter" id="billing-pricing-meter" value="llm.input_tokens" maxlength="128" required></label>
+                <label><span>Unit</span><input data-testid="billing-pricing-unit" id="billing-pricing-unit" value="tokens" maxlength="64" required></label>
+                <label><span>Unit Size</span><input data-testid="billing-pricing-unit-size" id="billing-pricing-unit-size" value="1000" inputmode="decimal" required></label>
+                <label><span>Minor / Unit</span><input data-testid="billing-pricing-minor" id="billing-pricing-minor" type="number" min="1" step="1" value="25" required></label>
+                <label><span>Effective From</span><input data-testid="billing-pricing-effective" id="billing-pricing-effective" type="datetime-local" required></label>
+                <label><span>Effective Until</span><input data-testid="billing-pricing-until" id="billing-pricing-until" type="datetime-local" required></label>
+                <button data-testid="billing-pricing-create" type="submit">SEAL PRICE VERSION +</button>
+              </form>
+            </section>
+
+            <section class="billing-module entitlement-module">
+              <div class="module-heading"><div><span>03</span><h2>ENTITLEMENT</h2></div><small>FIXED-POINT QUOTA</small></div>
+              <form class="billing-form" id="billing-entitlement-form">
+                <label><span>Scope</span><select data-testid="billing-entitlement-scope" id="billing-entitlement-scope"><option value="tenant">TENANT</option><option value="space">CURRENT SPACE</option><option value="project">SELECTED PROJECT</option><option value="user">USER</option><option value="model">MODEL</option></select></label>
+                <label><span>Scope Target</span><input data-testid="billing-entitlement-target" id="billing-entitlement-target" maxlength="256" placeholder="自动绑定当前作用域" disabled></label>
+                <label><span>Meter</span><input data-testid="billing-entitlement-meter" id="billing-entitlement-meter" value="llm.input_tokens" maxlength="128" required></label>
+                <label><span>Unit</span><input data-testid="billing-entitlement-unit" id="billing-entitlement-unit" value="tokens" maxlength="64" required></label>
+                <label><span>Limit Quantity</span><input data-testid="billing-entitlement-limit" id="billing-entitlement-limit" inputmode="decimal" value="100000" required></label>
+                <label><span>Concurrency</span><input data-testid="billing-entitlement-concurrency" id="billing-entitlement-concurrency" type="number" min="1" step="1" value="2"></label>
+                <label><span>Period Start</span><input data-testid="billing-entitlement-start" id="billing-entitlement-start" type="datetime-local" required></label>
+                <label><span>Period End</span><input data-testid="billing-entitlement-end" id="billing-entitlement-end" type="datetime-local" required></label>
+                <button data-testid="billing-entitlement-save" type="submit">SET ENTITLEMENT ↗</button>
+              </form>
+              <div class="billing-record-list" data-testid="billing-entitlement-list" id="billing-entitlement-list"></div>
+            </section>
+
+            <section class="billing-module reconciliation-module">
+              <div class="module-heading"><div><span>04</span><h2>RECONCILIATION</h2></div><button class="refresh-button" data-testid="billing-refresh" id="billing-refresh" type="button">REFRESH ↻</button></div>
+              <form class="billing-reconcile-form" id="billing-reconcile-form">
+                <label><span>From</span><input data-testid="billing-query-start" id="billing-query-start" type="datetime-local" required></label>
+                <label><span>Until</span><input data-testid="billing-query-end" id="billing-query-end" type="datetime-local" required></label>
+                <button data-testid="billing-reconcile" type="submit">RECONCILE PERIOD</button>
+              </form>
+              <div class="billing-record-list" data-testid="billing-reconciliation-list" id="billing-reconciliation-list"></div>
+            </section>
+          </div>
+
+          <div class="billing-evidence-grid">
+            <section class="billing-module">
+              <div class="module-heading"><div><span>05</span><h2>USAGE FACTS</h2></div><small>CONTENT BLIND</small></div>
+              <div class="billing-record-list" data-testid="billing-usage-list" id="billing-usage-list"></div>
+            </section>
+            <section class="billing-module ledger-module">
+              <div class="module-heading"><div><span>06</span><h2>CUSTOMER LEDGER</h2></div><small>APPEND ONLY</small></div>
+              <div class="billing-record-list" data-testid="billing-ledger-list" id="billing-ledger-list"></div>
             </section>
           </div>
         </section>

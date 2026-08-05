@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -20,14 +21,15 @@ class BrowserFixture:
 
 
 @pytest.fixture
-def project_admin_server() -> Iterator[BrowserFixture]:
+def project_admin_server(tmp_path: Path) -> Iterator[BrowserFixture]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", 0))
     sock.listen(128)
     port = sock.getsockname()[1]
     origin = f"http://127.0.0.1:{port}"
-    app, scope = _build_fastapi_app(origin)
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'project-admin.sqlite3'}"
+    app, scope = _build_fastapi_app(origin, database_url)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(
         target=server.run,
@@ -49,6 +51,7 @@ def project_admin_server() -> Iterator[BrowserFixture]:
         server.should_exit = True
         thread.join(timeout=10)
         sock.close()
+        app.state.saas_test_engine.dispose()
 
 
 def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
@@ -396,4 +399,61 @@ def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
     page.get_by_test_id("tenant-owner-transfer").click()
     _confirm_dialog(page, "rotate Tenant ownership to the primary administrator")
     expect(page.get_by_test_id("login-submit")).to_be_visible()
+    assert browser_errors == [], failed_responses
+
+
+def test_real_browser_tenant_billing_configures_authority_and_keeps_admin_read_only(
+    page: Page,
+    project_admin_server: BrowserFixture,
+) -> None:
+    fixture = project_admin_server
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(f"{fixture.origin}/saas/admin/projects")
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+
+    page.get_by_test_id("view-billing").click()
+    expect(page.get_by_test_id("billing-board")).to_be_visible()
+    expect(page.get_by_test_id("billing-state")).to_contain_text("UNCONFIGURED")
+    page.get_by_test_id("billing-plan-key").fill("browser-team-v1")
+    page.get_by_test_id("billing-subscription-status").select_option("active")
+    page.get_by_test_id("billing-subscription-save").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Billing subscription committed")
+    expect(page.get_by_test_id("billing-state")).to_contain_text("ACTIVE")
+    expect(page.get_by_test_id("billing-pricing-plan")).to_have_value("browser-team-v1")
+
+    page.get_by_test_id("billing-pricing-create").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Pricing snapshot V1 sealed")
+    page.get_by_test_id("billing-entitlement-save").click()
+    expect(page.get_by_test_id("billing-entitlement-list")).to_contain_text("llm.input_tokens")
+    expect(page.get_by_test_id("billing-entitlement-list")).to_contain_text("100000")
+
+    page.get_by_test_id("billing-reconcile").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Billing reconciliation")
+    expect(page.get_by_test_id("billing-reconciliation-list")).to_contain_text("completed")
+    expect(page.get_by_test_id("billing-reconciliation-state")).to_have_text("COMPLETED")
+    expect(page.get_by_test_id("billing-usage-list")).to_contain_text("NO USAGE FACTS")
+    expect(page.get_by_test_id("billing-ledger-list")).to_contain_text("NO CUSTOMER LEDGER")
+
+    page.locator("#logout-button").click()
+    _login_and_connect(page, "member@example.com", "initial-member-password")
+    page.get_by_test_id("view-billing").click()
+    expect(page.get_by_test_id("billing-state")).to_contain_text("ACTIVE")
+    expect(page.get_by_test_id("billing-subscription-save")).to_be_disabled()
+    expect(page.get_by_test_id("billing-pricing-create")).to_be_disabled()
+    expect(page.get_by_test_id("billing-entitlement-save")).to_be_disabled()
+    expect(page.get_by_test_id("billing-reconcile")).to_be_disabled()
     assert browser_errors == [], failed_responses
