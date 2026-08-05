@@ -775,6 +775,20 @@ replay, and source intrusion remains 8 files/443 lines with a 0.9931 isolated-co
 ratio. This closes only the isolated logical-restore contract subgate; production
 recovery evidence remains absent and the aggregate gate remains pending.
 
+Tenant deletion now has a separate fail-closed manifest contract. Its policy requires
+one exact-revision production record to cover thirteen authoritative surfaces:
+control-plane and Runtime databases, objects/artifacts, vector/search, caches,
+queues/DLQs, Provider/Connector state, Runner Worktree/recovery material, Webhooks,
+Secret/KMS state, logs/traces, immutable audit/ledger facts, and backups/snapshots.
+Primary surfaces must reach zero or cryptographic erasure. Retained logs and ledgers
+must remove direct identifiers and carry bounded retention; backups must be
+runtime-inaccessible, bound to a deletion tombstone, and have a bounded purge date.
+The canonical manifest, immutable artifact/DSSE envelope, exact revisions, cross-scope
+checks, restore tombstone check, and independent privacy/security/data-owner
+attestations are mandatory. The repository intentionally has zero production deletion
+records, so structural validation passes while production readiness is blocked. A CI
+fixture, successful worker, database row count, or screenshot cannot close this gate.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

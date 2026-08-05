@@ -315,3 +315,13 @@ Its PostgreSQL 16 restore report completes in 2.961 seconds with matching hashes
 50/17 forced-RLS inventories, both cross-scope probes, and post-backup revocation and
 deletion-marker replay. It closes only the CI logical-restore contract subgate;
 eleven production gates and the release-level `NO-GO` are unchanged.
+
+Tenant deletion has an independent machine-readable contract in
+`saas/production/deletion-policy.json` and
+`python -m saas.scripts.check_deletion_readiness`. It enforces a complete thirteen-
+surface manifest, exact revisions, trusted preconditions, zero/cryptographic erasure,
+bounded redacted/anonymized retention, backup tombstones and purge dates, the full
+cross-store reconciliation matrix, immutable signed evidence, and independent privacy,
+security, and data-owner attestations. The empty production evidence directory is
+deliberate: structural validation reports `pass`, production reports `blocked`, and no
+aggregate deletion or production-foundation gate is closed by the validator alone.
