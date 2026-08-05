@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "policy_id": "omnigent-saas-single-region-recovery-v1",
-  "reviewed_at": "2026-08-05",
+  "reviewed_at": "2026-08-06",
   "revision_contract": {
-    "upstream_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+    "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p6a000000007"
   },

@@ -951,7 +951,11 @@ def run_logical_restore_contract(
             "status": "pass",
             "evidence_kind": "ci_contract_not_production_drill",
             "product_revision": product_revision,
-            "upstream_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+            "upstream_revision": str(
+                json.loads(
+                    (repo / "saas/upstream-baseline.json").read_text(encoding="utf-8")
+                )["upstream_revision"]
+            ),
             "started_at": started.isoformat(),
             "completed_at": completed.isoformat(),
             "duration_seconds": round((completed - started).total_seconds(), 3),

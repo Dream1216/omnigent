@@ -7,5 +7,5 @@ accepted.
 
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
-| `0001-import-spawn-archive-stop.patch` | SaaS Platform | `omnigent/server/routes/sessions/__init__.py` | Pyrefly; `tests/server/integration/test_sessions_archive.py` | Upstream `ab4bcaa` absorbed the `routes_core.py` import; facade export remains downstream | `8c191ac0` | Remove when upstream facade-exports the archive-stop helper/state |
-| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; real PostgreSQL Runtime RLS | Generic extension proposal pending | `8c191ac0` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
+| `0001-import-spawn-archive-stop.patch` | SaaS Platform | `omnigent/server/routes/sessions/__init__.py` | Pyrefly; `tests/server/integration/test_sessions_archive.py` | Upstream `ab4bcaa` absorbed the `routes_core.py` import; facade export remains downstream | `d05e52b5` | Remove when upstream facade-exports the archive-stop helper/state |
+| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; real PostgreSQL Runtime RLS | Generic extension proposal pending | `d05e52b5` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
