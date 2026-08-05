@@ -949,6 +949,18 @@ transfer. PostgreSQL uses 52 control-plane forced-RLS tables and an exact
 deletion policies include machine-credential revocation. See
 `saas/production/runbooks/api-credentials.md` for deployment and incident gates.
 
+The reviewed official baseline has also advanced to
+`559504d9fe2c2794e7a1c487dcfc8c47455cb633`. The merge includes upstream named
+database-query sessions and Host/Web changes; the permanent managed-session
+initializer patch was regenerated against that exact tree. Both downstream patches
+replay in order with no content mismatch, while the intrusion budget remains eight
+official files, 449 net added lines, and a 0.9938 isolated-code ratio. On the merged
+tree, the local compatibility matrix passes 821 tests with 22 platform skips, the
+official Zygote/query-context matrix passes 57 tests, the 52/17 PostgreSQL restore
+contract passes with machine-credential revocation replay, the p6 migration round
+trip passes, and the wheel contains 145 required artifacts. These local results do
+not replace the exact-revision GitHub acceptance and evidence-successor gates.
+
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
 three data-class objectives still need the exact-revision approval roles, SLO
