@@ -255,8 +255,28 @@ and persists only bounded response metadata. Versioned HMAC signatures retain st
 Delivery/Event identities across retries and authorized manual DLQ replay. PostgreSQL
 forced RLS separates tenant registration/enqueue from the least-privilege global
 `saas_webhook_dispatcher`; `SKIP LOCKED` leases, immutable event facts, a replay guard,
-and an Outbox audit record cover replica races and operator actions. This subgate remains
-`pending` until an exact implementation revision passes CI. Production DNS policy,
-egress proxy/firewall enforcement, external Secret/KMS operation, receiver conformance,
-capacity/SLO evidence, deletion workflows, and multi-AZ recovery remain independent
-P5 `NO-GO` requirements.
+and an Outbox audit record cover replica races and operator actions.
+
+The implementation first ran at `569c1d0352beebee5f069dea8bac1890b4f3304a`.
+Compatibility run `30978680709` is deliberately not acceptance evidence: Linux
+scheduling exposed an older Preview Gateway runtime mixing its injected authority clock
+with wall time during a 300 ms test lease. Commit
+`d8f47804b767c6d24bc71694fa9c5e1882abc114` passes that same logical clock to every
+directory and certificate lifecycle operation and adds a regression that delays real
+time beyond the lease without advancing authority time. Exact run `30980110086` then
+passes 795 PostgreSQL/Chromium compatibility tests, 56 official zygote/query-context
+regressions, the 36/22 Linux security matrix, Pyrefly with zero errors, p5a migration
+upgrade/check/downgrade, the 119-artifact wheel inventory, both patch replays, and the
+source-intrusion budget at 8 files/434 lines with a 0.9931 isolated-code ratio. The
+signed Webhook/SSRF contract subgate is therefore `passed`; the evidence-successor
+wheel requires 121 artifacts and eleven aggregate gates remain pending.
+
+Image candidate run `30978680569` separately repeats Server and Host builds for
+`linux/amd64` and `linux/arm64` at exact implementation revision `569c1d03` and schema
+`p5a000000001`; both platform manifest/config facts match across attempts. Those OCI
+archives are neither registry-published nor signed, vulnerability/license admission
+and protected workflow identity are absent, and no canary or N-1 rollback ran. The P0
+image gate therefore remains pending. Production DNS policy, egress proxy/firewall
+enforcement, external Secret/KMS operation, receiver conformance, capacity/SLO
+evidence, deletion workflows, and multi-AZ recovery remain independent P5 `NO-GO`
+requirements.

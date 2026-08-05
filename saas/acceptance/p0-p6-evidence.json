@@ -46,7 +46,8 @@
             "deploy/docker/Dockerfile",
             "setup.py",
             "tests/saas/test_image_supply_chain.py",
-            "saas/acceptance/p4-image-candidate-ci-30901594130.json"
+            "saas/acceptance/p4-image-candidate-ci-30901594130.json",
+            "saas/acceptance/p5-image-candidate-ci-30978680569.json"
           ]
         },
         {
@@ -517,13 +518,14 @@
       "gates": [
         {
           "id": "p5-signed-webhook-delivery-and-ssrf-contract",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/control_plane/webhook_models.py",
             "saas/control_plane/webhooks.py",
             "saas/control_plane/migrations/versions/p5a000000001_webhook_delivery.py",
             "saas/control_plane/postgresql_roles.sql",
-            "tests/saas/test_webhook_delivery.py"
+            "tests/saas/test_webhook_delivery.py",
+            "saas/acceptance/p5-webhook-delivery-ci-30980110086.json"
           ]
         },
         {
