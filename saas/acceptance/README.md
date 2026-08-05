@@ -51,9 +51,13 @@ P0's three pending gates now list concrete policy, validator, Runbook, build,
 and test evidence. `check_production_baseline` distinguishes complete baseline
 content from approvals, measured dashboards, and recovery-drill proof;
 `check_image_supply_chain` distinguishes a repeatable unsigned candidate from a
-signed immutable production image. Both commands have `--require-ready` modes
-that fail until their external evidence is complete. The evidence paths on a
-pending gate therefore show implemented controls, not a passed gate.
+signed immutable production image. Its strict v2 contract binds the exact
+protected workflow/OIDC subject, digest subjects, transparency proof, fresh
+vulnerability and license admission, immutable registry receipt, one-hour
+canary, bounded N-1 rollback, and three distinct approvals; repository escape or
+symlink evidence is rejected. Both commands have `--require-ready` modes that
+fail until their external evidence is complete. The evidence paths on a pending
+gate therefore show implemented controls, not a passed gate.
 
 The P4 records separately close the credential-free Repository/ChangeSet/
 Worktree control plane, the physical Git/filesystem Runner adapter, the

@@ -27,9 +27,13 @@ P0 establishes executable controls that stay independent of feature claims:
 7. `supply_chain/release-policy.json` defines digest-pinned build materials,
    repeat-build comparison, source/schema/adapter image labels, dual SBOM,
    maximum SLSA provenance, keyless signature, zero Critical/High admission,
-   OSS/SaaS regression, digest-only canary, and N-1 requirements. The candidate
-   workflow builds twice without publishing; it cannot be mistaken for signed
-   production evidence.
+   zero denied/unknown license admission, exact protected workflow/OIDC subject,
+   signature subject and transparency proof, OSS/SaaS regression, immutable
+   registry receipt, one-hour digest-only canary, and bounded N-1 rollback. Its
+   strict v2 verifier rejects stale scans, reused approvers, canonical-record
+   tampering, repository escapes, and symlinked evidence. The candidate workflow
+   builds twice without publishing; it cannot be mistaken for signed production
+   evidence.
 
 The first P1 slice adds an independent control-plane schema and migration for
 Global User, Tenant, Space, versioned Membership, Runtime Placement, Runtime
@@ -894,10 +898,11 @@ replay, production baseline checks, and source-intrusion enforcement):
   quota admission.
 
 P4 multi-failure-domain execution and Worktree isolation remain partially
-implemented. P5 has closed only the signed Webhook/SSRF contract; production
-recovery, capacity/SLO, deletion, and supply-chain gates remain pending. P6
-commercial governance has not started. None may be inferred from a code-contract
-or CI-only subgate.
+implemented. P5 has passed Webhook/SSRF, recovery-verifier, isolated-restore,
+tenant-deletion-verifier, and SLO/capacity-verifier contract subgates; real
+production recovery, capacity/SLO, deletion, and supply-chain evidence remains
+pending. P6 commercial governance has not started. None may be inferred from a
+code-contract or CI-only subgate.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
@@ -918,7 +923,8 @@ uv run python -m saas.scripts.check_recovery_readiness \
   --product-revision "$(git rev-parse HEAD)" --require-ready
 uv run python -m saas.scripts.check_slo_capacity_readiness \
   --product-revision "$(git rev-parse HEAD)" --require-ready
-uv run python -m saas.scripts.check_image_supply_chain --require-ready
+uv run python -m saas.scripts.check_image_supply_chain \
+  --product-revision "$(git rev-parse HEAD)" --require-ready
 ```
 
 Run the focused checks:

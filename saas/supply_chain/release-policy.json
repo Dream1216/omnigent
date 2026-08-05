@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "policy_id": "omnigent-saas-production-image-v1",
-  "reviewed_at": "2026-08-04",
+  "schema_version": 2,
+  "policy_id": "omnigent-saas-production-image-v2",
+  "reviewed_at": "2026-08-05",
   "candidate_workflow": ".github/workflows/saas-image-candidate.yml",
   "release_runbook": "saas/production/runbooks/image-release.md",
   "dockerfile": "deploy/docker/Dockerfile",
@@ -50,7 +50,15 @@
     "sbom_formats": ["spdx-json", "cyclonedx-json"],
     "keyless_signature_required": true,
     "signature_issuer": "https://token.actions.githubusercontent.com",
-    "protected_workflow_identity_required": true
+    "signature_subject_digest_required": true,
+    "transparency_log_required": true,
+    "protected_workflow_identity_required": true,
+    "trusted_repository": "Dream1216/omnigent",
+    "trusted_workflow_ref": ".github/workflows/saas-image-candidate.yml@refs/heads/main",
+    "trusted_workflow_identity": "https://github.com/Dream1216/omnigent/.github/workflows/saas-image-candidate.yml@refs/heads/main",
+    "trusted_oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+    "trusted_builder_id": "https://github.com/actions/runner",
+    "trusted_environment": "production-image"
   },
   "regression": {
     "official_suites": [
@@ -70,12 +78,29 @@
   "vulnerability_policy": {
     "critical_allowed": 0,
     "high_allowed": 0,
-    "exceptions_require_owner_expiry_and_compensating_control": true
+    "exceptions_require_owner_expiry_and_compensating_control": true,
+    "maximum_scanner_database_age_hours": 24
+  },
+  "license_policy": {
+    "policy_id": "omnigent-saas-license-admission-v1",
+    "denied_license_count_allowed": 0,
+    "unknown_license_count_allowed": 0,
+    "exceptions_require_legal_approval_and_expiry": true
   },
   "promotion": {
     "digest_only_deployment": true,
     "n_minus_one_digest_required": true,
     "canary_required": true,
-    "floating_tag_may_authorize_deployment": false
+    "floating_tag_may_authorize_deployment": false,
+    "allowed_registry_hosts": ["ghcr.io"],
+    "canary_environment": "production-canary",
+    "minimum_canary_observation_seconds": 3600,
+    "maximum_n_minus_one_rollback_seconds": 900,
+    "required_approval_roles": [
+      "release-engineering",
+      "security",
+      "site-reliability"
+    ],
+    "maximum_evidence_age_days": 30
   }
 }

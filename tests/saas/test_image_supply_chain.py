@@ -4,10 +4,17 @@ import copy
 import hashlib
 import json
 import tarfile
+from datetime import UTC, datetime
 from pathlib import Path
 
-from saas.scripts.check_image_supply_chain import validate_release
+from saas.scripts.check_image_supply_chain import (
+    canonical_release_evidence_sha256,
+    load_release_evidence,
+    validate_release,
+)
 from saas.scripts.compare_oci_rebuilds import compare_archives
+
+_NOW = datetime(2026, 8, 5, 12, tzinfo=UTC)
 
 
 def _repo() -> Path:
@@ -56,19 +63,62 @@ def _valid_evidence() -> dict[str, object]:
                     "linux/arm64": _digest(config_chars[1]),
                 },
                 "labels": labels,
-                "sbom": {"spdx_sha256": "1" * 64, "cyclonedx_sha256": "2" * 64},
+                "sbom": {
+                    "spdx_sha256": "1" * 64,
+                    "cyclonedx_sha256": "2" * 64,
+                    "subject_digest": manifest_digest,
+                    "spdx_uri": (
+                        f"oci://ghcr.io/dream1216/{image_policy['name']}@"
+                        f"{manifest_digest}/sbom.spdx.json"
+                    ),
+                    "cyclonedx_uri": (
+                        f"oci://ghcr.io/dream1216/{image_policy['name']}@"
+                        f"{manifest_digest}/sbom.cyclonedx.json"
+                    ),
+                },
                 "provenance": {
                     "verified": True,
                     "predicate_type": "https://slsa.dev/provenance/v1",
                     "subject_digest": manifest_digest,
                     "materials_digest_pinned": True,
+                    "builder_id": "https://github.com/actions/runner",
+                    "source_revision": product_revision,
+                    "workflow_ref": (".github/workflows/saas-image-candidate.yml@refs/heads/main"),
+                    "statement_sha256": "3" * 64,
                 },
                 "signature": {
                     "verified": True,
                     "issuer": "https://token.actions.githubusercontent.com",
-                    "workflow_identity": "https://github.com/example/repo/.github/workflows/release.yml@refs/heads/main",
+                    "workflow_identity": (
+                        "https://github.com/Dream1216/omnigent/.github/workflows/"
+                        "saas-image-candidate.yml@refs/heads/main"
+                    ),
+                    "oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+                    "subject_digest": manifest_digest,
+                    "transparency_log_verified": True,
+                    "transparency_log_entry_sha256": "4" * 64,
+                    "bundle_sha256": "5" * 64,
                 },
-                "vulnerabilities": {"critical": 0, "high": 0, "exceptions": []},
+                "vulnerabilities": {
+                    "scanner": "trivy-verified",
+                    "scanner_database_updated_at": "2026-08-05T07:00:00Z",
+                    "scan_completed_at": "2026-08-05T07:30:00Z",
+                    "subject_digest": manifest_digest,
+                    "report_sha256": "6" * 64,
+                    "critical": 0,
+                    "high": 0,
+                    "exceptions": [],
+                },
+                "licenses": {
+                    "scanner": "syft-license-verified",
+                    "subject_digest": manifest_digest,
+                    "policy_id": "omnigent-saas-license-admission-v1",
+                    "report_sha256": "0" * 64,
+                    "denied_license_count": 0,
+                    "unknown_license_count": 0,
+                    "exceptions": [],
+                },
+                "admission_completed_at": "2026-08-05T07:45:00Z",
                 "smoke_passed": image_policy["required_smoke"],
             }
         )
@@ -76,18 +126,24 @@ def _valid_evidence() -> dict[str, object]:
         path: hashlib.sha256((_repo() / path).read_bytes()).hexdigest()
         for path in policy["reproducibility"]["dependency_locks"]  # type: ignore[index]
     }
-    return {
-        "evidence_version": 1,
+    evidence: dict[str, object] = {
+        "evidence_version": 2,
+        "completed_at": "2026-08-05T10:30:00Z",
         "product_revision": product_revision,
         "upstream_revision": upstream["upstream_revision"],
         "adapter_contract_version": upstream["adapter_contract_version"],
         "control_plane_schema_revision": schema_revision,
         "workflow": {
-            "repository": "example/repo",
-            "workflow_ref": ".github/workflows/release.yml@refs/heads/main",
+            "repository": "Dream1216/omnigent",
+            "workflow_ref": (".github/workflows/saas-image-candidate.yml@refs/heads/main"),
+            "source_ref": "refs/heads/main",
+            "source_ref_protected": True,
+            "oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
             "run_id": 1,
             "run_attempt": 1,
             "builder_id": "https://github.com/actions/runner",
+            "environment": "production-image",
+            "environment_protection_verified": True,
             "conclusion": "success",
         },
         "materials": {
@@ -111,11 +167,66 @@ def _valid_evidence() -> dict[str, object]:
             "patch_replay": True,
             "source_intrusion_budget": True,
         },
+        "promotion": {
+            "images": [
+                {
+                    "name": image["name"],
+                    "registry_ref": (
+                        f"ghcr.io/dream1216/{image['name']}@{image['manifest_digest']}"
+                    ),
+                    "registry_immutable": True,
+                    "registry_immutability_receipt_sha256": "9" * 64,
+                    "canary": {
+                        "environment": "production-canary",
+                        "deployed_digest": image["manifest_digest"],
+                        "started_at": "2026-08-05T08:00:00Z",
+                        "completed_at": "2026-08-05T09:00:00Z",
+                        "observation_seconds": 3600,
+                        "slo_gate_passed": True,
+                        "security_gate_passed": True,
+                        "result": "passed",
+                        "evidence_sha256": "7" * 64,
+                    },
+                    "n_minus_one_rollback": {
+                        "from_digest": image["manifest_digest"],
+                        "to_digest": (target := _digest("f" if index == 0 else "e")),
+                        "to_registry_ref": (f"ghcr.io/dream1216/{image['name']}@{target}"),
+                        "previous_release_signature_verified": True,
+                        "previous_release_provenance_verified": True,
+                        "started_at": "2026-08-05T09:05:00Z",
+                        "completed_at": "2026-08-05T09:10:00Z",
+                        "recovery_seconds": 300,
+                        "result": "passed",
+                        "evidence_sha256": "8" * 64,
+                    },
+                }
+                for index, image in enumerate(images)
+            ]
+        },
+        "attestations": [
+            {
+                "role": role,
+                "actor_id_hash": character * 64,
+                "attested_at": "2026-08-05T10:00:00Z",
+                "product_revision": product_revision,
+            }
+            for role, character in (
+                ("release-engineering", "a"),
+                ("security", "b"),
+                ("site-reliability", "c"),
+            )
+        ],
     }
+    evidence["evidence_sha256"] = canonical_release_evidence_sha256(evidence)
+    return evidence
+
+
+def _resign(evidence: dict[str, object]) -> None:
+    evidence["evidence_sha256"] = canonical_release_evidence_sha256(evidence)
 
 
 def test_image_policy_is_valid_but_missing_real_release_evidence() -> None:
-    report = validate_release(_repo(), _policy(), None)
+    report = validate_release(_repo(), _policy(), None, now=_NOW)
 
     assert report == {
         "status": "pass",
@@ -125,13 +236,20 @@ def test_image_policy_is_valid_but_missing_real_release_evidence() -> None:
         "metrics": {
             "policy_image_count": 2,
             "evidenced_image_count": 0,
+            "promoted_image_count": 0,
             "readiness_blocker_count": 1,
         },
     }
 
 
 def test_complete_image_evidence_satisfies_policy() -> None:
-    report = validate_release(_repo(), _policy(), _valid_evidence())
+    report = validate_release(
+        _repo(),
+        _policy(),
+        _valid_evidence(),
+        now=_NOW,
+        expected_product_revision="a" * 40,
+    )
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
@@ -143,11 +261,204 @@ def test_image_evidence_rejects_floating_material_and_lock_drift() -> None:
     evidence["materials"]["base_images"]["python"] = "python:3.12-slim"  # type: ignore[index]
     evidence["materials"]["lockfiles"]["uv.lock"] = "0" * 64  # type: ignore[index]
 
-    report = validate_release(_repo(), _policy(), evidence)
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
 
     assert report["production_readiness"] == "blocked"
     assert "every base image material must be digest-pinned" in report["blockers"]
     assert "image evidence lock hash drifted for uv.lock" in report["blockers"]
+
+
+def test_untrusted_workflow_signature_subject_and_transparency_fail_closed() -> None:
+    evidence = _valid_evidence()
+    evidence["workflow"]["source_ref_protected"] = False  # type: ignore[index]
+    signature = evidence["images"][0]["signature"]  # type: ignore[index]
+    signature["subject_digest"] = _digest("0")
+    signature["transparency_log_verified"] = False
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert report["production_readiness"] == "blocked"
+    assert "image evidence workflow.source_ref_protected is not trusted" in report["blockers"]
+    assert "omnigent-saas-server signature subject_digest is invalid" in report["blockers"]
+    assert (
+        "omnigent-saas-server signature transparency_log_verified is invalid" in report["blockers"]
+    )
+
+
+def test_canary_rollback_and_registry_claims_are_mandatory() -> None:
+    evidence = _valid_evidence()
+    promotion = evidence["promotion"]["images"][0]  # type: ignore[index]
+    promotion["registry_immutable"] = False
+    promotion["registry_immutability_receipt_sha256"] = "invalid"
+    canary = promotion["canary"]
+    canary["completed_at"] = "2026-08-05T08:30:00Z"
+    canary["observation_seconds"] = 1800
+    canary["slo_gate_passed"] = False
+    rollback = promotion["n_minus_one_rollback"]
+    rollback["completed_at"] = "2026-08-05T09:20:01Z"
+    rollback["recovery_seconds"] = 901
+    rollback["to_registry_ref"] = "example.invalid/image:latest"
+    rollback["previous_release_signature_verified"] = False
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert any("registry immutability is not verified" in item for item in report["blockers"])
+    assert any("registry immutability receipt is invalid" in item for item in report["blockers"])
+    assert any("canary observation is shorter" in item for item in report["blockers"])
+    assert any("canary slo_gate_passed is invalid" in item for item in report["blockers"])
+    assert any("N-1 rollback exceeded policy" in item for item in report["blockers"])
+    assert any("N-1 rollback registry target is invalid" in item for item in report["blockers"])
+    assert any("N-1 target signature is not verified" in item for item in report["blockers"])
+
+
+def test_admission_canary_and_rollback_must_run_in_order() -> None:
+    evidence = _valid_evidence()
+    image = evidence["images"][0]  # type: ignore[index]
+    image["admission_completed_at"] = "2026-08-05T08:30:00Z"
+    promotion = evidence["promotion"]["images"][0]  # type: ignore[index]
+    rollback = promotion["n_minus_one_rollback"]
+    rollback["started_at"] = "2026-08-05T08:55:00Z"
+    rollback["completed_at"] = "2026-08-05T09:00:00Z"
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert any("canary started before image admission" in item for item in report["blockers"])
+    assert any("rollback started before canary" in item for item in report["blockers"])
+
+
+def test_stale_scan_different_release_and_record_tampering_are_rejected() -> None:
+    evidence = _valid_evidence()
+    scan = evidence["images"][0]["vulnerabilities"]  # type: ignore[index]
+    scan["scanner_database_updated_at"] = "2026-08-03T07:00:00Z"
+    scan["scan_completed_at"] = "2026-08-03T07:30:00Z"
+    _resign(evidence)
+
+    report = validate_release(
+        _repo(),
+        _policy(),
+        evidence,
+        now=_NOW,
+        expected_product_revision="b" * 40,
+    )
+
+    assert any("scan is older than release evidence" in item for item in report["blockers"])
+    assert any("does not match the release candidate" in item for item in report["blockers"])
+
+    evidence["completed_at"] = "2026-08-05T10:31:00Z"
+    tampered = validate_release(_repo(), _policy(), evidence, now=_NOW)
+    assert any("canonical record" in item for item in tampered["blockers"])
+
+
+def test_license_admission_subject_policy_and_threshold_fail_closed() -> None:
+    evidence = _valid_evidence()
+    licenses = evidence["images"][0]["licenses"]  # type: ignore[index]
+    licenses["subject_digest"] = _digest("0")
+    licenses["policy_id"] = "unreviewed-policy"
+    licenses["unknown_license_count"] = 1
+    licenses["exceptions"] = [{"reason": "self-approved"}]
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert any("license report subject" in item for item in report["blockers"])
+    assert any("license report does not bind" in item for item in report["blockers"])
+    assert any("license admission threshold" in item for item in report["blockers"])
+    assert any("cannot carry license exceptions" in item for item in report["blockers"])
+
+
+def test_boolean_integer_substitution_cannot_satisfy_strict_release_fields() -> None:
+    evidence = _valid_evidence()
+    image = evidence["images"][0]  # type: ignore[index]
+    image["vulnerabilities"]["critical"] = False
+    image["licenses"]["denied_license_count"] = False
+    image["provenance"]["verified"] = 1
+    promotion = evidence["promotion"]["images"][0]  # type: ignore[index]
+    promotion["canary"]["slo_gate_passed"] = 1
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert any("vulnerability threshold" in item for item in report["blockers"])
+    assert any("license admission threshold" in item for item in report["blockers"])
+    assert any("provenance verified is invalid" in item for item in report["blockers"])
+    assert any("canary slo_gate_passed is invalid" in item for item in report["blockers"])
+
+
+def test_release_evidence_loader_rejects_escape_symlink_and_non_object(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    (repo / "link.json").symlink_to(outside)
+    (repo / "array.json").write_text("[]", encoding="utf-8")
+
+    for value in (str(outside), "../outside.json", "link.json"):
+        try:
+            load_release_evidence(repo, value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe release evidence path accepted: {value}")
+
+    try:
+        load_release_evidence(repo, "array.json")
+    except ValueError as error:
+        assert "must be an object" in str(error)
+    else:
+        raise AssertionError("non-object release evidence was accepted")
+
+    assert load_release_evidence(repo, "missing.json", allow_missing=True) is None
+
+
+def test_policy_drift_and_reused_release_attestor_fail_closed() -> None:
+    policy = copy.deepcopy(_policy())
+    policy["promotion"]["undeclared_bypass"] = True  # type: ignore[index]
+
+    invalid_policy = validate_release(_repo(), policy, _valid_evidence(), now=_NOW)
+    assert invalid_policy["status"] == "fail"
+    assert "promotion policy fields do not match schema version 2" in invalid_policy["violations"]
+    assert invalid_policy["blockers"] == [
+        "release policy must be valid before evidence can qualify"
+    ]
+
+    evidence = _valid_evidence()
+    attestations = evidence["attestations"]
+    assert isinstance(attestations, list)
+    assert isinstance(attestations[0], dict)
+    assert isinstance(attestations[1], dict)
+    attestations[1]["actor_id_hash"] = attestations[0]["actor_id_hash"]
+    _resign(evidence)
+
+    reused_actor = validate_release(_repo(), _policy(), evidence, now=_NOW)
+    assert any("actors must be distinct" in item for item in reused_actor["blockers"])
+
+
+def test_policy_weakening_and_malformed_nested_lists_fail_without_crashing() -> None:
+    policy = copy.deepcopy(_policy())
+    first_image = policy["images"][0]  # type: ignore[index]
+    first_image["target"] = "host"
+    first_image["platforms"] = 1
+    first_image["required_smoke"] = [{"fake": True}]
+    policy["required_labels"] = []
+    policy["reproducibility"]["dependency_locks"] = [{}]  # type: ignore[index]
+    policy["attestations"]["sbom_formats"] = 1  # type: ignore[index]
+    policy["regression"]["official_suites"] = 1  # type: ignore[index]
+    policy["promotion"]["required_approval_roles"] = [{}]  # type: ignore[index]
+
+    report = validate_release(_repo(), policy, None, now=_NOW)
+
+    assert report["status"] == "fail"
+    assert any("approved Docker target" in item for item in report["violations"])
+    assert any("approved smoke probes" in item for item in report["violations"])
+    assert any("approved image labels" in item for item in report["violations"])
+    assert any("approved set" in item for item in report["violations"])
 
 
 def _write_oci(path: Path, *, revision: str, nested: bool = False) -> None:
