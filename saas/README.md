@@ -85,11 +85,12 @@ boundary without changing the official server application:
   re-collects every fact before execution. It fails closed when the impact
   provider is absent, the member is an Owner, blockers exist, or facts changed.
   Tenant removal also logically removes active Space memberships;
-- all 48 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
+- all 50 protected control-plane tables use `ENABLE` and `FORCE ROW LEVEL
   SECURITY` with transaction-local server-chosen Actor/Tenant/Space values.
   The packaged role bootstrap separates `saas_app`,
-  `saas_authenticator`, `saas_governance`, `saas_dispatcher`, and break-glass
-  `saas_platform`; none has `BYPASSRLS`.
+  `saas_authenticator`, `saas_governance`, `saas_dispatcher`,
+  `saas_webhook_dispatcher`, and break-glass `saas_platform`; none has
+  `BYPASSRLS`.
 
 The fourth P1 slice closes the Context Shell and bounded control-plane
 degradation implementation:
@@ -698,6 +699,35 @@ workload issuance, CA/HSM and Trust Bundle operations, signed immutable deployme
 unique per-Pod endpoints, NetworkPolicy allowlists, cross-host partitions, two
 failure domains, and N-1 rollback are not implied; the release remains `NO-GO`.
 
+The first P5 slice adds migration `p5a000000001` and a durable signed outbound
+Webhook authority. Endpoint rows contain only canonical HTTPS metadata, event types,
+Secret references, and rotation versions. Delivery rows retain immutable payload/hash
+facts and stable Delivery/Event IDs across retries and authorized DLQ replay. Multiple
+replicas claim bounded leases with `FOR UPDATE SKIP LOCKED`; network I/O occurs after
+the database lock is released. Versioned HMAC-SHA256 signatures support a bounded
+old/new overlap, while Secret-provider and replay-authorization calls occur outside
+row locks.
+
+Every attempt re-resolves the complete A/AAAA set and rejects the target if any answer
+is not globally routable, including IPv4-mapped IPv6, NAT64 well-known/local, Teredo,
+and 6to4 transition forms. The sender pins one validated public address, but keeps the
+original hostname for Host, SNI, and certificate verification; redirects, environment
+proxies, and non-POST methods are disabled. Both Webhook tables use forced RLS. The
+dedicated `saas_webhook_dispatcher` can read endpoints, read/update deliveries, and
+insert only allowed Outbox audit facts, but cannot modify endpoint configuration.
+Triggers reject delivery fact rewrites, lifecycle reversal, and unauthorized replay.
+
+Implementation/stabilization run `30980110086` passes 795 PostgreSQL/Chromium tests,
+56 official regressions, and the 36/22 Linux security matrix at `d8f47804`; evidence
+successor run `30980779159` repeats the complete gate at `d9a9528c`, including Pyrefly
+zero errors, p5a migration round trip, 121 required wheel artifacts, both patches, 11
+pending aggregate gates, and the 8-file/434-line/0.9931 intrusion result. Image run
+`30978680569` repeats Server/Host builds on both supported architectures, but its OCI
+archives are not published, signed, vulnerability-cleared, canaried, or rolled back.
+Production DNS/egress enforcement, external Secret/KMS operation, receiver
+conformance, capacity/SLO, deletion, PITR, isolated restore, multi-AZ, and signed image
+promotion remain pending; P5 is `in_progress` and the release remains `NO-GO`.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly
@@ -763,9 +793,11 @@ replay, production baseline checks, and source-intrusion enforcement):
   non-bypass executor access, immutable artifacts, and one-winner concurrent
   quota admission.
 
-P4 multi-failure-domain execution and Worktree isolation are only partially
-implemented; P5 production recovery and P6 commercial governance have not
-started. None may be inferred from the P4 scheduling foundation.
+P4 multi-failure-domain execution and Worktree isolation remain partially
+implemented. P5 has closed only the signed Webhook/SSRF contract; production
+recovery, capacity/SLO, deletion, and supply-chain gates remain pending. P6
+commercial governance has not started. None may be inferred from a code-contract
+or CI-only subgate.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
@@ -815,5 +847,6 @@ uv run pytest \
   tests/saas/test_execution_postgresql.py \
   tests/saas/test_runtime_postgresql_rls.py \
   tests/saas/test_context_snapshot_postgresql.py \
-  tests/saas/test_scheduling_postgresql.py
+  tests/saas/test_scheduling_postgresql.py \
+  tests/saas/test_webhook_delivery.py
 ```

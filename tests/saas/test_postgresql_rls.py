@@ -72,6 +72,8 @@ _CONTROL_PLANE_RLS_TABLES = {
     "saas_worktree_quotas",
     "saas_worktree_instances",
     "saas_worktree_events",
+    "saas_webhook_endpoints",
+    "saas_webhook_deliveries",
 }
 
 
