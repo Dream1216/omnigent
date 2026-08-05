@@ -33,9 +33,18 @@ def create_omnigent_saas_app(
         raise ValueError("SaaS mode cannot combine independent auth providers")
 
     extra_routers = list(official_app_dependencies.pop("extra_routers", ()) or ())
-    if any(prefix.rstrip("/") == "/saas" for _router, prefix, _tags in extra_routers):
-        raise ValueError("the /saas router prefix is reserved by the SaaS integration")
-    extra_routers.append(integration.extra_router)
+    reserved_prefixes = {
+        prefix.rstrip("/") for _router, prefix, _tags in integration.extra_routers
+    }
+    conflicting = {
+        prefix.rstrip("/")
+        for _router, prefix, _tags in extra_routers
+        if prefix.rstrip("/") in reserved_prefixes
+    }
+    if conflicting:
+        joined = ", ".join(sorted(conflicting))
+        raise ValueError(f"router prefixes are reserved by the SaaS integration: {joined}")
+    extra_routers.extend(integration.extra_routers)
 
     app = create_official_app(
         auth_provider=integration.auth_provider,

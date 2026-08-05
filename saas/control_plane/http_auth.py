@@ -43,6 +43,7 @@ from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyC
 if TYPE_CHECKING:
     from saas.control_plane.authorization import ProjectAuthorizer
     from saas.control_plane.bindings import RuntimeBindingService
+    from saas.control_plane.enterprise_access import EnterpriseAccessService
     from saas.control_plane.projects import ProjectAdministrationService
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -1092,6 +1093,13 @@ def create_saas_auth_router(
                 "removed_space_memberships": removed.removed_space_memberships,
                 "security_version": removed.security_version,
                 "revoked_session_count": removed.revoked_session_count,
+                "revoked_project_memberships": removed.revoked_project_memberships,
+                "revoked_resource_grants": removed.revoked_resource_grants,
+                "changed_project_authorizations": removed.changed_project_authorizations,
+                "revoked_group_memberships": removed.revoked_group_memberships,
+                "changed_group_project_authorizations": (
+                    removed.changed_group_project_authorizations
+                ),
                 "replayed": removed.replayed,
             }
 
@@ -1114,6 +1122,7 @@ def create_saas_http_integration(
     availability_gate: ControlPlaneAvailabilityGate | None = None,
     degraded_read_paths: frozenset[str] = frozenset(),
     api_credentials: ApiCredentialService | None = None,
+    enterprise_access: EnterpriseAccessService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1141,6 +1150,16 @@ def create_saas_http_integration(
                 projects=project_admin,
                 authorizer=project_authorizer,
                 bindings=runtime_bindings,
+            )
+        )
+    if enterprise_access is not None:
+        from saas.control_plane.enterprise_http import create_enterprise_admin_router
+
+        router.include_router(
+            create_enterprise_admin_router(
+                auth_provider=auth_provider,
+                resolver=context_resolver,
+                enterprise_access=enterprise_access,
             )
         )
     public_api_router = None

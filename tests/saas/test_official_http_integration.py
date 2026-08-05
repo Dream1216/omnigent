@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -156,5 +157,30 @@ def test_composition_root_rejects_competing_auth_and_saas_router(
             assert "reserved" in str(error)
         else:
             raise AssertionError("duplicate SaaS router was accepted")
+    finally:
+        engine.dispose()
+
+
+def test_composition_root_registers_every_saas_owned_router(
+    db_uri: str,
+    tmp_path: Path,
+) -> None:
+    engine, integration, _user_id = _integration(db_uri)
+    public_router = APIRouter()
+
+    @public_router.get("/composition-probe")
+    def composition_probe() -> dict[str, str]:
+        return {"status": "registered"}
+
+    integration = replace(integration, public_api_router=public_router)
+    app = create_omnigent_saas_app(
+        integration=integration,
+        **_official_dependencies(db_uri, tmp_path),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/composition-probe")
+            assert response.status_code == 200
+            assert response.json() == {"status": "registered"}
     finally:
         engine.dispose()

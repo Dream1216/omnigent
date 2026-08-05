@@ -5,7 +5,7 @@
   "revision_contract": {
     "upstream_revision": "559504d9fe2c2794e7a1c487dcfc8c47455cb633",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p6a000000001"
+    "control_plane_schema_revision": "p6a000000002"
   },
   "evidence_directory": "saas/production/slo-capacity-evidence",
   "max_evidence_age_days": 35,

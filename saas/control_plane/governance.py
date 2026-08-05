@@ -25,6 +25,10 @@ from saas.control_plane.db_models import (
     SpaceMembership,
     TenantMembership,
 )
+from saas.control_plane.enterprise_models import (
+    EnterpriseGroupMembershipRecord,
+    EnterpriseGroupRoleAssignmentRecord,
+)
 from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls import RlsContext, apply_rls_context
@@ -113,6 +117,8 @@ class MemberRemoved:
     revoked_project_memberships: int
     revoked_resource_grants: int
     changed_project_authorizations: int
+    revoked_group_memberships: int
+    changed_group_project_authorizations: int
     replayed: bool
 
 
@@ -598,6 +604,9 @@ class MembershipGovernanceService:
             revoked_project_memberships, revoked_resource_grants, changed_projects = (
                 self._revoke_project_access(db, tenant_id, space_id, user_id)
             )
+            revoked_group_memberships, changed_group_projects = (
+                self._revoke_enterprise_group_access(db, tenant_id, space_id, user_id)
+            )
             membership.version += 1
             membership.status = "removed"
             removed_spaces = 0
@@ -634,6 +643,8 @@ class MembershipGovernanceService:
                 "revoked_project_memberships": revoked_project_memberships,
                 "revoked_resource_grants": revoked_resource_grants,
                 "changed_project_authorizations": changed_projects,
+                "revoked_group_memberships": revoked_group_memberships,
+                "changed_group_project_authorizations": changed_group_projects,
                 "reason": cleaned_reason,
                 "removed_by": str(actor_id),
             }
@@ -707,6 +718,57 @@ class MembershipGovernanceService:
             for project in projects:
                 project.authorization_version += 1
         return len(memberships), len(grants), len(affected_projects)
+
+    @staticmethod
+    def _revoke_enterprise_group_access(
+        db: Session,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> tuple[int, int]:
+        if space_id is not None:
+            return 0, 0
+        memberships = list(
+            db.execute(
+                sa.select(EnterpriseGroupMembershipRecord)
+                .where(
+                    EnterpriseGroupMembershipRecord.tenant_id == tenant_id,
+                    EnterpriseGroupMembershipRecord.user_id == user_id,
+                    EnterpriseGroupMembershipRecord.status == "active",
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        if not memberships:
+            return 0, 0
+        group_ids = tuple(membership.group_id for membership in memberships)
+        affected_projects = tuple(
+            db.execute(
+                sa.select(EnterpriseGroupRoleAssignmentRecord.project_id)
+                .where(
+                    EnterpriseGroupRoleAssignmentRecord.tenant_id == tenant_id,
+                    EnterpriseGroupRoleAssignmentRecord.group_id.in_(group_ids),
+                    EnterpriseGroupRoleAssignmentRecord.status == "active",
+                )
+                .distinct()
+            ).scalars()
+        )
+        for membership in memberships:
+            membership.status = "removed"
+            membership.expires_at = None
+            membership.version += 1
+        if affected_projects:
+            projects = db.execute(
+                sa.select(ProjectRecord)
+                .where(
+                    ProjectRecord.tenant_id == tenant_id,
+                    ProjectRecord.id.in_(affected_projects),
+                )
+                .with_for_update()
+            ).scalars()
+            for project in projects:
+                project.authorization_version += 1
+        return len(memberships), len(affected_projects)
 
     @staticmethod
     def _lock_transfer_memberships(
@@ -788,6 +850,10 @@ class MembershipGovernanceService:
             revoked_resource_grants=cast(int, payload.get("revoked_resource_grants", 0)),
             changed_project_authorizations=cast(
                 int, payload.get("changed_project_authorizations", 0)
+            ),
+            revoked_group_memberships=cast(int, payload.get("revoked_group_memberships", 0)),
+            changed_group_project_authorizations=cast(
+                int, payload.get("changed_group_project_authorizations", 0)
             ),
             replayed=replayed,
         )

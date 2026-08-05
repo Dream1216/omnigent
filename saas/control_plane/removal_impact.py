@@ -11,6 +11,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.api_credential_models import ApiCredentialRecord, ServiceAccountRecord
 from saas.control_plane.db_models import ProjectMembershipRecord, ResourceGrantRecord
+from saas.control_plane.enterprise_models import (
+    EnterpriseCustomRoleRecord,
+    EnterpriseGroupMembershipRecord,
+    EnterpriseGroupRecord,
+    EnterpriseGroupRoleAssignmentRecord,
+)
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
 from saas.control_plane.governance import RemovalImpact, RemovalImpactProvider
 from saas.control_plane.lifecycle import LifecycleError
@@ -239,6 +245,127 @@ class ProjectRemovalImpactProvider:
         return value.astimezone(timezone.utc)
 
 
+class EnterpriseAccessRemovalImpactProvider:
+    """Expose group-derived access that Tenant removal will revoke atomically."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def collect(
+        self,
+        *,
+        tenant_id: UUID,
+        space_id: UUID | None,
+        user_id: UUID,
+    ) -> RemovalImpact:
+        with self._session_factory.begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(actor_id=user_id, tenant_id=tenant_id, space_id=space_id),
+            )
+            memberships = tuple(
+                db.execute(
+                    sa.select(
+                        EnterpriseGroupMembershipRecord.group_id,
+                        EnterpriseGroupRecord.name,
+                        EnterpriseGroupMembershipRecord.version,
+                        EnterpriseGroupMembershipRecord.expires_at,
+                    )
+                    .join(
+                        EnterpriseGroupRecord,
+                        sa.and_(
+                            EnterpriseGroupRecord.tenant_id
+                            == EnterpriseGroupMembershipRecord.tenant_id,
+                            EnterpriseGroupRecord.id == EnterpriseGroupMembershipRecord.group_id,
+                        ),
+                    )
+                    .where(
+                        EnterpriseGroupMembershipRecord.tenant_id == tenant_id,
+                        EnterpriseGroupMembershipRecord.user_id == user_id,
+                        EnterpriseGroupMembershipRecord.status == "active",
+                        EnterpriseGroupRecord.status == "active",
+                    )
+                    .order_by(EnterpriseGroupMembershipRecord.group_id)
+                ).all()
+            )
+            group_ids = tuple(group_id for group_id, _name, _version, _expiry in memberships)
+            assignment_filters = [
+                EnterpriseGroupRoleAssignmentRecord.tenant_id == tenant_id,
+                EnterpriseGroupRoleAssignmentRecord.group_id.in_(group_ids),
+                EnterpriseGroupRoleAssignmentRecord.status == "active",
+                EnterpriseCustomRoleRecord.status == "active",
+            ]
+            if space_id is not None:
+                assignment_filters.append(EnterpriseGroupRoleAssignmentRecord.space_id == space_id)
+            assignments = (
+                tuple(
+                    db.execute(
+                        sa.select(
+                            EnterpriseGroupRoleAssignmentRecord.id,
+                            EnterpriseGroupRoleAssignmentRecord.group_id,
+                            EnterpriseGroupRoleAssignmentRecord.space_id,
+                            EnterpriseGroupRoleAssignmentRecord.project_id,
+                            EnterpriseCustomRoleRecord.id,
+                            EnterpriseCustomRoleRecord.name,
+                            EnterpriseCustomRoleRecord.version,
+                            EnterpriseGroupRoleAssignmentRecord.expires_at,
+                        )
+                        .join(
+                            EnterpriseCustomRoleRecord,
+                            sa.and_(
+                                EnterpriseCustomRoleRecord.tenant_id
+                                == EnterpriseGroupRoleAssignmentRecord.tenant_id,
+                                EnterpriseCustomRoleRecord.space_id
+                                == EnterpriseGroupRoleAssignmentRecord.space_id,
+                                EnterpriseCustomRoleRecord.project_id
+                                == EnterpriseGroupRoleAssignmentRecord.project_id,
+                                EnterpriseCustomRoleRecord.id
+                                == EnterpriseGroupRoleAssignmentRecord.custom_role_id,
+                            ),
+                        )
+                        .where(*assignment_filters)
+                        .order_by(EnterpriseGroupRoleAssignmentRecord.id)
+                    ).all()
+                )
+                if group_ids
+                else ()
+            )
+        facts: dict[str, object] = {
+            "group_memberships": [
+                {
+                    "group_id": str(group_id),
+                    "group_name": group_name,
+                    "membership_version": version,
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                }
+                for group_id, group_name, version, expires_at in memberships
+            ],
+            "group_role_assignments": [
+                {
+                    "assignment_id": str(assignment_id),
+                    "group_id": str(group_id),
+                    "space_id": str(assignment_space_id),
+                    "project_id": str(project_id),
+                    "custom_role_id": str(custom_role_id),
+                    "custom_role_name": role_name,
+                    "custom_role_version": role_version,
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                }
+                for (
+                    assignment_id,
+                    group_id,
+                    assignment_space_id,
+                    project_id,
+                    custom_role_id,
+                    role_name,
+                    role_version,
+                    expires_at,
+                ) in assignments
+            ],
+        }
+        return RemovalImpact(facts=facts, blocking_count=0)
+
+
 class ServiceAccountRemovalImpactProvider:
     """Block removal until explicit Service Account stewardship is transferred."""
 
@@ -266,7 +393,9 @@ class ServiceAccountRemovalImpactProvider:
                 filters.append(ServiceAccountRecord.space_id == space_id)
             accounts = tuple(
                 db.execute(
-                    sa.select(ServiceAccountRecord).where(*filters).order_by(ServiceAccountRecord.id)
+                    sa.select(ServiceAccountRecord)
+                    .where(*filters)
+                    .order_by(ServiceAccountRecord.id)
                 ).scalars()
             )
             account_ids = [account.id for account in accounts]

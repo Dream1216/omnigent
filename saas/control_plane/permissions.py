@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-05.p6"
+POLICY_VERSION: Final = "2026-08-05.p6-groups"
 
 
 class PermissionScope(StrEnum):
@@ -80,6 +80,8 @@ _DEFINITIONS = (
     _permission("membership.role.update", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("membership.suspend", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("membership.remove", PermissionScope.TENANT, PermissionRisk.HIGH),
+    _permission("group.read", PermissionScope.TENANT, PermissionRisk.LOW),
+    _permission("group.manage", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("space.create", PermissionScope.TENANT, PermissionRisk.MEDIUM),
     _permission("space.read", PermissionScope.SPACE, PermissionRisk.LOW),
     _permission("space.update", PermissionScope.SPACE, PermissionRisk.MEDIUM),
@@ -127,6 +129,8 @@ _DEFINITIONS = (
     _permission("grant.read", PermissionScope.PROJECT, PermissionRisk.MEDIUM),
     _permission("grant.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("role.preview", PermissionScope.PROJECT, PermissionRisk.LOW),
+    _permission("custom_role.read", PermissionScope.PROJECT, PermissionRisk.MEDIUM),
+    _permission("custom_role.manage", PermissionScope.PROJECT, PermissionRisk.HIGH),
     _permission("billing.read", PermissionScope.TENANT, PermissionRisk.MEDIUM),
     _permission("billing.manage", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("usage.export", PermissionScope.TENANT, PermissionRisk.MEDIUM),
@@ -197,6 +201,8 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "membership.role.update",
                 "membership.suspend",
                 "membership.remove",
+                "group.read",
+                "group.manage",
                 "space.create",
                 "project.create",
                 "billing.read",
@@ -217,6 +223,8 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "membership.role.update",
                 "membership.suspend",
                 "membership.remove",
+                "group.read",
+                "group.manage",
                 "space.create",
                 "project.create",
                 "billing.read",
@@ -230,7 +238,14 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
             {"tenant.read", "billing.read", "billing.manage", "usage.export"}
         ),
         "security_auditor": frozenset(
-            {"tenant.read", "audit.read", "audit.export", "project.read_metadata", "grant.read"}
+            {
+                "tenant.read",
+                "group.read",
+                "audit.read",
+                "audit.export",
+                "project.read_metadata",
+                "grant.read",
+            }
         ),
         "operator": frozenset({"tenant.read", "run.read_metadata", "run.cancel", "run.retry"}),
         "member": frozenset({"tenant.read"}),
@@ -253,6 +268,8 @@ SPACE_ROLE_PERMISSIONS = MappingProxyType(
                 "grant.read",
                 "grant.manage",
                 "role.preview",
+                "custom_role.read",
+                "custom_role.manage",
             }
         ),
         "admin": frozenset(
@@ -266,6 +283,8 @@ SPACE_ROLE_PERMISSIONS = MappingProxyType(
                 "grant.read",
                 "grant.manage",
                 "role.preview",
+                "custom_role.read",
+                "custom_role.manage",
             }
         ),
         "operator": frozenset(
@@ -288,6 +307,8 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "grant.read",
                 "grant.manage",
                 "role.preview",
+                "custom_role.read",
+                "custom_role.manage",
                 "run.create",
                 "run.read_metadata",
                 "run.read_content",
@@ -309,6 +330,8 @@ PROJECT_ROLE_PERMISSIONS = MappingProxyType(
                 "grant.read",
                 "grant.manage",
                 "role.preview",
+                "custom_role.read",
+                "custom_role.manage",
                 "runtime.binding.manage",
                 "environment.manage",
                 "egress.policy.manage",

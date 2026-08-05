@@ -43,8 +43,13 @@ _SELECTED_HASH_TABLES = (
     "saas_spaces",
     "saas_tenant_memberships",
     "saas_space_memberships",
+    "saas_projects",
     "saas_service_accounts",
     "saas_api_credentials",
+    "saas_enterprise_groups",
+    "saas_enterprise_group_memberships",
+    "saas_enterprise_custom_roles",
+    "saas_enterprise_group_role_assignments",
     "saas_control_plane_outbox",
 )
 
@@ -175,6 +180,14 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "tenant_b": "20000000-0000-4000-8000-000000000002",
         "space_a": "30000000-0000-4000-8000-000000000001",
         "space_b": "30000000-0000-4000-8000-000000000002",
+        "project_a": "90000000-0000-4000-8000-000000000001",
+        "project_b": "90000000-0000-4000-8000-000000000002",
+        "group_a": "91000000-0000-4000-8000-000000000001",
+        "group_b": "91000000-0000-4000-8000-000000000002",
+        "custom_role_a": "92000000-0000-4000-8000-000000000001",
+        "custom_role_b": "92000000-0000-4000-8000-000000000002",
+        "group_role_assignment_a": "93000000-0000-4000-8000-000000000001",
+        "group_role_assignment_b": "93000000-0000-4000-8000-000000000002",
         "identity_a": "40000000-0000-4000-8000-000000000001",
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
@@ -239,6 +252,60 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(tenant_id, space_id, user_id, role, status, version, joined_at) VALUES "
                     "(:tenant_a, :space_a, :actor_a, 'owner', 'active', 1, now()), "
                     "(:tenant_b, :space_b, :actor_b, 'owner', 'active', 1, now())"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_projects "
+                    "(id, tenant_id, space_id, name, visibility, created_by, status, "
+                    "authorization_version) VALUES "
+                    "(:project_a, :tenant_a, :space_a, 'Recovery Project A', 'private', "
+                    ":actor_a, 'active', 1), "
+                    "(:project_b, :tenant_b, :space_b, 'Recovery Project B', 'private', "
+                    ":actor_b, 'active', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_groups "
+                    "(id, tenant_id, name, description, status, version, created_by) VALUES "
+                    "(:group_a, :tenant_a, 'Recovery Group A', NULL, 'active', 1, :actor_a), "
+                    "(:group_b, :tenant_b, 'Recovery Group B', NULL, 'active', 1, :actor_b)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_group_memberships "
+                    "(tenant_id, group_id, user_id, status, expires_at, version, created_by) "
+                    "VALUES (:tenant_a, :group_a, :actor_a, 'active', NULL, 1, :actor_a), "
+                    "(:tenant_b, :group_b, :actor_b, 'active', NULL, 1, :actor_b)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_custom_roles "
+                    "(id, tenant_id, space_id, project_id, name, description, permissions, "
+                    "status, version, created_by) VALUES "
+                    "(:custom_role_a, :tenant_a, :space_a, :project_a, 'Recovery Reader A', "
+                    "NULL, CAST(:role_permissions AS jsonb), 'active', 1, :actor_a), "
+                    "(:custom_role_b, :tenant_b, :space_b, :project_b, 'Recovery Reader B', "
+                    "NULL, CAST(:role_permissions AS jsonb), 'active', 1, :actor_b)"
+                ),
+                {**identifiers, "role_permissions": json.dumps(["project.read_metadata"])},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_group_role_assignments "
+                    "(id, tenant_id, space_id, project_id, group_id, custom_role_id, status, "
+                    "expires_at, version, created_by) VALUES "
+                    "(:group_role_assignment_a, :tenant_a, :space_a, :project_a, :group_a, "
+                    ":custom_role_a, 'active', NULL, 1, :actor_a), "
+                    "(:group_role_assignment_b, :tenant_b, :space_b, :project_b, :group_b, "
+                    ":custom_role_b, 'active', NULL, 1, :actor_b)"
                 ),
                 identifiers,
             )
@@ -380,6 +447,22 @@ def _apply_post_backup_replay(
             )
             connection.execute(
                 sa.text(
+                    "UPDATE saas_enterprise_group_memberships "
+                    "SET status = 'removed', version = 2 "
+                    "WHERE tenant_id = :tenant_b AND group_id = :group_b AND user_id = :actor_b"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_enterprise_group_role_assignments "
+                    "SET status = 'revoked', version = 2 "
+                    "WHERE id = :group_role_assignment_b"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
                     "UPDATE saas_tenants SET status = 'pending_deletion' WHERE id = :tenant_b"
                 ),
                 identifiers,
@@ -483,7 +566,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000001":
+            if saas_head != "p6a000000002":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -495,13 +578,30 @@ def _verify_restored_database(
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "
                 f"SET LOCAL app.actor_id = '{identifiers['actor_a']}'; "
-                f"SET LOCAL app.tenant_id = '{identifiers['tenant_a']}'"
+                f"SET LOCAL app.tenant_id = '{identifiers['tenant_a']}'; "
+                f"SET LOCAL app.space_id = '{identifiers['space_a']}'"
             )
             visible_tenants = set(
                 connection.execute(sa.text("SELECT id::text FROM saas_tenants")).scalars()
             )
             if visible_tenants != {identifiers["tenant_a"]}:
                 raise PostgreSqlRestoreContractError("restored SaaS RLS exposed another tenant")
+            visible_groups = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_groups")
+                ).scalars()
+            )
+            visible_custom_roles = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_custom_roles")
+                ).scalars()
+            )
+            if visible_groups != {identifiers["group_a"]} or visible_custom_roles != {
+                identifiers["custom_role_a"]
+            }:
+                raise PostgreSqlRestoreContractError(
+                    "restored enterprise access RLS exposed another tenant"
+                )
         with engine.begin() as connection:
             connection.exec_driver_sql(
                 "SET LOCAL ROLE omnigent_runtime_app; "
@@ -520,7 +620,7 @@ def _verify_restored_database(
                     "SELECT u.security_version, i.status, s.revoked_at IS NOT NULL, "
                     "tm.status, sm.status, t.status, machine.status, "
                     "machine.security_version, credential.status, "
-                    "credential.revoked_at IS NOT NULL "
+                    "credential.revoked_at IS NOT NULL, gm.status, gra.status "
                     "FROM saas_global_users u "
                     "JOIN saas_identity_connections i ON i.user_id = u.id "
                     "JOIN saas_auth_sessions s ON s.user_id = u.id "
@@ -531,6 +631,10 @@ def _verify_restored_database(
                     "AND machine.tenant_id = t.id "
                     "JOIN saas_api_credentials credential "
                     "ON credential.service_account_id = machine.id "
+                    "JOIN saas_enterprise_group_memberships gm "
+                    "ON gm.tenant_id = t.id AND gm.user_id = u.id "
+                    "JOIN saas_enterprise_group_role_assignments gra "
+                    "ON gra.tenant_id = t.id AND gra.group_id = gm.group_id "
                     "WHERE u.id = :actor_b"
                 ),
                 identifiers,
@@ -546,6 +650,8 @@ def _verify_restored_database(
                 2,
                 "revoked",
                 True,
+                "removed",
+                "revoked",
             ):
                 raise PostgreSqlRestoreContractError(
                     "post-backup revocation/deletion replay is incomplete"

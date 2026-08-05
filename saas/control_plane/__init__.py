@@ -65,6 +65,24 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.enterprise_access import (
+    EnterpriseAccessService,
+    EnterpriseCustomRoleView,
+    EnterpriseGroupMembershipView,
+    EnterpriseGroupRoleAssignmentView,
+    EnterpriseGroupView,
+)
+from saas.control_plane.enterprise_http import (
+    ENTERPRISE_ADMIN_ROUTE_PERMISSIONS,
+    create_enterprise_admin_router,
+    validate_enterprise_admin_route_permissions,
+)
+from saas.control_plane.enterprise_models import (
+    EnterpriseCustomRoleRecord,
+    EnterpriseGroupMembershipRecord,
+    EnterpriseGroupRecord,
+    EnterpriseGroupRoleAssignmentRecord,
+)
 from saas.control_plane.execution import (
     ArtifactRegistration,
     EffectCallState,
@@ -196,6 +214,7 @@ from saas.control_plane.projects import (
 )
 from saas.control_plane.removal_impact import (
     CompositeRemovalImpactProvider,
+    EnterpriseAccessRemovalImpactProvider,
     ExecutionRemovalImpactProvider,
     ProjectRemovalImpactProvider,
     ServiceAccountRemovalImpactProvider,
@@ -260,6 +279,7 @@ from saas.control_plane.worktrees import (
 )
 
 __all__ = [
+    "ENTERPRISE_ADMIN_ROUTE_PERMISSIONS",
     "PERMISSION_CATALOG",
     "POLICY_VERSION",
     "PROJECT_ADMIN_ROUTE_PERMISSIONS",
@@ -301,6 +321,16 @@ __all__ = [
     "EffectCallState",
     "EgressPolicyRecord",
     "EnqueuedWebhookDelivery",
+    "EnterpriseAccessRemovalImpactProvider",
+    "EnterpriseAccessService",
+    "EnterpriseCustomRoleRecord",
+    "EnterpriseCustomRoleView",
+    "EnterpriseGroupMembershipRecord",
+    "EnterpriseGroupMembershipView",
+    "EnterpriseGroupRecord",
+    "EnterpriseGroupRoleAssignmentRecord",
+    "EnterpriseGroupRoleAssignmentView",
+    "EnterpriseGroupView",
     "ExecutionControlPlane",
     "ExecutionControlPlaneError",
     "ExecutionProfileRecord",
@@ -461,11 +491,13 @@ __all__ = [
     "WorktreeQuotaRecord",
     "WorktreeRemovalImpactProvider",
     "apply_rls_context",
+    "create_enterprise_admin_router",
     "create_project_admin_router",
     "create_saas_auth_router",
     "create_saas_http_integration",
     "load_runtime_compatibility_policy",
     "normalize_email",
     "permission_catalog_payload",
+    "validate_enterprise_admin_route_permissions",
     "validate_project_admin_route_permissions",
 ]

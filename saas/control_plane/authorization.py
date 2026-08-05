@@ -21,6 +21,12 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.enterprise_models import (
+    EnterpriseCustomRoleRecord,
+    EnterpriseGroupMembershipRecord,
+    EnterpriseGroupRecord,
+    EnterpriseGroupRoleAssignmentRecord,
+)
 from saas.control_plane.permissions import (
     PERMISSION_CATALOG,
     POLICY_VERSION,
@@ -48,14 +54,21 @@ class AuthorizationSource:
     role: str
     subject_type: str
     subject_id: UUID
+    role_id: UUID | None = None
+    role_version: int | None = None
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "source_type": self.source_type,
             "role": self.role,
             "subject_type": self.subject_type,
             "subject_id": str(self.subject_id),
         }
+        if self.role_id is not None:
+            payload["role_id"] = str(self.role_id)
+        if self.role_version is not None:
+            payload["role_version"] = self.role_version
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +330,73 @@ class ProjectAuthorizer:
                 permissions=PROJECT_ROLE_PERMISSIONS[membership.role],
             )
 
+        group_roles = db.execute(
+            sa.select(
+                EnterpriseGroupRoleAssignmentRecord,
+                EnterpriseCustomRoleRecord,
+            )
+            .join(
+                EnterpriseGroupMembershipRecord,
+                sa.and_(
+                    EnterpriseGroupMembershipRecord.tenant_id
+                    == EnterpriseGroupRoleAssignmentRecord.tenant_id,
+                    EnterpriseGroupMembershipRecord.group_id
+                    == EnterpriseGroupRoleAssignmentRecord.group_id,
+                ),
+            )
+            .join(
+                EnterpriseGroupRecord,
+                sa.and_(
+                    EnterpriseGroupRecord.tenant_id
+                    == EnterpriseGroupRoleAssignmentRecord.tenant_id,
+                    EnterpriseGroupRecord.id == EnterpriseGroupRoleAssignmentRecord.group_id,
+                ),
+            )
+            .join(
+                EnterpriseCustomRoleRecord,
+                sa.and_(
+                    EnterpriseCustomRoleRecord.tenant_id
+                    == EnterpriseGroupRoleAssignmentRecord.tenant_id,
+                    EnterpriseCustomRoleRecord.space_id
+                    == EnterpriseGroupRoleAssignmentRecord.space_id,
+                    EnterpriseCustomRoleRecord.project_id
+                    == EnterpriseGroupRoleAssignmentRecord.project_id,
+                    EnterpriseCustomRoleRecord.id
+                    == EnterpriseGroupRoleAssignmentRecord.custom_role_id,
+                ),
+            )
+            .where(
+                EnterpriseGroupRoleAssignmentRecord.tenant_id == request.tenant_id,
+                EnterpriseGroupRoleAssignmentRecord.space_id == request.space_id,
+                EnterpriseGroupRoleAssignmentRecord.project_id == project_id,
+                EnterpriseGroupRoleAssignmentRecord.status == "active",
+                EnterpriseGroupRecord.status == "active",
+                EnterpriseGroupMembershipRecord.user_id == request.actor_id,
+                EnterpriseGroupMembershipRecord.status == "active",
+                EnterpriseCustomRoleRecord.status == "active",
+                sa.or_(
+                    EnterpriseGroupRoleAssignmentRecord.expires_at.is_(None),
+                    EnterpriseGroupRoleAssignmentRecord.expires_at > checked_at,
+                ),
+                sa.or_(
+                    EnterpriseGroupMembershipRecord.expires_at.is_(None),
+                    EnterpriseGroupMembershipRecord.expires_at > checked_at,
+                ),
+            )
+        ).all()
+        for assignment, role in group_roles:
+            self._add_role_source(
+                sources,
+                granted_permissions,
+                source_type="enterprise_group_custom_role",
+                role=role.name,
+                subject_type="group",
+                subject_id=assignment.group_id,
+                permissions=frozenset(role.permissions),
+                role_id=role.id,
+                role_version=role.version,
+            )
+
         if project.visibility == "space":
             self._add_role_source(
                 sources,
@@ -447,6 +527,8 @@ class ProjectAuthorizer:
         subject_type: str,
         subject_id: UUID,
         permissions: frozenset[str],
+        role_id: UUID | None = None,
+        role_version: int | None = None,
     ) -> None:
         sources.append(
             AuthorizationSource(
@@ -454,6 +536,8 @@ class ProjectAuthorizer:
                 role=role,
                 subject_type=subject_type,
                 subject_id=subject_id,
+                role_id=role_id,
+                role_version=role_version,
             )
         )
         granted_permissions.update(permissions)

@@ -97,6 +97,10 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_member_removal_preflights,
     saas_service_accounts,
     saas_api_credentials,
+    saas_enterprise_groups,
+    saas_enterprise_group_memberships,
+    saas_enterprise_custom_roles,
+    saas_enterprise_group_role_assignments,
     saas_control_plane_outbox
 TO saas_governance;
 
@@ -107,6 +111,10 @@ GRANT SELECT ON
     saas_changesets,
     saas_worktree_instances
 TO saas_governance;
+
+-- Enterprise governance evaluates project permissions in the same transaction
+-- and therefore appends the immutable authorization decision before mutation.
+GRANT SELECT, INSERT ON saas_authorization_decisions TO saas_governance;
 
 GRANT SELECT ON
     saas_global_users,
@@ -122,6 +130,10 @@ GRANT SELECT ON
     saas_runtime_identity_aliases,
     saas_runtime_resource_bindings,
     saas_runtime_binding_sagas,
+    saas_enterprise_groups,
+    saas_enterprise_group_memberships,
+    saas_enterprise_custom_roles,
+    saas_enterprise_group_role_assignments,
     saas_repositories,
     saas_changeset_groups,
     saas_changesets,
@@ -135,6 +147,10 @@ GRANT SELECT ON
 TO saas_app;
 
 GRANT INSERT, UPDATE ON
+    saas_enterprise_groups,
+    saas_enterprise_group_memberships,
+    saas_enterprise_custom_roles,
+    saas_enterprise_group_role_assignments,
     saas_repositories,
     saas_changeset_groups,
     saas_changesets,

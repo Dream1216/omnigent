@@ -10,8 +10,8 @@ Service Accounts on upstream Runtime routes.
    KMS/HSM-backed secret delivery when constructing `ApiCredentialService`. Never log,
    persist, bake into an image, or reuse the browser Cookie/signing secret as this
    pepper.
-2. Run migration `p6a000000001`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Confirm all 52 control-plane and all 17
+2. Run migration `p6a000000002`, then reapply
+   `saas/control_plane/postgresql_roles.sql`. Confirm all 56 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 3. Use separate database logins inheriting exactly `saas_governance` for management
    and `saas_authenticator` for token validation. Both must remain `NOSUPERUSER
