@@ -954,12 +954,17 @@ The reviewed official baseline has also advanced to
 database-query sessions and Host/Web changes; the permanent managed-session
 initializer patch was regenerated against that exact tree. Both downstream patches
 replay in order with no content mismatch, while the intrusion budget remains eight
-official files, 449 net added lines, and a 0.9938 isolated-code ratio. On the merged
-tree, the local compatibility matrix passes 821 tests with 22 platform skips, the
-official Zygote/query-context matrix passes 57 tests, the 52/17 PostgreSQL restore
-contract passes with machine-credential revocation replay, the p6 migration round
-trip passes, and the wheel contains 145 required artifacts. These local results do
-not replace the exact-revision GitHub acceptance and evidence-successor gates.
+official files, 449 net added lines, and a 0.9938 isolated-code ratio. Exact run
+`31002035206` at `f5b6d06d16903943028ce0b8f6adf9534e05d3c2` passes 843
+compatibility tests, 57 official Zygote/query-context regressions, the 36/22 Linux
+safety matrix, Pyrefly with zero errors, the p6 migration round trip, both patch
+replays, and the 145-artifact implementation wheel. Its PostgreSQL 16 logical
+restore completes in 2.924 seconds with 52/17 forced-RLS inventories, two restored
+Service Accounts, two restored API Keys, both cross-scope negative probes, and
+post-backup machine-credential revocation replay. It closes only the
+`p6-service-account-api-credential-contract` code subgate; the evidence-successor
+wheel requires 146 artifacts, eleven aggregate gates remain pending, and the
+release-level decision remains `NO-GO`.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

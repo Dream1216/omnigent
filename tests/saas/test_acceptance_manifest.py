@@ -21,7 +21,7 @@ def test_current_acceptance_manifest_is_consistent_and_no_go() -> None:
         "complete",
         "in_progress",
         "in_progress",
-        "not_started",
+        "in_progress",
     ]
 
 

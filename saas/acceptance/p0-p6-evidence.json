@@ -604,8 +604,25 @@
     },
     {
       "id": "P6",
-      "status": "not_started",
+      "status": "in_progress",
       "gates": [
+        {
+          "id": "p6-service-account-api-credential-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/api_credential_models.py",
+            "saas/control_plane/api_credentials.py",
+            "saas/control_plane/api_http.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p6a000000001_api_service_accounts.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/production/runbooks/api-credentials.md",
+            "tests/saas/test_api_credentials.py",
+            "tests/saas/test_api_credentials_postgresql.py",
+            "saas/acceptance/p6-api-service-account-ci-31002035206.json"
+          ]
+        },
         {
           "id": "p6-billing-ledger-entitlement-quota-subscription",
           "status": "pending",

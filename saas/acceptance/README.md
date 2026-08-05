@@ -399,8 +399,17 @@ authorizes Service Accounts on upstream Runtime routes. The `p6a000000001`
 migration expands the control-plane forced-RLS inventory to 52 tables and limits
 the authenticator to an exact server-derived `app.api_credential_id` plus
 coalesced last-use fields. Backup/restore and deletion contracts now include
-machine-credential revocation. This paragraph records only the unaccepted
-implementation scope: no P6 subgate is closed until an exact-revision CI record
-and evidence-successor run are committed. Billing, enterprise federation,
-complete audit/API/console/privacy capability, commercial evidence, all eleven
-aggregate gates, and the release-level `NO-GO` remain pending.
+machine-credential revocation.
+
+Exact run `31002035206` at
+`f5b6d06d16903943028ce0b8f6adf9534e05d3c2` passes 843 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, p6 migration round trip, the 145-artifact wheel, both
+patch replays, and the 8-file/449-line/0.9938 intrusion result. Its PostgreSQL 16
+restore takes 2.924 seconds with 52/17 forced-RLS inventories, two Service Account
+rows, two API Key rows, cross-scope denials, and post-backup machine-credential
+revocation replay. It closes only
+`p6-service-account-api-credential-contract`; the evidence-successor wheel requires
+146 artifacts. Billing, enterprise federation, complete audit/API/console/privacy
+capability, commercial evidence, all eleven aggregate gates, and the release-level
+`NO-GO` remain pending.
