@@ -40,3 +40,18 @@ RPO/RTO, lost or corrected facts, manual steps, revision tuple, hash report,
 negative RLS output, tombstone and revocation replay, sign-off roles, and dated
 remediation. A backup without successful isolated restore evidence is not a
 production capability.
+
+Write the signed immutable drill record against
+`saas/production/recovery-policy.json`, then validate the exact release candidate:
+
+```bash
+uv run python -m saas.scripts.check_recovery_readiness \
+  --product-revision "$(git rev-parse HEAD)" \
+  --require-ready
+```
+
+The protected promotion workflow must persist the JSON report beside the source
+backup manifest and DSSE envelope. Structural validation without `--require-ready`
+is suitable for pull requests and is expected to report `blocked` while either the
+Tenant or cluster production drill is absent. CI fixtures, local databases, and a
+successful backup job are never copied into the production evidence directory.

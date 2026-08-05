@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-saas-single-region-recovery-v1",
+  "reviewed_at": "2026-08-05",
+  "revision_contract": {
+    "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "p5a000000001"
+  },
+  "evidence_directory": "saas/production/recovery-evidence",
+  "max_evidence_age_days": 90,
+  "minimum_source_failure_domains": 2,
+  "required_drill_scopes": [
+    "tenant",
+    "cluster"
+  ],
+  "required_isolation_boundaries": [
+    "account",
+    "network",
+    "kms",
+    "object_prefix",
+    "search_index",
+    "runner_pool"
+  ],
+  "required_attestation_roles": [
+    "site-reliability",
+    "security",
+    "data-owner"
+  ],
+  "required_checks": [
+    "backup_integrity",
+    "restore_completed",
+    "source_schema_exact",
+    "source_revision_exact",
+    "forced_rls_control_plane_50",
+    "forced_rls_runtime_17",
+    "cross_tenant_negative",
+    "tombstone_replay",
+    "revocation_replay",
+    "binding_generation_fence",
+    "active_binding_uniqueness",
+    "ledger_conservation",
+    "object_reference_integrity",
+    "kms_decryptability",
+    "canary_authorization",
+    "traffic_disabled_until_validation"
+  ],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ],
+  "data_classes": [
+    {
+      "id": "T0",
+      "rpo_seconds": 300,
+      "rto_seconds": 3600
+    },
+    {
+      "id": "T1",
+      "rpo_seconds": 900,
+      "rto_seconds": 14400
+    },
+    {
+      "id": "T2",
+      "rpo_seconds": null,
+      "rpo_mode": "latest_durable_recovery_point",
+      "rto_seconds": 28800
+    }
+  ]
+}

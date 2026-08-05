@@ -280,3 +280,13 @@ image gate therefore remains pending. Production DNS policy, egress proxy/firewa
 enforcement, external Secret/KMS operation, receiver conformance, capacity/SLO
 evidence, deletion workflows, and multi-AZ recovery remain independent P5 `NO-GO`
 requirements.
+
+Recovery readiness now has a separately executable contract in
+`saas/production/recovery-policy.json` and
+`python -m saas.scripts.check_recovery_readiness`. It rejects policy drift,
+canonical-record tampering, stale or different-release evidence, shared restore
+boundaries, same-failure-domain backup storage, missing signatures/attestations,
+incomplete safety checks, and RPO/RTO overruns. An empty evidence directory is a
+valid repository state but reports production `blocked`; it cannot be converted to
+`ready` without one current, exact-revision production Tenant drill and one cluster
+drill. This closes no multi-AZ, PITR, or recovery aggregate gate by itself.

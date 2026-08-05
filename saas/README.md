@@ -728,6 +728,20 @@ Production DNS/egress enforcement, external Secret/KMS operation, receiver
 conformance, capacity/SLO, deletion, PITR, isolated restore, multi-AZ, and signed image
 promotion remain pending; P5 is `in_progress` and the release remains `NO-GO`.
 
+The next P5 recovery slice adds a strict machine-readable policy and evidence
+validator without manufacturing operational proof. A qualifying record must bind the
+exact upstream, adapter, schema, and downstream product revisions; measure T0-T2
+RPO/RTO; prove an encrypted deletion-protected backup outside the source failure
+domains; restore with traffic disabled into separately hashed account, network, KMS,
+object-prefix, search-index, and Runner-pool boundaries; pass the complete 50-table
+control-plane and 17-table runtime forced-RLS, cross-tenant, tombstone, revocation,
+binding, ledger, object, key, and canary matrix; and reference a signed immutable
+artifact with independent SRE, security, and data-owner attestations. Both a current
+Tenant drill and a current cluster drill are required. The repository intentionally
+contains neither, so the structural check passes while production readiness remains
+blocked. CI fixtures, backup-job success, screenshots, and local restores cannot close
+the gate.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly
@@ -810,8 +824,11 @@ production promotion workflow:
 
 ```bash
 uv run python -m saas.scripts.check_production_baseline
+uv run python -m saas.scripts.check_recovery_readiness
 uv run python -m saas.scripts.check_image_supply_chain
 uv run python -m saas.scripts.check_production_baseline --require-ready
+uv run python -m saas.scripts.check_recovery_readiness \
+  --product-revision "$(git rev-parse HEAD)" --require-ready
 uv run python -m saas.scripts.check_image_supply_chain --require-ready
 ```
 
