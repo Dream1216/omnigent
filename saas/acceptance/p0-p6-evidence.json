@@ -550,20 +550,32 @@
             "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json"
           ]
         },
-        {
-          "id": "p5-tenant-deletion-evidence-verifier-contract",
-          "status": "passed",
+    {
+      "id": "p5-tenant-deletion-evidence-verifier-contract",
+      "status": "passed",
           "evidence": [
             "saas/production/deletion-policy.json",
             "saas/production/deletion.py",
             "saas/scripts/check_deletion_readiness.py",
             "saas/production/runbooks/tenant-deletion.md",
             "tests/saas/test_deletion_readiness.py",
-            "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json"
-          ]
-        },
-        {
-          "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
+        "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json"
+      ]
+    },
+    {
+      "id": "p5-production-slo-capacity-evidence-verifier-contract",
+      "status": "passed",
+      "evidence": [
+        "saas/production/slo-capacity-policy.json",
+        "saas/production/slo_capacity.py",
+        "saas/scripts/check_slo_capacity_readiness.py",
+        "saas/production/runbooks/slo-capacity.md",
+        "tests/saas/test_slo_capacity_readiness.py",
+        "saas/acceptance/p5-slo-capacity-contract-ci-30991532016.json"
+      ]
+    },
+    {
+      "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",
           "evidence": []
         },

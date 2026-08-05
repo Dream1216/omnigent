@@ -817,6 +817,17 @@ production `blocked` with seven explicit blockers. This closes only the verifier
 contract subgate after exact CI acceptance; it does not manufacture capacity, SLO,
 multi-AZ, or aggregate P5 proof.
 
+Exact Linux/PostgreSQL 16 run `30991532016` verifies the SLO/capacity-contract
+implementation at `05fbe7d80d32e5337f515a389520c1813d2a469f`: 827
+PostgreSQL/Chromium compatibility tests, 56 official regressions, and the 36/22 Linux
+security matrix pass; the disposable logical restore passes in 2.82 seconds, Pyrefly
+reports zero errors, p5a migrations round trip, the wheel contains 138 required
+artifacts, both patches replay, and source intrusion remains 8 files/449 lines with a
+0.9933 isolated-code ratio. The report confirms seven services, six SLOs, five
+scenarios, zero production records, zero qualified records, and seven readiness
+blockers. This closes only the fail-closed verifier-contract subgate; the actual
+production SLO/capacity and aggregate gates remain pending.
+
 Exact implementation run `30929785430` verifies this transport at
 `d6ec4b51cddd3583cc9a583476adb0163d760b51`: 693 PostgreSQL/Chromium
 compatibility tests and the 36/22 official Linux security matrix pass, Pyrefly

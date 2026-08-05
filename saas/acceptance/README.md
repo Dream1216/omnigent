@@ -347,3 +347,12 @@ records, stale observations, and policy drift. The repository deliberately conta
 no production record and retains six `planned` dashboards, so the structural check
 passes while production readiness reports seven blockers. Passing the verifier's CI
 contract does not close the actual SLO, capacity, multi-AZ, or aggregate P5 gate.
+
+Exact run `30991532016` at
+`05fbe7d80d32e5337f515a389520c1813d2a469f` passes 827 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, the 2.82-second logical
+restore contract, Pyrefly, migration round trip, the 138-artifact wheel, both patch
+replays, and the 8-file/449-line intrusion result. Its SLO/capacity report remains
+deliberately blocked with six inactive dashboards and no qualifying production
+record. It closes only `p5-production-slo-capacity-evidence-verifier-contract`;
+eleven aggregate gates and the release-level `NO-GO` remain unchanged.
