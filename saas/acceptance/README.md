@@ -658,8 +658,14 @@ Image candidate run `31063360725` is deliberately excluded from machine-metering
 acceptance because all four repeated builds still supplied the stale
 `p6a000000007` schema label. The evidence successor instead derives the only migration
 head from `saas/production/baseline.json`, passes it to every Server/Host build, and
-adds a fail-closed workflow-source check. A new exact-revision candidate must prove
-the corrected `p6a000000009` label before executable image evidence can be attached.
+adds a fail-closed workflow-source check. Corrected image run `31064837882` at
+`f75be5a62813b00740334ba701be9633b1dab9e3` passes 888 tests with one platform skip,
+migration round trip, both patches, and the 8-file/451-line/0.9953 intrusion result.
+Server and Host each build twice for both supported architectures with matching
+Manifest/Config pairs, the exact `p6a000000009` label, and two attestation descriptors
+per build. This is accepted candidate evidence, not a published, signed,
+vulnerability-cleared, canaried, or rollback-proven production image. The
+evidence-successor wheel requires 179 artifacts.
 
 The official Runtime Provider path is not yet wired to the machine client. Period
 rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice comparison,

@@ -1238,7 +1238,15 @@ older `p6a000000007` image label while the authoritative migration head is
 `p6a000000009`. The successor resolves the schema revision from
 `saas/production/baseline.json`, applies it to every Server/Host attempt, and makes the
 supply-chain policy checker reject a missing baseline derivation or any build that
-does not consume the resolved value. A new exact-revision image run is required.
+does not consume the resolved value. Corrected image run `31064837882` at
+`f75be5a62813b00740334ba701be9633b1dab9e3` passes 888 regressions with one platform
+skip, migration round trip, both patch replays, and the 8-file/451-line/0.9953
+intrusion budget. It builds Server and Host twice for `linux/amd64` and `linux/arm64`;
+each repeated Manifest/Config pair matches, every image label names
+`p6a000000009`, and each build carries two attestation descriptors. This closes the
+machine-metering executable candidate gap only. The archives are not registry-published
+or signed production images, and vulnerability admission, canary, and N-1 rollback
+remain open. The evidence-successor wheel requires 179 artifacts.
 
 This does **not** yet connect the official Runtime Provider execution path to the new
 client, and therefore does not establish live Provider usage. Period rollover, Provider
