@@ -1248,11 +1248,29 @@ machine-metering executable candidate gap only. The archives are not registry-pu
 or signed production images, and vulnerability admission, canary, and N-1 rollback
 remain open. The evidence-successor wheel requires 179 artifacts.
 
-This does **not** yet connect the official Runtime Provider execution path to the new
-client, and therefore does not establish live Provider usage. Period rollover, Provider
-webhook ordering/signature/replay, real invoice reconciliation, payment/invoice/tax
-boundaries, production SLO/capacity and commercial acceptance also remain open. P6 and
-release remain `NO-GO`.
+The next Runtime Partition slice now connects official usage completion to the machine
+client without importing SaaS code from official source. Managed Hosts disable the
+forkserver, select a reviewed downstream Runner entry module through a generic upstream
+seam, claim one scheduler-staged grant per official launch frame, and pass only a
+mode-0600 one-time envelope path to the child. The child unlinks and fsyncs that envelope
+before official startup. A required upstream-neutral usage sink persists content-blind
+input/output facts atomically before a completed response/event can return, then a
+background dispatcher retries the TLS 1.3 mTLS endpoint with stable idempotency. Spool
+files reject symlinks, changed identity, duplicate/unknown JSON, non-allowlisted meters,
+units, attributes and forged event keys; the capability never enters the spool.
+
+Local acceptance exercises the official `Client.responses.create` path, direct and
+actual official Host launch frames, crash/restart and partial-delivery replay, fail-closed
+disk/envelope behavior, and a complete Provider observer -> private spool -> mTLS ->
+durable certificate authorization -> `saas_metering` PostgreSQL RLS -> immutable Usage
+receipt chain. The wheel now requires 181 artifacts. This is still a code-level Runtime
+composition, not live production billing: the durable scheduler dispatcher must deliver
+the raw one-time grant to the selected Host process, the observer currently synthesizes
+a request identity because the official callback exposes no Provider-native request ID,
+and a process kill between Provider completion and usage notification remains a
+reconciliation window. Period rollover, signed/ordered/replay-safe Provider webhooks,
+real Provider invoice comparison, payment/tax boundaries, production SLO/capacity and
+commercial acceptance remain open. P6 and release remain `NO-GO`.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the

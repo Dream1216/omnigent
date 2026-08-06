@@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
     by_model: dict[str, _ModelUsage]
 
 
+_REQUIRED_OBSERVERS: list[UsageObserver] = []
 _OBSERVERS: list[UsageObserver] = []
 _RECORDS: dict[str, _UsageBucket] = {}
 _CURRENT_NODEID: str | None = None
@@ -138,6 +139,22 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
     return remove
 
 
+def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
+    """Register a fail-closed usage sink that runs before diagnostics.
+
+    Required observers are reserved for durable accounting boundaries.  An
+    exception propagates to the usage-producing call, unlike diagnostics
+    registered with :func:`add_observer`.
+    """
+    _REQUIRED_OBSERVERS.append(callback)
+
+    def remove() -> None:
+        with contextlib.suppress(ValueError):
+            _REQUIRED_OBSERVERS.remove(callback)
+
+    return remove
+
+
 def notify_from_dict(
     *,
     model: str | None,
@@ -173,13 +190,17 @@ def notify(
     output_tokens: int,
     total_tokens: int,
 ) -> None:
-    """Dispatch usage to observers and (if enabled) the auto-recorder.
-
-    Never raises: a misbehaving observer is logged and skipped.
-    """
+    """Dispatch usage to required sinks, diagnostics, and the auto-recorder."""
     if _ENV_VAR in os.environ and (input_tokens or output_tokens or total_tokens):
         _record(model, input_tokens, output_tokens, total_tokens)
         _write_records()
+    for cb in list(_REQUIRED_OBSERVERS):
+        cb(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
     for cb in list(_OBSERVERS):
         try:
             cb(
@@ -335,6 +356,7 @@ def _write_records() -> None:
 __all__ = [
     "UsageObserver",
     "add_observer",
+    "add_required_observer",
     "notify",
     "notify_from_dict",
     "set_current_test",

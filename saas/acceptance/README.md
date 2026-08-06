@@ -667,7 +667,20 @@ per build. This is accepted candidate evidence, not a published, signed,
 vulnerability-cleared, canaried, or rollback-proven production image. The
 evidence-successor wheel requires 179 artifacts.
 
-The official Runtime Provider path is not yet wired to the machine client. Period
-rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice comparison,
-payment and tax boundaries, production operations, commercial acceptance, all aggregate
-gates, and release `NO-GO` remain open.
+The downstream Runtime Partition now wires official usage completion to the machine
+client through three generic upstream seams: Host construction, Runner entry-module
+selection, and a required fail-closed usage sink. Managed launch uses a scheduler-staged
+one-time grant and a mode-0600 envelope that is unlinked before official Runner startup;
+input/output usage is atomically spooled without Prompt/output/capability content and
+retried over TLS 1.3 mTLS with stable idempotency. Local tests cover official Client and
+Host launch paths, failure and restart replay, strict spool rejection, and one complete
+official Provider observer -> mTLS -> durable certificate -> real PostgreSQL
+`saas_metering` RLS -> immutable receipt path. The implementation wheel requires 181
+artifacts.
+
+This does not yet establish production billing. The durable scheduler-to-Host raw-grant
+handoff is not deployed, the official observer exposes no Provider-native request ID,
+and a kill between Provider completion and notification remains a reconciliation window.
+Period rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice
+comparison, payment/tax boundaries, production operations, commercial acceptance, all
+aggregate gates, and release `NO-GO` remain open.

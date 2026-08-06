@@ -126,6 +126,8 @@ from omnigent.version import VERSION
 
 _logger = logging.getLogger(__name__)
 
+RUNNER_ENTRY_MODULE_ENV_VAR = "OMNIGENT_RUNNER_ENTRY_MODULE"
+
 
 class _WaitidInfo(Protocol):
     si_pid: int
@@ -1375,7 +1377,11 @@ class HostProcess:
 
             with child_logging_popen_kwargs(env) as logging_kwargs:
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "omnigent.runner._entry"],
+                    [
+                        sys.executable,
+                        "-m",
+                        os.environ.get(RUNNER_ENTRY_MODULE_ENV_VAR, "omnigent.runner._entry"),
+                    ],
                     env=env,
                     # Runners are WS-tunnel clients with no interactive input.
                     # Give them a clean /dev/null stdin instead of inheriting the
@@ -2846,6 +2852,7 @@ class HostProcess:
 def run_host_process(
     server_url: str,
     config_path: Path | None = None,
+    host_factory: Callable[[HostIdentity, str], HostProcess] = HostProcess,
 ) -> None:
     """Entry point for ``omnigent host``.
 
@@ -2856,6 +2863,7 @@ def run_host_process(
         ``"https://omnigent-app.databricksapps.com"``.
     :param config_path: Optional path to ``config.yaml``.
         Defaults to ``~/.omnigent/config.yaml``.
+    :param host_factory: Downstream-neutral HostProcess construction seam.
     :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
         fails permanently (auth / authorization / outdated server). The
         actionable cause is printed to stderr first.
@@ -2889,7 +2897,7 @@ def run_host_process(
     if _cli_log is not None and _cli_log != host_log_path:
         print(f"CLI diagnostics: {_display_log_path(_cli_log)}")
 
-    host = HostProcess(identity, server_url)
+    host = host_factory(identity, server_url)
     try:
         asyncio.run(host.run())
     except HostConnectError as exc:

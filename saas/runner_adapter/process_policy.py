@@ -18,18 +18,34 @@ fork, managed modes use the official direct-``Popen`` fallback.
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
 from omnigent.host.connect import (
     HARNESS_CREDENTIAL_ENV_VARS,
+    RUNNER_ENTRY_MODULE_ENV_VAR,
     RUNNER_ENV_PASSTHROUGH_ENV_VAR,
+    HostProcess,
     run_host_process,
 )
+from omnigent.host.frames import HostLaunchRunnerFrame, HostLaunchRunnerResultFrame
+from omnigent.host.identity import HostIdentity
+from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.process_logging import env_truthy
 from omnigent.runner._zygote import ZYGOTE_ENABLED_ENV_VAR
+from omnigent.runner.identity import RUNNER_ID_ENV_VAR, token_bound_runner_id
+from saas.runner_adapter.metering import (
+    MANAGED_METERING_ENVELOPE_ENV_VAR,
+    ManagedMeteringError,
+    ManagedMeteringGrant,
+    ManagedRunnerLaunchAuthority,
+    managed_runner_entry_module,
+    write_metering_envelope,
+)
 
 _CANONICAL_ZYGOTE_DISABLED = "0"
+_METERING_LAUNCH_ERROR = "managed_metering_grant_denied"
 
 
 class ManagedRunnerProcessPolicyError(RuntimeError):
@@ -98,6 +114,7 @@ def build_managed_host_environment(base: Mapping[str, str]) -> dict[str, str]:
     # Canonicalize every false spelling to the exact value used in deployment
     # evidence and ensure the upstream Host selects its direct-Popen path.
     environment[ZYGOTE_ENABLED_ENV_VAR] = _CANONICAL_ZYGOTE_DISABLED
+    environment[RUNNER_ENTRY_MODULE_ENV_VAR] = managed_runner_entry_module()
     environment.pop(RUNNER_ENV_PASSTHROUGH_ENV_VAR, None)
     for name in HARNESS_CREDENTIAL_ENV_VARS:
         if not environment.get(name, "").strip():
@@ -112,6 +129,11 @@ def require_managed_host_environment(environment: Mapping[str, str]) -> None:
         raise ManagedRunnerProcessPolicyError(
             "managed_runner_zygote_not_disabled",
             "managed Host must disable the upstream Runner zygote with the canonical value 0",
+        )
+    if environment.get(RUNNER_ENTRY_MODULE_ENV_VAR) != managed_runner_entry_module():
+        raise ManagedRunnerProcessPolicyError(
+            "managed_runner_entry_invalid",
+            "managed Host must use the reviewed downstream Runner entrypoint",
         )
     credentials = _ambient_credential_names(environment)
     if credentials or environment.get(RUNNER_ENV_PASSTHROUGH_ENV_VAR, "").strip():
@@ -132,16 +154,114 @@ def activate_managed_host_environment(
     require_managed_host_environment(environment)
 
 
-def run_managed_host_process(server_url: str, config_path: Path | None = None) -> None:
+class ManagedHostProcess(HostProcess):
+    """Official Host with a one-time downstream metering envelope per launch."""
+
+    def __init__(
+        self,
+        identity: HostIdentity,
+        server_url: str,
+        *,
+        launch_authority: ManagedRunnerLaunchAuthority,
+        envelope_directory: Path,
+    ) -> None:
+        super().__init__(identity, server_url)
+        self._launch_authority = launch_authority
+        self._envelope_directory = envelope_directory
+        self._pending_metering: dict[str, ManagedMeteringGrant] = {}
+        self._metering_envelopes: dict[str, Path] = {}
+
+    async def _handle_launch(self, frame: HostLaunchRunnerFrame) -> HostLaunchRunnerResultFrame:
+        runner_id = token_bound_runner_id(frame.binding_token)
+        if frame.session_id is None:
+            return HostLaunchRunnerResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="managed launch requires a scheduler-bound session",
+                error_code=_METERING_LAUNCH_ERROR,
+            )
+        try:
+            grant = self._launch_authority.claim_metering_grant(
+                session_id=frame.session_id,
+                official_runner_id=runner_id,
+            )
+        except ManagedMeteringError:
+            return HostLaunchRunnerResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="managed launch metering authority denied the Runner",
+                error_code=_METERING_LAUNCH_ERROR,
+            )
+        self._pending_metering[runner_id] = grant
+        try:
+            result = await super()._handle_launch(frame)
+            if result.status != "launched":
+                self._cleanup_metering_envelope(runner_id)
+            return result
+        finally:
+            self._pending_metering.pop(runner_id, None)
+
+    def _spawn_runner_proc(
+        self, env: dict[str, str], session_slug: str
+    ) -> tuple[subprocess.Popen[bytes] | ZygoteRunnerProc, Path]:
+        runner_id = env.get(RUNNER_ID_ENV_VAR, "")
+        grant = self._pending_metering.pop(runner_id, None)
+        if grant is None:
+            raise OSError("managed Runner metering grant is unavailable")
+        try:
+            envelope = write_metering_envelope(
+                self._envelope_directory,
+                grant=grant,
+                official_runner_id=runner_id,
+            )
+        except ManagedMeteringError as exc:
+            raise OSError("managed Runner metering envelope is unavailable") from exc
+        env[MANAGED_METERING_ENVELOPE_ENV_VAR] = str(envelope)
+        self._metering_envelopes[runner_id] = envelope
+        try:
+            return super()._spawn_runner_proc(env, session_slug)
+        except BaseException:
+            self._cleanup_metering_envelope(runner_id)
+            raise
+
+    async def _watch_runner(self, runner_id: str) -> None:
+        try:
+            await super()._watch_runner(runner_id)
+        finally:
+            self._cleanup_metering_envelope(runner_id)
+
+    def _cleanup_metering_envelope(self, runner_id: str) -> None:
+        path = self._metering_envelopes.pop(runner_id, None)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
+def run_managed_host_process(
+    server_url: str,
+    config_path: Path | None = None,
+    *,
+    launch_authority: ManagedRunnerLaunchAuthority,
+    envelope_directory: Path,
+) -> None:
     """Run the official Host behind the managed-SaaS process policy boundary."""
 
     activate_managed_host_environment()
+
     # HostProcess reads the zygote switch in its constructor, so activation
     # must precede the official composition root.
-    run_host_process(server_url, config_path)
+    def factory(identity: HostIdentity, resolved_server_url: str) -> ManagedHostProcess:
+        return ManagedHostProcess(
+            identity,
+            resolved_server_url,
+            launch_authority=launch_authority,
+            envelope_directory=envelope_directory,
+        )
+
+    run_host_process(server_url, config_path, host_factory=factory)
 
 
 __all__ = [
+    "ManagedHostProcess",
     "ManagedRunnerProcessPolicyError",
     "activate_managed_host_environment",
     "build_managed_host_environment",

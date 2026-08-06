@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.llms.client import Client, _ResponsesNamespace
+from omnigent.llms.types import MessageOutput, OutputText, Response, Usage
+from saas.billing_metering_transport import MutualTlsBillingMeteringServer
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     BillingControlPlane,
@@ -22,13 +29,23 @@ from saas.control_plane import (
     GlobalUser,
     ProjectMembershipRecord,
     ProjectRecord,
-    RunnerCertificateRecord,
+    RunnerCertificateAuthority,
     RuntimePlacementRecord,
     SchedulingControlPlane,
     Space,
     SpaceMembership,
     Tenant,
     TenantMembership,
+)
+from saas.runner_adapter.metering import (
+    ManagedMeteringGrant,
+    ProviderUsageMeter,
+    build_metering_client,
+)
+from tests.saas.test_billing_metering_transport import (
+    _certificate_fixture,
+    _server_context,
+    _ServerThread,
 )
 
 
@@ -56,7 +73,9 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
     return factory
 
 
-def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing() -> None:
+def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=2)
     suffix = uuid4().hex[:12]
@@ -273,25 +292,26 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing() -> No
         now=now + timedelta(seconds=1),
     )
     assert lease is not None
-    fingerprint = suffix.ljust(64, "a")
-    with platform_factory.begin() as db:
-        db.add(
-            RunnerCertificateRecord(
-                runner_id=runner.runner_id,
-                runner_connection_generation=runner.connection_generation,
-                purpose="billing_metering",
-                fingerprint_sha256=fingerprint,
-                spki_sha256=suffix.ljust(64, "b"),
-                serial_hex=suffix,
-                spiffe_id=f"spiffe://omnigent/runner/{runner.runner_id}",
-                trust_bundle_version="test-v1",
-                rotation_generation=1,
-                certificate_not_before=now - timedelta(minutes=1),
-                certificate_not_after=now + timedelta(hours=1),
-                status="active",
-                activated_at=now,
-            )
-        )
+    certificates = _certificate_fixture(tmp_path, (runner.runner_id,))
+    runner_certificate = x509.load_pem_x509_certificate(
+        certificates["runner-0"].certificate.read_bytes()
+    )
+    runner_certificate_der = runner_certificate.public_bytes(serialization.Encoding.DER)
+    certificate_platform = RunnerCertificateAuthority(
+        platform_factory, accepted_trust_bundle_versions=("test-v1",)
+    )
+    certificate_metering = RunnerCertificateAuthority(
+        metering_factory, accepted_trust_bundle_versions=("test-v1",)
+    )
+    activated = certificate_platform.activate_certificate(
+        runner_id=runner.runner_id,
+        runner_connection_generation=runner.connection_generation,
+        purpose="billing_metering",
+        certificate_der=runner_certificate_der,
+        trust_bundle_version="test-v1",
+        now=now,
+    )
+    fingerprint = activated.fingerprint_sha256
     for current_tenant, current_owner, label in (
         (tenant_id, owner_id, "a"),
         (other_tenant, other_owner, "b"),
@@ -323,7 +343,64 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing() -> No
             idempotency_key=f"metering-pricing-{label}-{suffix}",
         )
 
-    request = {
+    metering_server = MutualTlsBillingMeteringServer(
+        authority,
+        _server_context(certificates["server"]),
+        certificate_metering,
+    )
+    server_thread = _ServerThread(metering_server)
+    server_thread.start()
+    grant = ManagedMeteringGrant(
+        session_id=uuid4(),
+        run_id=run_id,
+        runner_id=runner.runner_id,
+        capability_token=lease.capability_token,
+        expires_at=now + timedelta(minutes=10),
+        metering_base_url=f"https://127.0.0.1:{metering_server.port}",
+        expected_host="billing-metering.internal",
+        ca_certificate_path=certificates["runner-0"].ca.absolute(),
+        client_certificate_path=certificates["runner-0"].certificate.absolute(),
+        client_key_path=certificates["runner-0"].private_key.absolute(),
+        spool_directory=(tmp_path / "provider-spool").absolute(),
+    )
+    response = Response(
+        output=[MessageOutput(content=[OutputText(text="never persisted in billing")])],
+        model="openai/gpt-test",
+        usage=Usage(input_tokens=1500, output_tokens=0, total_tokens=1500),
+    )
+
+    async def provider_response(*_args: object, **_kwargs: object) -> Response:
+        return response
+
+    monkeypatch.setattr(_ResponsesNamespace, "_do_create", provider_response, raising=True)
+    provider_meter = ProviderUsageMeter(
+        grant=grant,
+        client=build_metering_client(grant),
+        retry_interval_seconds=60,
+    )
+    try:
+        asyncio.run(Client().responses.create(input=[], model="openai/gpt-test"))
+        assert provider_meter.flush()
+    finally:
+        assert provider_meter.close()
+        server_thread.close()
+
+    with platform_factory() as db:
+        provider_usage = db.execute(
+                sa.text(
+                    "SELECT meter, quantity, customer_charge_minor, attributes "
+                    "FROM saas_usage_events WHERE run_id = :run "
+                    "AND provider_request_id LIKE 'omnigent-observer-%'"
+                ),
+                {"run": run_id},
+            ).one()
+    assert provider_usage[:3] == ("llm.input_tokens", 1500, 38)
+    assert provider_usage.attributes == {
+        "model": "openai/gpt-test",
+        "operation": "responses.create",
+    }
+
+    request: dict[str, Any] = {
         "runner_id": runner.runner_id,
         "certificate_fingerprint_sha256": fingerprint,
         "capability_token": lease.capability_token,
@@ -403,7 +480,7 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing() -> No
         )
     with pytest.raises(BillingMeteringError) as stale:
         authority.record_usage(
-            **{
+            **{  # type: ignore[bad-argument-type]
                 **request,
                 "provider_request_id": f"provider-stale-{suffix}",
                 "idempotency_key": f"metering-stale-{suffix}",

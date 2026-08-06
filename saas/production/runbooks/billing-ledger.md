@@ -4,8 +4,8 @@ This runbook covers the P6 billing-authority and machine-metering slices: Tenant
 subscription state, immutable pricing snapshots and Usage facts, fixed-point
 entitlements, reservation conservation, separate customer/provider ledgers,
 reconciliation, and execution-bound usage ingestion. It is a code-contract runbook,
-not evidence of a live payment processor, invoice system, tax engine, Runtime Provider
-integration, or production commercial acceptance.
+not evidence of a live payment processor, invoice system, tax engine, deployed Runtime
+scheduler composition, or production commercial acceptance.
 
 ## Production composition
 
@@ -30,11 +30,16 @@ integration, or production commercial acceptance.
    user-facing ingress.
 6. The Runner must obtain a scoped `billing.usage.record` capability and a current
    `billing_metering` certificate from the control plane. It sends only Run ID, meter,
-   quantity, unit, Provider identity, stable Provider Request ID, stable idempotency key,
+   quantity, unit, Provider identity, stable request identity, stable idempotency key,
    occurrence time, allowlisted attributes, and the capability. Tenant, Space, Project,
    actor, session, Pricing Snapshot, currency, and price are server-derived and are not
    accepted from the caller.
-7. Keep the Outbox dispatcher healthy. Each billing mutation and its secret-free event
+7. Start managed Hosts only through `run_managed_host_process`: reject ambient Provider
+   credentials, force the official zygote off, and stage exactly one unexpired metering
+   grant for each scheduler-bound session before sending the official launch frame. The
+   child must consume its private one-time envelope before official startup and keep its
+   mode-0700 spool on durable, capacity-monitored storage.
+8. Keep the Outbox dispatcher healthy. Each billing mutation and its secret-free event
    commit in the same transaction; downstream consumers deduplicate by immutable Event
    ID and never rebuild financial truth from delivery order.
 
@@ -65,6 +70,10 @@ integration, or production commercial acceptance.
   cost fact, never an update to the original receipt.
 - Usage attributes use the fixed allowlist in `billing.py` and must not contain Prompt,
   code, Secret, Token, Credential, Authorization, or arbitrary high-cardinality data.
+- Until official callbacks expose a Provider-native request ID, the Runtime adapter uses
+  a synthetic per-observation identity that is stable only across its own delivery
+  retries. Treat process loss after Provider completion but before notification as an
+  invoice-reconciliation exception, not as proof that no Provider charge occurred.
 
 ## Operator procedure
 
@@ -127,7 +136,8 @@ metering receipts, Outbox idempotency, wheel contents, patch replay, and
 intrusion-budget checks.
 
 Those checks still do not prove the aggregate P6 gate. Production acceptance additionally
-requires wiring the official Runtime Provider path to the machine client, entitlement
+requires deploying the durable scheduler-to-Host raw-grant handoff, closing the
+Provider-completion/notification kill window with native receipt recovery, entitlement
 rollover, real Provider webhook signature/
 dedupe/out-of-order/replay handling, at least one real Provider invoice comparison,
 payment/invoice/tax boundaries, production SLO/capacity, and customer sign-off. Keep P6

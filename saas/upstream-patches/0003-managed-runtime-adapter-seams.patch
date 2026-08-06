@@ -1,0 +1,98 @@
+diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
+index 945665df..a7166519 100644
+--- a/omnigent/host/connect.py
++++ b/omnigent/host/connect.py
+@@ -127,4 +127,6 @@ from omnigent.version import VERSION
+ _logger = logging.getLogger(__name__)
+ 
++RUNNER_ENTRY_MODULE_ENV_VAR = "OMNIGENT_RUNNER_ENTRY_MODULE"
++
+ 
+ class _WaitidInfo(Protocol):
+@@ -1376,5 +1378,9 @@ class HostProcess:
+             with child_logging_popen_kwargs(env) as logging_kwargs:
+                 proc = subprocess.Popen(
+-                    [sys.executable, "-m", "omnigent.runner._entry"],
++                    [
++                        sys.executable,
++                        "-m",
++                        os.environ.get(RUNNER_ENTRY_MODULE_ENV_VAR, "omnigent.runner._entry"),
++                    ],
+                     env=env,
+                     # Runners are WS-tunnel clients with no interactive input.
+@@ -2847,4 +2853,5 @@ def run_host_process(
+     server_url: str,
+     config_path: Path | None = None,
++    host_factory: Callable[[HostIdentity, str], HostProcess] = HostProcess,
+ ) -> None:
+     """Entry point for ``omnigent host``.
+@@ -2857,4 +2864,5 @@ def run_host_process(
+     :param config_path: Optional path to ``config.yaml``.
+         Defaults to ``~/.omnigent/config.yaml``.
++    :param host_factory: Downstream-neutral HostProcess construction seam.
+     :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
+         fails permanently (auth / authorization / outdated server). The
+@@ -2890,5 +2898,5 @@ def run_host_process(
+         print(f"CLI diagnostics: {_display_log_path(_cli_log)}")
+ 
+-    host = HostProcess(identity, server_url)
++    host = host_factory(identity, server_url)
+     try:
+         asyncio.run(host.run())
+diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
+index 970fa7eb..04cd40c0 100644
+--- a/omnigent/llms/_usage_observer.py
++++ b/omnigent/llms/_usage_observer.py
+@@ -81,4 +81,5 @@ class _UsageBucket(_ModelUsage):
+ 
+ 
++_REQUIRED_OBSERVERS: list[UsageObserver] = []
+ _OBSERVERS: list[UsageObserver] = []
+ _RECORDS: dict[str, _UsageBucket] = {}
+@@ -139,4 +140,20 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
+ 
+ 
++def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
++    """Register a fail-closed usage sink that runs before diagnostics.
++
++    Required observers are reserved for durable accounting boundaries.  An
++    exception propagates to the usage-producing call, unlike diagnostics
++    registered with :func:`add_observer`.
++    """
++    _REQUIRED_OBSERVERS.append(callback)
++
++    def remove() -> None:
++        with contextlib.suppress(ValueError):
++            _REQUIRED_OBSERVERS.remove(callback)
++
++    return remove
++
++
+ def notify_from_dict(
+     *,
+@@ -174,11 +191,15 @@ def notify(
+     total_tokens: int,
+ ) -> None:
+-    """Dispatch usage to observers and (if enabled) the auto-recorder.
+-
+-    Never raises: a misbehaving observer is logged and skipped.
+-    """
++    """Dispatch usage to required sinks, diagnostics, and the auto-recorder."""
+     if _ENV_VAR in os.environ and (input_tokens or output_tokens or total_tokens):
+         _record(model, input_tokens, output_tokens, total_tokens)
+         _write_records()
++    for cb in list(_REQUIRED_OBSERVERS):
++        cb(
++            model=model,
++            input_tokens=input_tokens,
++            output_tokens=output_tokens,
++            total_tokens=total_tokens,
++        )
+     for cb in list(_OBSERVERS):
+         try:
+@@ -336,4 +357,5 @@ __all__ = [
+     "UsageObserver",
+     "add_observer",
++    "add_required_observer",
+     "notify",
+     "notify_from_dict",

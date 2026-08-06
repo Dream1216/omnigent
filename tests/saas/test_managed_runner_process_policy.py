@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from omnigent.host.connect import HostProcess
+from omnigent.host.connect import RUNNER_ENTRY_MODULE_ENV_VAR, HostProcess
 from omnigent.host.identity import HostIdentity
 from omnigent.runner._zygote import ZYGOTE_ENABLED_ENV_VAR
 from saas.runner_adapter import (
@@ -11,6 +11,7 @@ from saas.runner_adapter import (
     build_managed_host_environment,
     require_managed_host_environment,
 )
+from saas.runner_adapter.metering import managed_runner_entry_module
 
 
 def test_managed_environment_disables_upstream_zygote_without_mutating_base() -> None:
@@ -18,7 +19,11 @@ def test_managed_environment_disables_upstream_zygote_without_mutating_base() ->
 
     managed = build_managed_host_environment(base)
 
-    assert managed == {"PATH": "/usr/bin", ZYGOTE_ENABLED_ENV_VAR: "0"}
+    assert managed == {
+        "PATH": "/usr/bin",
+        ZYGOTE_ENABLED_ENV_VAR: "0",
+        RUNNER_ENTRY_MODULE_ENV_VAR: managed_runner_entry_module(),
+    }
     assert base[ZYGOTE_ENABLED_ENV_VAR] == "false"
 
 
@@ -73,5 +78,19 @@ def test_require_policy_rejects_missing_or_noncanonical_switch() -> None:
     assert missing.value.code == "managed_runner_zygote_not_disabled"
 
     with pytest.raises(ManagedRunnerProcessPolicyError) as noncanonical:
-        require_managed_host_environment({ZYGOTE_ENABLED_ENV_VAR: "false"})
+        require_managed_host_environment(
+            {
+                ZYGOTE_ENABLED_ENV_VAR: "false",
+                RUNNER_ENTRY_MODULE_ENV_VAR: managed_runner_entry_module(),
+            }
+        )
     assert noncanonical.value.code == "managed_runner_zygote_not_disabled"
+
+    with pytest.raises(ManagedRunnerProcessPolicyError) as wrong_entry:
+        require_managed_host_environment(
+            {
+                ZYGOTE_ENABLED_ENV_VAR: "0",
+                RUNNER_ENTRY_MODULE_ENV_VAR: "omnigent.runner._entry",
+            }
+        )
+    assert wrong_entry.value.code == "managed_runner_entry_invalid"

@@ -11,6 +11,15 @@ from saas.runner_adapter.isolation import (
     SecretRedemptionAuthority,
     reap_orphaned_secret_directories,
 )
+from saas.runner_adapter.metering import (
+    MANAGED_METERING_ENVELOPE_ENV_VAR,
+    ManagedMeteringError,
+    ManagedMeteringGrant,
+    ManagedRunnerLaunchAuthority,
+    ProviderUsageMeter,
+    StagedManagedRunnerLaunchAuthority,
+    consume_metering_envelope,
+)
 from saas.runner_adapter.preview_supervisor import (
     PreviewProcessExit,
     PreviewProcessSnapshot,
@@ -19,6 +28,7 @@ from saas.runner_adapter.preview_supervisor import (
     RunnerPreviewProcessSupervisor,
 )
 from saas.runner_adapter.process_policy import (
+    ManagedHostProcess,
     ManagedRunnerProcessPolicyError,
     activate_managed_host_environment,
     build_managed_host_environment,
@@ -38,12 +48,17 @@ from saas.runner_adapter.worktrees import (
 )
 
 __all__ = [
+    "MANAGED_METERING_ENVELOPE_ENV_VAR",
     "CheckpointArtifact",
     "ContainmentVerifier",
     "FilesystemRecoveryArtifactStore",
     "IsolationAuthority",
     "LaunchGrantAuthority",
     "LinuxCgroupV2ContainmentVerifier",
+    "ManagedHostProcess",
+    "ManagedMeteringError",
+    "ManagedMeteringGrant",
+    "ManagedRunnerLaunchAuthority",
     "ManagedRunnerProcessPolicyError",
     "PhysicalCheckpoint",
     "PhysicalWorktree",
@@ -52,6 +67,7 @@ __all__ = [
     "PreviewProcessSnapshot",
     "PreviewProcessSpec",
     "PreviewProcessSupervisorError",
+    "ProviderUsageMeter",
     "RepositoryMirrorResolver",
     "RunnerIsolationAdapter",
     "RunnerIsolationAdapterError",
@@ -59,10 +75,12 @@ __all__ = [
     "RunnerWorktreeAdapter",
     "RunnerWorktreeAdapterError",
     "SecretRedemptionAuthority",
+    "StagedManagedRunnerLaunchAuthority",
     "StaticRepositoryMirrorResolver",
     "WorktreeLifecycleAuthority",
     "activate_managed_host_environment",
     "build_managed_host_environment",
+    "consume_metering_envelope",
     "reap_orphaned_secret_directories",
     "require_managed_host_environment",
     "run_managed_host_process",
