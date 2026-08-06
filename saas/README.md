@@ -1223,7 +1223,22 @@ Pyrefly reports zero errors. That matrix exposed a Project Admin login race in w
 the permission catalog could finish before scope discovery. The scope action is now
 disabled until discovery completes, and a deterministic Chromium regression delays
 the scope response by 750 milliseconds before proving the action cannot submit early.
-Exact-revision GitHub CI evidence is still pending for this uncommitted slice.
+Exact compatibility run `31063360786` at
+`b2285a70b0c78131b043200c4b1cc1ca8536877f` passes 889 tests in 144.76 seconds,
+a 3.134-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 34.33 seconds, the 36/22 Linux security
+matrix in 15.14 seconds, Pyrefly, migration round trip, both patch replays, and the
+177-artifact implementation wheel. The intrusion result remains 8 files, 449 lines,
+two patches, and 0.9953 isolated custom code. The evidence-successor wheel requires
+178 artifacts.
+
+Image candidate run `31063360725` is deliberately not accepted as machine-metering
+evidence: source inspection found that all four repeated builds still hard-coded the
+older `p6a000000007` image label while the authoritative migration head is
+`p6a000000009`. The successor resolves the schema revision from
+`saas/production/baseline.json`, applies it to every Server/Host attempt, and makes the
+supply-chain policy checker reject a missing baseline derivation or any build that
+does not consume the resolved value. A new exact-revision image run is required.
 
 This does **not** yet connect the official Runtime Provider execution path to the new
 client, and therefore does not establish live Provider usage. Period rollover, Provider

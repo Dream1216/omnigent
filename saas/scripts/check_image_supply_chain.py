@@ -374,6 +374,22 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         value = policy.get(field)
         if value != _APPROVED_PATHS[field] or not (repo / str(value)).is_file():
             violations.append(f"release policy {field} must reference the approved file")
+    workflow_path = repo / str(policy.get("candidate_workflow", ""))
+    if workflow_path.is_file():
+        workflow = workflow_path.read_text(encoding="utf-8")
+        schema_source = (
+            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
+            "saas/production/baseline.json)"
+        )
+        schema_argument = (
+            "CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}"
+        )
+        if schema_source not in workflow:
+            violations.append("candidate workflow schema revision is not baseline-derived")
+        if workflow.count(schema_argument) != 4:
+            violations.append(
+                "every repeated candidate build must use the resolved schema revision"
+            )
     production_evidence = policy.get("production_evidence")
     if production_evidence != _APPROVED_PATHS["production_evidence"]:
         violations.append("production_evidence must use the approved repository path")

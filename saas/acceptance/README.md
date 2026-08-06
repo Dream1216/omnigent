@@ -640,11 +640,26 @@ cross-Tenant denial for `saas_billing`, link integrity, the restored immutable t
 and 68/17 forced-RLS inventories. Local evidence passes 23 focused metering, billing,
 migration, and restore tests, the complete 889-test compatibility matrix on a clean
 PostgreSQL 16 database in 339.37 seconds, a 28.408-second isolated logical restore, the
-177-artifact wheel, and full Pyrefly with zero errors. The full matrix also exposed and
-closed a Project Admin readiness race: scope submission remains disabled until discovery
-finishes, and a deterministic Chromium test delays the scope response by 750 milliseconds
-before proving no early submission is possible. Exact-revision GitHub CI evidence is not
-yet attached, so this is implementation status rather than accepted release evidence.
+177-artifact implementation wheel, and full Pyrefly with zero errors. The full matrix
+also exposed and closed a Project Admin readiness race: scope submission remains disabled
+until discovery finishes, and a deterministic Chromium test delays the scope response by
+750 milliseconds before proving no early submission is possible.
+
+Exact compatibility run `31063360786` at
+`b2285a70b0c78131b043200c4b1cc1ca8536877f` passes 889 tests in 144.76 seconds,
+a 3.134-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 34.33 seconds, the 36/22 Linux security
+matrix in 15.14 seconds, Pyrefly, migration round trip, both patch replays, and the
+177-artifact implementation wheel. The intrusion result remains 8 files, 449 lines,
+two patches, and 0.9953 isolated custom code. The evidence-successor wheel requires
+178 artifacts.
+
+Image candidate run `31063360725` is deliberately excluded from machine-metering
+acceptance because all four repeated builds still supplied the stale
+`p6a000000007` schema label. The evidence successor instead derives the only migration
+head from `saas/production/baseline.json`, passes it to every Server/Host build, and
+adds a fail-closed workflow-source check. A new exact-revision candidate must prove
+the corrected `p6a000000009` label before executable image evidence can be attached.
 
 The official Runtime Provider path is not yet wired to the machine client. Period
 rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice comparison,

@@ -110,12 +110,14 @@ jobs:
           source_revision=$(git rev-parse HEAD)
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
+          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
           echo "python_image=python:3.12-slim@${python_digest}" >> "$GITHUB_OUTPUT"
           echo "node_image=node:22-slim@${node_digest}" >> "$GITHUB_OUTPUT"
           echo "source_epoch=${source_epoch}" >> "$GITHUB_OUTPUT"
           echo "source_revision=${source_revision}" >> "$GITHUB_OUTPUT"
           echo "upstream_revision=${upstream_revision}" >> "$GITHUB_OUTPUT"
           echo "adapter_contract=${adapter_contract}" >> "$GITHUB_OUTPUT"
+          echo "schema_revision=${schema_revision}" >> "$GITHUB_OUTPUT"
 
       - name: Build server candidate attempt 1
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -136,7 +138,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p6a000000007
+            CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build server candidate attempt 2
@@ -157,7 +159,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p6a000000007
+            CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build host candidate attempt 1
@@ -179,7 +181,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p6a000000007
+            CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Build host candidate attempt 2
@@ -200,7 +202,7 @@ jobs:
             SOURCE_DATE_EPOCH=${{ steps.materials.outputs.source_epoch }}
             SOURCE_REVISION=${{ steps.materials.outputs.source_revision }}
             UPSTREAM_REVISION=${{ steps.materials.outputs.upstream_revision }}
-            CONTROL_PLANE_SCHEMA_REVISION=p6a000000007
+            CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}
             ADAPTER_CONTRACT_VERSION=${{ steps.materials.outputs.adapter_contract }}
 
       - name: Compare repeated executable image facts

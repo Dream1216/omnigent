@@ -50,6 +50,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p6-tenant-members-admin-console-ci-31042515162.json",
     "saas/acceptance/p6-tenant-members-image-candidate-ci-31043457794.json",
     "saas/acceptance/p6-billing-ledger-ci-31055362434.json",
+    "saas/acceptance/p6-machine-metering-ci-31063360786.json",
     "saas/acceptance/p6-enterprise-access-preflight-ci-31025362985.json",
     "saas/acceptance/p6-enterprise-access-lifecycle-ci-31016011969.json",
     "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json",
