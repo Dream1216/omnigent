@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from saas.control_plane.db_models import SaasBase, _values
 
-RUNNER_CERTIFICATE_PURPOSES = ("preview_tunnel", "secret_broker")
+RUNNER_CERTIFICATE_PURPOSES = ("preview_tunnel", "secret_broker", "billing_metering")
 RUNNER_CERTIFICATE_STATUSES = ("active", "retiring", "revoked")
 
 

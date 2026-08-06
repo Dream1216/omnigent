@@ -5,7 +5,7 @@
   "revision_contract": {
     "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p6a000000008"
+    "control_plane_schema_revision": "p6a000000009"
   },
   "evidence_directory": "saas/production/deletion-evidence",
   "max_evidence_age_days": 90,

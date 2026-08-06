@@ -341,17 +341,20 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims() -> None:
                 ).scalar_one()
                 == 1
             )
+            # Tenant/Space context alone is not execution authority. Dispatch
+            # and capability rows are visible only to platform/executor or the
+            # exact p6a9 machine-metering identity.
             assert (
                 connection.execute(
                     sa.text("SELECT count(*) FROM saas_run_dispatches")
                 ).scalar_one()
-                == 1
+                == 0
             )
             assert (
                 connection.execute(
                     sa.text("SELECT count(*) FROM saas_capability_tokens")
                 ).scalar_one()
-                == 1
+                == 0
             )
 
         with engine.begin() as connection:

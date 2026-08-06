@@ -34,9 +34,15 @@ from saas.control_plane.billing_http import (
     create_billing_admin_router,
     validate_billing_admin_route_permissions,
 )
+from saas.control_plane.billing_metering import (
+    BillingMeteringAuthority,
+    BillingMeteringError,
+    MeteredUsage,
+)
 from saas.control_plane.billing_models import (
     BillingBalanceRecord,
     BillingEntitlementRecord,
+    BillingMeteringReceiptRecord,
     BillingReconciliationBatchRecord,
     BillingReconciliationMismatchRecord,
     BillingReservationRecord,
@@ -359,6 +365,9 @@ __all__ = [
     "BillingControlPlane",
     "BillingControlPlaneError",
     "BillingEntitlementRecord",
+    "BillingMeteringAuthority",
+    "BillingMeteringError",
+    "BillingMeteringReceiptRecord",
     "BillingOverview",
     "BillingReconciliationBatchRecord",
     "BillingReconciliationMismatchRecord",
@@ -436,6 +445,7 @@ __all__ = [
     "MembershipInvitation",
     "MembershipInvitationView",
     "MembershipLifecycleService",
+    "MeteredUsage",
     "OidcAuthorizationCompleted",
     "OidcAuthorizationService",
     "OidcAuthorizationStarted",

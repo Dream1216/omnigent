@@ -360,6 +360,101 @@ class UsageEventRecord(SaasBase):
     )
 
 
+class BillingMeteringReceiptRecord(SaasBase):
+    """Immutable machine identity and execution fence behind one Usage fact."""
+
+    __tablename__ = "saas_billing_metering_receipts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID] = mapped_column(nullable=False)
+    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    usage_event_id: Mapped[UUID] = mapped_column(nullable=False)
+    runner_id: Mapped[UUID] = mapped_column(nullable=False)
+    runner_connection_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    runner_certificate_id: Mapped[UUID] = mapped_column(nullable=False)
+    certificate_fingerprint_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    capability_id: Mapped[UUID] = mapped_column(nullable=False)
+    dispatch_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    fence_token: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "run_id"),
+            ("saas_runs.tenant_id", "saas_runs.space_id", "saas_runs.project_id", "saas_runs.id"),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_run",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "usage_event_id"),
+            ("saas_usage_events.tenant_id", "saas_usage_events.id"),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_usage",
+        ),
+        sa.ForeignKeyConstraint(
+            ("runner_id",),
+            ("saas_runner_registrations.id",),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_runner",
+        ),
+        sa.ForeignKeyConstraint(
+            ("runner_certificate_id",),
+            ("saas_runner_certificates.id",),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_certificate",
+        ),
+        sa.ForeignKeyConstraint(
+            ("capability_id",),
+            ("saas_capability_tokens.id",),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_capability",
+        ),
+        sa.CheckConstraint(
+            "runner_connection_generation > 0",
+            name="ck_billing_metering_receipt_runner_generation",
+        ),
+        sa.CheckConstraint(
+            "dispatch_generation > 0", name="ck_billing_metering_receipt_dispatch_generation"
+        ),
+        sa.CheckConstraint("fence_token > 0", name="ck_billing_metering_receipt_fence"),
+        sa.CheckConstraint(
+            "length(certificate_fingerprint_sha256) = 64",
+            name="ck_billing_metering_receipt_fingerprint",
+        ),
+        sa.CheckConstraint(
+            "length(idempotency_key) > 0", name="ck_billing_metering_receipt_idempotency"
+        ),
+        sa.CheckConstraint(
+            "length(request_hash) = 64", name="ck_billing_metering_receipt_request_hash"
+        ),
+        sa.UniqueConstraint("tenant_id", "id", name="uq_billing_metering_receipt_scope"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_billing_metering_receipt_idempotency",
+        ),
+        sa.UniqueConstraint("usage_event_id", name="uq_billing_metering_receipt_usage"),
+        sa.Index(
+            "ix_billing_metering_receipt_run",
+            "tenant_id",
+            "run_id",
+            "recorded_at",
+        ),
+        sa.Index(
+            "ix_billing_metering_receipt_runner",
+            "runner_id",
+            "runner_connection_generation",
+            "recorded_at",
+        ),
+    )
+
+
 class BillingBalanceRecord(SaasBase):
     """Rebuildable Tenant balance projection locked by every ledger mutation."""
 

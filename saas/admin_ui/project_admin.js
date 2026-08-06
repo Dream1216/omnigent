@@ -121,6 +121,7 @@
     document.querySelector(".system-state").classList.remove("connected");
     $("#context-state").textContent = "NO CONTEXT";
     $("#snapshot-state").textContent = "UNBOUND";
+    $("#scope-connect").disabled = true;
     hideOneTimeToken();
     showView("projects", { load: false });
   }
@@ -181,6 +182,8 @@
   }
 
   async function loadScopes() {
+    const connect = $("#scope-connect");
+    connect.disabled = true;
     state.scopes = await api("/context/scopes");
     const selector = $("#scope-select");
     selector.replaceChildren();
@@ -189,7 +192,6 @@
       empty.value = "";
       empty.textContent = "没有可用的 Tenant / Space";
       selector.append(empty);
-      $("#scope-connect").disabled = true;
       return;
     }
     state.scopes.forEach((scope, index) => {
@@ -198,7 +200,7 @@
       option.textContent = `${scope.tenant_name} / ${scope.space_name} · ${scope.tenant_role}:${scope.space_role}`;
       selector.append(option);
     });
-    $("#scope-connect").disabled = false;
+    connect.disabled = false;
     log(`Resolved ${state.scopes.length} authorized scope(s)`, "success");
   }
 

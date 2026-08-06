@@ -71,8 +71,9 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_provider_cost_entries",
         "saas_billing_reconciliation_batches",
         "saas_billing_reconciliation_mismatches",
+        "saas_billing_metering_receipts",
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 67:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 67 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 68:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 68 tables")

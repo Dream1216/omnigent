@@ -1,15 +1,16 @@
 # Tenant billing, metering, and ledger operations
 
-This runbook covers the first P6 billing-authority slice: Tenant subscription state,
-immutable pricing snapshots and Usage facts, fixed-point entitlements, reservation
-conservation, separate customer/provider ledgers, and reconciliation. It is a
-code-contract runbook, not evidence of a live payment processor, invoice system, tax
-engine, or production commercial acceptance.
+This runbook covers the P6 billing-authority and machine-metering slices: Tenant
+subscription state, immutable pricing snapshots and Usage facts, fixed-point
+entitlements, reservation conservation, separate customer/provider ledgers,
+reconciliation, and execution-bound usage ingestion. It is a code-contract runbook,
+not evidence of a live payment processor, invoice system, tax engine, Runtime Provider
+integration, or production commercial acceptance.
 
 ## Production composition
 
-1. Migrate through `p6a000000008`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Verify all 67 control-plane and all 17
+1. Migrate through `p6a000000009`, then reapply
+   `saas/control_plane/postgresql_roles.sql`. Verify all 68 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 2. Construct `BillingControlPlane` with a session factory whose login inherits only
    `saas_billing`. Do not reuse `saas_app`, `saas_governance`, `saas_authenticator`, or
@@ -18,11 +19,22 @@ engine, or production commercial acceptance.
    exposes content-blind subscription, pricing, entitlement, ledger, and reconciliation
    administration only. It intentionally has no HTTP endpoint for Credit, Usage,
    Reserve, Settlement, Refund, or Provider Cost ingestion.
-4. Keep financial ingestion behind a separate authenticated internal transport. Until
-   a workload identity is bound to an independently authorized metering principal, do
-   not connect the service methods to an Internet-facing route or let a human Cookie
-   session impersonate a worker.
-5. Keep the Outbox dispatcher healthy. Each billing mutation and its secret-free event
+4. Construct `BillingMeteringAuthority` with a session factory whose database login
+   inherits only `saas_metering`. It must not inherit `saas_app`, `saas_billing`,
+   `saas_executor`, `saas_governance`, `saas_authenticator`, or `saas_platform`.
+5. Expose that authority only through `MutualTlsBillingMeteringServer` on an internal
+   listener. Require TLS 1.3, a dedicated Runner client CA, a certificate whose only URI
+   SAN is `spiffe://omnigent/runner/{runner_uuid}`, durable authorization for certificate
+   purpose `billing_metering`, hostname validation, bounded requests, and the exact
+   `POST /internal/v1/billing/usage` route. Never publish this listener through the
+   user-facing ingress.
+6. The Runner must obtain a scoped `billing.usage.record` capability and a current
+   `billing_metering` certificate from the control plane. It sends only Run ID, meter,
+   quantity, unit, Provider identity, stable Provider Request ID, stable idempotency key,
+   occurrence time, allowlisted attributes, and the capability. Tenant, Space, Project,
+   actor, session, Pricing Snapshot, currency, and price are server-derived and are not
+   accepted from the caller.
+7. Keep the Outbox dispatcher healthy. Each billing mutation and its secret-free event
    commit in the same transaction; downstream consumers deduplicate by immutable Event
    ID and never rebuild financial truth from delivery order.
 
@@ -32,6 +44,11 @@ engine, or production commercial acceptance.
   sizes use `Decimal(38, 12)`. Floats are rejected at the service boundary.
 - `UsageEvent` is append-only and records the exact Pricing Snapshot used at occurrence
   time. It is not itself a customer settlement or Provider cost.
+- Every machine-created Usage fact has exactly one immutable metering receipt binding
+  it to Runner connection generation, certificate fingerprint, capability, Dispatch
+  generation, Run fence, idempotency key, and request hash. A replay must revalidate the
+  current certificate, capability, Runner, Dispatch, Run lease/fence, Subscription, and
+  Pricing authority before returning the existing receipt.
 - Pricing Snapshots and Usage facts are never updated or deleted. Corrections require a
   new snapshot or an explicit reversing/correcting ledger fact.
 - One Tenant billing account has one currency in this slice. A currency change requires
@@ -63,9 +80,10 @@ engine, or production commercial acceptance.
 4. Reserve before Provider I/O. If admission is denied, do not call the Provider. If a
    call is canceled before Provider acceptance, release the hold. If Provider outcome
    is unknown, retain the hold and reconcile; do not retry under a new operation key.
-5. Record exactly one Usage fact per Provider Request and Meter. Settle the matching
-   Reservation from that fact. Retries reuse the same Provider Request ID and
-   idempotency key.
+5. Record exactly one Usage fact per Provider Request and Meter through the mTLS machine
+   transport. Settle the matching Reservation from that fact. Retries reuse the same
+   Provider Request ID and caller-owned idempotency key; the transport performs no
+   hidden retry.
 6. Record Provider estimates/final receipts/refunds independently. Run reconciliation
    over half-open UTC periods, inspect every mismatch, attach non-sensitive resolution
    evidence, and resolve rather than deleting exceptions.
@@ -84,8 +102,13 @@ engine, or production commercial acceptance.
   rows or expose this repair through the ordinary Cookie console.
 - If pricing overlap, currency drift, duplicate Provider facts, or unexplained negative
   projection is detected, fail admission closed and open a billing incident.
-- Application rollback may hide the Billing view while retaining
-  `p6a000000008`. Drain billing writers and Outbox delivery before a schema downgrade.
+- Application rollback may hide the Billing view or stop the metering listener while
+  retaining `p6a000000009`. Before downgrading from `p6a000000009`, stop Runtime
+  admission, drain metering requests and billing Outbox delivery, and prove no active
+  Runner can continue writing. The `p6a000000008` authority must not be used as a silent
+  fallback to human-originated Usage ingestion because it has no execution receipt. The
+  downgrade deletes metering receipts and all `billing_metering` certificate records;
+  re-upgrade requires fresh certificate issuance rather than resurrecting old identity.
   A destructive downgrade deletes financial tables and requires an approved immutable
   backup, ledger export/hash, open-reservation disposition, and restore rehearsal.
 - Restoring an old backup must replay post-backup Subscription suspension and mismatch
@@ -96,13 +119,16 @@ engine, or production commercial acceptance.
 
 The slice is accepted only with SQLite migration compatibility, real PostgreSQL forced
 RLS and least-privilege roles, cross-Tenant and missing-context denial, append-only
-trigger rejection, concurrent Reservation single-winner behavior, Cookie/CSRF/Origin
-and role denial, real Chromium UI coverage, non-empty logical backup/restore, Outbox
-idempotency, wheel contents, patch replay, and intrusion-budget checks.
+trigger rejection, current certificate/capability/Dispatch/Run-fence denial, TLS 1.3
+mTLS and exact SPIFFE identity, no caller-supplied scope or price, stable replay,
+concurrent Reservation single-winner behavior, Cookie/CSRF/Origin and role denial, real
+Chromium UI coverage, non-empty logical backup/restore including authority-linked
+metering receipts, Outbox idempotency, wheel contents, patch replay, and
+intrusion-budget checks.
 
 Those checks still do not prove the aggregate P6 gate. Production acceptance additionally
-requires a non-human metering identity and internal transport, entitlement rollover,
-real Provider webhook signature/
+requires wiring the official Runtime Provider path to the machine client, entitlement
+rollover, real Provider webhook signature/
 dedupe/out-of-order/replay handling, at least one real Provider invoice comparison,
 payment/invoice/tax boundaries, production SLO/capacity, and customer sign-off. Keep P6
 and release status `NO-GO` until that evidence is bound to the exact deployed revision.

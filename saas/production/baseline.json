@@ -6,7 +6,7 @@
     "upstream_manifest": "saas/upstream-baseline.json",
     "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p6a000000008",
+    "control_plane_schema_revision": "p6a000000009",
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {

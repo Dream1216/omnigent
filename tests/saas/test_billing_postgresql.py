@@ -366,6 +366,7 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             "saas_provider_cost_entries",
             "saas_billing_reconciliation_batches",
             "saas_billing_reconciliation_mismatches",
+            "saas_billing_metering_receipts",
         }
         posture = connection.execute(
             sa.text(

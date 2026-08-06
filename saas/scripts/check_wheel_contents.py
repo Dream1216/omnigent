@@ -10,6 +10,7 @@ from pathlib import Path
 
 REQUIRED_WHEEL_PATHS = (
     "saas/application.py",
+    "saas/billing_metering_transport.py",
     "saas/acceptance/p0-p6-evidence.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
@@ -64,6 +65,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/api_http.py",
     "saas/control_plane/billing.py",
     "saas/control_plane/billing_http.py",
+    "saas/control_plane/billing_metering.py",
     "saas/control_plane/billing_models.py",
     "saas/control_plane/authorization.py",
     "saas/control_plane/binding_saga.py",
@@ -118,6 +120,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p6a000000006_tenant_member_directory.py",
     "saas/control_plane/migrations/versions/p6a000000007_invitation_acceptance_rls.py",
     "saas/control_plane/migrations/versions/p6a000000008_billing_authority.py",
+    "saas/control_plane/migrations/versions/p6a000000009_machine_metering.py",
     "saas/control_plane/outbox.py",
     "saas/control_plane/placement_models.py",
     "saas/control_plane/placements.py",

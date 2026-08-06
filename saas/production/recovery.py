@@ -145,7 +145,7 @@ def _validate_policy(
         "restore_completed",
         "source_schema_exact",
         "source_revision_exact",
-        "forced_rls_control_plane_67",
+        "forced_rls_control_plane_68",
         "forced_rls_runtime_17",
         "cross_tenant_negative",
         "tombstone_replay",

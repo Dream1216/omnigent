@@ -41,9 +41,17 @@ _SELECTED_HASH_TABLES = (
     "saas_auth_sessions",
     "saas_tenants",
     "saas_spaces",
+    "saas_runtime_placements",
     "saas_tenant_memberships",
     "saas_space_memberships",
     "saas_projects",
+    "saas_tasks",
+    "saas_runs",
+    "saas_runner_pools",
+    "saas_runner_registrations",
+    "saas_run_dispatches",
+    "saas_capability_tokens",
+    "saas_runner_certificates",
     "saas_service_accounts",
     "saas_api_credentials",
     "saas_enterprise_groups",
@@ -61,6 +69,7 @@ _SELECTED_HASH_TABLES = (
     "saas_provider_cost_entries",
     "saas_billing_reconciliation_batches",
     "saas_billing_reconciliation_mismatches",
+    "saas_billing_metering_receipts",
     "saas_control_plane_outbox",
 )
 
@@ -195,6 +204,20 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "space_b": "30000000-0000-4000-8000-000000000002",
         "project_a": "90000000-0000-4000-8000-000000000001",
         "project_b": "90000000-0000-4000-8000-000000000002",
+        "runtime_placement": "95000000-0000-4000-8000-000000000001",
+        "runner_pool": "96000000-0000-4000-8000-000000000001",
+        "runner_a": "97000000-0000-4000-8000-000000000001",
+        "runner_b": "97000000-0000-4000-8000-000000000002",
+        "task_a": "98000000-0000-4000-8000-000000000001",
+        "task_b": "98000000-0000-4000-8000-000000000002",
+        "run_a": "99000000-0000-4000-8000-000000000001",
+        "run_b": "99000000-0000-4000-8000-000000000002",
+        "run_lease_a": "9a000000-0000-4000-8000-000000000001",
+        "run_lease_b": "9a000000-0000-4000-8000-000000000002",
+        "capability_a": "9b000000-0000-4000-8000-000000000001",
+        "capability_b": "9b000000-0000-4000-8000-000000000002",
+        "runner_certificate_a": "9c000000-0000-4000-8000-000000000001",
+        "runner_certificate_b": "9c000000-0000-4000-8000-000000000002",
         "group_a": "91000000-0000-4000-8000-000000000001",
         "group_b": "91000000-0000-4000-8000-000000000002",
         "custom_role_a": "92000000-0000-4000-8000-000000000001",
@@ -231,6 +254,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "billing_reconciliation_b": "a7000000-0000-4000-8000-000000000002",
         "billing_mismatch_a": "a8000000-0000-4000-8000-000000000001",
         "billing_mismatch_b": "a8000000-0000-4000-8000-000000000002",
+        "billing_metering_receipt_a": "a9000000-0000-4000-8000-000000000001",
+        "billing_metering_receipt_b": "a9000000-0000-4000-8000-000000000002",
         "outbox_seed": "60000000-0000-4000-8000-000000000001",
         "outbox_replay": "60000000-0000-4000-8000-000000000002",
         "workspace_a": 11001,
@@ -276,6 +301,17 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_runtime_placements "
+                    "(id, runtime_type, data_region, failure_domain, database_cluster_ref, "
+                    "object_store_ref, kms_key_ref, official_schema_revision, capacity_class, "
+                    "status) VALUES (:runtime_placement, 'omnigent', 'region-a', 'region-a-1', "
+                    "'recovery-db', 'recovery-objects', 'recovery-kms', 'runtime-schema-v1', "
+                    "'shared-medium', 'active')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_tenant_memberships "
                     "(tenant_id, user_id, role, status, version, joined_at) VALUES "
                     "(:tenant_a, :actor_a, 'owner', 'active', 1, now()), "
@@ -307,6 +343,167 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     ":actor_b, 'active', 1)"
                 ),
                 identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_tasks "
+                    "(id, tenant_id, space_id, project_id, created_by, title, version) VALUES "
+                    "(:task_a, :tenant_a, :space_a, :project_a, :actor_a, "
+                    "'Recovery metered task A', 1), "
+                    "(:task_b, :tenant_b, :space_b, :project_b, :actor_b, "
+                    "'Recovery metered task B', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runs "
+                    "(id, tenant_id, space_id, project_id, task_id, created_by, status, version, "
+                    "event_sequence, queue_class, priority, idempotency_key, request_hash, input, "
+                    "product_revision, upstream_revision, schema_revision, "
+                    "adapter_contract_version, lease_owner, lease_token, fence_token, "
+                    "lease_expires_at, heartbeat_at) VALUES "
+                    "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
+                    "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
+                    "CAST(:run_input AS jsonb), "
+                    "'recovery-product', 'recovery-upstream', 'p6a000000009', '0.2.0', "
+                    ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
+                    "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
+                    "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
+                    "CAST(:run_input AS jsonb), "
+                    "'recovery-product', 'recovery-upstream', 'p6a000000009', '0.2.0', "
+                    ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
+                ),
+                {
+                    **identifiers,
+                    "run_hash_a": "5" * 64,
+                    "run_hash_b": "6" * 64,
+                    "run_input": json.dumps({"recovery": "content-blind"}),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runner_pools "
+                    "(id, placement_id, failure_domain, name, queue_class, capacity_slots, "
+                    "reserved_slots, status, protocol_version, source_revision, schema_revision, "
+                    "adapter_contract_version) VALUES (:runner_pool, :runtime_placement, "
+                    "'region-a-1', 'recovery-metering', 'interactive', 4, 0, 'active', 2, "
+                    "'recovery-upstream', 'runtime-schema-v1', '0.2.0')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runner_registrations "
+                    "(id, pool_id, placement_id, instance_key, failure_domain, status, "
+                    "connection_generation, connection_token_hash, protocol_version, "
+                    "source_revision, schema_revision, adapter_contract_version, capabilities, "
+                    "capabilities_hash, max_concurrency, active_leases, last_heartbeat_at, "
+                    "registered_at) VALUES "
+                    "(:runner_a, :runner_pool, :runtime_placement, 'recovery-runner-a', "
+                    "'region-a-1', 'online', 1, :runner_token_a, 2, 'recovery-upstream', "
+                    "'runtime-schema-v1', '0.2.0', CAST(:capabilities AS jsonb), :cap_hash, "
+                    "2, 1, now(), now()), "
+                    "(:runner_b, :runner_pool, :runtime_placement, 'recovery-runner-b', "
+                    "'region-a-1', 'online', 1, :runner_token_b, 2, 'recovery-upstream', "
+                    "'runtime-schema-v1', '0.2.0', CAST(:capabilities AS jsonb), :cap_hash, "
+                    "2, 1, now(), now())"
+                ),
+                {
+                    **identifiers,
+                    "runner_token_a": "7" * 64,
+                    "runner_token_b": "8" * 64,
+                    "capabilities": json.dumps(["shell"]),
+                    "cap_hash": "9" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_run_dispatches "
+                    "(run_id, tenant_id, space_id, project_id, pool_id, queue_class, "
+                    "required_capabilities, requirements_hash, cost_units, eligible_at, "
+                    "max_wait_at, status, selected_runner_id, selected_failure_domain, "
+                    "dispatch_generation) VALUES "
+                    "(:run_a, :tenant_a, :space_a, :project_a, :runner_pool, 'interactive', "
+                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
+                    "'1 minute', now() + interval '1 hour', 'leased', :runner_a, "
+                    "'region-a-1', 1), "
+                    "(:run_b, :tenant_b, :space_b, :project_b, :runner_pool, 'interactive', "
+                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
+                    "'1 minute', now() + interval '1 hour', 'leased', :runner_b, "
+                    "'region-a-1', 1)"
+                ),
+                {
+                    **identifiers,
+                    "capabilities": json.dumps(["shell"]),
+                    "requirements_hash": "a" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_capability_tokens "
+                    "(id, token_hash, tenant_id, space_id, project_id, run_id, runner_id, "
+                    "runner_connection_generation, dispatch_generation, fence_token, "
+                    "allowed_actions, resource_scope, issued_at, expires_at) VALUES "
+                    "(:capability_a, :capability_hash_a, :tenant_a, :space_a, :project_a, "
+                    ":run_a, :runner_a, 1, 1, 1, CAST(:actions AS jsonb), "
+                    "CAST(:scope_a AS jsonb), now() - interval '1 minute', "
+                    "now() + interval '1 hour'), "
+                    "(:capability_b, :capability_hash_b, :tenant_b, :space_b, :project_b, "
+                    ":run_b, :runner_b, 1, 1, 1, CAST(:actions AS jsonb), "
+                    "CAST(:scope_b AS jsonb), now() - interval '1 minute', "
+                    "now() + interval '1 hour')"
+                ),
+                {
+                    **identifiers,
+                    "capability_hash_a": "b" * 64,
+                    "capability_hash_b": "c" * 64,
+                    "actions": json.dumps(["billing.usage.record"]),
+                    "scope_a": json.dumps(
+                        {
+                            "tenant_id": identifiers["tenant_a"],
+                            "space_id": identifiers["space_a"],
+                            "project_id": identifiers["project_a"],
+                            "run_id": identifiers["run_a"],
+                            "runner_id": identifiers["runner_a"],
+                            "billing_meter": "llm.input_tokens",
+                        }
+                    ),
+                    "scope_b": json.dumps(
+                        {
+                            "tenant_id": identifiers["tenant_b"],
+                            "space_id": identifiers["space_b"],
+                            "project_id": identifiers["project_b"],
+                            "run_id": identifiers["run_b"],
+                            "runner_id": identifiers["runner_b"],
+                            "billing_meter": "llm.input_tokens",
+                        }
+                    ),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runner_certificates "
+                    "(id, runner_id, runner_connection_generation, purpose, fingerprint_sha256, "
+                    "spki_sha256, serial_hex, spiffe_id, trust_bundle_version, "
+                    "rotation_generation, certificate_not_before, certificate_not_after, status, "
+                    "activated_at) VALUES "
+                    "(:runner_certificate_a, :runner_a, 1, 'billing_metering', "
+                    ":certificate_fingerprint_a, :spki_a, 'aa01', :spiffe_a, 'recovery-v1', 1, "
+                    "now() - interval '1 minute', now() + interval '1 hour', 'active', now()), "
+                    "(:runner_certificate_b, :runner_b, 1, 'billing_metering', "
+                    ":certificate_fingerprint_b, :spki_b, 'bb01', :spiffe_b, 'recovery-v1', 1, "
+                    "now() - interval '1 minute', now() + interval '1 hour', 'active', now())"
+                ),
+                {
+                    **identifiers,
+                    "certificate_fingerprint_a": "d" * 64,
+                    "certificate_fingerprint_b": "e" * 64,
+                    "spki_a": "f" * 64,
+                    "spki_b": "0" * 64,
+                    "spiffe_a": f"spiffe://omnigent/runner/{identifiers['runner_a']}",
+                    "spiffe_b": f"spiffe://omnigent/runner/{identifiers['runner_b']}",
+                },
             )
             connection.execute(
                 sa.text(
@@ -497,17 +694,43 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             connection.execute(
                 sa.text(
                     "INSERT INTO saas_usage_events "
-                    "(id, tenant_id, meter, quantity, unit, provider, provider_request_id, "
-                    "idempotency_key, pricing_snapshot_id, currency, customer_charge_minor, "
-                    "attributes, occurred_at) VALUES "
-                    "(:usage_event_a, :tenant_a, 'llm.input_tokens', 1, 'tokens', 'recovery', "
-                    "'recovery-request-a', 'recovery-usage-a', :pricing_snapshot_a, 'USD', 25, "
+                    "(id, tenant_id, space_id, project_id, run_id, user_id, meter, quantity, "
+                    "unit, provider, provider_request_id, idempotency_key, pricing_snapshot_id, "
+                    "currency, customer_charge_minor, attributes, occurred_at) VALUES "
+                    "(:usage_event_a, :tenant_a, :space_a, :project_a, :run_a, :actor_a, "
+                    "'llm.input_tokens', 1, 'tokens', 'recovery', 'recovery-request-a', "
+                    "'recovery-usage-a', :pricing_snapshot_a, 'USD', 25, "
                     "CAST(:attributes AS jsonb), now()), "
-                    "(:usage_event_b, :tenant_b, 'llm.input_tokens', 1, 'tokens', 'recovery', "
-                    "'recovery-request-b', 'recovery-usage-b', :pricing_snapshot_b, 'USD', 25, "
+                    "(:usage_event_b, :tenant_b, :space_b, :project_b, :run_b, :actor_b, "
+                    "'llm.input_tokens', 1, 'tokens', 'recovery', 'recovery-request-b', "
+                    "'recovery-usage-b', :pricing_snapshot_b, 'USD', 25, "
                     "CAST(:attributes AS jsonb), now())"
                 ),
                 {**identifiers, "attributes": json.dumps({"model": "recovery-model"})},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_metering_receipts "
+                    "(id, tenant_id, space_id, project_id, run_id, usage_event_id, runner_id, "
+                    "runner_connection_generation, runner_certificate_id, "
+                    "certificate_fingerprint_sha256, capability_id, dispatch_generation, "
+                    "fence_token, idempotency_key, request_hash) VALUES "
+                    "(:billing_metering_receipt_a, :tenant_a, :space_a, :project_a, :run_a, "
+                    ":usage_event_a, :runner_a, 1, :runner_certificate_a, "
+                    ":certificate_fingerprint_a, :capability_a, 1, 1, 'recovery-metering-a', "
+                    ":metering_hash_a), "
+                    "(:billing_metering_receipt_b, :tenant_b, :space_b, :project_b, :run_b, "
+                    ":usage_event_b, :runner_b, 1, :runner_certificate_b, "
+                    ":certificate_fingerprint_b, :capability_b, 1, 1, 'recovery-metering-b', "
+                    ":metering_hash_b)"
+                ),
+                {
+                    **identifiers,
+                    "certificate_fingerprint_a": "d" * 64,
+                    "certificate_fingerprint_b": "e" * 64,
+                    "metering_hash_a": "1" * 64,
+                    "metering_hash_b": "2" * 64,
+                },
             )
             connection.execute(
                 sa.text(
@@ -833,7 +1056,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000008":
+            if saas_head != "p6a000000009":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -875,6 +1098,20 @@ def _verify_restored_database(
             ):
                 raise PostgreSqlRestoreContractError(
                     "restored enterprise access RLS exposed another tenant"
+                )
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "SET LOCAL ROLE saas_billing; "
+                f"SET LOCAL app.tenant_id = '{identifiers['tenant_a']}'"
+            )
+            visible_metering_receipts = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_billing_metering_receipts")
+                ).scalars()
+            )
+            if visible_metering_receipts != {identifiers["billing_metering_receipt_a"]}:
+                raise PostgreSqlRestoreContractError(
+                    "restored billing receipt RLS exposed another tenant"
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
@@ -985,17 +1222,87 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "post-backup billing authority replay is incomplete"
                 )
+            metering_receipts = connection.execute(
+                sa.text(
+                    "SELECT receipt.id::text, receipt.tenant_id::text, usage.id::text, "
+                    "run.id::text, capability.id::text, certificate.id::text, runner.id::text "
+                    "FROM saas_billing_metering_receipts receipt "
+                    "JOIN saas_usage_events usage "
+                    "ON usage.tenant_id = receipt.tenant_id "
+                    "AND usage.id = receipt.usage_event_id "
+                    "JOIN saas_runs run ON run.tenant_id = receipt.tenant_id "
+                    "AND run.space_id = receipt.space_id "
+                    "AND run.project_id = receipt.project_id AND run.id = receipt.run_id "
+                    "JOIN saas_capability_tokens capability "
+                    "ON capability.id = receipt.capability_id "
+                    "AND capability.run_id = receipt.run_id "
+                    "AND capability.runner_id = receipt.runner_id "
+                    "AND capability.runner_connection_generation = "
+                    "receipt.runner_connection_generation "
+                    "AND capability.dispatch_generation = receipt.dispatch_generation "
+                    "AND capability.fence_token = receipt.fence_token "
+                    "JOIN saas_runner_certificates certificate "
+                    "ON certificate.id = receipt.runner_certificate_id "
+                    "AND certificate.runner_id = receipt.runner_id "
+                    "AND certificate.runner_connection_generation = "
+                    "receipt.runner_connection_generation "
+                    "AND certificate.purpose = 'billing_metering' "
+                    "AND certificate.fingerprint_sha256 = "
+                    "receipt.certificate_fingerprint_sha256 "
+                    "JOIN saas_runner_registrations runner ON runner.id = receipt.runner_id "
+                    "ORDER BY receipt.id"
+                )
+            ).all()
+            expected_metering_links = {
+                (
+                    identifiers["billing_metering_receipt_a"],
+                    identifiers["tenant_a"],
+                    identifiers["usage_event_a"],
+                    identifiers["run_a"],
+                    identifiers["capability_a"],
+                    identifiers["runner_certificate_a"],
+                    identifiers["runner_a"],
+                ),
+                (
+                    identifiers["billing_metering_receipt_b"],
+                    identifiers["tenant_b"],
+                    identifiers["usage_event_b"],
+                    identifiers["run_b"],
+                    identifiers["capability_b"],
+                    identifiers["runner_certificate_b"],
+                    identifiers["runner_b"],
+                ),
+            }
+            if {tuple(row) for row in metering_receipts} != expected_metering_links:
+                raise PostgreSqlRestoreContractError(
+                    "restored machine metering authority links are incomplete"
+                )
+            metering_immutable_trigger = connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM pg_trigger trigger "
+                    "JOIN pg_class relation ON relation.oid = trigger.tgrelid "
+                    "WHERE relation.relname = 'saas_billing_metering_receipts' "
+                    "AND trigger.tgname = 'trg_saas_billing_metering_receipts_immutable' "
+                    "AND NOT trigger.tgisinternal"
+                )
+            ).scalar_one()
+            if metering_immutable_trigger != 1:
+                raise PostgreSqlRestoreContractError(
+                    "restored machine metering receipt immutability trigger is missing"
+                )
         return {
             "saas_migration_head": saas_head,
             "official_migration_heads": official_heads,
             "control_plane_forced_rls_tables": len(CONTROL_PLANE_RLS_TABLES),
             "runtime_forced_rls_tables": len(load_runtime_rls_contract()),
             "cross_tenant_negative_probe": "passed",
+            "cross_tenant_billing_receipt_negative_probe": "passed",
             "cross_workspace_negative_probe": "passed",
             "post_backup_revocation_and_deletion_marker_replay": "passed",
             "post_backup_enterprise_lifecycle_replay": "passed",
             "post_backup_enterprise_approval_replay": "passed",
             "post_backup_billing_authority_replay": "passed",
+            "machine_metering_receipt_restore": "passed",
         }
     finally:
         engine.dispose()

@@ -507,7 +507,7 @@ the successful revision corrected that assertion without weakening the cross-Ten
 denial. The intrusion result remains 8 files, 449 lines, two patches, and 0.9945
 isolated custom code.
 
-This evidence is attached to the still-pending
+That exact-revision evidence is attached to the still-pending
 `p6-enterprise-identity-audit-api-platform-console-privacy` aggregate gate. It does
 not turn official server-level `/settings/members` into Tenant administration, nor
 does it complete a Tenant Members module for invitation, Tenant/Space roles,
@@ -624,3 +624,29 @@ identity, authenticated internal ingestion, real Run/Provider integration, perio
 rollover, signed and ordered Provider webhooks, real invoices, payment/tax boundaries,
 production operations, commercial acceptance, all eleven aggregate gates, and release
 `NO-GO` remain open.
+
+The successor `p6a000000009` machine-metering slice adds a dedicated `saas_metering`
+role, execution-bound metering authority, immutable receipt, and TLS 1.3 mutual-auth
+transport. The server derives Tenant/Space/Project/actor/session/Pricing from a current
+Runner certificate, exact capability, Dispatch generation, Run lease and fence; caller
+scope and price are invalid request fields. The transport requires one canonical Runner
+SPIFFE URI SAN, checks the durable `billing_metering` certificate lifecycle, derives the
+certificate fingerprint from DER, bounds and strictly parses one HTTP/1.1 endpoint, and
+does not hide retries.
+
+The PostgreSQL restore fixture now contains two nonempty machine receipts and every
+linked Usage/Run/Capability/certificate/Runner authority row. It proves receipt
+cross-Tenant denial for `saas_billing`, link integrity, the restored immutable trigger,
+and 68/17 forced-RLS inventories. Local evidence passes 23 focused metering, billing,
+migration, and restore tests, the complete 889-test compatibility matrix on a clean
+PostgreSQL 16 database in 339.37 seconds, a 28.408-second isolated logical restore, the
+177-artifact wheel, and full Pyrefly with zero errors. The full matrix also exposed and
+closed a Project Admin readiness race: scope submission remains disabled until discovery
+finishes, and a deterministic Chromium test delays the scope response by 750 milliseconds
+before proving no early submission is possible. Exact-revision GitHub CI evidence is not
+yet attached, so this is implementation status rather than accepted release evidence.
+
+The official Runtime Provider path is not yet wired to the machine client. Period
+rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice comparison,
+payment and tax boundaries, production operations, commercial acceptance, all aggregate
+gates, and release `NO-GO` remain open.

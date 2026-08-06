@@ -29,6 +29,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_billing') THEN
         CREATE ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_metering') THEN
+        CREATE ROLE saas_metering NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
         CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
@@ -44,12 +47,13 @@ ALTER ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_metering NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
-    saas_platform;
+    saas_metering, saas_platform;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
@@ -264,7 +268,14 @@ GRANT SELECT ON
     saas_secret_access_leases,
     saas_preview_leases,
     saas_runner_certificates
-TO saas_app, saas_governance, saas_executor, saas_secret_broker, saas_preview_gateway;
+TO saas_app, saas_governance, saas_executor, saas_secret_broker, saas_preview_gateway,
+    saas_metering;
+
+-- The exact metering Run policy references the capability table. These roles
+-- need planning privilege when they read Runs, but the capability table's own
+-- FORCE RLS exposes rows only to executor/platform or one exact metering hash.
+GRANT SELECT ON saas_capability_tokens
+TO saas_app, saas_governance, saas_secret_broker, saas_preview_gateway;
 
 GRANT SELECT ON
     saas_secret_bindings,
@@ -312,10 +323,11 @@ REVOKE ALL PRIVILEGES ON
     saas_customer_ledger_entries,
     saas_provider_cost_entries,
     saas_billing_reconciliation_batches,
-    saas_billing_reconciliation_mismatches
+    saas_billing_reconciliation_mismatches,
+    saas_billing_metering_receipts
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
-    saas_webhook_dispatcher, saas_billing, saas_platform;
+    saas_webhook_dispatcher, saas_billing, saas_metering, saas_platform;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_billing_subscriptions,
@@ -333,6 +345,49 @@ GRANT SELECT, INSERT ON
     saas_billing_reconciliation_batches,
     saas_control_plane_outbox
 TO saas_billing;
+
+GRANT SELECT ON saas_billing_metering_receipts TO saas_billing;
+
+-- These dependency reads are still row-empty for saas_billing because the
+-- referenced tables retain FORCE RLS with no billing policy. PostgreSQL needs
+-- the grants only to plan the exact-capability metering policies that coexist
+-- with the ordinary billing policies.
+GRANT SELECT ON
+    saas_capability_tokens,
+    saas_runner_certificates
+TO saas_billing;
+
+-- Machine metering can see exactly the certificate and capability selected by
+-- transaction-local hashes. Run columns deliberately exclude input content.
+GRANT SELECT ON
+    saas_runner_certificates,
+    saas_runner_registrations,
+    saas_capability_tokens,
+    saas_run_dispatches,
+    saas_billing_subscriptions,
+    saas_pricing_snapshots
+TO saas_metering;
+GRANT SELECT (
+    id, tenant_id, space_id, project_id, session_id, created_by, status,
+    fence_token, lease_owner, lease_expires_at, created_at
+) ON saas_runs TO saas_metering;
+-- PostgreSQL requires UPDATE privilege on at least one column before a
+-- SELECT ... FOR UPDATE lock can be taken. These grants exist only for the
+-- lock/revalidation transaction: the metering policies are SELECT/INSERT-only,
+-- so FORCE RLS still rejects every attempted UPDATE.
+GRANT UPDATE (updated_at) ON
+    saas_runner_certificates,
+    saas_runner_registrations,
+    saas_run_dispatches,
+    saas_runs,
+    saas_billing_subscriptions
+TO saas_metering;
+GRANT UPDATE (revocation_reason) ON saas_capability_tokens TO saas_metering;
+GRANT SELECT, INSERT ON
+    saas_usage_events,
+    saas_billing_metering_receipts
+TO saas_metering;
+GRANT INSERT ON saas_control_plane_outbox TO saas_metering;
 
 GRANT SELECT ON
     saas_global_users,
@@ -407,5 +462,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_provider_cost_entries,
     saas_billing_reconciliation_batches,
     saas_billing_reconciliation_mismatches,
+    saas_billing_metering_receipts,
     saas_control_plane_outbox
 TO saas_platform;

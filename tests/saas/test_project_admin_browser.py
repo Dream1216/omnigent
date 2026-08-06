@@ -78,11 +78,26 @@ def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
         f"{fixture.origin}/saas/admin/projects"
         f"?tenant={fixture.scope['tenant_id']}&space={fixture.scope['space_id']}"
     )
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const response = await nativeFetch(input, init);
+            if (url.endsWith("/context/scopes")) {
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+            }
+            return response;
+          };
+        }
+        """
+    )
 
     page.get_by_test_id("login-email").fill("http@example.com")
     page.get_by_test_id("login-password").fill("initial-http-password")
     page.get_by_test_id("login-submit").click()
-    expect(page.get_by_test_id("scope-connect")).to_be_visible()
+    expect(page.get_by_test_id("scope-connect")).to_be_enabled()
     expect(page.locator("#permission-count")).to_contain_text("2026-08-06.p6")
 
     page.get_by_test_id("scope-connect").click()
@@ -119,7 +134,7 @@ def _login_and_connect(page: Page, email: str, password: str) -> None:
     page.get_by_test_id("login-email").fill(email)
     page.get_by_test_id("login-password").fill(password)
     page.get_by_test_id("login-submit").click()
-    expect(page.get_by_test_id("scope-connect")).to_be_visible()
+    expect(page.get_by_test_id("scope-connect")).to_be_enabled()
     page.get_by_test_id("scope-connect").click()
     expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")
 

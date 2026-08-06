@@ -1191,11 +1191,45 @@ the 36/22 Linux matrix, Pyrefly, the `p6a000000008` migration round trip, both p
 replays, the 173-artifact implementation wheel, and the unchanged 8-file/449-line/
 two-patch intrusion budget. The evidence-successor wheel requires 174 artifacts.
 
-The implementation still does **not** close P6: non-human metering identity, actual
+That `p6a000000008` implementation did **not** close P6: non-human metering identity, actual
 Run/Provider integration, period rollover, Provider webhook ordering/signature/replay,
 real Provider invoice reconciliation, payment/invoice/tax boundaries, production SLO,
 and commercial acceptance remain open. See
 `saas/production/runbooks/billing-ledger.md`; release remains `NO-GO`.
+
+The eighth P6 contract slice advances the downstream schema to `p6a000000009` and
+closes the code-level non-human metering identity and authenticated internal-ingestion
+gap. A dedicated `saas_metering` database role can see only the exact live Runner,
+`billing_metering` certificate, capability, Dispatch, content-blind Run columns,
+Subscription, Pricing, Usage and receipt selected by transaction-local authority facts.
+Tenant, Space, Project, actor, session and price are derived by the server; the request
+cannot provide any of them. Every accepted Usage fact receives one immutable receipt
+binding Runner connection generation, certificate fingerprint, capability, Dispatch
+generation, Run fence, idempotency key and request hash, and publishes a secret-free
+Outbox event in the same transaction.
+
+The internal transport accepts only TLS 1.3 mutual authentication and one exact
+`spiffe://omnigent/runner/{uuid}` URI SAN, rechecks the durable certificate lifecycle,
+derives the SHA-256 fingerprint from the presented DER certificate, enforces a bounded
+HTTP/1.1 `POST /internal/v1/billing/usage` contract, rejects caller scope and Pricing,
+and performs no hidden retry. The logical-restore contract now restores two nonempty
+machine receipts plus their Usage/Run/Capability/certificate/Runner dependencies,
+proves billing-role cross-Tenant denial, checks the immutable trigger, and reports
+68/17 forced-RLS inventories. Local focused acceptance passes 23 metering, billing,
+migration, and restore tests. A clean PostgreSQL 16 database then passes the complete
+889-test SaaS compatibility matrix in 339.37 seconds; the isolated logical restore
+passes in 28.408 seconds, the wheel contains 177 required SaaS artifacts, and full
+Pyrefly reports zero errors. That matrix exposed a Project Admin login race in which
+the permission catalog could finish before scope discovery. The scope action is now
+disabled until discovery completes, and a deterministic Chromium regression delays
+the scope response by 750 milliseconds before proving the action cannot submit early.
+Exact-revision GitHub CI evidence is still pending for this uncommitted slice.
+
+This does **not** yet connect the official Runtime Provider execution path to the new
+client, and therefore does not establish live Provider usage. Period rollover, Provider
+webhook ordering/signature/replay, real invoice reconciliation, payment/invoice/tax
+boundaries, production SLO/capacity and commercial acceptance also remain open. P6 and
+release remain `NO-GO`.
 
 P0 now has executable baseline and image-candidate controls rather than empty
 evidence slots. It deliberately remains `in_progress`: all eleven ADRs and the
