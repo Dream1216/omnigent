@@ -1263,7 +1263,16 @@ Local acceptance exercises the official `Client.responses.create` path, direct a
 actual official Host launch frames, crash/restart and partial-delivery replay, fail-closed
 disk/envelope behavior, and a complete Provider observer -> private spool -> mTLS ->
 durable certificate authorization -> `saas_metering` PostgreSQL RLS -> immutable Usage
-receipt chain. The wheel now requires 181 artifacts. This is still a code-level Runtime
+receipt chain. Exact compatibility run `31068082417` at
+`0e886d503b4fbd12813de3a6034f451e6e3e4e8a` passes 901 tests in 149.00 seconds,
+a 6.672-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 29.88 seconds, the 36/22 Linux security
+matrix in 12.76 seconds, Pyrefly with zero errors, migration round trip, both patch
+replays, and the 181-artifact implementation wheel. The intrusion result remains within
+budget at 9 direct upstream files, 479 net-added lines, two patches, and 0.995 isolated
+custom code. The evidence-successor wheel requires 182 artifacts.
+
+This is still a code-level Runtime
 composition, not live production billing: the durable scheduler dispatcher must deliver
 the raw one-time grant to the selected Host process, the observer currently synthesizes
 a request identity because the official callback exposes no Provider-native request ID,

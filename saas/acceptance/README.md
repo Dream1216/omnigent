@@ -676,7 +676,14 @@ retried over TLS 1.3 mTLS with stable idempotency. Local tests cover official Cl
 Host launch paths, failure and restart replay, strict spool rejection, and one complete
 official Provider observer -> mTLS -> durable certificate -> real PostgreSQL
 `saas_metering` RLS -> immutable receipt path. The implementation wheel requires 181
-artifacts.
+artifacts. Exact compatibility run `31068082417` at
+`0e886d503b4fbd12813de3a6034f451e6e3e4e8a` passes 901 tests in 149.00 seconds,
+a 6.672-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 29.88 seconds, the 36/22 Linux security
+matrix in 12.76 seconds, Pyrefly, migration round trip, two patch replays, and the
+181-artifact implementation wheel. Source intrusion remains within budget at 9 files,
+479 lines, two patches, and a 0.995 isolated ratio. The evidence-successor wheel
+requires 182 artifacts.
 
 This does not yet establish production billing. The durable scheduler-to-Host raw-grant
 handoff is not deployed, the official observer exposes no Provider-native request ID,

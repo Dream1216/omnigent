@@ -704,7 +704,8 @@
             "tests/saas/test_project_admin_browser.py",
             "saas/acceptance/p6-billing-ledger-ci-31055362434.json",
             "saas/acceptance/p6-machine-metering-ci-31063360786.json",
-            "saas/acceptance/p6-machine-metering-image-candidate-ci-31064837882.json"
+            "saas/acceptance/p6-machine-metering-image-candidate-ci-31064837882.json",
+            "saas/acceptance/p6-provider-runtime-metering-ci-31068082417.json"
           ]
         },
         {
