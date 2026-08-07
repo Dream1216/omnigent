@@ -1411,9 +1411,21 @@ The policy catalog is now `2026-08-08.pc2-lifecycle` with 24 Platform
 permissions, and the forced-RLS inventory is 75 control-plane plus 17 Runtime tables.
 The implementation includes SQLite migration round trips, Cookie/CSRF and real
 Chromium checks, version/idempotency/impact tests, plus PostgreSQL 16 target-bound RLS,
-immutability and cross-Tenant tests. PostgreSQL-only cases skip when
-`OMNIGENT_SAAS_TEST_POSTGRES_URL` is absent and therefore require CI execution before
-this candidate may be recorded as exact-SHA evidence.
+immutability and cross-Tenant tests. Exact compatibility run `31201598950` at
+`2d92d02fa02b1e418967c91d67e3eccc59659540` passes 943 tests, a 3.641-second isolated
+logical restore, 57 official regressions, the 36/22 Linux security matrix, Pyrefly,
+the `p6b000000001` migration round trip, two patch replays, the 192-artifact
+implementation wheel, and the 9-file/479-line/0.9953 intrusion result. Its restore
+fixture contains zero period-close rows, so it does not yet prove nonempty close-fact
+backup and replay.
+
+Image candidate run `31202057865` verifies the same exact SHA with 942 tests and one
+platform skip. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+all four repeated platform Manifest/Config pairs match exact Product, Upstream, Schema
+and Adapter labels and include two attestation descriptors per build. These archives
+are not registry-published, signed, vulnerability/license-cleared, canaried, or
+N-1-rollback proven, so this is accepted candidate evidence rather than production
+image promotion. The evidence-successor wheel requires 194 artifacts.
 
 This slice does not complete PC2 identity-conflict case management or destructive
 User/Tenant deletion. It does not implement PC3 governed support and signed audit,

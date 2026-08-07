@@ -725,3 +725,38 @@ matches, has two attestation descriptors, and labels exact product `07b36803`, u
 archives, not registry-pinned, signed, vulnerability/license-cleared, canaried, or
 N-1-rollback production images; P0 remains pending and release remains `NO-GO`. The two
 PC1 machine records bring the evidence-successor wheel requirement to 189 artifacts.
+
+PC2/P6 implementation commit `2d92d02fa02b1e418967c91d67e3eccc59659540`
+adds target-bound Global User/Tenant lifecycle governance and immutable billing
+period-close/Entitlement-rollover facts on migration head `p6b000000001`. Initial
+compatibility run `31199941325` correctly failed closed on four PostgreSQL defects:
+ordinary roles could not evaluate the Platform assignment predicate, target Auth rows
+were not selectable before update, the policy version exceeded its database width, and
+immutable Reconciliation facts were locked with an UPDATE-requiring clause. The
+successor grants only predicate columns while the Assignment table's own FORCE RLS
+returns zero ordinary rows, adds exact-target SELECT policies, shortens the version,
+and relies on the per-period transaction advisory lock plus unique close invariant.
+
+Exact compatibility run `31201598950` passes 943 tests in 161.25 seconds, a
+3.641-second PostgreSQL 16 isolated logical restore with 75/17 forced-RLS inventories,
+57 official tests in 33.80 seconds, the 36/22 Linux security matrix in 15.40 seconds,
+Pyrefly with zero errors, migration round trip with no drift, both patch replays, and
+the 192-artifact implementation wheel. Source intrusion remains within budget at nine
+files, 479 lines, two patches, and a 0.9953 isolated-code ratio. The restore report has
+zero `saas_billing_period_closes` rows: schema, RLS and adjacent Billing replay pass, but
+nonempty close-fact backup/restore remains an explicit P6 evidence gap.
+
+Image candidate run `31202057865` verifies the same exact SHA with 942 tests and one
+platform skip. Server and Host each build twice for both `linux/amd64` and
+`linux/arm64`; all repeated platform Manifest/Config pairs match, bind product
+`2d92d02f`, upstream `63035f92`, schema `p6b000000001` and adapter `0.2.0`, and contain
+two attestation descriptors per build. These archives are not registry-published,
+signed, vulnerability/license-cleared, canaried, or rollback-proven production images.
+The two PC2/P6 machine records bring the evidence-successor wheel requirement to 194
+artifacts.
+
+This accepts only the first PC2 and P6 code/CI/image-candidate slices. Identity Conflict
+Case governance, destructive User/Tenant deletion manifests, Provider-native Receipt
+and kill-window recovery, signed Provider webhooks, payment/invoice/tax, PC3, PC4 and
+PC5 remain open. All eleven aggregate production gates and release `NO-GO` are
+unchanged.

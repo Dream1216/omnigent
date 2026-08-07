@@ -14,6 +14,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p0-p6-evidence.json",
     "saas/acceptance/pc1-platform-security-ci-31187073403.json",
     "saas/acceptance/pc1-platform-security-image-candidate-ci-31187141816.json",
+    "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
+    "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",

@@ -266,6 +266,7 @@ def test_permission_catalog_is_versioned_complete_and_content_separated() -> Non
     payload = permission_catalog_payload()
 
     assert payload["policy_version"]
+    assert len(payload["policy_version"]) <= 32
     permissions = payload["permissions"]
     assert isinstance(permissions, list)
     assert len(permissions) == len(PERMISSION_CATALOG)
