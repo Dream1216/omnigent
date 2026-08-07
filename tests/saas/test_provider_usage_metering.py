@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 
 import saas.runner_adapter.managed_entry as managed_entry_module
+import saas.runner_adapter.metering as metering_module
 import saas.runner_adapter.process_policy as process_policy_module
 from omnigent.host.connect import HostProcess
 from omnigent.host.frames import HostLaunchRunnerFrame
@@ -74,6 +75,11 @@ def _grant(
 
 async def _official_response(model: str = "anthropic/claude-test") -> None:
     await Client().responses.create(input=[], model=model)
+
+
+@pytest.mark.parametrize("model", ["o1-preview", "o3-mini", "o4-mini"])
+def test_provider_detection_covers_openai_reasoning_model_family(model: str) -> None:
+    assert metering_module._provider_from_model(model) == "openai"
 
 
 def _run_async(coroutine: Coroutine[Any, Any, Any]) -> Any:
@@ -375,6 +381,7 @@ def test_managed_host_claims_staged_grant_on_official_launch_frame(
         envelope_directory=(tmp_path / "host-envelopes").absolute(),
     )
     binding_token = "scheduler-bound-official-runner-token"
+
     async def launch() -> object:
         result = await host._handle_launch(
             HostLaunchRunnerFrame(

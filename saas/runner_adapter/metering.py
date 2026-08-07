@@ -623,11 +623,11 @@ def _provider_from_model(model: str | None) -> str:
         candidate = lowered.split("/", 1)[0]
         if _SAFE_PROVIDER.fullmatch(candidate):
             return candidate
+    if re.search(r"(?:^|[_-])o[1-9](?:$|[._-])", lowered):
+        return "openai"
     for token, provider in (
         ("claude", "anthropic"),
         ("gpt", "openai"),
-        ("o1", "openai"),
-        ("o3", "openai"),
         ("gemini", "google"),
         ("mistral", "mistral"),
     ):

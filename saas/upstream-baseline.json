@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-08-06",
+  "audit_verified_at": "2026-08-07",
   "downstream_owned_prefixes": [
     "saas/",
     "tests/saas/"
@@ -15,7 +15,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "e6f7a8b9c0d1"
+    "f7a8b9c0d1e2"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -45,6 +45,6 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
   "upstream_version": "0.9.0.dev0"
 }
