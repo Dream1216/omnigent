@@ -343,4 +343,28 @@ def test_real_postgresql_pc3_support_is_exact_token_tenant_and_immutable() -> No
                 "SET LOCAL SESSION AUTHORIZATION pc3_platform_support_login"
             )
             connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+
+    # This acceptance suite intentionally shares one PostgreSQL database so
+    # migration round-trip tests exercise the same role/policy composition as
+    # CI. Return only this test's PC3-owned facts and schema to the predecessor
+    # revision. TRUNCATE is executed by the fixture superuser because the
+    # product contract correctly makes audit events immutable to every runtime
+    # role; application code has no equivalent bypass.
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "TRUNCATE TABLE "
+            "saas_platform_audit_exports, "
+            "saas_platform_audit_events, "
+            "saas_platform_support_sessions, "
+            "saas_platform_support_grants, "
+            "saas_platform_admin_operations"
+        )
+        connection.exec_driver_sql(
+            "UPDATE saas_platform_audit_chain_heads "
+            "SET last_sequence = 0, last_event_hash = repeat('0', 64), updated_at = now()"
+        )
+        config = Config(root / "saas/control_plane/alembic.ini")
+        config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
+        config.attributes["connection"] = connection
+        command.downgrade(config, "pc2b00000001")
     engine.dispose()
