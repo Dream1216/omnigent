@@ -14,7 +14,7 @@ Those remain separate governed capabilities and acceptance gates.
 2. Require Passkey/WebAuthn or an equivalent phishing-resistant IdP assertion. Password
    authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
    incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `p6b000000001`, then apply
+3. Migrate through `pc2b00000001`, then apply
    `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 75 control-plane
    tables and 17 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
@@ -80,6 +80,23 @@ Those remain separate governed capabilities and acceptance gates.
   secret-free Outbox event in the same transaction. Never treat an HTTP response alone
   as lifecycle evidence.
 
+## PC2 Identity Conflict Case review
+
+- The Staff queue exposes only case ID, Provider class, optional candidate User ID,
+  lifecycle/review states, versions and timestamps. Raw email, Issuer, Subject, login
+  assertion, Prompt, message and customer content remain unavailable to Staff roles.
+- Only a current `platform_operator` with fresh authentication may assign one active
+  Global User candidate or block a pending case. Every decision requires an external
+  approval reference, reason, expected case version and idempotency key; PostgreSQL
+  binds UPDATE to the one requested case.
+- Assignment is not account linking. The candidate must reauthenticate in the customer
+  Realm and use the existing Identity Conflict self-service challenge to approve or
+  reject. Staff code must never insert `saas_identity_connections` for this workflow.
+- A blocked case rejects later login resolution. Preserve the lifecycle receipt and
+  Outbox event as security evidence. Downgrade from `pc2b00000001` is deliberately
+  refused while any reviewed case or Identity Conflict operation exists; use an
+  explicitly approved forward archival migration rather than deleting audit facts.
+
 ## Verification
 
 Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
@@ -107,7 +124,7 @@ role-less denial.
 
 Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
 compatibility matrix. The restore must retain non-empty Staff, Assignment, Session and
-both projection tables, lifecycle receipts, exact `p6b000000001`, and the 75/17
+both projection tables, lifecycle receipts, exact `pc2b00000001`, and the 75/17
 forced-RLS inventories.
 
 ## Revocation, incident response and rollback

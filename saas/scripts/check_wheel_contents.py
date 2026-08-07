@@ -130,6 +130,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p6a000000009_machine_metering.py",
     "saas/control_plane/migrations/versions/pc1a00000001_platform_security_foundation.py",
     "saas/control_plane/migrations/versions/pc2a00000001_platform_user_tenant_lifecycle.py",
+    "saas/control_plane/migrations/versions/pc2b00000001_identity_conflict_platform_review.py",
     "saas/control_plane/migrations/versions/p6b000000001_billing_period_close.py",
     "saas/control_plane/platform_lifecycle.py",
     "saas/control_plane/outbox.py",

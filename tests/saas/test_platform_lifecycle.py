@@ -12,10 +12,14 @@ from saas.control_plane.api_credential_models import ApiCredentialRecord, Servic
 from saas.control_plane.db_models import (
     AuthSessionRecord,
     GlobalUser,
+    IdentityConflict,
+    IdentityConnection,
     SaasBase,
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.identity import IdentityManagementService, VerifiedIdentityAssertion
+from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.platform_lifecycle import PlatformLifecycleService
 from saas.control_plane.platform_models import (
     PlatformLifecycleOperationRecord,
@@ -370,6 +374,129 @@ def test_owner_recovery_preflight_blocks_when_current_owner_is_still_active(pc2)
         now=NOW + timedelta(seconds=2),
     )
     assert preview.blockers == ("owner_still_active",)
+
+
+def test_platform_identity_conflict_review_assigns_or_blocks_without_direct_link(pc2) -> None:
+    factory, lifecycle, sessions, operator_id = pc2
+    candidate_id = uuid4()
+    assigned_conflict_id = uuid4()
+    blocked_conflict_id = uuid4()
+    with factory.begin() as db:
+        db.add(
+            GlobalUser(
+                id=candidate_id,
+                status="active",
+                primary_email_normalized="candidate@example.test",
+                security_version=1,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        db.add_all(
+            [
+                IdentityConflict(
+                    id=assigned_conflict_id,
+                    provider="oidc",
+                    issuer="https://customer-idp.example.test",
+                    subject="ambiguous-assigned",
+                    email_normalized="candidate@example.test",
+                    status="pending",
+                    version=1,
+                    created_at=NOW,
+                    updated_at=NOW,
+                ),
+                IdentityConflict(
+                    id=blocked_conflict_id,
+                    provider="oidc",
+                    issuer="https://customer-idp.example.test",
+                    subject="ambiguous-blocked",
+                    email_normalized="candidate@example.test",
+                    status="pending",
+                    version=1,
+                    created_at=NOW,
+                    updated_at=NOW,
+                ),
+            ]
+        )
+    actor = _actor(sessions)
+    cases = lifecycle.list_identity_conflicts(actor, now=NOW + timedelta(seconds=2))
+    assert {value.conflict_id for value in cases} == {
+        assigned_conflict_id,
+        blocked_conflict_id,
+    }
+    assigned = lifecycle.review_identity_conflict(
+        actor,
+        conflict_id=assigned_conflict_id,
+        decision="assign",
+        candidate_user_id=candidate_id,
+        expected_version=1,
+        approval_ref="approval-conflict-assignment",
+        reason="verified enterprise identity ownership",
+        idempotency_key="identity-conflict-assign",
+        now=NOW + timedelta(seconds=3),
+    )
+    assert assigned.result == {
+        "status": "pending",
+        "version": 2,
+        "platform_review_status": "assigned",
+        "candidate_user_id": str(candidate_id),
+        "customer_reauthentication_required": True,
+        "identity_connection_created": False,
+    }
+    replay = lifecycle.review_identity_conflict(
+        actor,
+        conflict_id=assigned_conflict_id,
+        decision="assign",
+        candidate_user_id=candidate_id,
+        expected_version=1,
+        approval_ref="approval-conflict-assignment",
+        reason="verified enterprise identity ownership",
+        idempotency_key="identity-conflict-assign",
+        now=NOW + timedelta(seconds=4),
+    )
+    assert replay.operation_id == assigned.operation_id
+    assert replay.replayed is True
+    with factory() as db:
+        assert db.query(IdentityConnection).count() == 0
+        conflict = db.get(IdentityConflict, assigned_conflict_id)
+        assert conflict is not None
+        assert conflict.platform_reviewed_by_principal_id == operator_id
+
+    confirmed = IdentityManagementService(factory).resolve_identity_conflict(
+        user_id=candidate_id,
+        conflict_id=assigned_conflict_id,
+        decision="approve",
+        reason="candidate confirmed the new identity",
+        reauthenticated_at=NOW + timedelta(seconds=4),
+        idempotency_key="candidate-conflict-confirm",
+        expected_security_version=1,
+        now=NOW + timedelta(seconds=5),
+    )
+    assert confirmed.identity_connection_id is not None
+
+    blocked = lifecycle.review_identity_conflict(
+        actor,
+        conflict_id=blocked_conflict_id,
+        decision="block",
+        candidate_user_id=None,
+        expected_version=1,
+        approval_ref="approval-conflict-block",
+        reason="verified hostile identity assertion",
+        idempotency_key="identity-conflict-block",
+        now=NOW + timedelta(seconds=5),
+    )
+    assert blocked.result["platform_review_status"] == "blocked"
+    with pytest.raises(LifecycleError) as blocked_login:
+        IdentityManagementService(factory).resolve_verified_login(
+            VerifiedIdentityAssertion(
+                provider="oidc",
+                issuer="https://customer-idp.example.test",
+                subject="ambiguous-blocked",
+                email="candidate@example.test",
+                email_verified=True,
+            )
+        )
+    assert blocked_login.value.code == "identity_conflict_rejected"
 
 
 def cast_int(value: int | None) -> int:

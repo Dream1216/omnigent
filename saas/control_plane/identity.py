@@ -289,6 +289,11 @@ class IdentityManagementService:
                     .with_for_update()
                 ).scalar_one_or_none()
                 if conflict is not None:
+                    if conflict.platform_review_status == "blocked":
+                        raise LifecycleError(
+                            "identity_conflict_rejected",
+                            "identity connection was blocked by Platform Security",
+                        )
                     if conflict.status == "approved":
                         linked = db.execute(
                             sa.select(IdentityConnection).where(
@@ -450,6 +455,11 @@ class IdentityManagementService:
                 raise LifecycleError(
                     "identity_conflict_manual_review_required",
                     "ambiguous identity conflict requires platform review",
+                )
+            if conflict.platform_review_status == "blocked":
+                raise LifecycleError(
+                    "identity_conflict_rejected",
+                    "identity connection was blocked by Platform Security",
                 )
             if conflict.candidate_user_id != user_id:
                 raise LifecycleError("forbidden", "identity conflict belongs to another user")

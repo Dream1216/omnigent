@@ -149,6 +149,10 @@ GRANT SELECT (id, user_id, revoked_at) ON saas_auth_sessions
 TO saas_platform_governance;
 GRANT SELECT (id, target_user_id, status) ON saas_oidc_login_transactions
 TO saas_platform_governance;
+GRANT SELECT (
+    id, provider, candidate_user_id, status, version, platform_review_status,
+    platform_reviewed_by_principal_id, platform_reviewed_at, created_at, updated_at
+) ON saas_identity_conflicts TO saas_platform_governance;
 GRANT SELECT ON
     saas_tenants,
     saas_tenant_memberships
@@ -162,6 +166,11 @@ TO saas_platform_governance;
 GRANT UPDATE (revoked_at) ON saas_auth_sessions TO saas_platform_governance;
 GRANT UPDATE (status, consumed_at) ON saas_oidc_login_transactions
 TO saas_platform_governance;
+GRANT UPDATE (
+    candidate_user_id, version, platform_review_status,
+    platform_reviewed_by_principal_id, platform_review_approval_ref,
+    platform_review_reason, platform_reviewed_at, updated_at
+) ON saas_identity_conflicts TO saas_platform_governance;
 GRANT UPDATE (status, lifecycle_version, updated_at) ON saas_tenants
 TO saas_platform_governance;
 GRANT UPDATE (role, version) ON saas_tenant_memberships

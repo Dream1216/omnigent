@@ -1388,7 +1388,7 @@ scanned, canaried, or rollback-proven, so they do not close the P0 production im
 
 ## PC2 lifecycle and P6 period-close implementation candidate
 
-The downstream head `p6b000000001` builds on PC1 without modifying the official
+The downstream head `pc2b00000001` builds on PC1 without modifying the official
 Agent/Harness loop. `pc2a00000001` adds a Tenant lifecycle version and immutable
 Platform lifecycle receipts. `PlatformLifecycleService` now provides fresh-auth,
 approval-bound, versioned and idempotent Global User suspend/restore, all-Session
@@ -1399,6 +1399,15 @@ these commands through its independent Cookie/Origin/CSRF Realm, while PostgreSQ
 binds the governance role to the exact target User or Tenant and an active
 `platform_operator` assignment.
 
+`pc2b00000001` adds a content-blind Identity Conflict Case queue and a two-stage
+review contract. An active `platform_operator` may assign one active Global User
+candidate or block the case, but the Staff Realm cannot read the raw email, Issuer or
+Subject and can never create an Identity Connection. An assigned candidate must
+reauthenticate in the customer Realm and explicitly approve or reject the existing
+self-service challenge. Every Staff decision is versioned, idempotent, approval-bound,
+target-bound by PostgreSQL RLS and recorded in the immutable lifecycle/Outbox trail.
+Downgrade refuses to erase any accepted PC2 review or audit fact.
+
 `p6b000000001` adds an immutable billing period-close checkpoint. A close requires an
 ended interval, its exact reconciliation, no open mismatch and no active/reserved work
 on matching periodic Entitlements. The same transaction resets drained counters,
@@ -1407,7 +1416,7 @@ the idempotent `billing.period.closed` Outbox event. The Tenant Billing HTTP sur
 request and list closes but still cannot mint Credit, Usage, Provider Cost, Settlement
 or Refund facts.
 
-The policy catalog is now `2026-08-08.pc2-lifecycle` with 24 Platform
+The policy catalog is now `2026-08-08.pc2-conflict` with 26 Platform
 permissions, and the forced-RLS inventory is 75 control-plane plus 17 Runtime tables.
 The implementation includes SQLite migration round trips, Cookie/CSRF and real
 Chromium checks, version/idempotency/impact tests, plus PostgreSQL 16 target-bound RLS,
@@ -1415,9 +1424,17 @@ immutability and cross-Tenant tests. Exact compatibility run `31201598950` at
 `2d92d02fa02b1e418967c91d67e3eccc59659540` passes 943 tests, a 3.641-second isolated
 logical restore, 57 official regressions, the 36/22 Linux security matrix, Pyrefly,
 the `p6b000000001` migration round trip, two patch replays, the 192-artifact
-implementation wheel, and the 9-file/479-line/0.9953 intrusion result. Its restore
-fixture contains zero period-close rows, so it does not yet prove nonempty close-fact
-backup and replay.
+implementation wheel, and the 9-file/479-line/0.9953 intrusion result. That predecessor
+restore fixture contains zero period-close rows and therefore remains evidence only for
+the earlier slice.
+
+The current implementation candidate extends the isolated logical-restore fixture with
+two immutable period-close facts: one is present in the backup and one is applied by
+the deterministic post-backup replay. The restored database must retain both exact
+Tenant/Reconciliation links, expose only the current Tenant through RLS, retain the
+immutability trigger and match selected-table hashes. Local verification passes all 946
+compatibility tests and the 75/17 forced-RLS restore contract; an exact-SHA CI successor
+is still required before this candidate becomes accepted code evidence.
 
 Image candidate run `31202057865` verifies the same exact SHA with 942 tests and one
 platform skip. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
@@ -1427,8 +1444,8 @@ are not registry-published, signed, vulnerability/license-cleared, canaried, or
 N-1-rollback proven, so this is accepted candidate evidence rather than production
 image promotion. The evidence-successor wheel requires 194 artifacts.
 
-This slice does not complete PC2 identity-conflict case management or destructive
-User/Tenant deletion. It does not implement PC3 governed support and signed audit,
+This slice does not complete destructive User/Tenant deletion. It does not implement
+PC3 governed support and signed audit,
 PC4 `/platform-admin` UI, PC5 enterprise/operations completion, Provider-native
 Receipt/Kill-Window recovery, payment, invoice or tax integrations. The 11 aggregate
 production gates and release `NO-GO` remain unchanged.

@@ -30,6 +30,7 @@ class PlatformRlsContext:
     identity_subject: str | None = None
     target_tenant_id: UUID | None = None
     target_user_id: UUID | None = None
+    target_identity_conflict_id: UUID | None = None
 
 
 def _set_local(session: Session, name: str, value: str) -> None:
@@ -51,6 +52,7 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     _set_local(session, "app.platform_identity_subject", "")
     _set_local(session, "app.platform_target_tenant_id", "")
     _set_local(session, "app.platform_target_user_id", "")
+    _set_local(session, "app.platform_target_identity_conflict_id", "")
     _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
     _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
     _set_local(session, "app.space_id", str(context.space_id) if context.space_id else "")
@@ -97,4 +99,9 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         session,
         "app.platform_target_user_id",
         str(context.target_user_id) if context.target_user_id else "",
+    )
+    _set_local(
+        session,
+        "app.platform_target_identity_conflict_id",
+        str(context.target_identity_conflict_id) if context.target_identity_conflict_id else "",
     )

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from saas.control_plane.db_models import GlobalUser, SaasBase
+from saas.control_plane.db_models import GlobalUser, IdentityConflict, SaasBase
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_lifecycle import PlatformLifecycleService
 from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
@@ -158,3 +158,114 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
     assert replayed.status_code == 200
     assert replayed.json()["operation_id"] == suspended.json()["operation_id"]
     assert replayed.json()["replayed"] is True
+
+
+def test_platform_identity_conflict_http_is_content_blind_and_two_stage() -> None:
+    now = datetime.now(timezone.utc)
+    engine = sa.create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SaasBase.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    authorization = PlatformAuthorizationService(factory)
+    sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
+    operator_id = authorization.provision_staff_principal(
+        identity_connection_ref="staff-idp:conflict-operator",
+        issuer="https://staff-idp.example.test",
+        subject="conflict-operator",
+        now=now,
+    )
+    approver_id = authorization.provision_staff_principal(
+        identity_connection_ref="staff-idp:conflict-approver",
+        issuer="https://staff-idp.example.test",
+        subject="conflict-approver",
+        now=now,
+    )
+    candidate_id, conflict_id = uuid4(), uuid4()
+    with factory.begin() as db:
+        db.add(
+            PlatformRoleAssignmentRecord(
+                principal_id=operator_id,
+                role="platform_operator",
+                status="active",
+                version=1,
+                assigned_by_principal_id=approver_id,
+                approval_ref="bootstrap-conflict-operator",
+                reason="PC2 conflict HTTP acceptance",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.add(
+            GlobalUser(
+                id=candidate_id,
+                status="active",
+                security_version=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.add(
+            IdentityConflict(
+                id=conflict_id,
+                provider="oidc",
+                issuer="https://private-idp.example.test",
+                subject="private-subject",
+                email_normalized="private@example.test",
+                status="pending",
+                version=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    issued = sessions.issue_session(
+        StaffIdentityAssertion(
+            issuer="https://staff-idp.example.test",
+            subject="conflict-operator",
+            authn_method="passkey",
+            mfa_strength="phishing_resistant",
+            authenticated_at=now,
+        ),
+        expires_at=now + timedelta(hours=1),
+        now=now,
+    )
+    config = PlatformHttpConfig(enabled=True, origin=ORIGIN, audience=AUDIENCE)
+    client = TestClient(
+        create_platform_admin_app(
+            config=config,
+            sessions=sessions,
+            authorization=authorization,
+            projections=PlatformProjectionService(factory),
+            lifecycle=PlatformLifecycleService(factory),
+        ),
+        base_url=ORIGIN,
+    )
+    client.cookies.set(config.cookie_name, issued.token)
+    listed = client.get("/v2/platform-admin/identity-conflicts")
+    assert listed.status_code == 200
+    assert listed.json()["content_access"] == "none"
+    assert listed.json()["items"][0]["conflict_id"] == str(conflict_id)
+    encoded = listed.text
+    assert "private@example.test" not in encoded
+    assert "private-subject" not in encoded
+    assert "private-idp.example.test" not in encoded
+
+    assigned = client.post(
+        f"/v2/platform-admin/identity-conflicts/{conflict_id}/assign",
+        json={
+            "candidate_user_id": str(candidate_id),
+            "expected_version": 1,
+            "approval_ref": "approval-conflict-http",
+            "reason": "enterprise directory ownership verified",
+        },
+        headers={
+            "Origin": ORIGIN,
+            "X-CSRF-Token": issued.csrf_token,
+            "Idempotency-Key": "identity-conflict-http-assign",
+        },
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["result"]["platform_review_status"] == "assigned"
+    assert assigned.json()["result"]["identity_connection_created"] is False

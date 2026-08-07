@@ -26,6 +26,8 @@ PLATFORM_OPERATION_ACTIONS = (
     "tenant_suspend",
     "tenant_restore",
     "tenant_owner_recover",
+    "identity_conflict_assign",
+    "identity_conflict_block",
 )
 
 
@@ -252,7 +254,7 @@ class PlatformLifecycleOperationRecord(SaasBase):
 
     __table_args__ = (
         sa.CheckConstraint(
-            "target_type IN ('global_user', 'tenant')",
+            "target_type IN ('global_user', 'tenant', 'identity_conflict')",
             name="ck_platform_lifecycle_target_type",
         ),
         sa.CheckConstraint(
@@ -268,7 +270,7 @@ class PlatformLifecycleOperationRecord(SaasBase):
         ),
         sa.CheckConstraint("length(reason) > 0", name="ck_platform_lifecycle_reason_nonempty"),
         sa.CheckConstraint(
-            "(target_type = 'global_user' AND tenant_id IS NULL) OR "
+            "(target_type IN ('global_user', 'identity_conflict') AND tenant_id IS NULL) OR "
             "(target_type = 'tenant' AND tenant_id = target_id)",
             name="ck_platform_lifecycle_target_scope",
         ),

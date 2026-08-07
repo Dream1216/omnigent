@@ -43,6 +43,19 @@ class _OwnerRecoveryCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
 
 
+class _IdentityConflictAssignmentCommand(BaseModel):
+    candidate_user_id: UUID
+    expected_version: int = Field(ge=1)
+    approval_ref: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class _IdentityConflictBlockCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+    approval_ref: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformHttpConfig:
     """Feature flag and independent browser trust configuration."""
@@ -246,6 +259,92 @@ def create_platform_admin_app(
             "items": list(page.items),
             "next_cursor": page.next_cursor,
         }
+
+    @app.get("/v2/platform-admin/identity-conflicts")
+    def identity_conflicts(
+        request: Request,
+        status: str | None = "pending",
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        values = lifecycle_service().list_identity_conflicts(
+            principal,
+            status=status,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [
+                {
+                    "conflict_id": str(value.conflict_id),
+                    "provider": value.provider,
+                    "candidate_user_id": (
+                        str(value.candidate_user_id)
+                        if value.candidate_user_id is not None
+                        else None
+                    ),
+                    "status": value.status,
+                    "version": value.version,
+                    "platform_review_status": value.platform_review_status,
+                    "platform_reviewed_by_principal_id": (
+                        str(value.platform_reviewed_by_principal_id)
+                        if value.platform_reviewed_by_principal_id is not None
+                        else None
+                    ),
+                    "platform_reviewed_at": (
+                        value.platform_reviewed_at.isoformat()
+                        if value.platform_reviewed_at is not None
+                        else None
+                    ),
+                    "created_at": value.created_at.isoformat(),
+                    "updated_at": value.updated_at.isoformat(),
+                }
+                for value in values
+            ],
+            "next_cursor": (str(values[-1].conflict_id) if len(values) == limit else None),
+            "content_access": "none",
+        }
+
+    @app.post("/v2/platform-admin/identity-conflicts/{conflict_id}/assign")
+    def assign_identity_conflict(
+        conflict_id: UUID,
+        command: _IdentityConflictAssignmentCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().review_identity_conflict(
+            principal,
+            conflict_id=conflict_id,
+            decision="assign",
+            candidate_user_id=command.candidate_user_id,
+            expected_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.post("/v2/platform-admin/identity-conflicts/{conflict_id}/block")
+    def block_identity_conflict(
+        conflict_id: UUID,
+        command: _IdentityConflictBlockCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().review_identity_conflict(
+            principal,
+            conflict_id=conflict_id,
+            decision="block",
+            candidate_user_id=None,
+            expected_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
 
     @app.post("/v2/platform-admin/users/{user_id}/suspend")
     def suspend_user(

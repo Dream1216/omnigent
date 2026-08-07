@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc2-lifecycle"
+POLICY_VERSION: Final = "2026-08-08.pc2-conflict"
 
 
 class PermissionScope(StrEnum):
@@ -193,6 +193,27 @@ _DEFINITIONS = (
         api_surfaces=("POST /v2/platform-admin/users/{id}/revoke-sessions",),
         ui_surface="global-users",
         audit_event="platform.user_sessions.revoked",
+    ),
+    _permission(
+        "platform.identity_conflict.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        api_surfaces=("GET /v2/platform-admin/identity-conflicts",),
+        ui_surface="identity-security",
+        audit_event="platform.identity_conflict.read",
+    ),
+    _permission(
+        "platform.identity_conflict.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/identity-conflicts/{id}/assign",
+            "POST /v2/platform-admin/identity-conflicts/{id}/block",
+        ),
+        ui_surface="identity-security",
+        audit_event="platform.identity_conflict.reviewed",
     ),
     _permission(
         "platform.support.read",
@@ -441,6 +462,8 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.user.suspend",
                 "platform.user.restore",
                 "platform.user.sessions.revoke",
+                "platform.identity_conflict.read",
+                "platform.identity_conflict.manage",
                 "platform.operations.read",
                 "platform.runner.manage",
                 "platform.billing.read",
@@ -455,6 +478,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.role.read",
                 "platform.tenant.read",
                 "platform.user.read",
+                "platform.identity_conflict.read",
                 "platform.support.read",
                 "platform.security.read",
                 "platform.audit.read",

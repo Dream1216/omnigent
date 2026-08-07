@@ -262,6 +262,7 @@ from saas.control_plane.placements import (
 )
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_lifecycle import (
+    IdentityConflictCaseView,
     OwnerRecoveryPreview,
     PlatformLifecycleResult,
     PlatformLifecycleService,
@@ -462,6 +463,7 @@ __all__ = [
     "FairRunLease",
     "GlobalUser",
     "IdentityConflict",
+    "IdentityConflictCaseView",
     "IdentityConflictResolved",
     "IdentityConnection",
     "IdentityLoginResolution",

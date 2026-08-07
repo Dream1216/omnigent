@@ -26,6 +26,7 @@ IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
 OIDC_LOGIN_TRANSACTION_STATUSES = ("pending", "consumed", "failed")
 OIDC_LOGIN_PURPOSES = ("login", "link")
 IDENTITY_CONFLICT_STATUSES = ("pending", "approved", "rejected")
+IDENTITY_CONFLICT_PLATFORM_REVIEW_STATUSES = ("unreviewed", "assigned", "blocked")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
 OWNER_TRANSFER_STATUSES = ("completed", "cancelled")
 REMOVAL_PREFLIGHT_STATUSES = ("ready", "blocked", "executed", "expired", "cancelled")
@@ -261,6 +262,15 @@ class IdentityConflict(SaasBase):
     )
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
     version: Mapped[int] = mapped_column(nullable=False, default=1)
+    platform_review_status: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, default="unreviewed"
+    )
+    platform_reviewed_by_principal_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT")
+    )
+    platform_review_approval_ref: Mapped[str | None] = mapped_column(sa.String(256))
+    platform_review_reason: Mapped[str | None] = mapped_column(sa.String(1024))
+    platform_reviewed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     resolved_by: Mapped[UUID | None] = mapped_column(
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
@@ -286,6 +296,25 @@ class IdentityConflict(SaasBase):
         sa.CheckConstraint("length(subject) > 0", name="ck_identity_conflict_subject"),
         sa.CheckConstraint("length(email_normalized) > 0", name="ck_identity_conflict_email"),
         sa.CheckConstraint("version > 0", name="ck_identity_conflict_version"),
+        sa.CheckConstraint(
+            f"platform_review_status IN ({_values(IDENTITY_CONFLICT_PLATFORM_REVIEW_STATUSES)})",
+            name="ck_identity_conflict_platform_review_status",
+        ),
+        sa.CheckConstraint(
+            "(platform_review_status = 'unreviewed' "
+            "AND platform_reviewed_by_principal_id IS NULL "
+            "AND platform_review_approval_ref IS NULL "
+            "AND platform_review_reason IS NULL AND platform_reviewed_at IS NULL) OR "
+            "(platform_review_status = 'assigned' AND candidate_user_id IS NOT NULL "
+            "AND platform_reviewed_by_principal_id IS NOT NULL "
+            "AND length(platform_review_approval_ref) > 0 "
+            "AND length(platform_review_reason) > 0 AND platform_reviewed_at IS NOT NULL) OR "
+            "(platform_review_status = 'blocked' AND candidate_user_id IS NULL "
+            "AND platform_reviewed_by_principal_id IS NOT NULL "
+            "AND length(platform_review_approval_ref) > 0 "
+            "AND length(platform_review_reason) > 0 AND platform_reviewed_at IS NOT NULL)",
+            name="ck_identity_conflict_platform_review",
+        ),
         sa.CheckConstraint(
             "(status = 'pending' AND resolved_by IS NULL AND resolved_at IS NULL "
             "AND resolution_reason IS NULL) OR "

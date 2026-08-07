@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -18,6 +18,7 @@ from saas.control_plane.db_models import (
     AuthSessionRecord,
     ControlPlaneOutboxEvent,
     GlobalUser,
+    IdentityConflict,
     OidcLoginTransaction,
     Tenant,
     TenantMembership,
@@ -53,6 +54,20 @@ class OwnerRecoveryPreview:
     target_membership_version: int | None
     blockers: tuple[str, ...]
     preview_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityConflictCaseView:
+    conflict_id: UUID
+    provider: str
+    candidate_user_id: UUID | None
+    status: str
+    version: int
+    platform_review_status: str
+    platform_reviewed_by_principal_id: UUID | None
+    platform_reviewed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +117,189 @@ class PlatformLifecycleService:
 
     def __init__(self, governance_factory: sessionmaker[Session]) -> None:
         self._governance = governance_factory
+
+    def list_identity_conflicts(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        status: str | None = "pending",
+        cursor: UUID | None = None,
+        limit: int = 50,
+        now: datetime | None = None,
+    ) -> tuple[IdentityConflictCaseView, ...]:
+        """Return content-blind conflict cases; raw email, issuer, and subject never leave auth."""
+
+        if limit < 1 or limit > 200:
+            raise PlatformSecurityError("platform_query_invalid", "limit is invalid")
+        if status not in {None, "pending", "approved", "rejected"}:
+            raise PlatformSecurityError("platform_query_invalid", "status is invalid")
+        checked_at = now or _now()
+        with self._governance.begin() as db:
+            self._bind(db, actor)
+            self._authorize(db, actor, "platform.identity_conflict.read", checked_at)
+            query = sa.select(
+                IdentityConflict.id,
+                IdentityConflict.provider,
+                IdentityConflict.candidate_user_id,
+                IdentityConflict.status,
+                IdentityConflict.version,
+                IdentityConflict.platform_review_status,
+                IdentityConflict.platform_reviewed_by_principal_id,
+                IdentityConflict.platform_reviewed_at,
+                IdentityConflict.created_at,
+                IdentityConflict.updated_at,
+            )
+            if status is not None:
+                query = query.where(IdentityConflict.status == status)
+            if cursor is not None:
+                query = query.where(IdentityConflict.id > cursor)
+            rows = db.execute(query.order_by(IdentityConflict.id).limit(limit)).all()
+            return tuple(
+                IdentityConflictCaseView(
+                    conflict_id=row.id,
+                    provider=row.provider,
+                    candidate_user_id=row.candidate_user_id,
+                    status=row.status,
+                    version=row.version,
+                    platform_review_status=row.platform_review_status,
+                    platform_reviewed_by_principal_id=row.platform_reviewed_by_principal_id,
+                    platform_reviewed_at=row.platform_reviewed_at,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                )
+                for row in rows
+            )
+
+    def review_identity_conflict(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        conflict_id: UUID,
+        decision: Literal["assign", "block"],
+        candidate_user_id: UUID | None,
+        expected_version: int,
+        approval_ref: str,
+        reason: str,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> PlatformLifecycleResult:
+        """Assign one candidate or block a conflict; Staff can never directly link the subject."""
+
+        changed_at = now or _now()
+        _require_fresh(actor, changed_at)
+        if decision not in {"assign", "block"}:
+            raise PlatformSecurityError("platform_command_invalid", "decision is invalid")
+        if (decision == "assign") != (candidate_user_id is not None):
+            raise PlatformSecurityError(
+                "platform_command_invalid",
+                "assign requires one candidate and block forbids a candidate",
+            )
+        cleaned_approval = _required_text(approval_ref, "approval_ref", 256)
+        cleaned_reason = _required_text(reason, "reason", 1024)
+        key = _required_text(idempotency_key, "idempotency_key", 128)
+        payload: dict[str, object] = {
+            "action": f"identity_conflict_{decision}",
+            "conflict_id": str(conflict_id),
+            "candidate_user_id": str(candidate_user_id) if candidate_user_id else None,
+            "expected_version": expected_version,
+            "approval_ref": cleaned_approval,
+            "reason": cleaned_reason,
+        }
+        request_hash = _digest(payload)
+        with self._governance.begin() as db:
+            self._bind(
+                db,
+                actor,
+                user_id=candidate_user_id,
+                identity_conflict_id=conflict_id,
+            )
+            self._serialize(db, actor.principal_id, key)
+            self._authorize(db, actor, "platform.identity_conflict.manage", changed_at)
+            replay = self._replay(db, actor.principal_id, key, request_hash)
+            if replay is not None:
+                return replay
+            conflict = db.execute(
+                sa.select(
+                    IdentityConflict.id,
+                    IdentityConflict.status,
+                    IdentityConflict.version,
+                    IdentityConflict.platform_review_status,
+                )
+                .where(IdentityConflict.id == conflict_id)
+                .with_for_update()
+            ).one_or_none()
+            if conflict is None:
+                raise PlatformSecurityError(
+                    "platform_identity_conflict_not_found", "Identity Conflict was not found"
+                )
+            if (
+                conflict.status != "pending"
+                or conflict.version != expected_version
+                or conflict.platform_review_status != "unreviewed"
+            ):
+                raise PlatformSecurityError(
+                    "platform_identity_conflict_conflict",
+                    "Identity Conflict changed or was already reviewed",
+                )
+            if candidate_user_id is not None:
+                candidate = db.execute(
+                    sa.select(GlobalUser.status).where(GlobalUser.id == candidate_user_id)
+                ).scalar_one_or_none()
+                if candidate != "active":
+                    raise PlatformSecurityError(
+                        "platform_identity_conflict_blocked",
+                        "assigned candidate must be an active Global User",
+                    )
+            next_version = conflict.version + 1
+            next_review_status = "assigned" if decision == "assign" else "blocked"
+            updated = db.execute(
+                sa.update(IdentityConflict)
+                .where(
+                    IdentityConflict.id == conflict_id,
+                    IdentityConflict.status == "pending",
+                    IdentityConflict.version == expected_version,
+                    IdentityConflict.platform_review_status == "unreviewed",
+                )
+                .values(
+                    candidate_user_id=candidate_user_id,
+                    version=next_version,
+                    platform_review_status=next_review_status,
+                    platform_reviewed_by_principal_id=actor.principal_id,
+                    platform_review_approval_ref=cleaned_approval,
+                    platform_review_reason=cleaned_reason,
+                    platform_reviewed_at=changed_at,
+                    updated_at=changed_at,
+                )
+            )
+            if _rowcount(updated) != 1:
+                raise PlatformSecurityError(
+                    "platform_identity_conflict_conflict",
+                    "Identity Conflict changed concurrently",
+                )
+            result: dict[str, object] = {
+                "status": "pending",
+                "version": next_version,
+                "platform_review_status": next_review_status,
+                "candidate_user_id": (
+                    str(candidate_user_id) if candidate_user_id is not None else None
+                ),
+                "customer_reauthentication_required": decision == "assign",
+                "identity_connection_created": False,
+            }
+            return self._record(
+                db,
+                actor=actor,
+                target_type="identity_conflict",
+                target_id=conflict_id,
+                tenant_id=None,
+                action=f"identity_conflict_{decision}",
+                key=key,
+                request_hash=request_hash,
+                approval_ref=cleaned_approval,
+                reason=cleaned_reason,
+                result=result,
+                occurred_at=changed_at,
+            )
 
     def suspend_user(
         self,
@@ -628,6 +826,7 @@ class PlatformLifecycleService:
         *,
         tenant_id: UUID | None = None,
         user_id: UUID | None = None,
+        identity_conflict_id: UUID | None = None,
     ) -> None:
         apply_platform_rls_context(
             db,
@@ -635,6 +834,7 @@ class PlatformLifecycleService:
                 principal_id=actor.principal_id,
                 target_tenant_id=tenant_id,
                 target_user_id=user_id,
+                target_identity_conflict_id=identity_conflict_id,
             ),
         )
 

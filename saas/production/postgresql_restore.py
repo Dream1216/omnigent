@@ -264,6 +264,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "billing_reconciliation_b": "a7000000-0000-4000-8000-000000000002",
         "billing_mismatch_a": "a8000000-0000-4000-8000-000000000001",
         "billing_mismatch_b": "a8000000-0000-4000-8000-000000000002",
+        "billing_period_close_a": "aa000000-0000-4000-8000-000000000001",
+        "billing_period_close_b": "aa000000-0000-4000-8000-000000000002",
         "billing_metering_receipt_a": "a9000000-0000-4000-8000-000000000001",
         "billing_metering_receipt_b": "a9000000-0000-4000-8000-000000000002",
         "outbox_seed": "60000000-0000-4000-8000-000000000001",
@@ -439,12 +441,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'p6b000000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc2b00000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'p6b000000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc2b00000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -889,6 +891,32 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "UPDATE saas_billing_reconciliation_mismatches "
+                    "SET status = 'resolved', resolution = 'source close verified', "
+                    "resolved_by = :actor_a, resolved_at = now() "
+                    "WHERE id = :billing_mismatch_a"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_period_closes "
+                    "(id, tenant_id, reconciliation_batch_id, period_start, period_end, "
+                    "status, rolled_entitlement_count, usage_event_count, "
+                    "customer_charge_minor, customer_settled_minor, provider_cost_minor, "
+                    "reconciliation_evidence_sha256, close_evidence_sha256, closed_by, "
+                    "closed_at) SELECT :billing_period_close_a, batch.tenant_id, batch.id, "
+                    "batch.period_start, batch.period_end, 'closed_with_resolved_exceptions', "
+                    "0, batch.usage_event_count, batch.customer_charge_minor, "
+                    "batch.customer_settled_minor, batch.provider_cost_minor, "
+                    "batch.evidence_sha256, :close_hash, :actor_a, now() "
+                    "FROM saas_billing_reconciliation_batches batch "
+                    "WHERE batch.id = :billing_reconciliation_a"
+                ),
+                {**identifiers, "close_hash": "5" * 64},
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_control_plane_outbox "
                     "(id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
                     "idempotency_key, request_hash, attempt_count, available_at) VALUES "
@@ -966,6 +994,23 @@ def _apply_post_backup_replay(
                     "WHERE id = :billing_mismatch_b"
                 ),
                 replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_billing_period_closes "
+                    "(id, tenant_id, reconciliation_batch_id, period_start, period_end, "
+                    "status, rolled_entitlement_count, usage_event_count, "
+                    "customer_charge_minor, customer_settled_minor, provider_cost_minor, "
+                    "reconciliation_evidence_sha256, close_evidence_sha256, closed_by, "
+                    "closed_at) SELECT :billing_period_close_b, batch.tenant_id, batch.id, "
+                    "batch.period_start, batch.period_end, 'closed_with_resolved_exceptions', "
+                    "0, batch.usage_event_count, batch.customer_charge_minor, "
+                    "batch.customer_settled_minor, batch.provider_cost_minor, "
+                    "batch.evidence_sha256, :close_hash, :actor_b, :replay_at "
+                    "FROM saas_billing_reconciliation_batches batch "
+                    "WHERE batch.id = :billing_reconciliation_b"
+                ),
+                {**replay_parameters, "close_hash": "6" * 64},
             )
             connection.execute(
                 sa.text(
@@ -1129,7 +1174,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6b000000001":
+            if saas_head != "pc2b00000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1199,6 +1244,15 @@ def _verify_restored_database(
             if visible_metering_receipts != {identifiers["billing_metering_receipt_a"]}:
                 raise PostgreSqlRestoreContractError(
                     "restored billing receipt RLS exposed another tenant"
+                )
+            visible_period_closes = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_billing_period_closes")
+                ).scalars()
+            )
+            if visible_period_closes != {identifiers["billing_period_close_a"]}:
+                raise PostgreSqlRestoreContractError(
+                    "restored billing period-close RLS exposed another tenant"
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
@@ -1377,6 +1431,42 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "restored machine metering receipt immutability trigger is missing"
                 )
+            period_close_rows = connection.execute(
+                sa.text(
+                    "SELECT id::text, tenant_id::text, reconciliation_batch_id::text, status "
+                    "FROM saas_billing_period_closes ORDER BY id"
+                )
+            ).all()
+            if {tuple(row) for row in period_close_rows} != {
+                (
+                    identifiers["billing_period_close_a"],
+                    identifiers["tenant_a"],
+                    identifiers["billing_reconciliation_a"],
+                    "closed_with_resolved_exceptions",
+                ),
+                (
+                    identifiers["billing_period_close_b"],
+                    identifiers["tenant_b"],
+                    identifiers["billing_reconciliation_b"],
+                    "closed_with_resolved_exceptions",
+                ),
+            }:
+                raise PostgreSqlRestoreContractError(
+                    "restored nonempty billing period-close facts are incomplete"
+                )
+            period_close_immutable_trigger = connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM pg_trigger trigger "
+                    "JOIN pg_class relation ON relation.oid = trigger.tgrelid "
+                    "WHERE relation.relname = 'saas_billing_period_closes' "
+                    "AND trigger.tgname = 'trg_saas_billing_period_closes_immutable' "
+                    "AND NOT trigger.tgisinternal"
+                )
+            ).scalar_one()
+            if period_close_immutable_trigger != 1:
+                raise PostgreSqlRestoreContractError(
+                    "restored billing period-close immutability trigger is missing"
+                )
         return {
             "saas_migration_head": saas_head,
             "official_migration_heads": official_heads,
@@ -1390,6 +1480,7 @@ def _verify_restored_database(
             "post_backup_enterprise_approval_replay": "passed",
             "post_backup_billing_authority_replay": "passed",
             "machine_metering_receipt_restore": "passed",
+            "billing_period_close_restore": "passed with one backed-up and one replayed fact",
             "platform_security_restore": "passed",
         }
     finally:
