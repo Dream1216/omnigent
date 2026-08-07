@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc2-user-tenant-lifecycle"
+POLICY_VERSION: Final = "2026-08-08.pc2-lifecycle"
 
 
 class PermissionScope(StrEnum):

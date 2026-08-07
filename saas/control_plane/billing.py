@@ -1733,14 +1733,15 @@ class BillingControlPlane:
                 raise BillingControlPlaneError(
                     "billing_period_already_closed", "billing period is already closed"
                 )
+            # Reconciliation batches are append-only facts and the period advisory
+            # lock above serializes close attempts. A row lock would require UPDATE
+            # privilege on an immutable table and needlessly weaken the billing role.
             reconciliation = db.scalar(
-                sa.select(BillingReconciliationBatchRecord)
-                .where(
+                sa.select(BillingReconciliationBatchRecord).where(
                     BillingReconciliationBatchRecord.tenant_id == tenant_id,
                     BillingReconciliationBatchRecord.period_start == start,
                     BillingReconciliationBatchRecord.period_end == end,
                 )
-                .with_for_update()
             )
             if reconciliation is None:
                 raise BillingControlPlaneError(

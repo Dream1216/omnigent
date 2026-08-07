@@ -1407,7 +1407,7 @@ the idempotent `billing.period.closed` Outbox event. The Tenant Billing HTTP sur
 request and list closes but still cannot mint Credit, Usage, Provider Cost, Settlement
 or Refund facts.
 
-The policy catalog is now `2026-08-08.pc2-user-tenant-lifecycle` with 24 Platform
+The policy catalog is now `2026-08-08.pc2-lifecycle` with 24 Platform
 permissions, and the forced-RLS inventory is 75 control-plane plus 17 Runtime tables.
 The implementation includes SQLite migration round trips, Cookie/CSRF and real
 Chromium checks, version/idempotency/impact tests, plus PostgreSQL 16 target-bound RLS,

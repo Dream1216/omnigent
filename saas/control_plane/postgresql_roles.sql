@@ -133,6 +133,16 @@ TO saas_platform;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
 -- governance login gets only the metadata and columns required by those commands.
+-- The lifecycle policies authenticate the Staff assignment in the database. PostgreSQL
+-- validates subquery privileges before evaluating an OR branch, so every role that can
+-- touch a protected business table needs read access to these four assignment columns.
+-- The assignment table's own FORCE RLS policy still returns no rows to tenant/runtime
+-- roles; this grant cannot expose Staff assignment data.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO
+    saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
+    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
+    saas_metering, saas_platform_projector;
 GRANT SELECT (id, status, security_version) ON saas_global_users
 TO saas_platform_governance;
 GRANT SELECT (id, user_id, revoked_at) ON saas_auth_sessions

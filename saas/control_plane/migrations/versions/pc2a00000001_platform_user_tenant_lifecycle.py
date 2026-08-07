@@ -129,10 +129,19 @@ def _install_postgresql_policies() -> None:
         'CREATE POLICY "rls_auth_sessions_platform_target" ON saas_auth_sessions '
         f"FOR UPDATE USING ({session_scope}) WITH CHECK ({session_scope})"
     )
+    op.execute(
+        'CREATE POLICY "rls_auth_sessions_platform_target_read" ON saas_auth_sessions '
+        f"FOR SELECT USING ({session_scope})"
+    )
     oidc_scope = f"({_EMERGENCY} OR ({operator} AND target_user_id = {_TARGET_USER}))"
     op.execute(
         'CREATE POLICY "rls_oidc_transactions_platform_target" ON saas_oidc_login_transactions '
         f"FOR UPDATE USING ({oidc_scope}) WITH CHECK ({oidc_scope})"
+    )
+    op.execute(
+        'CREATE POLICY "rls_oidc_transactions_platform_target_read" '
+        "ON saas_oidc_login_transactions "
+        f"FOR SELECT USING ({oidc_scope})"
     )
     tenant_scope = f"({_EMERGENCY} OR ({operator} AND id = {_TARGET_TENANT}))"
     op.execute(
@@ -164,6 +173,10 @@ def _install_postgresql_policies() -> None:
         'CREATE POLICY "rls_api_credentials_platform_target" ON saas_api_credentials '
         f"FOR UPDATE USING ({credential_scope}) WITH CHECK ({credential_scope})"
     )
+    op.execute(
+        'CREATE POLICY "rls_api_credentials_platform_target_read" ON saas_api_credentials '
+        f"FOR SELECT USING ({credential_scope})"
+    )
     outbox_scope = f"({_EMERGENCY} OR {operator})"
     op.execute(
         'CREATE POLICY "rls_outbox_platform_insert" ON saas_control_plane_outbox '
@@ -186,6 +199,10 @@ def downgrade() -> None:
             'DROP POLICY IF EXISTS "rls_api_credentials_platform_target" ON saas_api_credentials'
         )
         op.execute(
+            'DROP POLICY IF EXISTS "rls_api_credentials_platform_target_read" '
+            "ON saas_api_credentials"
+        )
+        op.execute(
             'DROP POLICY IF EXISTS "rls_service_accounts_platform_target" ON saas_service_accounts'
         )
         op.execute(
@@ -198,7 +215,14 @@ def downgrade() -> None:
             "ON saas_oidc_login_transactions"
         )
         op.execute(
+            'DROP POLICY IF EXISTS "rls_oidc_transactions_platform_target_read" '
+            "ON saas_oidc_login_transactions"
+        )
+        op.execute(
             'DROP POLICY IF EXISTS "rls_auth_sessions_platform_target" ON saas_auth_sessions'
+        )
+        op.execute(
+            'DROP POLICY IF EXISTS "rls_auth_sessions_platform_target_read" ON saas_auth_sessions'
         )
         op.execute('DROP POLICY IF EXISTS "rls_global_users_platform_target" ON saas_global_users')
     op.drop_table("saas_platform_lifecycle_operations")
