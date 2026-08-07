@@ -18,6 +18,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
     "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
     "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json",
+    "saas/acceptance/pc3-governed-access-ci-31223549606.json",
+    "saas/acceptance/pc3-governed-access-image-candidate-ci-31223584072.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",

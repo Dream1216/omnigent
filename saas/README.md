@@ -1468,7 +1468,7 @@ PC4 `/platform-admin` UI, PC5 enterprise/operations completion, Provider-native
 Receipt/Kill-Window recovery, payment, invoice or tax integrations. The 11 aggregate
 production gates and release `NO-GO` remain unchanged.
 
-## PC3 governed Support and audit-evidence implementation candidate
+## PC3 governed Support and audit-evidence verified candidate
 
 The downstream head `pc3a00000001` adds six isolated platform tables for versioned
 Admin Operations, Tenant-bound JIT Support Grants, opaque one-time Support Sessions, a
@@ -1499,11 +1499,29 @@ the in-process `AuditSigningKey` exists only for deterministic local acceptance.
 production plaintext signing key, missing KMS identity/rotation proof, or unverified
 chain/export signature remains a release blocker.
 
-Local acceptance covers SQLite migration/downgrade, Staff and Tenant HTTP Cookie/CSRF
-flows, stale customer security-version denial, exact Project scope, customer and Staff
-revocation, two-person Export signing, hash-chain verification, and isolated real
-PostgreSQL 16 PC1/PC2/PC3 role/RLS regression. These code checks do not prove the exact
-candidate through hosted CI, non-empty logical backup/restore of PC3 facts, production
-KMS signing, a complete PC4 UI, deployed Origins/IdPs, multi-AZ/PITR, or any aggregate
-production gate. Release remains `NO-GO` until those artifacts exist for one immutable
-revision.
+Implementation commit `c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b` first exposed
+that the workflow intentionally reused one PostgreSQL database across migration tests:
+immutable PC3 audit facts correctly blocked a later downgrade. Test-isolation successor
+`df7ce571910bd0c4c727784cd4a27f8fbfb97ce3` removes only the fixture's PC3 facts as
+the test superuser and returns the schema to PC2 without weakening product roles,
+immutability triggers or the nonempty downgrade guard.
+
+Exact-successor compatibility run
+[`31223549606`](https://github.com/Dream1216/omnigent/actions/runs/31223549606)
+passes 951 tests, 57 official tests, 36 hard-sandbox tests with 22 platform skips,
+Pyrefly with zero errors, PostgreSQL 16 forced-RLS checks for 81 control-plane and 17
+Runtime tables, `base -> pc3 -> no drift -> base`, wheel inspection and two patch
+replays. Exact-successor image run
+[`31223584072`](https://github.com/Dream1216/omnigent/actions/runs/31223584072)
+passes its 950-test suite with one platform skip and independently reproduces Server
+and Host OCI archives for amd64 and arm64 with matching manifests/configs and two
+attestation descriptors per build.
+
+These records close only the PC3 code, exact-SHA compatibility and reproducible-image
+candidate subchecks. The restored database contained the PC3 schema and policies but
+no nonempty Support Grant, Session, Admin Operation, Audit Event or Export fact. The
+archives are not registry-published, signed, vulnerability/license-cleared, canaried
+or N-1 rollback proven. Production KMS/HSM signing and rotation evidence, live Staff
+and Tenant approval operations, a complete PC4 UI, deployed Origins/IdPs,
+multi-AZ/PITR and all aggregate production gates remain open. Release therefore remains
+`NO-GO`.

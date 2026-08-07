@@ -800,17 +800,40 @@ admission, Canary or N-1 rollback. They close only this executable-image candida
 subcheck; P0 and all eleven aggregate production gates remain blocked. The compatibility
 and image records bring the evidence-successor Wheel requirement to 197 artifacts.
 
-PC3 governed-access working candidate advances the schema to `pc3a00000001` and the
-forced-RLS inventory to 81 control-plane plus 17 Runtime tables. It adds Tenant-visible
-JIT Support Grants, independent Staff approval, exact short-lived Support Sessions,
-customer immediate revoke, Admin Operations, a serialized immutable audit hash chain,
-and two-person signed exports. Staff, Tenant and Support database roles remain separate
-from emergency `saas_platform`; real PostgreSQL 16 tests exercise PC1, PC2 downgrade,
-PC3 exact-token/Tenant isolation, immutability and failed emergency escalation in
-isolated databases.
+PC3 implementation commit `c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b` advances the
+schema to `pc3a00000001` and the forced-RLS inventory to 81 control-plane plus 17 Runtime
+tables. It adds Tenant-visible JIT Support Grants, independent Staff approval, exact
+short-lived Support Sessions, customer immediate revoke, Admin Operations, a serialized
+immutable audit hash chain, and two-person signed exports. Staff, Tenant and Support
+database roles remain separate from emergency `saas_platform`.
 
-This is current local code evidence, not an accepted immutable release record. It still
-requires an exact-SHA compatibility run, image run, non-empty PC3 backup/restore and
-replay proof, production KMS/HSM signer and rotation evidence, protected deployment,
-authenticated production E2E, and PC4/PC5 completion. All eleven aggregate gates and
-release status remain `NO-GO`.
+Initial compatibility and image runs `31220917286 / 31220917310` correctly failed closed:
+the real-PostgreSQL PC3 test left immutable audit facts in the workflow's intentionally
+shared database, so later PC2 and Invitation migration round trips refused to discard
+them. Test-isolation successor `df7ce571910bd0c4c727784cd4a27f8fbfb97ce3`
+uses the fixture superuser to remove only its own PC3 facts and return the schema to the
+PC2 predecessor; application roles still cannot mutate audit facts and the production
+downgrade guard remains unchanged.
+
+Exact compatibility run `31223549606` passes 951 tests in 176.78 seconds, a 3.642-second
+PostgreSQL 16 logical restore with 81/17 forced-RLS inventories, 57 official regressions
+in 38.33 seconds, the 36-pass/22-platform-skip Linux security matrix in 17.42 seconds,
+Pyrefly with zero errors, migration round trip with no drift, both patch replays, and the
+201-artifact implementation wheel. Source intrusion remains within budget at nine files,
+479 lines, two patches, and a 0.9956 isolated-code ratio. The restore verifies the new
+schema and policies but contains no nonempty PC3 Support, Operation, Audit or Export fact.
+
+Exact-SHA image candidate run `31223584072` verifies the same successor with 950 tests
+and one platform skip. Server and Host each build twice for `linux/amd64` and
+`linux/arm64`; every repeated Manifest/Config pair matches, every image carries exact
+Product `df7ce571`, Upstream `63035f92`, Schema `pc3a00000001` and Adapter `0.2.0`
+labels, and each build has two attestation descriptors. The candidates remain unpublished
+archives without registry-pinned Digests, verified signatures, vulnerability/license
+admission, Canary or N-1 rollback.
+
+These records close the PC3 code, exact-SHA compatibility, and reproducible-image
+candidate subchecks only. Nonempty PC3 backup/replay, production KMS/HSM signer and key
+rotation, protected deployment, real Staff/Tenant approval operations, authenticated
+production E2E, and PC4/PC5 remain open. All eleven aggregate gates and release status
+remain `NO-GO`. The two PC3 records bring the evidence-successor Wheel requirement to
+203 artifacts.
