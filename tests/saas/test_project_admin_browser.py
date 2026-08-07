@@ -3,13 +3,13 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 import uvicorn
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 from saas.control_plane.permissions import POLICY_VERSION
 from tests.saas.test_http_cookie_auth import _build_fastapi_app
@@ -55,11 +55,38 @@ def project_admin_server(tmp_path: Path) -> Iterator[BrowserFixture]:
         app.state.saas_test_engine.dispose()
 
 
-def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
-    page: Page,
-    project_admin_server: BrowserFixture,
+def _run_in_fresh_browser_thread(
+    fixture: BrowserFixture,
+    case: Callable[[Page, BrowserFixture], None],
 ) -> None:
-    fixture = project_admin_server
+    """Run sync Playwright outside pytest-asyncio's main thread."""
+
+    captured: dict[str, BaseException] = {}
+
+    def worker() -> None:
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    case(browser.new_page(), fixture)
+                finally:
+                    browser.close()
+        except BaseException as error:
+            captured["error"] = error
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=90)
+    if thread.is_alive():
+        raise RuntimeError("Project Admin Chromium acceptance did not terminate")
+    if error := captured.get("error"):
+        raise error
+
+
+def _project_permission_deny_grant_allow_revoke_deny(
+    page: Page,
+    fixture: BrowserFixture,
+) -> None:
     browser_errors: list[str] = []
     failed_responses: list[str] = []
     page.on(
@@ -151,11 +178,10 @@ def _approval_card(page: Page, list_testid: str, target_name: str) -> Locator:
     return page.get_by_test_id(list_testid).locator(".approval-card").filter(has_text=target_name)
 
 
-def test_real_browser_enterprise_approval_desk_separates_request_decision_and_execution(
+def _enterprise_approval_desk_separates_request_decision_and_execution(
     page: Page,
-    project_admin_server: BrowserFixture,
+    fixture: BrowserFixture,
 ) -> None:
-    fixture = project_admin_server
     browser_errors: list[str] = []
     failed_responses: list[str] = []
     page.on(
@@ -297,11 +323,10 @@ def test_real_browser_enterprise_approval_desk_separates_request_decision_and_ex
     assert browser_errors == [], failed_responses
 
 
-def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
+def _tenant_members_directory_invitation_roles_and_governance(
     page: Page,
-    project_admin_server: BrowserFixture,
+    fixture: BrowserFixture,
 ) -> None:
-    fixture = project_admin_server
     browser_errors: list[str] = []
     failed_responses: list[str] = []
     page.on(
@@ -418,11 +443,10 @@ def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
     assert browser_errors == [], failed_responses
 
 
-def test_real_browser_tenant_billing_configures_authority_and_keeps_admin_read_only(
+def _tenant_billing_configures_authority_and_keeps_admin_read_only(
     page: Page,
-    project_admin_server: BrowserFixture,
+    fixture: BrowserFixture,
 ) -> None:
-    fixture = project_admin_server
     browser_errors: list[str] = []
     failed_responses: list[str] = []
     page.on(
@@ -473,3 +497,39 @@ def test_real_browser_tenant_billing_configures_authority_and_keeps_admin_read_o
     expect(page.get_by_test_id("billing-entitlement-save")).to_be_disabled()
     expect(page.get_by_test_id("billing-reconcile")).to_be_disabled()
     assert browser_errors == [], failed_responses
+
+
+def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _project_permission_deny_grant_allow_revoke_deny,
+    )
+
+
+def test_real_browser_enterprise_approval_desk_separates_request_decision_and_execution(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _enterprise_approval_desk_separates_request_decision_and_execution,
+    )
+
+
+def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _tenant_members_directory_invitation_roles_and_governance,
+    )
+
+
+def test_real_browser_tenant_billing_configures_authority_and_keeps_admin_read_only(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _tenant_billing_configures_authority_and_keeps_admin_read_only,
+    )

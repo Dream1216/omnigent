@@ -27,6 +27,7 @@ NOW = datetime(2026, 8, 7, 13, 0, tzinfo=timezone.utc)
 
 
 def _app(*, enabled: bool = True):
+    session_now = datetime.now(timezone.utc)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -69,10 +70,10 @@ def _app(*, enabled: bool = True):
             subject="operator",
             authn_method="webauthn",
             mfa_strength="phishing_resistant",
-            authenticated_at=NOW,
+            authenticated_at=session_now,
         ),
-        expires_at=NOW + timedelta(hours=1),
-        now=NOW,
+        expires_at=session_now + timedelta(hours=1),
+        now=session_now,
     )
     roleless = sessions.issue_session(
         StaffIdentityAssertion(
@@ -80,10 +81,10 @@ def _app(*, enabled: bool = True):
             subject="roleless",
             authn_method="passkey",
             mfa_strength="phishing_resistant",
-            authenticated_at=NOW,
+            authenticated_at=session_now,
         ),
-        expires_at=NOW + timedelta(hours=1),
-        now=NOW,
+        expires_at=session_now + timedelta(hours=1),
+        now=session_now,
     )
     projections.upsert_tenant(
         TenantProjectionInput(

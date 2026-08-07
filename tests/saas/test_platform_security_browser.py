@@ -5,7 +5,7 @@ import json
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +17,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import (
@@ -231,11 +231,38 @@ def _navigate_json(page: Page, url: str) -> tuple[int, dict[str, object]]:
     return response.status, json.loads(page.locator("body").inner_text())
 
 
-def test_real_chromium_platform_realm_and_role_negative_matrix(
-    browser: Browser,
-    platform_browser_server: PlatformBrowserFixture,
+def _run_in_fresh_browser_thread(
+    fixture: PlatformBrowserFixture,
+    case: Callable[[Browser, PlatformBrowserFixture], None],
 ) -> None:
-    fixture = platform_browser_server
+    """Keep sync Playwright's loop out of pytest-asyncio's main thread."""
+
+    captured: dict[str, BaseException] = {}
+
+    def worker() -> None:
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    case(browser, fixture)
+                finally:
+                    browser.close()
+        except BaseException as error:
+            captured["error"] = error
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=60)
+    if thread.is_alive():
+        raise RuntimeError("Platform Chromium acceptance did not terminate")
+    if error := captured.get("error"):
+        raise error
+
+
+def _realm_and_role_negative_matrix(
+    browser: Browser,
+    fixture: PlatformBrowserFixture,
+) -> None:
     context = _platform_context(browser, fixture)
     page = context.new_page()
     try:
@@ -285,11 +312,10 @@ def test_real_chromium_platform_realm_and_role_negative_matrix(
         context.close()
 
 
-def test_real_chromium_platform_rejects_wrong_origin_and_bearer(
+def _wrong_origin_and_bearer_matrix(
     browser: Browser,
-    platform_browser_server: PlatformBrowserFixture,
+    fixture: PlatformBrowserFixture,
 ) -> None:
-    fixture = platform_browser_server
     context = _platform_context(browser, fixture)
     page = context.new_page()
     try:
@@ -304,3 +330,21 @@ def test_real_chromium_platform_rejects_wrong_origin_and_bearer(
         assert payload["error"]["code"] == "platform_realm_mismatch"  # type: ignore[index]
     finally:
         context.close()
+
+
+def test_real_chromium_platform_realm_and_role_negative_matrix(
+    platform_browser_server: PlatformBrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        platform_browser_server,
+        _realm_and_role_negative_matrix,
+    )
+
+
+def test_real_chromium_platform_rejects_wrong_origin_and_bearer(
+    platform_browser_server: PlatformBrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        platform_browser_server,
+        _wrong_origin_and_bearer_matrix,
+    )
