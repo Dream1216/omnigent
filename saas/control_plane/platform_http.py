@@ -7,8 +7,10 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
+from saas.control_plane.platform_lifecycle import PlatformLifecycleResult, PlatformLifecycleService
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
     PlatformProjectionService,
@@ -18,6 +20,27 @@ from saas.control_plane.platform_security import (
 )
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class _LifecycleCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+    approval_ref: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class _SessionRevocationCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class _OwnerRecoveryCommand(BaseModel):
+    target_user_id: UUID
+    expected_tenant_version: int = Field(ge=1)
+    expected_source_membership_version: int = Field(ge=1)
+    expected_target_membership_version: int = Field(ge=1)
+    preview_hash: str = Field(min_length=64, max_length=64)
+    approval_ref: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=1024)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +79,13 @@ def _status_for(error: PlatformSecurityError) -> int:
         return 401
     if error.code in {"platform_permission_denied", "platform_csrf_invalid"}:
         return 403
+    if error.code in {"platform_fresh_auth_required"}:
+        return 403
+    if error.code == "platform_lifecycle_unavailable":
+        return 503
     if error.code.endswith("_not_found"):
         return 404
-    if error.code.endswith("_conflict"):
+    if error.code.endswith("_conflict") or error.code.endswith("_blocked"):
         return 409
     return 400
 
@@ -69,6 +96,7 @@ def create_platform_admin_app(
     sessions: PlatformSessionService,
     authorization: PlatformAuthorizationService,
     projections: PlatformProjectionService,
+    lifecycle: PlatformLifecycleService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -147,6 +175,24 @@ def create_platform_admin_app(
             sessions.validate_csrf(token, request.headers.get("x-csrf-token", ""))
         return principal, token
 
+    def lifecycle_service() -> PlatformLifecycleService:
+        if lifecycle is None:
+            raise PlatformSecurityError(
+                "platform_lifecycle_unavailable", "Platform lifecycle authority is unavailable"
+            )
+        return lifecycle
+
+    def mutation_result(request: Request, value: PlatformLifecycleResult) -> dict[str, object]:
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "operation_id": str(value.operation_id),
+            "action": value.action,
+            "target_id": str(value.target_id),
+            "result": value.result,
+            "replayed": value.replayed,
+        }
+
     @app.get("/v2/platform-admin/context")
     def context(request: Request) -> dict[str, object]:
         principal, _token = authenticate(request)
@@ -200,6 +246,138 @@ def create_platform_admin_app(
             "items": list(page.items),
             "next_cursor": page.next_cursor,
         }
+
+    @app.post("/v2/platform-admin/users/{user_id}/suspend")
+    def suspend_user(
+        user_id: UUID,
+        command: _LifecycleCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().suspend_user(
+            principal,
+            user_id=user_id,
+            expected_security_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.post("/v2/platform-admin/users/{user_id}/restore")
+    def restore_user(
+        user_id: UUID,
+        command: _LifecycleCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().restore_user(
+            principal,
+            user_id=user_id,
+            expected_security_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.post("/v2/platform-admin/users/{user_id}/revoke-sessions")
+    def revoke_user_sessions(
+        user_id: UUID,
+        command: _SessionRevocationCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().revoke_user_sessions(
+            principal,
+            user_id=user_id,
+            expected_security_version=command.expected_version,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.post("/v2/platform-admin/tenants/{tenant_id}/suspend")
+    def suspend_tenant(
+        tenant_id: UUID,
+        command: _LifecycleCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().suspend_tenant(
+            principal,
+            tenant_id=tenant_id,
+            expected_lifecycle_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.post("/v2/platform-admin/tenants/{tenant_id}/restore")
+    def restore_tenant(
+        tenant_id: UUID,
+        command: _LifecycleCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().restore_tenant(
+            principal,
+            tenant_id=tenant_id,
+            expected_lifecycle_version=command.expected_version,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
+
+    @app.get("/v2/platform-admin/tenants/{tenant_id}/owner-recovery-preview")
+    def owner_recovery_preview(
+        tenant_id: UUID,
+        request: Request,
+        target_user_id: UUID,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        preview = lifecycle_service().preview_owner_recovery(
+            principal,
+            tenant_id=tenant_id,
+            target_user_id=target_user_id,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "tenant_id": str(preview.tenant_id),
+            "source_owner_id": (
+                str(preview.source_owner_id) if preview.source_owner_id is not None else None
+            ),
+            "target_user_id": str(preview.target_user_id),
+            "tenant_version": preview.tenant_version,
+            "source_membership_version": preview.source_membership_version,
+            "target_membership_version": preview.target_membership_version,
+            "blockers": list(preview.blockers),
+            "preview_hash": preview.preview_hash,
+        }
+
+    @app.post("/v2/platform-admin/tenants/{tenant_id}/owner-recovery")
+    def recover_tenant_owner(
+        tenant_id: UUID,
+        command: _OwnerRecoveryCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = lifecycle_service().recover_tenant_owner(
+            principal,
+            tenant_id=tenant_id,
+            target_user_id=command.target_user_id,
+            expected_tenant_version=command.expected_tenant_version,
+            expected_source_membership_version=command.expected_source_membership_version,
+            expected_target_membership_version=command.expected_target_membership_version,
+            preview_hash=command.preview_hash,
+            approval_ref=command.approval_ref,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return mutation_result(request, value)
 
     @app.post("/v2/platform-admin/session/logout", status_code=204)
     def logout(request: Request, response: Response) -> Response:

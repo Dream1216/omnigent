@@ -309,6 +309,7 @@ class Tenant(SaasBase):
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="trial")
     plan: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="trial")
     home_region: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    lifecycle_version: Mapped[int] = mapped_column(nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -322,6 +323,7 @@ class Tenant(SaasBase):
     __table_args__ = (
         sa.CheckConstraint(f"status IN ({_values(TENANT_STATUSES)})", name="ck_tenant_status"),
         sa.CheckConstraint("length(slug) > 0", name="ck_tenant_slug_nonempty"),
+        sa.CheckConstraint("lifecycle_version > 0", name="ck_tenant_lifecycle_version"),
     )
 
 

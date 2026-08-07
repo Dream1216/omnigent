@@ -14,6 +14,7 @@ from saas.control_plane.billing import (
     BalanceView,
     BillingControlPlane,
     BillingControlPlaneError,
+    BillingPeriodCloseView,
     EntitlementView,
     ReconciliationView,
     SubscriptionView,
@@ -32,6 +33,8 @@ BILLING_ADMIN_ROUTE_PERMISSIONS = MappingProxyType(
         "GET /tenants/{tenant}/billing/ledger": "billing.read",
         "GET /tenants/{tenant}/billing/reconciliations": "billing.read",
         "POST /tenants/{tenant}/billing/reconciliations": "billing.manage",
+        "GET /tenants/{tenant}/billing/period-closes": "billing.read",
+        "POST /tenants/{tenant}/billing/period-closes": "billing.manage",
         "GET /tenants/{tenant}/billing/reconciliations/{batch}/mismatches": "billing.read",
         "POST /tenants/{tenant}/billing/reconciliation-mismatches/{mismatch}/resolve": (
             "billing.manage"
@@ -321,6 +324,43 @@ def create_billing_admin_router(
             raise _http_error(error) from error
         return _reconciliation_payload(result)
 
+    @router.get("/tenants/{tenant_id}/billing/period-closes")
+    def list_period_closes(
+        tenant_id: UUID,
+        request: Request,
+        response: Response,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal = _principal(auth_provider, request)
+        try:
+            values = billing.list_period_closes(
+                actor_id=principal.session.user_id, tenant_id=tenant_id, limit=limit
+            )
+        except BillingControlPlaneError as error:
+            raise _http_error(error) from error
+        response.headers["Cache-Control"] = "private, no-store"
+        return {"items": [_period_close_payload(value) for value in values]}
+
+    @router.post("/tenants/{tenant_id}/billing/period-closes", status_code=201)
+    def close_period(
+        tenant_id: UUID,
+        body: ReconciliationBody,
+        request: Request,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        principal = _principal(auth_provider, request)
+        try:
+            result = billing.close_period(
+                actor_id=principal.session.user_id,
+                tenant_id=tenant_id,
+                period_start=body.period_start,
+                period_end=body.period_end,
+                idempotency_key=idempotency_key,
+            )
+        except BillingControlPlaneError as error:
+            raise _http_error(error) from error
+        return _period_close_payload(result)
+
     @router.get("/tenants/{tenant_id}/billing/reconciliations/{batch_id}/mismatches")
     def list_mismatches(
         tenant_id: UUID,
@@ -485,6 +525,26 @@ def _reconciliation_payload(value: ReconciliationView) -> dict[str, object]:
         "provider_cost_minor": value.provider_cost_minor,
         "mismatch_count": value.mismatch_count,
         "evidence_sha256": value.evidence_sha256,
+        "replayed": value.replayed,
+    }
+
+
+def _period_close_payload(value: BillingPeriodCloseView) -> dict[str, object]:
+    return {
+        "period_close_id": str(value.id),
+        "reconciliation_batch_id": str(value.reconciliation_batch_id),
+        "period_start": value.period_start.isoformat(),
+        "period_end": value.period_end.isoformat(),
+        "status": value.status,
+        "rolled_entitlement_count": value.rolled_entitlement_count,
+        "usage_event_count": value.usage_event_count,
+        "customer_charge_minor": value.customer_charge_minor,
+        "customer_settled_minor": value.customer_settled_minor,
+        "provider_cost_minor": value.provider_cost_minor,
+        "reconciliation_evidence_sha256": value.reconciliation_evidence_sha256,
+        "close_evidence_sha256": value.close_evidence_sha256,
+        "closed_by": str(value.closed_by),
+        "closed_at": value.closed_at.isoformat(),
         "replayed": value.replayed,
     }
 

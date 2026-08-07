@@ -59,7 +59,8 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
 
 
 def test_canonical_control_plane_rls_inventory_has_exactly_seventy_three_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 73
+    assert len(CONTROL_PLANE_RLS_TABLES) == 75
+    assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_auth_sessions" in CONTROL_PLANE_RLS_TABLES
@@ -78,4 +79,5 @@ def test_canonical_control_plane_rls_inventory_has_exactly_seventy_three_tables(
     assert "saas_customer_ledger_entries" in CONTROL_PLANE_RLS_TABLES
     assert "saas_provider_cost_entries" in CONTROL_PLANE_RLS_TABLES
     assert "saas_billing_reconciliation_mismatches" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_billing_period_closes" in CONTROL_PLANE_RLS_TABLES
     assert "saas_billing_metering_receipts" in CONTROL_PLANE_RLS_TABLES

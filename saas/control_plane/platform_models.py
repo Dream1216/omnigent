@@ -19,6 +19,14 @@ PLATFORM_ROLES = (
     "billing_operator",
     "compliance_operator",
 )
+PLATFORM_OPERATION_ACTIONS = (
+    "user_suspend",
+    "user_restore",
+    "user_sessions_revoke",
+    "tenant_suspend",
+    "tenant_restore",
+    "tenant_owner_recover",
+)
 
 
 class PlatformStaffPrincipalRecord(SaasBase):
@@ -218,4 +226,61 @@ class PlatformUserProjectionRecord(SaasBase):
         sa.CheckConstraint("security_version > 0", name="ck_platform_user_security_version"),
         sa.CheckConstraint("source_version > 0", name="ck_platform_user_source_version"),
         sa.Index("ix_platform_user_projection_list", "status", "user_id"),
+    )
+
+
+class PlatformLifecycleOperationRecord(SaasBase):
+    """Immutable receipt for one high-risk PC2 platform lifecycle command."""
+
+    __tablename__ = "saas_platform_lifecycle_operations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    actor_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    target_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    target_id: Mapped[UUID] = mapped_column(nullable=False)
+    tenant_id: Mapped[UUID | None] = mapped_column()
+    action: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    approval_ref: Mapped[str] = mapped_column(sa.String(256), nullable=False)
+    reason: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    result: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "target_type IN ('global_user', 'tenant')",
+            name="ck_platform_lifecycle_target_type",
+        ),
+        sa.CheckConstraint(
+            f"action IN ({_values(PLATFORM_OPERATION_ACTIONS)})",
+            name="ck_platform_lifecycle_action",
+        ),
+        sa.CheckConstraint(
+            "length(idempotency_key) > 0", name="ck_platform_lifecycle_idempotency_nonempty"
+        ),
+        sa.CheckConstraint("length(request_hash) = 64", name="ck_platform_lifecycle_request_hash"),
+        sa.CheckConstraint(
+            "length(approval_ref) > 0", name="ck_platform_lifecycle_approval_nonempty"
+        ),
+        sa.CheckConstraint("length(reason) > 0", name="ck_platform_lifecycle_reason_nonempty"),
+        sa.CheckConstraint(
+            "(target_type = 'global_user' AND tenant_id IS NULL) OR "
+            "(target_type = 'tenant' AND tenant_id = target_id)",
+            name="ck_platform_lifecycle_target_scope",
+        ),
+        sa.UniqueConstraint(
+            "actor_principal_id",
+            "idempotency_key",
+            name="uq_platform_lifecycle_actor_idempotency",
+        ),
+        sa.Index(
+            "ix_platform_lifecycle_target",
+            "target_type",
+            "target_id",
+            "occurred_at",
+        ),
     )

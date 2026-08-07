@@ -1,9 +1,9 @@
 # Platform Security Foundation operations
 
-This runbook operates the PC1 Staff Realm and content-blind Platform Control Plane.
-It does not authorize customer-content access, support impersonation, break-glass,
-Tenant lifecycle mutations, or production release. Those remain separate governed
-capabilities and acceptance gates.
+This runbook operates the PC1 Staff Realm plus the PC2 content-blind Global User and
+Tenant lifecycle authority. It does not authorize customer-content access, support
+impersonation, break-glass, destructive User/Tenant deletion, or production release.
+Those remain separate governed capabilities and acceptance gates.
 
 ## Trust boundary and deployment
 
@@ -14,8 +14,8 @@ capabilities and acceptance gates.
 2. Require Passkey/WebAuthn or an equivalent phishing-resistant IdP assertion. Password
    authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
    incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `pc1a00000001`, then apply
-   `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 73 control-plane
+3. Migrate through `p6b000000001`, then apply
+   `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 75 control-plane
    tables and 17 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
 
@@ -61,6 +61,25 @@ capabilities and acceptance gates.
 - Add a new projection field only with a migration, a catalog field permission, a safe
   projector input, output filtering, PostgreSQL denial coverage and recovery hashing.
 
+## PC2 lifecycle commands
+
+- High-risk User suspend/restore and Tenant suspend/restore require a current
+  `platform_operator` assignment, fresh phishing-resistant Staff authentication,
+  approval reference, reason, expected version and idempotency key. The governance
+  transaction rechecks current authority rather than trusting browser session claims.
+- User suspension increments `security_version`, revokes all human Sessions, fails
+  pending OIDC login transactions, suspends stewarded Service Accounts and revokes
+  their active API Credentials. Restore never resurrects old Sessions or Credentials.
+- Tenant suspension increments active members' security versions, revokes their
+  Sessions, suspends Tenant Service Accounts and revokes active API Credentials.
+  Restore only reopens the Tenant status; it does not reactivate revoked credentials.
+- Owner Recovery is not ordinary ownership transfer. Preview must prove the existing
+  Owner is inactive and the target is an active member; execution binds the preview
+  hash plus Tenant/source/target versions and atomically demotes/promotes one Owner.
+- Every accepted mutation appends a `saas_platform_lifecycle_operations` receipt and a
+  secret-free Outbox event in the same transaction. Never treat an HTTP response alone
+  as lifecycle evidence.
+
 ## Verification
 
 Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
@@ -69,11 +88,15 @@ Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
 uv run pytest -q \
   tests/saas/test_platform_security.py \
   tests/saas/test_platform_http.py \
-  tests/saas/test_platform_security_browser.py
+  tests/saas/test_platform_security_browser.py \
+  tests/saas/test_platform_lifecycle.py \
+  tests/saas/test_platform_lifecycle_http.py
 
 export OMNIGENT_SAAS_TEST_POSTGRES_URL=\
 postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
-uv run pytest -q tests/saas/test_platform_security_postgresql.py
+uv run pytest -q \
+  tests/saas/test_platform_security_postgresql.py \
+  tests/saas/test_platform_lifecycle_postgresql.py
 ```
 
 The PostgreSQL check must prove exact Staff identity and session lookup, role-less
@@ -84,7 +107,8 @@ role-less denial.
 
 Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
 compatibility matrix. The restore must retain non-empty Staff, Assignment, Session and
-both projection tables, exact `pc1a00000001`, and the 73/17 forced-RLS inventories.
+both projection tables, lifecycle receipts, exact `p6b000000001`, and the 75/17
+forced-RLS inventories.
 
 ## Revocation, incident response and rollback
 
@@ -105,8 +129,10 @@ both projection tables, exact `pc1a00000001`, and the 73/17 forced-RLS inventori
 
 ## Acceptance boundary
 
-Passing this runbook establishes the PC1 security foundation: independent Staff Realm,
-versioned permissions and built-in roles, governed Assignments, content-blind
-projections, least-privilege database roles and negative tests. It does not establish a
-complete Platform Console, JIT Support, immutable audit, Global User/Tenant mutations,
-enterprise identity, production evidence, or release GO.
+Passing this runbook establishes the PC1 security foundation and current PC2 lifecycle
+slice: independent Staff Realm, versioned permissions and built-in roles, governed
+Assignments, content-blind projections, least-privilege target-bound database roles,
+User/Tenant suspend/restore, Session revocation and Owner Recovery. It does not
+establish User/Tenant deletion, identity-conflict case management, a complete Platform
+Console, JIT Support, immutable audit/export, enterprise identity, production evidence,
+or release GO.

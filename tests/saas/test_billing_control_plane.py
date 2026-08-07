@@ -12,6 +12,7 @@ from saas.control_plane.billing import BillingControlPlane, BillingControlPlaneE
 from saas.control_plane.billing_models import (
     BillingBalanceRecord,
     BillingEntitlementRecord,
+    BillingPeriodCloseRecord,
     BillingReconciliationMismatchRecord,
     BillingReservationRecord,
     CustomerLedgerEntryRecord,
@@ -479,6 +480,220 @@ def test_complete_reconciliation_keeps_provider_and_customer_amounts_separate(
     assert batch.customer_charge_minor == 25
     assert batch.customer_settled_minor == 25
     assert batch.provider_cost_minor == 9
+
+
+def test_period_close_requires_reconciliation_and_atomically_rolls_entitlement(
+    billing: tuple[BillingControlPlane, sessionmaker[Session], UUID, UUID, UUID],
+) -> None:
+    control, factory, tenant_id, owner_id, _member_id = billing
+    pricing_id, entitlement_id = _bootstrap(control, tenant_id, owner_id)
+    control.grant_credit(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        amount_minor=1000,
+        currency="USD",
+        idempotency_key="close-credit",
+        occurred_at=NOW,
+    )
+    reservation = control.reserve(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        entitlement_id=entitlement_id,
+        operation_key="close-run",
+        quantity="1000",
+        amount_minor=100,
+        currency="USD",
+        idempotency_key="close-reserve",
+        now=NOW,
+    )
+    usage = control.record_usage(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        pricing_snapshot_id=pricing_id,
+        meter="llm.input_tokens",
+        quantity="1000",
+        unit="tokens",
+        provider="openai",
+        provider_request_id="close-provider-request",
+        idempotency_key="close-usage",
+        occurred_at=NOW + timedelta(minutes=1),
+    )
+    control.settle(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        reservation_id=reservation.id,
+        usage_event_id=usage.id,
+        idempotency_key="close-settle",
+        now=NOW + timedelta(minutes=2),
+    )
+    control.record_provider_cost(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        usage_event_id=usage.id,
+        provider="openai",
+        provider_receipt_id="close-invoice-line",
+        kind="final",
+        amount_minor=9,
+        currency="USD",
+        occurred_at=NOW + timedelta(minutes=3),
+        idempotency_key="close-provider-cost",
+    )
+    period_end = NOW + timedelta(days=30)
+    reconciliation = control.reconcile(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="close-reconciliation",
+    )
+    closed = control.close_period(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="period-close",
+        now=period_end + timedelta(minutes=1),
+    )
+    assert closed.status == "closed"
+    assert closed.reconciliation_batch_id == reconciliation.id
+    assert closed.rolled_entitlement_count == 1
+    assert len(closed.close_evidence_sha256) == 64
+    replay = control.close_period(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="period-close",
+        now=period_end + timedelta(minutes=2),
+    )
+    assert replay.id == closed.id
+    assert replay.replayed is True
+    assert control.list_period_closes(actor_id=owner_id, tenant_id=tenant_id) == (closed,)
+
+    with factory.begin() as db:
+        entitlement = db.get(BillingEntitlementRecord, entitlement_id)
+        checkpoint = db.get(BillingPeriodCloseRecord, closed.id)
+        assert entitlement is not None
+        assert entitlement.period_start == period_end.replace(tzinfo=None)
+        assert entitlement.period_end.replace(tzinfo=timezone.utc) == datetime(
+            2026, 10, 5, 4, tzinfo=timezone.utc
+        )
+        assert entitlement.consumed_quantity == 0
+        assert entitlement.reserved_quantity == 0
+        assert entitlement.active_reservations == 0
+        assert checkpoint is not None
+        assert checkpoint.close_evidence_sha256 == closed.close_evidence_sha256
+
+
+def test_period_close_blocks_active_reservations(
+    billing: tuple[BillingControlPlane, sessionmaker[Session], UUID, UUID, UUID],
+) -> None:
+    control, _factory, tenant_id, owner_id, _member_id = billing
+    _pricing_id, entitlement_id = _bootstrap(control, tenant_id, owner_id)
+    control.grant_credit(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        amount_minor=1000,
+        currency="USD",
+        idempotency_key="blocked-close-credit",
+        occurred_at=NOW,
+    )
+    control.reserve(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        entitlement_id=entitlement_id,
+        operation_key="blocked-close-run",
+        quantity="1000",
+        amount_minor=100,
+        currency="USD",
+        idempotency_key="blocked-close-reserve",
+        now=NOW,
+    )
+    period_end = NOW + timedelta(days=30)
+    control.reconcile(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="blocked-close-reconciliation",
+    )
+    with pytest.raises(BillingControlPlaneError) as error:
+        control.close_period(
+            actor_id=owner_id,
+            tenant_id=tenant_id,
+            period_start=NOW,
+            period_end=period_end,
+            idempotency_key="blocked-period-close",
+            now=period_end + timedelta(minutes=1),
+        )
+    assert error.value.code == "billing_period_active_reservations"
+
+
+def test_period_close_accepts_only_resolved_reconciliation_exceptions(
+    billing: tuple[BillingControlPlane, sessionmaker[Session], UUID, UUID, UUID],
+) -> None:
+    control, factory, tenant_id, owner_id, _member_id = billing
+    pricing_id, _entitlement_id = _bootstrap(control, tenant_id, owner_id)
+    usage = control.record_usage(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        pricing_snapshot_id=pricing_id,
+        meter="llm.input_tokens",
+        quantity="1000",
+        unit="tokens",
+        provider="openai",
+        provider_request_id="exception-close-request",
+        idempotency_key="exception-close-usage",
+        occurred_at=NOW + timedelta(minutes=1),
+    )
+    period_end = NOW + timedelta(days=30)
+    reconciliation = control.reconcile(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="exception-close-reconciliation",
+    )
+    assert reconciliation.status == "exception"
+    with pytest.raises(BillingControlPlaneError) as error:
+        control.close_period(
+            actor_id=owner_id,
+            tenant_id=tenant_id,
+            period_start=NOW,
+            period_end=period_end,
+            idempotency_key="exception-period-close",
+            now=period_end + timedelta(minutes=1),
+        )
+    assert error.value.code == "billing_reconciliation_open_exceptions"
+
+    with factory.begin() as db:
+        mismatch_ids = tuple(
+            db.scalars(
+                sa.select(BillingReconciliationMismatchRecord.id).where(
+                    BillingReconciliationMismatchRecord.batch_id == reconciliation.id
+                )
+            )
+        )
+    assert mismatch_ids
+    for index, mismatch_id in enumerate(mismatch_ids):
+        control.resolve_mismatch(
+            actor_id=owner_id,
+            tenant_id=tenant_id,
+            mismatch_id=mismatch_id,
+            resolution=f"Finance exception case FIN-{index} approved the close.",
+            idempotency_key=f"resolve-close-mismatch-{index}",
+            now=period_end,
+        )
+    closed = control.close_period(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        period_start=NOW,
+        period_end=period_end,
+        idempotency_key="exception-period-close",
+        now=period_end + timedelta(minutes=2),
+    )
+    assert usage.id
+    assert closed.status == "closed_with_resolved_exceptions"
 
 
 def test_member_cannot_read_or_mutate_billing(

@@ -80,7 +80,8 @@ REVOKE ALL PRIVILEGES ON
     saas_platform_role_assignments,
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
-    saas_platform_user_projections
+    saas_platform_user_projections,
+    saas_platform_lifecycle_operations
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
@@ -107,6 +108,8 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_platform_staff_principals,
     saas_platform_role_assignments
 TO saas_platform_governance;
+GRANT SELECT, INSERT ON saas_platform_lifecycle_operations
+TO saas_platform_governance;
 GRANT SELECT ON
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
@@ -124,8 +127,40 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_platform_role_assignments,
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
-    saas_platform_user_projections
+    saas_platform_user_projections,
+    saas_platform_lifecycle_operations
 TO saas_platform;
+
+-- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
+-- governance login gets only the metadata and columns required by those commands.
+GRANT SELECT (id, status, security_version) ON saas_global_users
+TO saas_platform_governance;
+GRANT SELECT (id, user_id, revoked_at) ON saas_auth_sessions
+TO saas_platform_governance;
+GRANT SELECT (id, target_user_id, status) ON saas_oidc_login_transactions
+TO saas_platform_governance;
+GRANT SELECT ON
+    saas_tenants,
+    saas_tenant_memberships
+TO saas_platform_governance;
+GRANT SELECT (id, tenant_id, steward_user_id, status) ON saas_service_accounts
+TO saas_platform_governance;
+GRANT SELECT (id, tenant_id, service_account_id, status) ON saas_api_credentials
+TO saas_platform_governance;
+GRANT UPDATE (status, security_version, updated_at) ON saas_global_users
+TO saas_platform_governance;
+GRANT UPDATE (revoked_at) ON saas_auth_sessions TO saas_platform_governance;
+GRANT UPDATE (status, consumed_at) ON saas_oidc_login_transactions
+TO saas_platform_governance;
+GRANT UPDATE (status, lifecycle_version, updated_at) ON saas_tenants
+TO saas_platform_governance;
+GRANT UPDATE (role, version) ON saas_tenant_memberships
+TO saas_platform_governance;
+GRANT UPDATE (status, security_version, updated_at) ON saas_service_accounts
+TO saas_platform_governance;
+GRANT UPDATE (status, revoked_at) ON saas_api_credentials
+TO saas_platform_governance;
+GRANT INSERT ON saas_control_plane_outbox TO saas_platform_governance;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
@@ -396,6 +431,7 @@ REVOKE ALL PRIVILEGES ON
     saas_provider_cost_entries,
     saas_billing_reconciliation_batches,
     saas_billing_reconciliation_mismatches,
+    saas_billing_period_closes,
     saas_billing_metering_receipts
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
@@ -415,6 +451,7 @@ GRANT SELECT, INSERT ON
     saas_customer_ledger_entries,
     saas_provider_cost_entries,
     saas_billing_reconciliation_batches,
+    saas_billing_period_closes,
     saas_control_plane_outbox
 TO saas_billing;
 
@@ -534,6 +571,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_provider_cost_entries,
     saas_billing_reconciliation_batches,
     saas_billing_reconciliation_mismatches,
+    saas_billing_period_closes,
     saas_billing_metering_receipts,
     saas_control_plane_outbox
 TO saas_platform;

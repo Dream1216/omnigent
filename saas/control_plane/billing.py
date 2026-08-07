@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from hashlib import sha256
 from typing import TypedDict, cast
@@ -22,6 +23,7 @@ from saas.control_plane.billing_models import (
     SUBSCRIPTION_STATUSES,
     BillingBalanceRecord,
     BillingEntitlementRecord,
+    BillingPeriodCloseRecord,
     BillingReconciliationBatchRecord,
     BillingReconciliationMismatchRecord,
     BillingReservationRecord,
@@ -204,6 +206,26 @@ class ReconciliationView:
     replayed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class BillingPeriodCloseView:
+    id: UUID
+    tenant_id: UUID
+    reconciliation_batch_id: UUID
+    period_start: datetime
+    period_end: datetime
+    status: str
+    rolled_entitlement_count: int
+    usage_event_count: int
+    customer_charge_minor: int
+    customer_settled_minor: int
+    provider_cost_minor: int
+    reconciliation_evidence_sha256: str
+    close_evidence_sha256: str
+    closed_by: UUID
+    closed_at: datetime
+    replayed: bool = False
+
+
 class BillingOverview(TypedDict):
     """Typed, content-blind snapshot returned to the Tenant Billing console."""
 
@@ -270,6 +292,19 @@ def _request_hash(payload: dict[str, object]) -> str:
 def _derived_key(value: str, suffix: str) -> str:
     candidate = f"{value}.{suffix}"
     return candidate if len(candidate) <= 128 else sha256(candidate.encode()).hexdigest()
+
+
+def _next_period_end(period: str, current_end: datetime) -> datetime:
+    if period == "day":
+        return current_end + timedelta(days=1)
+    if period == "month":
+        year = current_end.year + (1 if current_end.month == 12 else 0)
+        month = 1 if current_end.month == 12 else current_end.month + 1
+        day = min(current_end.day, monthrange(year, month)[1])
+        return current_end.replace(year=year, month=month, day=day)
+    raise BillingControlPlaneError(
+        "billing_period_close_invalid", "only periodic entitlements can be rolled"
+    )
 
 
 class BillingControlPlane:
@@ -1636,6 +1671,191 @@ class BillingControlPlane:
             )
             return self._reconciliation_view(batch)
 
+    def close_period(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        period_start: datetime,
+        period_end: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> BillingPeriodCloseView:
+        """Close one reconciled period and atomically roll drained entitlements."""
+
+        key = _idempotency_key(idempotency_key)
+        start = _time(period_start, "period_start")
+        end = _time(period_end, "period_end")
+        closed_at = _time(now or _utcnow(), "now")
+        if end <= start:
+            raise BillingControlPlaneError(
+                "billing_period_close_invalid", "billing period is invalid"
+            )
+        if closed_at < end:
+            raise BillingControlPlaneError(
+                "billing_period_not_ended", "billing period has not ended"
+            )
+        payload: dict[str, object] = {
+            "tenant_id": str(tenant_id),
+            "period_start": start.isoformat(),
+            "period_end": end.isoformat(),
+        }
+        digest = _request_hash(payload)
+        with self._session_factory.begin() as db:
+            self._context(db, actor_id, tenant_id)
+            self._transaction_locks(
+                db,
+                f"billing-idempotency:{tenant_id}:{key}",
+                f"billing-period-close:{tenant_id}:{start.isoformat()}:{end.isoformat()}",
+            )
+            self._require_permission(db, actor_id, tenant_id, "billing.manage")
+            replay = self._receipt(db, tenant_id, key, "billing.period.closed", digest)
+            if replay is not None:
+                record = db.get(
+                    BillingPeriodCloseRecord,
+                    UUID(cast(str, replay.payload["period_close_id"])),
+                )
+                if record is None or record.tenant_id != tenant_id:
+                    raise BillingControlPlaneError(
+                        "billing_invariant_broken", "period-close receipt is orphaned"
+                    )
+                return self._period_close_view(record, replayed=True)
+            if (
+                db.scalar(
+                    sa.select(BillingPeriodCloseRecord.id).where(
+                        BillingPeriodCloseRecord.tenant_id == tenant_id,
+                        BillingPeriodCloseRecord.period_start == start,
+                        BillingPeriodCloseRecord.period_end == end,
+                    )
+                )
+                is not None
+            ):
+                raise BillingControlPlaneError(
+                    "billing_period_already_closed", "billing period is already closed"
+                )
+            reconciliation = db.scalar(
+                sa.select(BillingReconciliationBatchRecord)
+                .where(
+                    BillingReconciliationBatchRecord.tenant_id == tenant_id,
+                    BillingReconciliationBatchRecord.period_start == start,
+                    BillingReconciliationBatchRecord.period_end == end,
+                )
+                .with_for_update()
+            )
+            if reconciliation is None:
+                raise BillingControlPlaneError(
+                    "billing_reconciliation_missing",
+                    "an exact reconciliation is required before period close",
+                )
+            open_mismatches = int(
+                db.scalar(
+                    sa.select(sa.func.count(BillingReconciliationMismatchRecord.id)).where(
+                        BillingReconciliationMismatchRecord.tenant_id == tenant_id,
+                        BillingReconciliationMismatchRecord.batch_id == reconciliation.id,
+                        BillingReconciliationMismatchRecord.status == "open",
+                    )
+                )
+                or 0
+            )
+            if open_mismatches:
+                raise BillingControlPlaneError(
+                    "billing_reconciliation_open_exceptions",
+                    "all reconciliation exceptions must be resolved before period close",
+                )
+            entitlements = cast(
+                tuple[BillingEntitlementRecord, ...],
+                tuple(
+                    db.scalars(
+                        sa.select(BillingEntitlementRecord)
+                        .where(
+                            BillingEntitlementRecord.tenant_id == tenant_id,
+                            BillingEntitlementRecord.status == "active",
+                            BillingEntitlementRecord.period.in_(("day", "month")),
+                            BillingEntitlementRecord.period_start == start,
+                            BillingEntitlementRecord.period_end == end,
+                        )
+                        .order_by(BillingEntitlementRecord.id)
+                        .with_for_update()
+                    )
+                ),
+            )
+            entitlement_ids = tuple(record.id for record in entitlements)
+            if entitlement_ids:
+                reserved_count = int(
+                    db.scalar(
+                        sa.select(sa.func.count(BillingReservationRecord.id)).where(
+                            BillingReservationRecord.tenant_id == tenant_id,
+                            BillingReservationRecord.entitlement_id.in_(entitlement_ids),
+                            BillingReservationRecord.status == "reserved",
+                        )
+                    )
+                    or 0
+                )
+                if reserved_count:
+                    raise BillingControlPlaneError(
+                        "billing_period_active_reservations",
+                        "active reservations must be drained before period close",
+                    )
+            rollover_evidence: list[dict[str, object]] = []
+            for entitlement in entitlements:
+                active_reservations = entitlement.active_reservations
+                reserved_quantity = entitlement.reserved_quantity
+                if active_reservations != 0 or reserved_quantity != 0:
+                    raise BillingControlPlaneError(
+                        "billing_period_entitlement_not_drained",
+                        "entitlement reservation counters must be drained before period close",
+                    )
+                rollover_evidence.append(self._roll_entitlement(entitlement, actor_id=actor_id))
+            close_evidence = _request_hash(
+                {
+                    **payload,
+                    "reconciliation_batch_id": str(reconciliation.id),
+                    "reconciliation_evidence_sha256": reconciliation.evidence_sha256,
+                    "rollovers": rollover_evidence,
+                }
+            )
+            status = (
+                "closed_with_resolved_exceptions"
+                if reconciliation.status == "exception"
+                else "closed"
+            )
+            record = BillingPeriodCloseRecord(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                reconciliation_batch_id=reconciliation.id,
+                period_start=start,
+                period_end=end,
+                status=status,
+                rolled_entitlement_count=len(entitlements),
+                usage_event_count=reconciliation.usage_event_count,
+                customer_charge_minor=reconciliation.customer_charge_minor,
+                customer_settled_minor=reconciliation.customer_settled_minor,
+                provider_cost_minor=reconciliation.provider_cost_minor,
+                reconciliation_evidence_sha256=reconciliation.evidence_sha256,
+                close_evidence_sha256=close_evidence,
+                closed_by=actor_id,
+                closed_at=closed_at,
+            )
+            db.add(record)
+            db.flush()
+            self._event(
+                db,
+                tenant_id=tenant_id,
+                aggregate_key=str(record.id),
+                event_type="billing.period.closed",
+                idempotency_key=key,
+                request_hash=digest,
+                payload={
+                    **payload,
+                    "period_close_id": str(record.id),
+                    "reconciliation_batch_id": str(reconciliation.id),
+                    "status": status,
+                    "rolled_entitlement_count": len(entitlements),
+                    "close_evidence_sha256": close_evidence,
+                },
+            )
+            return self._period_close_view(record)
+
     def resolve_mismatch(
         self,
         *,
@@ -1908,6 +2128,28 @@ class BillingControlPlane:
                 .limit(limit)
             )
             return tuple(self._reconciliation_view(value) for value in values)
+
+    def list_period_closes(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        limit: int = 50,
+    ) -> tuple[BillingPeriodCloseView, ...]:
+        if not 1 <= limit <= 100:
+            raise BillingControlPlaneError(
+                "billing_query_invalid", "period-close query is invalid"
+            )
+        with self._session_factory.begin() as db:
+            self._context(db, actor_id, tenant_id)
+            self._require_permission(db, actor_id, tenant_id, "billing.read")
+            values = db.scalars(
+                sa.select(BillingPeriodCloseRecord)
+                .where(BillingPeriodCloseRecord.tenant_id == tenant_id)
+                .order_by(BillingPeriodCloseRecord.period_end.desc())
+                .limit(limit)
+            )
+            return tuple(self._period_close_view(value) for value in values)
 
     def list_reconciliation_mismatches(
         self,
@@ -2413,3 +2655,54 @@ class BillingControlPlane:
             evidence_sha256=record.evidence_sha256,
             replayed=replayed,
         )
+
+    @staticmethod
+    def _period_close_view(
+        record: BillingPeriodCloseRecord, *, replayed: bool = False
+    ) -> BillingPeriodCloseView:
+        return BillingPeriodCloseView(
+            id=record.id,
+            tenant_id=record.tenant_id,
+            reconciliation_batch_id=record.reconciliation_batch_id,
+            period_start=_stored_time(record.period_start),
+            period_end=_stored_time(record.period_end),
+            status=record.status,
+            rolled_entitlement_count=record.rolled_entitlement_count,
+            usage_event_count=record.usage_event_count,
+            customer_charge_minor=record.customer_charge_minor,
+            customer_settled_minor=record.customer_settled_minor,
+            provider_cost_minor=record.provider_cost_minor,
+            reconciliation_evidence_sha256=record.reconciliation_evidence_sha256,
+            close_evidence_sha256=record.close_evidence_sha256,
+            closed_by=record.closed_by,
+            closed_at=_stored_time(record.closed_at),
+            replayed=replayed,
+        )
+
+    @staticmethod
+    def _roll_entitlement(
+        entitlement: BillingEntitlementRecord, *, actor_id: UUID
+    ) -> dict[str, object]:
+        old_version = entitlement.version
+        old_consumed = str(entitlement.consumed_quantity)
+        if entitlement.period_end is None:
+            raise BillingControlPlaneError(
+                "billing_period_close_invalid", "periodic entitlement has no period end"
+            )
+        next_start = _stored_time(entitlement.period_end)
+        next_end = _next_period_end(entitlement.period, next_start)
+        entitlement.period_start = next_start
+        entitlement.period_end = next_end
+        entitlement.reserved_quantity = Decimal(0)
+        entitlement.consumed_quantity = Decimal(0)
+        entitlement.active_reservations = 0
+        entitlement.updated_by = actor_id
+        entitlement.version += 1
+        return {
+            "entitlement_id": str(entitlement.id),
+            "old_version": old_version,
+            "new_version": entitlement.version,
+            "consumed_quantity": old_consumed,
+            "next_period_start": next_start.isoformat(),
+            "next_period_end": next_end.isoformat(),
+        }

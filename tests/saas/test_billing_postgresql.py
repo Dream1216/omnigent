@@ -174,6 +174,24 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
         owner_id=owner_b,
         suffix=f"b-{suffix}",
     )
+    tenant_b_period_end = NOW + timedelta(days=30)
+    tenant_b_reconciliation = control.reconcile(
+        actor_id=owner_b,
+        tenant_id=tenant_b,
+        period_start=NOW,
+        period_end=tenant_b_period_end,
+        idempotency_key=f"pg-close-reconcile-{suffix}",
+    )
+    tenant_b_close = control.close_period(
+        actor_id=owner_b,
+        tenant_id=tenant_b,
+        period_start=NOW,
+        period_end=tenant_b_period_end,
+        idempotency_key=f"pg-close-{suffix}",
+        now=tenant_b_period_end + timedelta(minutes=1),
+    )
+    assert tenant_b_close.reconciliation_batch_id == tenant_b_reconciliation.id
+    assert tenant_b_close.rolled_entitlement_count == 1
     control.grant_credit(
         actor_id=owner_a,
         tenant_id=tenant_a,
@@ -301,6 +319,10 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             sa.text("SELECT count(*) FROM saas_billing_subscriptions")
         ).scalar_one()
         assert without_context == 0
+        without_context_closes = connection.execute(
+            sa.text("SELECT count(*) FROM saas_billing_period_closes")
+        ).scalar_one()
+        assert without_context_closes == 0
         connection.execute(
             sa.text("SELECT set_config('app.tenant_id', :tenant, true)"),
             {"tenant": str(tenant_a)},
@@ -309,6 +331,12 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             sa.text("SELECT tenant_id FROM saas_billing_subscriptions")
         ).scalars()
         assert set(tenant_a_rows) == {tenant_a}
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_billing_period_closes")
+            ).scalar_one()
+            == 0
+        )
         connection.execute(
             sa.text("SELECT set_config('app.tenant_id', :tenant, true)"),
             {"tenant": str(tenant_b)},
@@ -317,6 +345,10 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             sa.text("SELECT tenant_id FROM saas_billing_subscriptions")
         ).scalars()
         assert set(tenant_b_rows) == {tenant_b}
+        assert (
+            connection.execute(sa.text("SELECT id FROM saas_billing_period_closes")).scalar_one()
+            == tenant_b_close.id
+        )
 
     with pytest.raises(sa.exc.DBAPIError, match="Billing fact is append-only"):
         with engine.begin() as connection:
@@ -331,6 +363,13 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             connection.execute(
                 sa.text("DELETE FROM saas_billing_reconciliation_batches WHERE id = :batch"),
                 {"batch": batch.id},
+            )
+    with pytest.raises(sa.exc.DBAPIError, match="Billing fact is append-only"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            connection.execute(
+                sa.text("UPDATE saas_billing_period_closes SET status = status WHERE id = :close"),
+                {"close": tenant_b_close.id},
             )
     with pytest.raises(sa.exc.DBAPIError, match="Billing mismatch transition is invalid"):
         with engine.begin() as connection:
@@ -366,6 +405,7 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
             "saas_provider_cost_entries",
             "saas_billing_reconciliation_batches",
             "saas_billing_reconciliation_mismatches",
+            "saas_billing_period_closes",
             "saas_billing_metering_receipts",
         }
         posture = connection.execute(
@@ -384,11 +424,15 @@ def test_real_postgresql_billing_rls_append_only_and_concurrent_reservation() ->
                 "has_table_privilege('saas_billing', 'saas_usage_events', 'UPDATE'), "
                 "has_table_privilege('saas_app', 'saas_usage_events', 'SELECT'), "
                 "has_table_privilege('saas_governance', 'saas_usage_events', 'SELECT'), "
+                "has_table_privilege('saas_billing', "
+                "'saas_billing_period_closes', 'SELECT'), "
+                "has_table_privilege('saas_billing', "
+                "'saas_billing_period_closes', 'UPDATE'), "
                 "has_table_privilege(:child, 'saas_projects', 'SELECT')"
             ),
             {"child": billing_role},
         ).one()
-        assert privileges == (True, False, False, False, False)
+        assert privileges == (True, False, False, False, True, False, False)
         connection.exec_driver_sql(f"REVOKE saas_billing FROM {billing_role}")
         connection.exec_driver_sql(f"DROP ROLE {billing_role}")
     engine.dispose()

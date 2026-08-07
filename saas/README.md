@@ -1385,3 +1385,38 @@ platform skip. Server and Host each build twice for both `linux/amd64` and `linu
 all repeated platform Manifest/Config pairs match and bind exact Product, Upstream,
 Schema and Adapter labels. The archived candidates are not registry-published, signed,
 scanned, canaried, or rollback-proven, so they do not close the P0 production image gate.
+
+## PC2 lifecycle and P6 period-close implementation candidate
+
+The downstream head `p6b000000001` builds on PC1 without modifying the official
+Agent/Harness loop. `pc2a00000001` adds a Tenant lifecycle version and immutable
+Platform lifecycle receipts. `PlatformLifecycleService` now provides fresh-auth,
+approval-bound, versioned and idempotent Global User suspend/restore, all-Session
+revocation, Tenant suspend/restore and inactive-Owner recovery. Suspension revokes
+human Sessions and active API Credentials and suspends affected Service Accounts;
+restore never resurrects old credentials. The standalone Staff application exposes
+these commands through its independent Cookie/Origin/CSRF Realm, while PostgreSQL
+binds the governance role to the exact target User or Tenant and an active
+`platform_operator` assignment.
+
+`p6b000000001` adds an immutable billing period-close checkpoint. A close requires an
+ended interval, its exact reconciliation, no open mismatch and no active/reserved work
+on matching periodic Entitlements. The same transaction resets drained counters,
+advances each day/month bucket, appends a deterministic close-evidence hash and emits
+the idempotent `billing.period.closed` Outbox event. The Tenant Billing HTTP surface can
+request and list closes but still cannot mint Credit, Usage, Provider Cost, Settlement
+or Refund facts.
+
+The policy catalog is now `2026-08-08.pc2-user-tenant-lifecycle` with 24 Platform
+permissions, and the forced-RLS inventory is 75 control-plane plus 17 Runtime tables.
+The implementation includes SQLite migration round trips, Cookie/CSRF and real
+Chromium checks, version/idempotency/impact tests, plus PostgreSQL 16 target-bound RLS,
+immutability and cross-Tenant tests. PostgreSQL-only cases skip when
+`OMNIGENT_SAAS_TEST_POSTGRES_URL` is absent and therefore require CI execution before
+this candidate may be recorded as exact-SHA evidence.
+
+This slice does not complete PC2 identity-conflict case management or destructive
+User/Tenant deletion. It does not implement PC3 governed support and signed audit,
+PC4 `/platform-admin` UI, PC5 enterprise/operations completion, Provider-native
+Receipt/Kill-Window recovery, payment, invoice or tax integrations. The 11 aggregate
+production gates and release `NO-GO` remain unchanged.

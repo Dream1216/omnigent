@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import saas.control_plane.billing as billing_module
 from saas.control_plane import BILLING_ADMIN_ROUTE_PERMISSIONS
 from tests.saas.test_http_cookie_auth import _build_fastapi_app
 
@@ -25,7 +27,9 @@ def _write_headers(csrf: str, idempotency_key: str) -> dict[str, str]:
     }
 
 
-def test_billing_admin_http_is_cookie_bound_content_blind_and_least_privileged() -> None:
+def test_billing_admin_http_is_cookie_bound_content_blind_and_least_privileged(
+    monkeypatch,
+) -> None:
     app, scope = _build_fastapi_app()
     tenant_base = f"/saas/tenants/{scope['tenant_id']}/billing"
 
@@ -141,6 +145,38 @@ def test_billing_admin_http_is_cookie_bound_content_blind_and_least_privileged()
         "password_hash",
     ):
         assert forbidden_field not in serialized
+
+    reconciliation_body = {
+        "period_start": "2026-08-01T00:00:00Z",
+        "period_end": "2026-09-01T00:00:00Z",
+    }
+    reconciliation = owner.post(
+        f"{tenant_base}/reconciliations",
+        json=reconciliation_body,
+        headers=_write_headers(owner_csrf, "http-billing-reconciliation"),
+    )
+    assert reconciliation.status_code == 201
+    assert reconciliation.json()["status"] == "completed"
+    monkeypatch.setattr(
+        billing_module,
+        "_utcnow",
+        lambda: datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+    period_close = owner.post(
+        f"{tenant_base}/period-closes",
+        json=reconciliation_body,
+        headers=_write_headers(owner_csrf, "http-billing-period-close"),
+    )
+    assert period_close.status_code == 201
+    assert period_close.json()["status"] == "closed"
+    assert period_close.json()["rolled_entitlement_count"] == 1
+    listed_closes = owner.get(f"{tenant_base}/period-closes")
+    assert listed_closes.status_code == 200
+    assert listed_closes.headers["cache-control"] == "private, no-store"
+    assert (
+        listed_closes.json()["items"][0]["period_close_id"]
+        == period_close.json()["period_close_id"]
+    )
 
     tenant_admin = TestClient(app)
     tenant_admin_csrf = _login(

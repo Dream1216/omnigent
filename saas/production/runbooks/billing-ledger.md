@@ -3,14 +3,14 @@
 This runbook covers the P6 billing-authority and machine-metering slices: Tenant
 subscription state, immutable pricing snapshots and Usage facts, fixed-point
 entitlements, reservation conservation, separate customer/provider ledgers,
-reconciliation, and execution-bound usage ingestion. It is a code-contract runbook,
+reconciliation, period close/entitlement rollover, and execution-bound usage ingestion. It is a code-contract runbook,
 not evidence of a live payment processor, invoice system, tax engine, deployed Runtime
 scheduler composition, or production commercial acceptance.
 
 ## Production composition
 
-1. Migrate through `pc1a00000001`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Verify all 73 control-plane and all 17
+1. Migrate through `p6b000000001`, then reapply
+   `saas/control_plane/postgresql_roles.sql`. Verify all 75 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 2. Construct `BillingControlPlane` with a session factory whose login inherits only
    `saas_billing`. Do not reuse `saas_app`, `saas_governance`, `saas_authenticator`, or
@@ -68,6 +68,10 @@ scheduler composition, or production commercial acceptance.
   retries single-winner without granting UPDATE on Tenant metadata.
 - Provider cost entries are independent append-only facts. A Provider refund is a new
   cost fact, never an update to the original receipt.
+- A period closes only after its exact half-open interval has one immutable
+  reconciliation, the end time has passed, every exception is resolved, and every
+  matching periodic Entitlement has zero active/reserved work. Close and rollover share
+  one transaction, one idempotency receipt and one deterministic evidence hash.
 - Usage attributes use the fixed allowlist in `billing.py` and must not contain Prompt,
   code, Secret, Token, Credential, Authorization, or arbitrary high-cardinality data.
 - Until official callbacks expose a Provider-native request ID, the Runtime adapter uses
@@ -96,7 +100,11 @@ scheduler composition, or production commercial acceptance.
 6. Record Provider estimates/final receipts/refunds independently. Run reconciliation
    over half-open UTC periods, inspect every mismatch, attach non-sensitive resolution
    evidence, and resolve rather than deleting exceptions.
-7. Confirm billing Outbox lag, open mismatch count, balance/ledger projection, active
+7. Close an ended period only through `BillingControlPlane.close_period`. Verify the
+   returned reconciliation hash, close hash and rolled Entitlement count, then confirm
+   each matching bucket starts at the old end with zero consumed/reserved counters. Do
+   not update period boundaries or counters by SQL.
+8. Confirm billing Outbox lag, open mismatch count, balance/ledger projection, active
    Reservation age, and hard-limit rejection rate remain within the approved SLO.
 
 ## Failure, reconciliation, and rollback
@@ -112,7 +120,9 @@ scheduler composition, or production commercial acceptance.
 - If pricing overlap, currency drift, duplicate Provider facts, or unexplained negative
   projection is detected, fail admission closed and open a billing incident.
 - Application rollback may hide the Billing view or stop the metering listener while
-  retaining `p6a000000009`. Before downgrading from `p6a000000009`, stop Runtime
+  retaining `p6b000000001`. Before downgrading from `p6b000000001`, stop period-close
+  workers and preserve every close checkpoint. Before downgrading from
+  `p6a000000009`, stop Runtime
   admission, drain metering requests and billing Outbox delivery, and prove no active
   Runner can continue writing. The `p6a000000008` authority must not be used as a silent
   fallback to human-originated Usage ingestion because it has no execution receipt. The

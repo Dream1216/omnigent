@@ -478,6 +478,27 @@ class PlatformAuthorizationService:
                 "platform_permission_denied", "platform permission is denied"
             )
 
+    @staticmethod
+    def require_current(
+        db: Session,
+        principal: ValidatedPlatformPrincipal,
+        permission: str,
+        *,
+        now: datetime,
+    ) -> None:
+        """Re-evaluate one permission inside the command transaction."""
+
+        PlatformAuthorizationService.require(principal, permission)
+        if permission not in _current_permissions(
+            db,
+            principal_id=principal.principal_id,
+            security_version=principal.security_version,
+            now=now,
+        ):
+            raise PlatformSecurityError(
+                "platform_permission_denied", "platform permission is denied"
+            )
+
     def assign_role(
         self,
         actor: ValidatedPlatformPrincipal,

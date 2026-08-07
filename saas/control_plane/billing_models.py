@@ -26,6 +26,7 @@ MISMATCH_TYPES = (
     "currency_mismatch",
 )
 MISMATCH_STATUSES = ("open", "resolved")
+BILLING_PERIOD_CLOSE_STATUSES = ("closed", "closed_with_resolved_exceptions")
 
 
 def _values(values: tuple[str, ...]) -> str:
@@ -759,6 +760,73 @@ class BillingReconciliationBatchRecord(SaasBase):
             "tenant_id", "period_start", "period_end", name="uq_billing_reconciliation_period"
         ),
         sa.Index("ix_billing_reconciliation_status", "tenant_id", "status", "period_end"),
+    )
+
+
+class BillingPeriodCloseRecord(SaasBase):
+    """Immutable period-close checkpoint after reconciliation and reservation drain."""
+
+    __tablename__ = "saas_billing_period_closes"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    reconciliation_batch_id: Mapped[UUID] = mapped_column(nullable=False)
+    period_start: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    rolled_entitlement_count: Mapped[int] = mapped_column(nullable=False)
+    usage_event_count: Mapped[int] = mapped_column(nullable=False)
+    customer_charge_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    customer_settled_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    provider_cost_minor: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    reconciliation_evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    close_evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    closed_by: Mapped[UUID] = mapped_column(nullable=False)
+    closed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "reconciliation_batch_id"),
+            (
+                "saas_billing_reconciliation_batches.tenant_id",
+                "saas_billing_reconciliation_batches.id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_billing_period_close_reconciliation",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "closed_by"),
+            ("saas_tenant_memberships.tenant_id", "saas_tenant_memberships.user_id"),
+            ondelete="RESTRICT",
+            name="fk_billing_period_close_actor",
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(BILLING_PERIOD_CLOSE_STATUSES)})",
+            name="ck_billing_period_close_status",
+        ),
+        sa.CheckConstraint("period_end > period_start", name="ck_billing_period_close_period"),
+        sa.CheckConstraint(
+            "rolled_entitlement_count >= 0 AND usage_event_count >= 0",
+            name="ck_billing_period_close_counts",
+        ),
+        sa.CheckConstraint(
+            "customer_charge_minor >= 0 AND customer_settled_minor >= 0 "
+            "AND provider_cost_minor >= 0",
+            name="ck_billing_period_close_amounts",
+        ),
+        sa.CheckConstraint(
+            "length(reconciliation_evidence_sha256) = 64",
+            name="ck_billing_period_close_reconciliation_hash",
+        ),
+        sa.CheckConstraint(
+            "length(close_evidence_sha256) = 64",
+            name="ck_billing_period_close_evidence_hash",
+        ),
+        sa.UniqueConstraint("tenant_id", "id", name="uq_billing_period_close_scope"),
+        sa.UniqueConstraint(
+            "tenant_id", "period_start", "period_end", name="uq_billing_period_close_period"
+        ),
+        sa.Index("ix_billing_period_close_list", "tenant_id", "period_end", "id"),
     )
 
 

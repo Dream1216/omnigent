@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-07.pc1-platform-security"
+POLICY_VERSION: Final = "2026-08-08.pc2-user-tenant-lifecycle"
 
 
 class PermissionScope(StrEnum):
@@ -128,9 +128,25 @@ _DEFINITIONS = (
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
         approval_required=True,
-        api_surfaces=("POST /v2/platform-admin/tenants/{id}/lifecycle",),
+        api_surfaces=(
+            "POST /v2/platform-admin/tenants/{id}/suspend",
+            "POST /v2/platform-admin/tenants/{id}/restore",
+        ),
         ui_surface="tenants",
         audit_event="platform.tenant_lifecycle.requested",
+    ),
+    _permission(
+        "platform.tenant.owner_recover",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "GET /v2/platform-admin/tenants/{id}/owner-recovery-preview",
+            "POST /v2/platform-admin/tenants/{id}/owner-recovery",
+        ),
+        ui_surface="tenants",
+        audit_event="platform.tenant_owner_recovery.requested",
     ),
     _permission(
         "platform.user.read",
@@ -158,6 +174,16 @@ _DEFINITIONS = (
         api_surfaces=("POST /v2/platform-admin/users/{id}/suspend",),
         ui_surface="global-users",
         audit_event="platform.user.suspension.requested",
+    ),
+    _permission(
+        "platform.user.restore",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/users/{id}/restore",),
+        ui_surface="global-users",
+        audit_event="platform.user.restore.requested",
     ),
     _permission(
         "platform.user.sessions.revoke",
@@ -410,6 +436,11 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.role.manage",
                 "platform.tenant.read",
                 "platform.tenant.lifecycle.manage",
+                "platform.tenant.owner_recover",
+                "platform.user.read",
+                "platform.user.suspend",
+                "platform.user.restore",
+                "platform.user.sessions.revoke",
                 "platform.operations.read",
                 "platform.runner.manage",
                 "platform.billing.read",
