@@ -691,3 +691,37 @@ and a kill between Provider completion and notification remains a reconciliation
 Period rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice
 comparison, payment/tax boundaries, production operations, commercial acceptance, all
 aggregate gates, and release `NO-GO` remain open.
+
+PC1 establishes the separate Platform Staff security realm without turning the customer
+Tenant Admin or PostgreSQL emergency role into a super-admin product. Migration
+`pc1a00000001` adds Staff principals, role assignments, phishing-resistant sessions, and
+content-blind Tenant/User projections. The standalone API uses an independent HTTPS
+Origin, `__Host-` Cookie, Audience and CSRF contract; 22 Platform permissions, five
+built-in least-privilege roles, field-level metadata and explicit no-content defaults have
+no `allow_all` path. Independent application, authenticator, governance and projector
+roles cannot inherit or `SET ROLE` the emergency `saas_platform` authority.
+
+Initial run `31184944950` correctly failed closed because sync Playwright on pytest's main
+thread left an active event loop and rejected 38 later asynchronous Preview tests. The
+fix runs both Platform and Tenant Admin Chromium scenarios in dedicated Playwright
+threads and removes an absolute one-hour test-session expiry. Exact successor run
+`31187073403` at `07b368033d91aa4fe4d3e649b4c3dccd358f3e0e` passes 934 tests in
+145.80 seconds, a 3.173-second PostgreSQL 16 logical restore with 73/17 forced-RLS
+inventories and nonempty PC1 facts, 57 official tests in 30.68 seconds, the 36/22 Linux
+security matrix in 14.10 seconds, Pyrefly with zero errors, the migration round trip,
+both patch replays, and the 187-artifact implementation wheel. Source intrusion remains
+within budget at 9 files, 479 lines, two patches, and a 0.9952 isolated-code ratio.
+
+This closes the PC1 code and CI slice only. It does not prove a deployed enterprise Staff
+IdP or Platform Origin, PC2 global User/Tenant lifecycle, PC3 governed support and
+immutable evidence, PC4 Platform Console UI, PC5 enterprise operations, any of the eleven
+aggregate production gates, or release `GO`.
+
+Manually dispatched image run `31187141816` verifies the same exact implementation SHA
+with 933 tests and one platform skip, then builds Server and Host twice for both
+`linux/amd64` and `linux/arm64`. Every repeated platform Manifest and Config digest
+matches, has two attestation descriptors, and labels exact product `07b36803`, upstream
+`63035f92`, schema `pc1a00000001`, and adapter `0.2.0`. These are unpublished candidate
+archives, not registry-pinned, signed, vulnerability/license-cleared, canaried, or
+N-1-rollback production images; P0 remains pending and release remains `NO-GO`. The two
+PC1 machine records bring the evidence-successor wheel requirement to 189 artifacts.

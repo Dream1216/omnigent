@@ -1364,3 +1364,24 @@ facts at the exact migration head. See
 `saas/production/runbooks/platform-security.md` for deployment, bootstrap, incident and
 rollback procedures. These code contracts are PC1 only and do not claim a complete
 Platform Console or production GO.
+
+Exact implementation successor `07b368033d91aa4fe4d3e649b4c3dccd358f3e0e` is
+verified by compatibility run `31187073403`: 934 combined tests, a 3.173-second
+PostgreSQL 16 isolated restore with the 73/17 forced-RLS inventories, 57 official
+zygote/query-context regressions, the 36-pass/22-platform-skip Linux security matrix,
+Pyrefly with zero errors, the `pc1a00000001` migration round trip, both patch replays,
+and the 187-artifact implementation wheel. The direct-upstream budget remains 9 files,
+479 net lines and two patches, with a 0.9952 isolated-code ratio. The first implementation
+run failed closed on a real sync-Playwright/asyncio process-ordering conflict; the
+successor runs both Admin Chromium suites outside pytest-asyncio's main thread.
+
+This evidence does not activate a production Staff IdP or Platform Origin, and it does
+not implement PC2 User/Tenant lifecycle, PC3 governed support/evidence, PC4 Platform UI,
+or PC5 enterprise operations. The P0-P6 ledger therefore remains at eleven pending
+aggregate gates and release `NO-GO`.
+
+Image candidate run `31187141816` verifies the same exact SHA with 933 tests and one
+platform skip. Server and Host each build twice for both `linux/amd64` and `linux/arm64`;
+all repeated platform Manifest/Config pairs match and bind exact Product, Upstream,
+Schema and Adapter labels. The archived candidates are not registry-published, signed,
+scanned, canaried, or rollback-proven, so they do not close the P0 production image gate.

@@ -12,6 +12,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/application.py",
     "saas/billing_metering_transport.py",
     "saas/acceptance/p0-p6-evidence.json",
+    "saas/acceptance/pc1-platform-security-ci-31187073403.json",
+    "saas/acceptance/pc1-platform-security-image-candidate-ci-31187141816.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",

@@ -1,0 +1,90 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31187073403,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31187073403",
+  "job_id": 92894207445,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31187073403/job/92894207445",
+  "artifact_id": 8997336119,
+  "head_sha": "07b368033d91aa4fe4d3e649b4c3dccd358f3e0e",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "934 passed",
+    "combined_ci_warnings": 232,
+    "combined_ci_seconds": 145.8,
+    "isolated_logical_restore_contract": "passed in 3.173 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 30.68 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 14.10 seconds",
+    "wheel_required_artifacts": 187,
+    "patches_replayed": 2,
+    "migration_head": "pc1a00000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "platform_security_foundation": {
+    "staff_and_customer_realms_are_independent": true,
+    "independent_https_origin_cookie_and_audience": true,
+    "phishing_resistant_staff_authentication_required": true,
+    "platform_permission_policy_version": "2026-08-07.pc1-platform-security",
+    "built_in_platform_roles": 5,
+    "platform_permissions": 22,
+    "field_level_permission_metadata": true,
+    "allow_all_absent": true,
+    "content_access_default": "none",
+    "tenant_and_user_directories_use_content_blind_projections": true,
+    "stable_projection_cursors": true,
+    "tenant_cookie_bearer_wrong_origin_and_roleless_negative_matrix": "passed",
+    "real_chromium_realm_and_role_matrix": "passed",
+    "sync_playwright_isolated_from_async_runtime": true
+  },
+  "database_isolation": {
+    "real_postgresql": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 73,
+    "runtime_forced_rls_tables": 17,
+    "platform_security_restore": "passed",
+    "restored_staff_principals": 2,
+    "restored_platform_role_assignments": 1,
+    "restored_platform_auth_sessions": 1,
+    "restored_tenant_projections": 2,
+    "restored_user_projections": 1,
+    "customer_tenant_guc_does_not_grant_staff_access": true,
+    "browser_and_ordinary_workers_cannot_set_emergency_role": true,
+    "governance_and_projection_roles_cannot_read_raw_customer_content": true,
+    "connection_realm_context_is_cleared_before_reuse": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 479,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9952,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_predecessor": {
+    "run_id": 31184944950,
+    "head_sha": "53a5386a37b12a25f50c4092ee59bd933797494a",
+    "conclusion": "failure",
+    "failure": "sync Playwright on pytest's main thread left a running event loop and rejected 38 later async Preview tests; the successor runs both browser control planes in dedicated Playwright threads"
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "a live enterprise Staff IdP phishing-resistant authentication ceremony",
+    "production deployment of the independent Platform Origin session and database roles",
+    "PC2 global user and Tenant lifecycle commands or Owner Recovery",
+    "PC3 JIT Support Break-glass immutable audit and signed export",
+    "PC4 Platform Console user interface",
+    "production SLO recovery deletion signed-image cross-failure-domain or commercial evidence",
+    "completion of the aggregate P6 enterprise Platform Console gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact PC1 implementation at 07b368033d91aa4fe4d3e649b4c3dccd358f3e0e. A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified implementation and must not be treated as production proof."
+}
