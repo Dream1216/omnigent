@@ -39,6 +39,11 @@ _SELECTED_HASH_TABLES = (
     "saas_global_users",
     "saas_identity_connections",
     "saas_auth_sessions",
+    "saas_platform_staff_principals",
+    "saas_platform_role_assignments",
+    "saas_platform_auth_sessions",
+    "saas_platform_tenant_projections",
+    "saas_platform_user_projections",
     "saas_tenants",
     "saas_spaces",
     "saas_runtime_placements",
@@ -230,6 +235,10 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
         "session_b": "50000000-0000-4000-8000-000000000002",
+        "platform_operator": "b0000000-0000-4000-8000-000000000001",
+        "platform_approver": "b0000000-0000-4000-8000-000000000002",
+        "platform_assignment": "b1000000-0000-4000-8000-000000000001",
+        "platform_session": "b2000000-0000-4000-8000-000000000001",
         "service_account_a": "70000000-0000-4000-8000-000000000001",
         "service_account_b": "70000000-0000-4000-8000-000000000002",
         "api_credential_a": "80000000-0000-4000-8000-000000000001",
@@ -284,10 +293,73 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_platform_staff_principals "
+                    "(id, identity_connection_ref, issuer, subject, display_name, "
+                    "email_normalized, status, security_version) VALUES "
+                    "(:platform_operator, 'recovery-staff-operator', "
+                    "'https://staff-idp.recovery.test', 'operator', 'Recovery Operator', "
+                    "'operator@staff.recovery.test', 'active', 1), "
+                    "(:platform_approver, 'recovery-staff-approver', "
+                    "'https://staff-idp.recovery.test', 'approver', 'Recovery Approver', "
+                    "'approver@staff.recovery.test', 'active', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_platform_role_assignments "
+                    "(id, principal_id, role, status, version, assigned_by_principal_id, "
+                    "approval_ref, reason) VALUES "
+                    "(:platform_assignment, :platform_operator, 'platform_operator', "
+                    "'active', 1, :platform_approver, 'recovery-two-person-approval', "
+                    "'logical restore contract')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_platform_auth_sessions "
+                    "(id, principal_id, token_hash, csrf_token_hash, security_version, audience, "
+                    "origin, authn_method, mfa_strength, authenticated_at, expires_at) VALUES "
+                    "(:platform_session, :platform_operator, :platform_token_hash, "
+                    ":platform_csrf_hash, 1, 'omnigent-platform-admin', "
+                    "'https://platform-admin.recovery.test', 'passkey', "
+                    "'phishing_resistant', now(), now() + interval '1 hour')"
+                ),
+                {
+                    **identifiers,
+                    "platform_token_hash": "5" * 64,
+                    "platform_csrf_hash": "6" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_tenants (id, slug, name, status, plan, home_region) "
                     "VALUES (:tenant_a, 'recovery-a', 'Recovery A', 'active', "
                     "'test', 'region-a'), "
                     "(:tenant_b, 'recovery-b', 'Recovery B', 'active', 'test', 'region-a')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_platform_tenant_projections "
+                    "(tenant_id, slug, name, status, plan, home_region, member_count, "
+                    "space_count, source_version, updated_at) VALUES "
+                    "(:tenant_a, 'recovery-a', 'Recovery A', 'active', 'test', "
+                    "'region-a', 2, 1, 1, now()), "
+                    "(:tenant_b, 'recovery-b', 'Recovery B', 'active', 'test', "
+                    "'region-a', 2, 1, 1, now())"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_platform_user_projections "
+                    "(user_id, status, display_name, email_masked, membership_count, "
+                    "security_version, source_version, created_at, updated_at) VALUES "
+                    "(:actor_a, 'active', 'Recovery A', 'a***@example.test', 1, 1, 1, "
+                    "now(), now())"
                 ),
                 identifiers,
             )
@@ -366,12 +438,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'p6a000000009', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc1a00000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'p6a000000009', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc1a00000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -1056,7 +1128,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "p6a000000009":
+            if saas_head != "pc1a00000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1065,6 +1137,20 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError("restored official migration head is missing")
             _verify_control_plane_rls(connection)
             verify_runtime_rls(connection)
+            platform_counts = connection.execute(
+                sa.text(
+                    "SELECT "
+                    "(SELECT count(*) FROM saas_platform_staff_principals), "
+                    "(SELECT count(*) FROM saas_platform_role_assignments), "
+                    "(SELECT count(*) FROM saas_platform_auth_sessions), "
+                    "(SELECT count(*) FROM saas_platform_tenant_projections), "
+                    "(SELECT count(*) FROM saas_platform_user_projections)"
+                )
+            ).one()
+            if tuple(platform_counts) != (2, 1, 1, 2, 1):
+                raise PostgreSqlRestoreContractError(
+                    "restored Staff Realm or content-blind platform projections drifted"
+                )
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "
                 f"SET LOCAL app.actor_id = '{identifiers['actor_a']}'; "
@@ -1303,6 +1389,7 @@ def _verify_restored_database(
             "post_backup_enterprise_approval_replay": "passed",
             "post_backup_billing_authority_replay": "passed",
             "machine_metering_receipt_restore": "passed",
+            "platform_security_restore": "passed",
         }
     finally:
         engine.dispose()

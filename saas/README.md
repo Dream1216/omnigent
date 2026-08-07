@@ -1333,9 +1333,34 @@ postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 uv sync --frozen --extra dev --extra saas
 uv run pytest \
   tests/saas/test_postgresql_rls.py \
+  tests/saas/test_platform_security_postgresql.py \
   tests/saas/test_execution_postgresql.py \
   tests/saas/test_runtime_postgresql_rls.py \
   tests/saas/test_context_snapshot_postgresql.py \
   tests/saas/test_scheduling_postgresql.py \
   tests/saas/test_webhook_delivery.py
 ```
+
+## PC1 Platform Security Foundation
+
+The `pc1a00000001` downstream migration adds an independent Staff principal, expiring
+role Assignment and phishing-resistant Staff session model plus content-blind Tenant and
+Global User projections. The Platform permission catalog declares API, UI and audit
+metadata for five built-in roles and has no wildcard or `allow_all` permission. Platform
+roles never derive from Tenant Membership.
+
+`create_platform_admin_app` is a standalone, feature-flagged FastAPI application for a
+dedicated HTTPS Origin, Audience and `__Host-` cookie. It rejects bearer authentication,
+mixed Tenant/Staff cookies, wrong Origin/Audience, unsafe requests without exact Origin,
+and stale/revoked Staff authority. Its first read-only endpoints expose context,
+permissions, stable-cursor Tenant/User projections and logout; mutation APIs remain
+closed until governed Admin Operations are implemented.
+
+PostgreSQL uses four independent least-privilege roles for Staff authentication,
+browser reads, governance and projection writes. None inherits the emergency
+`saas_platform` role. All five PC1 tables use forced RLS, bringing the control-plane
+inventory to 73 tables; the isolated logical restore hashes and verifies non-empty PC1
+facts at the exact migration head. See
+`saas/production/runbooks/platform-security.md` for deployment, bootstrap, incident and
+rollback procedures. These code contracts are PC1 only and do not claim a complete
+Platform Console or production GO.

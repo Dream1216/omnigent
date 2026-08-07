@@ -9,8 +9,8 @@ scheduler composition, or production commercial acceptance.
 
 ## Production composition
 
-1. Migrate through `p6a000000009`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Verify all 68 control-plane and all 17
+1. Migrate through `pc1a00000001`, then reapply
+   `saas/control_plane/postgresql_roles.sql`. Verify all 73 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 2. Construct `BillingControlPlane` with a session factory whose login inherits only
    `saas_billing`. Do not reuse `saas_app`, `saas_governance`, `saas_authenticator`, or

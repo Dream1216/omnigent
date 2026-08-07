@@ -20,29 +20,67 @@ class RlsContext:
     invitation_token_hash: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PlatformRlsContext:
+    """Server-verified Staff Realm facts used by platform-only policies."""
+
+    principal_id: UUID | None = None
+    session_token_hash: str | None = None
+    identity_issuer: str | None = None
+    identity_subject: str | None = None
+
+
+def _set_local(session: Session, name: str, value: str) -> None:
+    session.execute(
+        sa.text("SELECT set_config(:name, :value, true)"),
+        {"name": name, "value": value},
+    )
+
+
 def apply_rls_context(session: Session, context: RlsContext) -> None:
     """Bind RLS facts to the current transaction; never accept raw client values."""
 
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
-    session.execute(
-        sa.text("SELECT set_config('app.actor_id', :value, true)"),
-        {"value": str(context.actor_id) if context.actor_id else ""},
+    _set_local(session, "app.platform_principal_id", "")
+    _set_local(session, "app.platform_session_token_hash", "")
+    _set_local(session, "app.platform_identity_issuer", "")
+    _set_local(session, "app.platform_identity_subject", "")
+    _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
+    _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
+    _set_local(session, "app.space_id", str(context.space_id) if context.space_id else "")
+    _set_local(
+        session,
+        "app.api_credential_id",
+        str(context.api_credential_id) if context.api_credential_id else "",
     )
-    session.execute(
-        sa.text("SELECT set_config('app.tenant_id', :value, true)"),
-        {"value": str(context.tenant_id) if context.tenant_id else ""},
+    _set_local(session, "app.invitation_token_hash", context.invitation_token_hash or "")
+
+
+def apply_platform_rls_context(session: Session, context: PlatformRlsContext) -> None:
+    """Bind Staff facts and explicitly clear every Customer Realm GUC."""
+
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    for name in (
+        "app.actor_id",
+        "app.tenant_id",
+        "app.space_id",
+        "app.api_credential_id",
+        "app.invitation_token_hash",
+    ):
+        _set_local(session, name, "")
+    _set_local(
+        session,
+        "app.platform_principal_id",
+        str(context.principal_id) if context.principal_id else "",
     )
-    session.execute(
-        sa.text("SELECT set_config('app.space_id', :value, true)"),
-        {"value": str(context.space_id) if context.space_id else ""},
+    _set_local(
+        session,
+        "app.platform_session_token_hash",
+        context.session_token_hash or "",
     )
-    session.execute(
-        sa.text("SELECT set_config('app.api_credential_id', :value, true)"),
-        {"value": str(context.api_credential_id) if context.api_credential_id else ""},
-    )
-    session.execute(
-        sa.text("SELECT set_config('app.invitation_token_hash', :value, true)"),
-        {"value": context.invitation_token_hash or ""},
-    )
+    _set_local(session, "app.platform_identity_issuer", context.identity_issuer or "")
+    _set_local(session, "app.platform_identity_subject", context.identity_subject or "")

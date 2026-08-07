@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-06.p6-members"
+POLICY_VERSION: Final = "2026-08-07.pc1-platform-security"
 
 
 class PermissionScope(StrEnum):
@@ -36,6 +36,9 @@ class PermissionDefinition:
     service_account_allowed: bool = False
     fresh_auth_required: bool = False
     approval_required: bool = False
+    api_surfaces: tuple[str, ...] = ()
+    ui_surface: str | None = None
+    audit_event: str | None = None
 
 
 def _permission(
@@ -47,6 +50,9 @@ def _permission(
     service_account_allowed: bool = False,
     fresh_auth_required: bool = False,
     approval_required: bool = False,
+    api_surfaces: tuple[str, ...] = (),
+    ui_surface: str | None = None,
+    audit_event: str | None = None,
 ) -> PermissionDefinition:
     return PermissionDefinition(
         name=name,
@@ -56,10 +62,214 @@ def _permission(
         service_account_allowed=service_account_allowed,
         fresh_auth_required=fresh_auth_required,
         approval_required=approval_required,
+        api_surfaces=api_surfaces,
+        ui_surface=ui_surface,
+        audit_event=audit_event,
     )
 
 
 _DEFINITIONS = (
+    _permission(
+        "platform.context.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=("GET /v2/platform-admin/context",),
+        ui_surface="platform-shell",
+        audit_event="platform.context.read",
+    ),
+    _permission(
+        "platform.permission.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=("GET /v2/platform-admin/permissions",),
+        ui_surface="access-control",
+        audit_event="platform.permission_catalog.read",
+    ),
+    _permission(
+        "platform.staff.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/staff",),
+        ui_surface="identity-security",
+        audit_event="platform.staff.read",
+    ),
+    _permission(
+        "platform.role.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=("GET /v2/platform-admin/role-assignments",),
+        ui_surface="access-control",
+        audit_event="platform.role_assignment.read",
+    ),
+    _permission(
+        "platform.role.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/role-assignments",
+            "DELETE /v2/platform-admin/role-assignments/{id}",
+        ),
+        ui_surface="access-control",
+        audit_event="platform.role_assignment.changed",
+    ),
+    _permission(
+        "platform.tenant.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=("GET /v2/platform-admin/tenants",),
+        ui_surface="tenants",
+        audit_event="platform.tenant_projection.read",
+    ),
+    _permission(
+        "platform.tenant.lifecycle.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/tenants/{id}/lifecycle",),
+        ui_surface="tenants",
+        audit_event="platform.tenant_lifecycle.requested",
+    ),
+    _permission(
+        "platform.user.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/users",),
+        ui_surface="global-users",
+        audit_event="platform.user_projection.read",
+    ),
+    _permission(
+        "platform.user.pii.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("GET /v2/platform-admin/users/{id}/pii",),
+        ui_surface="global-users",
+        audit_event="platform.user_pii.read",
+    ),
+    _permission(
+        "platform.user.suspend",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/users/{id}/suspend",),
+        ui_surface="global-users",
+        audit_event="platform.user.suspension.requested",
+    ),
+    _permission(
+        "platform.user.sessions.revoke",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("POST /v2/platform-admin/users/{id}/revoke-sessions",),
+        ui_surface="global-users",
+        audit_event="platform.user_sessions.revoked",
+    ),
+    _permission(
+        "platform.support.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/support-access-grants",),
+        ui_surface="support-access",
+        audit_event="platform.support_access.read",
+    ),
+    _permission(
+        "platform.support.request",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("POST /v2/platform-admin/support-access-grants",),
+        ui_surface="support-access",
+        audit_event="platform.support_access.requested",
+    ),
+    _permission(
+        "platform.support_grant.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/support-access-grants/{id}/approve",
+            "POST /v2/platform-admin/support-access-grants/{id}/revoke",
+        ),
+        ui_surface="support-access",
+        audit_event="platform.support_access.decided",
+    ),
+    _permission(
+        "platform.operations.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=("GET /v2/platform-admin/operations",),
+        ui_surface="operations",
+        audit_event="platform.operations.read",
+    ),
+    _permission(
+        "platform.runner.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/runners/{id}/transition",),
+        ui_surface="operations",
+        audit_event="platform.runner_transition.requested",
+    ),
+    _permission(
+        "platform.billing.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/billing",),
+        ui_surface="billing-finance",
+        audit_event="platform.billing_projection.read",
+    ),
+    _permission(
+        "platform.billing.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/subscriptions/{id}/transition",),
+        ui_surface="billing-finance",
+        audit_event="platform.billing_transition.requested",
+    ),
+    _permission(
+        "platform.security.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/security",),
+        ui_surface="identity-security",
+        audit_event="platform.security_projection.read",
+    ),
+    _permission(
+        "platform.audit.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/audit-events",),
+        ui_surface="audit-compliance",
+        audit_event="platform.audit.read",
+    ),
+    _permission(
+        "platform.audit.export",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/audit-exports",),
+        ui_surface="audit-compliance",
+        audit_event="platform.audit_export.requested",
+    ),
+    _permission(
+        "platform.data_request.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/data-requests",),
+        ui_surface="data-lifecycle",
+        audit_event="platform.data_request.changed",
+    ),
     _permission("tenant.read", PermissionScope.TENANT, PermissionRisk.LOW),
     _permission("tenant.update", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("tenant.suspend", PermissionScope.TENANT, PermissionRisk.CRITICAL),
@@ -188,6 +398,103 @@ _DEFINITIONS = (
 )
 
 PERMISSION_CATALOG = MappingProxyType({definition.name: definition for definition in _DEFINITIONS})
+
+PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
+    {
+        "platform_operator": frozenset(
+            {
+                "platform.context.read",
+                "platform.permission.read",
+                "platform.staff.read",
+                "platform.role.read",
+                "platform.role.manage",
+                "platform.tenant.read",
+                "platform.tenant.lifecycle.manage",
+                "platform.operations.read",
+                "platform.runner.manage",
+                "platform.billing.read",
+                "platform.support.read",
+            }
+        ),
+        "platform_security_auditor": frozenset(
+            {
+                "platform.context.read",
+                "platform.permission.read",
+                "platform.staff.read",
+                "platform.role.read",
+                "platform.tenant.read",
+                "platform.user.read",
+                "platform.support.read",
+                "platform.security.read",
+                "platform.audit.read",
+                "platform.audit.export",
+            }
+        ),
+        "support_agent": frozenset(
+            {
+                "platform.context.read",
+                "platform.permission.read",
+                "platform.tenant.read",
+                "platform.user.read",
+                "platform.support.read",
+                "platform.support.request",
+                "platform.operations.read",
+            }
+        ),
+        "billing_operator": frozenset(
+            {
+                "platform.context.read",
+                "platform.permission.read",
+                "platform.tenant.read",
+                "platform.billing.read",
+                "platform.billing.manage",
+            }
+        ),
+        "compliance_operator": frozenset(
+            {
+                "platform.context.read",
+                "platform.permission.read",
+                "platform.tenant.read",
+                "platform.user.read",
+                "platform.user.pii.read",
+                "platform.audit.read",
+                "platform.audit.export",
+                "platform.data_request.manage",
+            }
+        ),
+    }
+)
+
+PLATFORM_FIELD_PERMISSIONS = MappingProxyType(
+    {
+        "tenant": MappingProxyType(
+            {
+                "tenant_id": "platform.tenant.read",
+                "slug": "platform.tenant.read",
+                "name": "platform.tenant.read",
+                "status": "platform.tenant.read",
+                "plan": "platform.tenant.read",
+                "home_region": "platform.tenant.read",
+                "member_count": "platform.tenant.read",
+                "space_count": "platform.tenant.read",
+                "updated_at": "platform.tenant.read",
+            }
+        ),
+        "user": MappingProxyType(
+            {
+                "user_id": "platform.user.read",
+                "status": "platform.user.read",
+                "display_name": "platform.user.read",
+                "email_masked": "platform.user.read",
+                "primary_email": "platform.user.pii.read",
+                "membership_count": "platform.user.read",
+                "security_version": "platform.security.read",
+                "created_at": "platform.user.read",
+                "updated_at": "platform.user.read",
+            }
+        ),
+    }
+)
 
 TENANT_ROLE_PERMISSIONS = MappingProxyType(
     {
@@ -409,6 +716,9 @@ def permission_catalog_payload() -> dict[str, object]:
             for definition in _DEFINITIONS
         ],
         "roles": {
+            "platform": {
+                role: sorted(values) for role, values in PLATFORM_ROLE_PERMISSIONS.items()
+            },
             "tenant": {role: sorted(values) for role, values in TENANT_ROLE_PERMISSIONS.items()},
             "space": {role: sorted(values) for role, values in SPACE_ROLE_PERMISSIONS.items()},
             "project": {role: sorted(values) for role, values in PROJECT_ROLE_PERMISSIONS.items()},
@@ -417,6 +727,9 @@ def permission_catalog_payload() -> dict[str, object]:
                 for resource_type, role_map in RESOURCE_ROLE_PERMISSIONS.items()
             },
         },
+        "field_permissions": {
+            projection: dict(fields) for projection, fields in PLATFORM_FIELD_PERMISSIONS.items()
+        },
     }
 
 
@@ -424,7 +737,12 @@ def _validate_catalog() -> None:
     if len(PERMISSION_CATALOG) != len(_DEFINITIONS):
         raise RuntimeError("permission catalog contains duplicate names")
     known = frozenset(PERMISSION_CATALOG)
-    for role_map in (TENANT_ROLE_PERMISSIONS, SPACE_ROLE_PERMISSIONS, PROJECT_ROLE_PERMISSIONS):
+    for role_map in (
+        PLATFORM_ROLE_PERMISSIONS,
+        TENANT_ROLE_PERMISSIONS,
+        SPACE_ROLE_PERMISSIONS,
+        PROJECT_ROLE_PERMISSIONS,
+    ):
         for role, permissions in role_map.items():
             unknown = permissions - known
             if unknown:
@@ -443,6 +761,20 @@ def _validate_catalog() -> None:
                     f"unknown={unknown}, widened={widened}"
                 )
     content_actions = {name for name, item in PERMISSION_CATALOG.items() if item.reads_content}
+    for role, permissions in PLATFORM_ROLE_PERMISSIONS.items():
+        if permissions & content_actions:
+            raise RuntimeError(f"Platform role {role} must remain content-blind")
+    for name, definition in PERMISSION_CATALOG.items():
+        if name.startswith("platform.") and (
+            definition.scope is not PermissionScope.PLATFORM
+            or not definition.api_surfaces
+            or not definition.ui_surface
+            or not definition.audit_event
+            or definition.service_account_allowed
+        ):
+            raise RuntimeError(f"Platform permission {name} has an incomplete contract")
+        if "allow_all" in name:
+            raise RuntimeError("permission catalog must not contain allow_all")
     for role in ("owner", "admin"):
         if TENANT_ROLE_PERMISSIONS[role] & content_actions:
             raise RuntimeError("Tenant governance roles must not imply content access")

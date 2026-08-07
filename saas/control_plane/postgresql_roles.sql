@@ -35,6 +35,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
         CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_authenticator') THEN
+        CREATE ROLE saas_platform_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_app') THEN
+        CREATE ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_governance') THEN
+        CREATE ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_projector') THEN
+        CREATE ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 
@@ -49,11 +61,71 @@ ALTER ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_metering NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_platform_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
-    saas_metering, saas_platform;
+    saas_metering, saas_platform, saas_platform_authenticator, saas_platform_app,
+    saas_platform_governance, saas_platform_projector;
+
+-- Platform browser/API roles are independent from the emergency saas_platform
+-- role. No GRANT connects them, so an application login cannot SET ROLE into
+-- the recovery authority even when its Staff identity has every product role.
+REVOKE ALL PRIVILEGES ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments,
+    saas_platform_auth_sessions,
+    saas_platform_tenant_projections,
+    saas_platform_user_projections
+FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
+    saas_executor, saas_secret_broker, saas_preview_gateway,
+    saas_webhook_dispatcher, saas_billing, saas_metering,
+    saas_platform_authenticator, saas_platform_app, saas_platform_governance,
+    saas_platform_projector, saas_platform;
+
+GRANT SELECT ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments,
+    saas_platform_auth_sessions
+TO saas_platform_authenticator;
+GRANT INSERT ON saas_platform_auth_sessions TO saas_platform_authenticator;
+GRANT UPDATE (revoked_at, last_seen_at) ON saas_platform_auth_sessions
+TO saas_platform_authenticator;
+
+GRANT SELECT ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments,
+    saas_platform_tenant_projections,
+    saas_platform_user_projections
+TO saas_platform_app;
+
+GRANT SELECT, INSERT, UPDATE ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments
+TO saas_platform_governance;
+GRANT SELECT ON
+    saas_platform_auth_sessions,
+    saas_platform_tenant_projections,
+    saas_platform_user_projections
+TO saas_platform_governance;
+GRANT UPDATE (revoked_at) ON saas_platform_auth_sessions TO saas_platform_governance;
+
+GRANT SELECT, INSERT, UPDATE ON
+    saas_platform_tenant_projections,
+    saas_platform_user_projections
+TO saas_platform_projector;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments,
+    saas_platform_auth_sessions,
+    saas_platform_tenant_projections,
+    saas_platform_user_projections
+TO saas_platform;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;

@@ -11,6 +11,7 @@ import pytest
 import uvicorn
 from playwright.sync_api import Locator, Page, expect
 
+from saas.control_plane.permissions import POLICY_VERSION
 from tests.saas.test_http_cookie_auth import _build_fastapi_app
 
 
@@ -98,7 +99,7 @@ def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
     page.get_by_test_id("login-password").fill("initial-http-password")
     page.get_by_test_id("login-submit").click()
     expect(page.get_by_test_id("scope-connect")).to_be_enabled()
-    expect(page.locator("#permission-count")).to_contain_text("2026-08-06.p6")
+    expect(page.locator("#permission-count")).to_contain_text(POLICY_VERSION)
 
     page.get_by_test_id("scope-connect").click()
     expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")

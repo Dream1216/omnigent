@@ -14,6 +14,8 @@ from sqlalchemy.pool import StaticPool
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     PERMISSION_CATALOG,
+    PLATFORM_FIELD_PERMISSIONS,
+    PLATFORM_ROLE_PERMISSIONS,
     AuthorizationDecisionRecord,
     CompositeRemovalImpactProvider,
     ControlPlaneOutboxEvent,
@@ -269,12 +271,25 @@ def test_permission_catalog_is_versioned_complete_and_content_separated() -> Non
     assert len(permissions) == len(PERMISSION_CATALOG)
     roles = payload["roles"]
     assert isinstance(roles, dict)
+    platform_roles = roles["platform"]
     tenant_roles = roles["tenant"]
     space_roles = roles["space"]
     resource_roles = roles["resource"]
     assert isinstance(tenant_roles, dict)
     assert isinstance(space_roles, dict)
     assert isinstance(resource_roles, dict)
+    assert set(platform_roles) == set(PLATFORM_ROLE_PERMISSIONS)
+    assert not any("allow_all" in permission for permission in PERMISSION_CATALOG)
+    assert all(
+        not PERMISSION_CATALOG[permission].reads_content
+        for permissions in PLATFORM_ROLE_PERMISSIONS.values()
+        for permission in permissions
+    )
+    assert payload["field_permissions"] == {
+        projection: dict(fields) for projection, fields in PLATFORM_FIELD_PERMISSIONS.items()
+    }
+    assert PLATFORM_FIELD_PERMISSIONS["user"]["primary_email"] == "platform.user.pii.read"
+    assert PLATFORM_FIELD_PERMISSIONS["user"]["security_version"] == "platform.security.read"
     assert "project.content.read" not in tenant_roles["owner"]
     assert "project.content.read" not in tenant_roles["admin"]
     assert "project.content.read" not in space_roles["owner"]
