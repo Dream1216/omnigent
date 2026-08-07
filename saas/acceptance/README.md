@@ -760,3 +760,42 @@ Case governance, destructive User/Tenant deletion manifests, Provider-native Rec
 and kill-window recovery, signed Provider webhooks, payment/invoice/tax, PC3, PC4 and
 PC5 remain open. All eleven aggregate production gates and release `NO-GO` are
 unchanged.
+
+PC2 Identity Conflict and P6 nonempty-restore implementation commit
+`cc9536094ff71eff1e7513198de878e3cd038491` adds content-blind, two-stage Platform
+review without granting Staff authority to create an Identity Connection. An active
+`platform_operator` can assign one active Global User candidate or block a case only
+with fresh authentication, approval, reason, expected version and idempotency; the
+assigned customer must reauthenticate and complete the existing self-service decision.
+PostgreSQL binds the write to the exact conflict and candidate User, while the lifecycle
+receipt and redacted Outbox fact commit atomically. The `pc2b00000001` downgrade refuses
+to discard accepted review or audit facts.
+
+Exact compatibility run `31211571929` passes 946 tests in 173.45 seconds, a
+3.713-second PostgreSQL 16 logical restore, 57 official regressions, the 36-pass and
+22-platform-skip Linux security matrix, Pyrefly, migration round trip, both patch
+replays and the 195-artifact implementation wheel. The restore contains two immutable
+billing-period closes: one from the backup and one from deterministic post-backup
+replay. It verifies exact Tenant/Reconciliation/status links, Tenant RLS, the restored
+immutability trigger and selected-table hash
+`f6727575856fc5fe0e6e24a91e0faa4eace75280794c6d6dc97e57eab7c5750c`. The 75/17 RLS
+inventories and 9-file/479-line/two-patch/0.9954 intrusion result remain within policy.
+
+This record does not prove Provider-native receipts, kill-window recovery, signed
+Provider webhooks, payment/invoice/tax reconciliation, destructive User/Tenant deletion,
+WAL/PITR/multi-AZ recovery, PC3-PC5, production deployment or release `GO`. The eleven
+aggregate gates remain pending.
+
+Exact-SHA image candidate run `31211571817` verifies the same implementation with 945
+tests and one platform skip, a drift-free migration round trip, both patch replays and
+the 9-file/479-line/0.9954 intrusion result. Server and Host each build twice for both
+`linux/amd64` and `linux/arm64`; every repeated Manifest/Config pair matches, every
+image carries exact Product `cc953609`, Upstream `63035f92`, Schema `pc2b00000001` and
+Adapter `0.2.0` labels, and each build has two attestation descriptors. Artifact
+`9007725182` records the four platform Manifest/Config pairs without violations.
+
+The candidates remain unpublished archives without registry-pinned immutable Digests,
+verified signatures, protected production workflow identity, vulnerability/license
+admission, Canary or N-1 rollback. They close only this executable-image candidate
+subcheck; P0 and all eleven aggregate production gates remain blocked. The compatibility
+and image records bring the evidence-successor Wheel requirement to 197 artifacts.

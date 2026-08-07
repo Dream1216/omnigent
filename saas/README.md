@@ -1432,12 +1432,30 @@ The current implementation candidate extends the isolated logical-restore fixtur
 two immutable period-close facts: one is present in the backup and one is applied by
 the deterministic post-backup replay. The restored database must retain both exact
 Tenant/Reconciliation links, expose only the current Tenant through RLS, retain the
-immutability trigger and match selected-table hashes. Local verification passes all 946
-compatibility tests and the 75/17 forced-RLS restore contract; an exact-SHA CI successor
-is still required before this candidate becomes accepted code evidence.
+immutability trigger and match selected-table hashes. Exact compatibility run
+`31211571929` at `cc9536094ff71eff1e7513198de878e3cd038491` passes 946 tests in
+173.45 seconds, the 3.713-second PostgreSQL 16 restore with one backed-up and one
+post-backup replayed close fact, 57 official regressions, the 36/22 Linux security
+matrix, Pyrefly with zero errors, the `pc2b00000001` migration round trip, both patch
+replays, and the 195-artifact implementation wheel. The restored selected-table hash is
+`f6727575856fc5fe0e6e24a91e0faa4eace75280794c6d6dc97e57eab7c5750c`; the forced-RLS
+inventory remains 75 control-plane plus 17 Runtime tables, and source intrusion remains
+inside budget at nine files, 479 lines, two patches and a 0.9954 isolated-code ratio.
+This accepts the exact PC2 Identity Conflict and P6 nonempty logical-restore code slice;
+its executable-image facts are verified separately by the exact-SHA image run below.
 
-Image candidate run `31202057865` verifies the same exact SHA with 942 tests and one
+Image candidate run `31211571817` verifies the same exact SHA with 945 tests and one
 platform skip. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+all repeated platform Manifest/Config pairs match, bind Product `cc953609`, Upstream
+`63035f92`, Schema `pc2b00000001` and Adapter `0.2.0`, and contain two attestation
+descriptors per build. These archives are not registry-published, signed,
+vulnerability/license-cleared, canaried, or N-1-rollback proven. They are accepted
+reproducible candidate-image evidence, not production image promotion. The two new
+machine records bring the evidence-successor wheel requirement to 197 artifacts.
+
+Predecessor image candidate run `31202057865` verifies
+`2d92d02fa02b1e418967c91d67e3eccc59659540` with 942 tests and one platform skip.
+Server and Host each build twice for `linux/amd64` and `linux/arm64`;
 all four repeated platform Manifest/Config pairs match exact Product, Upstream, Schema
 and Adapter labels and include two attestation descriptors per build. These archives
 are not registry-published, signed, vulnerability/license-cleared, canaried, or

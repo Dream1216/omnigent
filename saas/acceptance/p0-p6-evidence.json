@@ -547,7 +547,8 @@
             "saas/production/postgresql_restore.py",
             "saas/scripts/run_postgresql_restore_contract.py",
             "tests/saas/test_postgresql_restore_contract.py",
-            "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json"
+            "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json"
           ]
         },
         {
@@ -708,7 +709,9 @@
             "saas/acceptance/p6-provider-runtime-metering-ci-31068082417.json",
             "saas/control_plane/migrations/versions/p6b000000001_billing_period_close.py",
             "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
-            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json"
+            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json"
           ]
         },
         {
@@ -726,7 +729,9 @@
             "saas/control_plane/platform_lifecycle.py",
             "saas/control_plane/platform_http.py",
             "saas/control_plane/platform_models.py",
+            "saas/control_plane/db_models.py",
             "saas/control_plane/migrations/versions/pc2a00000001_platform_user_tenant_lifecycle.py",
+            "saas/control_plane/migrations/versions/pc2b00000001_identity_conflict_platform_review.py",
             "saas/production/runbooks/tenant-members.md",
             "tests/saas/test_http_cookie_auth.py",
             "tests/saas/test_identity_outbox_governance.py",
@@ -739,7 +744,9 @@
             "saas/acceptance/p6-tenant-members-admin-console-ci-31042515162.json",
             "saas/acceptance/p6-tenant-members-image-candidate-ci-31043457794.json",
             "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
-            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json"
+            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json"
           ]
         },
         {
