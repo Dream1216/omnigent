@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Query, Request, Response
@@ -10,6 +12,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
+from saas.control_plane.platform_governed_access import (
+    AdminOperationView,
+    AuditEventView,
+    PlatformGovernedAccessService,
+    SupportGrantView,
+)
 from saas.control_plane.platform_lifecycle import PlatformLifecycleResult, PlatformLifecycleService
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
@@ -56,6 +64,37 @@ class _IdentityConflictBlockCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
 
 
+class _SupportGrantRequestCommand(BaseModel):
+    tenant_id: UUID
+    mode: Literal["standard", "break_glass"]
+    scopes: tuple[str, ...] = Field(min_length=1, max_length=3)
+    project_ids: tuple[UUID, ...] = Field(default=(), max_length=100)
+    reason: str = Field(min_length=1, max_length=1024)
+    incident_ref: str | None = Field(default=None, max_length=256)
+    expires_at: datetime
+
+
+class _GovernedDecisionCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class _SupportSessionCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class _AuditExportRequestCommand(BaseModel):
+    tenant_id: UUID | None = None
+    from_sequence: int = Field(ge=1)
+    to_sequence: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
+class _AuditExportApprovalCommand(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1024)
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformHttpConfig:
     """Feature flag and independent browser trust configuration."""
@@ -94,7 +133,7 @@ def _status_for(error: PlatformSecurityError) -> int:
         return 403
     if error.code in {"platform_fresh_auth_required"}:
         return 403
-    if error.code == "platform_lifecycle_unavailable":
+    if error.code.endswith("_unavailable"):
         return 503
     if error.code.endswith("_not_found"):
         return 404
@@ -110,6 +149,7 @@ def create_platform_admin_app(
     authorization: PlatformAuthorizationService,
     projections: PlatformProjectionService,
     lifecycle: PlatformLifecycleService | None = None,
+    governed_access: PlatformGovernedAccessService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -194,6 +234,14 @@ def create_platform_admin_app(
                 "platform_lifecycle_unavailable", "Platform lifecycle authority is unavailable"
             )
         return lifecycle
+
+    def governed_access_service() -> PlatformGovernedAccessService:
+        if governed_access is None:
+            raise PlatformSecurityError(
+                "platform_governed_access_unavailable",
+                "Platform governed access authority is unavailable",
+            )
+        return governed_access
 
     def mutation_result(request: Request, value: PlatformLifecycleResult) -> dict[str, object]:
         return {
@@ -478,6 +526,212 @@ def create_platform_admin_app(
         )
         return mutation_result(request, value)
 
+    @app.get("/v2/platform-admin/support-access-grants")
+    def support_access_grants(
+        request: Request,
+        tenant_id: UUID | None = None,
+        status: str | None = Query(default=None, max_length=32),
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        values = governed_access_service().list_support_grants(
+            principal,
+            tenant_id=tenant_id,
+            status=status,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [_support_grant_payload(value) for value in values],
+            "next_cursor": str(values[-1].grant_id) if len(values) == limit else None,
+            "content_access": "grant_scoped_only",
+        }
+
+    @app.post("/v2/platform-admin/support-access-grants", status_code=201)
+    def request_support_access(
+        command: _SupportGrantRequestCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().request_support_grant(
+            principal,
+            tenant_id=command.tenant_id,
+            mode=command.mode,
+            scopes=command.scopes,
+            project_ids=command.project_ids,
+            reason=command.reason,
+            incident_ref=command.incident_ref,
+            expires_at=command.expires_at,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_support_grant_payload(value),
+        }
+
+    @app.post("/v2/platform-admin/support-access-grants/{grant_id}/approve")
+    def approve_support_access(
+        grant_id: UUID,
+        command: _GovernedDecisionCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().decide_staff_approval(
+            principal,
+            grant_id=grant_id,
+            expected_version=command.expected_version,
+            decision="approve",
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _support_grant_payload(value)
+
+    @app.post("/v2/platform-admin/support-access-grants/{grant_id}/reject")
+    def reject_support_access(
+        grant_id: UUID,
+        command: _GovernedDecisionCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().decide_staff_approval(
+            principal,
+            grant_id=grant_id,
+            expected_version=command.expected_version,
+            decision="reject",
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _support_grant_payload(value)
+
+    @app.post("/v2/platform-admin/support-access-grants/{grant_id}/revoke")
+    def revoke_support_access(
+        grant_id: UUID,
+        command: _GovernedDecisionCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().revoke_support_grant(
+            principal,
+            grant_id=grant_id,
+            expected_version=command.expected_version,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _support_grant_payload(value)
+
+    @app.post("/v2/platform-admin/support-access-grants/{grant_id}/sessions", status_code=201)
+    def issue_support_session(
+        grant_id: UUID,
+        command: _SupportSessionCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().issue_support_session(
+            principal,
+            grant_id=grant_id,
+            expected_version=command.expected_version,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return {
+            "session_id": str(value.session_id),
+            "grant_id": str(value.grant_id),
+            "tenant_id": str(value.tenant_id),
+            "principal_id": str(value.principal_id),
+            "scopes": list(value.scopes),
+            "token": value.token,
+            "expires_at": value.expires_at.isoformat(),
+            "one_time_disclosure": True,
+        }
+
+    @app.get("/v2/platform-admin/operations")
+    def operations(
+        request: Request,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        values = governed_access_service().list_admin_operations(
+            principal,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [_operation_payload(value) for value in values],
+            "next_cursor": str(values[-1].operation_id) if len(values) == limit else None,
+        }
+
+    @app.get("/v2/platform-admin/audit-events")
+    def audit_events(
+        request: Request,
+        tenant_id: UUID | None = None,
+        after_sequence: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        values = governed_access_service().list_audit_events(
+            principal,
+            tenant_id=tenant_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [_audit_event_payload(value) for value in values],
+            "next_sequence": values[-1].sequence_no if len(values) == limit else None,
+        }
+
+    @app.post("/v2/platform-admin/audit-exports", status_code=202)
+    def request_audit_export(
+        command: _AuditExportRequestCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().request_audit_export(
+            principal,
+            tenant_id=command.tenant_id,
+            from_sequence=command.from_sequence,
+            to_sequence=command.to_sequence,
+            reason=command.reason,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return {
+            "operation_id": str(value.operation_id),
+            "export_id": str(value.export_id),
+            "status": value.status,
+            "version": value.version,
+            "replayed": value.replayed,
+        }
+
+    @app.post("/v2/platform-admin/operations/{operation_id}/approve")
+    def approve_audit_export(
+        operation_id: UUID,
+        command: _AuditExportApprovalCommand,
+        request: Request,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = governed_access_service().approve_audit_export(
+            principal,
+            operation_id=operation_id,
+            expected_version=command.expected_version,
+            approval_reason=command.reason,
+        )
+        return {
+            "export_id": str(value.export_id),
+            "operation_id": str(value.operation_id),
+            "manifest": value.manifest,
+            "content_hash": value.content_hash,
+            "signing_key_id": value.signing_key_id,
+            "signature": value.signature,
+            "replayed": value.replayed,
+        }
+
     @app.post("/v2/platform-admin/session/logout", status_code=204)
     def logout(request: Request, response: Response) -> Response:
         _principal, token = authenticate(request)
@@ -493,3 +747,71 @@ def create_platform_admin_app(
         return response
 
     return app
+
+
+def _support_grant_payload(value: SupportGrantView) -> dict[str, object]:
+    return {
+        "grant_id": str(value.grant_id),
+        "operation_id": str(value.operation_id),
+        "tenant_id": str(value.tenant_id),
+        "requested_by_principal_id": str(value.requested_by_principal_id),
+        "mode": value.mode,
+        "scopes": list(value.scopes),
+        "project_ids": [str(item) for item in value.project_ids],
+        "status": value.status,
+        "version": value.version,
+        "customer_approval_required": value.customer_approval_required,
+        "customer_approved_by_user_id": (
+            str(value.customer_approved_by_user_id)
+            if value.customer_approved_by_user_id is not None
+            else None
+        ),
+        "staff_approved_by_principal_id": (
+            str(value.staff_approved_by_principal_id)
+            if value.staff_approved_by_principal_id is not None
+            else None
+        ),
+        "requested_at": value.requested_at.isoformat(),
+        "starts_at": value.starts_at.isoformat() if value.starts_at is not None else None,
+        "expires_at": value.expires_at.isoformat(),
+        "incident_ref": value.incident_ref,
+    }
+
+
+def _operation_payload(value: AdminOperationView) -> dict[str, object]:
+    return {
+        "operation_id": str(value.operation_id),
+        "action": value.action,
+        "risk_level": value.risk_level,
+        "tenant_id": str(value.tenant_id) if value.tenant_id is not None else None,
+        "target_type": value.target_type,
+        "target_id": str(value.target_id),
+        "requested_by_principal_id": str(value.requested_by_principal_id),
+        "approved_by_principal_id": (
+            str(value.approved_by_principal_id)
+            if value.approved_by_principal_id is not None
+            else None
+        ),
+        "status": value.status,
+        "version": value.version,
+        "created_at": value.created_at.isoformat(),
+        "updated_at": value.updated_at.isoformat(),
+    }
+
+
+def _audit_event_payload(value: AuditEventView) -> dict[str, object]:
+    return {
+        "event_id": str(value.event_id),
+        "sequence_no": value.sequence_no,
+        "tenant_id": str(value.tenant_id) if value.tenant_id is not None else None,
+        "actor_type": value.actor_type,
+        "actor_id": str(value.actor_id),
+        "event_type": value.event_type,
+        "target_type": value.target_type,
+        "target_id": str(value.target_id),
+        "operation_id": str(value.operation_id) if value.operation_id is not None else None,
+        "payload": value.payload,
+        "previous_hash": value.previous_hash,
+        "event_hash": value.event_hash,
+        "occurred_at": value.occurred_at.isoformat(),
+    }

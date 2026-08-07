@@ -9,8 +9,8 @@ scheduler composition, or production commercial acceptance.
 
 ## Production composition
 
-1. Migrate through `pc2b00000001`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Verify all 75 control-plane and all 17
+1. Migrate through `pc3a00000001`, then reapply
+   `saas/control_plane/postgresql_roles.sql`. Verify all 81 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 2. Construct `BillingControlPlane` with a session factory whose login inherits only
    `saas_billing`. Do not reuse `saas_app`, `saas_governance`, `saas_authenticator`, or
@@ -120,7 +120,9 @@ scheduler composition, or production commercial acceptance.
 - If pricing overlap, currency drift, duplicate Provider facts, or unexplained negative
   projection is detected, fail admission closed and open a billing incident.
 - Application rollback may hide the Billing view or stop the metering listener while
-  retaining `pc2b00000001`. A downgrade to `p6b000000001` is permitted only when the
+  retaining `pc3a00000001`. A schema downgrade must first satisfy the PC3 governed-access
+  evidence guard; do not delete Support or audit facts. A later downgrade to
+  `p6b000000001` is permitted only when the
   PC2 Identity Conflict review guard proves that no review or audit fact would be lost.
   Before downgrading from `p6b000000001`, stop period-close
   workers and preserve every close checkpoint. Before downgrading from

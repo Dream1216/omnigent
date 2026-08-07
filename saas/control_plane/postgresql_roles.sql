@@ -47,6 +47,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_projector') THEN
         CREATE ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_support') THEN
+        CREATE ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 
@@ -65,12 +68,13 @@ ALTER ROLE saas_platform_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
     saas_metering, saas_platform, saas_platform_authenticator, saas_platform_app,
-    saas_platform_governance, saas_platform_projector;
+    saas_platform_governance, saas_platform_projector, saas_platform_support;
 
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
@@ -81,17 +85,30 @@ REVOKE ALL PRIVILEGES ON
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
     saas_platform_user_projections,
-    saas_platform_lifecycle_operations
+    saas_platform_lifecycle_operations,
+    saas_platform_admin_operations,
+    saas_platform_support_grants,
+    saas_platform_support_sessions,
+    saas_platform_audit_chain_heads,
+    saas_platform_audit_events,
+    saas_platform_audit_exports
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
     saas_platform_authenticator, saas_platform_app, saas_platform_governance,
-    saas_platform_projector, saas_platform;
+    saas_platform_projector, saas_platform_support, saas_platform;
 
 GRANT SELECT ON
     saas_platform_staff_principals,
     saas_platform_role_assignments,
     saas_platform_auth_sessions
+TO saas_platform_authenticator;
+-- PC3 adds an exact support-session policy to the Staff and assignment tables.
+-- PostgreSQL validates referenced-table privileges before choosing another
+-- permissive policy branch. These two columns are therefore required by the
+-- existing authenticator/app readers; FORCE RLS still exposes zero support rows.
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions
 TO saas_platform_authenticator;
 GRANT INSERT ON saas_platform_auth_sessions TO saas_platform_authenticator;
 GRANT UPDATE (revoked_at, last_seen_at) ON saas_platform_auth_sessions
@@ -103,6 +120,9 @@ GRANT SELECT ON
     saas_platform_tenant_projections,
     saas_platform_user_projections
 TO saas_platform_app;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions
+TO saas_platform_app;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_platform_staff_principals,
@@ -110,12 +130,40 @@ GRANT SELECT, INSERT, UPDATE ON
 TO saas_platform_governance;
 GRANT SELECT, INSERT ON saas_platform_lifecycle_operations
 TO saas_platform_governance;
+GRANT SELECT, INSERT, UPDATE ON
+    saas_platform_admin_operations,
+    saas_platform_support_grants,
+    saas_platform_support_sessions,
+    saas_platform_audit_chain_heads
+TO saas_platform_governance;
+GRANT SELECT, INSERT ON
+    saas_platform_audit_events,
+    saas_platform_audit_exports
+TO saas_platform_governance;
 GRANT SELECT ON
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
     saas_platform_user_projections
 TO saas_platform_governance;
 GRANT UPDATE (revoked_at) ON saas_platform_auth_sessions TO saas_platform_governance;
+GRANT SELECT ON saas_control_plane_outbox TO saas_platform_governance;
+
+-- The support data-plane role validates one opaque, short-lived JIT session.
+-- It cannot create Grants, mutate their scope, approve operations, or inherit
+-- the platform emergency authority.
+GRANT SELECT ON
+    saas_platform_staff_principals,
+    saas_platform_role_assignments,
+    saas_platform_support_grants,
+    saas_platform_support_sessions
+TO saas_platform_support;
+GRANT UPDATE (last_seen_at) ON saas_platform_support_sessions
+TO saas_platform_support;
+-- PostgreSQL validates every table referenced by a permissive RLS policy even
+-- when another OR branch grants the row. Tenant RLS still returns no rows
+-- because the Support Realm clears app.actor_id and app.tenant_id.
+GRANT SELECT (tenant_id, user_id, role, status) ON saas_tenant_memberships
+TO saas_platform_support;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_platform_tenant_projections,
@@ -128,7 +176,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_platform_auth_sessions,
     saas_platform_tenant_projections,
     saas_platform_user_projections,
-    saas_platform_lifecycle_operations
+    saas_platform_lifecycle_operations,
+    saas_platform_admin_operations,
+    saas_platform_support_grants,
+    saas_platform_support_sessions,
+    saas_platform_audit_chain_heads,
+    saas_platform_audit_events,
+    saas_platform_audit_exports
 TO saas_platform;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
@@ -143,6 +197,18 @@ ON saas_platform_role_assignments TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
     saas_metering, saas_platform_projector;
+-- PC3 adds a Support-session branch to the Assignment policy. These roles can
+-- already evaluate PC2 Assignment predicates, so PostgreSQL also needs planning
+-- access to exactly the four Session columns used by that branch. The Session
+-- table's FORCE RLS exposes zero rows unless the caller is the exact Support role
+-- with an active token.
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO
+    saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
+    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
+    saas_metering, saas_platform_projector;
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_platform_support;
 GRANT SELECT (id, status, security_version) ON saas_global_users
 TO saas_platform_governance;
 GRANT SELECT (id, user_id, revoked_at) ON saas_auth_sessions

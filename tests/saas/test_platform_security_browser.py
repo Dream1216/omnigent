@@ -274,7 +274,7 @@ def _realm_and_role_negative_matrix(
 
         status, payload = _navigate_json(page, f"{fixture.origin}/v2/platform-admin/permissions")
         assert status == 200
-        assert payload["policy_version"] == "2026-08-08.pc2-conflict"
+        assert payload["policy_version"] == "2026-08-08.pc3-governed-access"
 
         context.add_cookies(
             [

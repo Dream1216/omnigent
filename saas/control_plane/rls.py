@@ -18,6 +18,8 @@ class RlsContext:
     space_id: UUID | None = None
     api_credential_id: UUID | None = None
     invitation_token_hash: str | None = None
+    target_support_grant_id: UUID | None = None
+    target_admin_operation_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,9 @@ class PlatformRlsContext:
     target_tenant_id: UUID | None = None
     target_user_id: UUID | None = None
     target_identity_conflict_id: UUID | None = None
+    target_support_grant_id: UUID | None = None
+    target_admin_operation_id: UUID | None = None
+    support_session_token_hash: str | None = None
 
 
 def _set_local(session: Session, name: str, value: str) -> None:
@@ -53,6 +58,9 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     _set_local(session, "app.platform_target_tenant_id", "")
     _set_local(session, "app.platform_target_user_id", "")
     _set_local(session, "app.platform_target_identity_conflict_id", "")
+    _set_local(session, "app.platform_target_support_grant_id", "")
+    _set_local(session, "app.platform_target_admin_operation_id", "")
+    _set_local(session, "app.platform_support_session_token_hash", "")
     _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
     _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
     _set_local(session, "app.space_id", str(context.space_id) if context.space_id else "")
@@ -62,6 +70,16 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
         str(context.api_credential_id) if context.api_credential_id else "",
     )
     _set_local(session, "app.invitation_token_hash", context.invitation_token_hash or "")
+    _set_local(
+        session,
+        "app.platform_target_support_grant_id",
+        str(context.target_support_grant_id) if context.target_support_grant_id else "",
+    )
+    _set_local(
+        session,
+        "app.platform_target_admin_operation_id",
+        str(context.target_admin_operation_id) if context.target_admin_operation_id else "",
+    )
 
 
 def apply_platform_rls_context(session: Session, context: PlatformRlsContext) -> None:
@@ -104,4 +122,19 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         session,
         "app.platform_target_identity_conflict_id",
         str(context.target_identity_conflict_id) if context.target_identity_conflict_id else "",
+    )
+    _set_local(
+        session,
+        "app.platform_target_support_grant_id",
+        str(context.target_support_grant_id) if context.target_support_grant_id else "",
+    )
+    _set_local(
+        session,
+        "app.platform_target_admin_operation_id",
+        str(context.target_admin_operation_id) if context.target_admin_operation_id else "",
+    )
+    _set_local(
+        session,
+        "app.platform_support_session_token_hash",
+        context.support_session_token_hash or "",
     )

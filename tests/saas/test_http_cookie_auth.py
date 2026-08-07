@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
+import pytest
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -11,7 +13,9 @@ from saas.compatibility import current_runtime_context
 from saas.control_plane import (
     MEMBER_ADMIN_ROUTE_PERMISSIONS,
     PERMISSION_CATALOG,
+    PLATFORM_ROLE_PERMISSIONS,
     PROJECT_ADMIN_ROUTE_PERMISSIONS,
+    AuditSigningKey,
     BillingControlPlane,
     ContextSnapshotPolicy,
     ContextSnapshotService,
@@ -20,6 +24,11 @@ from saas.control_plane import (
     MembershipGovernanceService,
     MembershipLifecycleService,
     PasswordCredentialService,
+    PlatformGovernedAccessService,
+    PlatformRoleAssignmentRecord,
+    PlatformSecurityError,
+    PlatformStaffPrincipalRecord,
+    PlatformTenantProjectionRecord,
     ProjectAdministrationService,
     ProjectAuthorizer,
     RemovalImpact,
@@ -36,6 +45,7 @@ from saas.control_plane import (
     Tenant,
     TenantMemberAdministrationService,
     TenantMembership,
+    ValidatedPlatformPrincipal,
     VerifiedIdentityAssertion,
     create_saas_http_integration,
 )
@@ -49,6 +59,8 @@ class _NoRemovalImpact:
 def _build_fastapi_app(
     trusted_origin: str = "http://testserver",
     database_url: str | None = None,
+    *,
+    with_platform_support_access: bool = False,
 ) -> tuple[FastAPI, dict[str, str]]:
     database = database_url or (
         f"sqlite+pysqlite:///file:omnigent-http-{uuid4().hex}?mode=memory&cache=shared&uri=true"
@@ -284,6 +296,14 @@ def _build_fastapi_app(
         secure=False,
         trusted_origins=frozenset({trusted_origin}),
     )
+    platform_support_access = (
+        PlatformGovernedAccessService(
+            sessions,
+            signing_key=AuditSigningKey(key_id="tenant-http-test-v1", secret=b"t" * 32),
+        )
+        if with_platform_support_access
+        else None
+    )
     integration = create_saas_http_integration(
         lifecycle=lifecycle,
         identities=identities,
@@ -307,10 +327,13 @@ def _build_fastapi_app(
             )
         ),
         degraded_read_paths=frozenset({"/v1/protected"}),
+        platform_support_access=platform_support_access,
     )
     auth = integration.auth_provider
     app = FastAPI()
     app.state.saas_test_engine = engine
+    app.state.saas_test_sessions = sessions
+    app.state.saas_test_support_access = platform_support_access
     router, prefix, tags = integration.extra_router
     app.include_router(router, prefix=prefix, tags=tags)
 
@@ -347,7 +370,168 @@ def _login(client: TestClient) -> str:
     )
     assert response.status_code == 200
     assert "HttpOnly" in response.headers["set-cookie"]
-    return response.json()["csrf_token"]
+    token = response.json()["csrf_token"]
+    assert isinstance(token, str)
+    return token
+
+
+def test_tenant_cookie_support_access_can_approve_and_immediately_revoke() -> None:
+    app, scope = _build_fastapi_app(with_platform_support_access=True)
+    client = TestClient(app)
+    csrf = _login(client)
+    factory = app.state.saas_test_sessions
+    governed = app.state.saas_test_support_access
+    assert governed is not None
+    now = datetime.now(timezone.utc)
+    support_id, operator_id = uuid4(), uuid4()
+    tenant_id = UUID(scope["tenant_id"])
+    with factory.begin() as db:
+        db.add_all(
+            [
+                PlatformStaffPrincipalRecord(
+                    id=support_id,
+                    identity_connection_ref=f"staff-idp:{support_id}",
+                    issuer="https://staff-idp.example.test",
+                    subject=f"tenant-http-support-{support_id}",
+                    status="active",
+                    security_version=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                PlatformStaffPrincipalRecord(
+                    id=operator_id,
+                    identity_connection_ref=f"staff-idp:{operator_id}",
+                    issuer="https://staff-idp.example.test",
+                    subject=f"tenant-http-operator-{operator_id}",
+                    status="active",
+                    security_version=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        db.flush()
+        db.add_all(
+            [
+                PlatformRoleAssignmentRecord(
+                    principal_id=support_id,
+                    role="support_agent",
+                    status="active",
+                    version=1,
+                    assigned_by_principal_id=operator_id,
+                    approval_ref="tenant-http-support-bootstrap",
+                    reason="Tenant Cookie support acceptance",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                PlatformRoleAssignmentRecord(
+                    principal_id=operator_id,
+                    role="platform_operator",
+                    status="active",
+                    version=1,
+                    assigned_by_principal_id=support_id,
+                    approval_ref="tenant-http-operator-bootstrap",
+                    reason="Tenant Cookie approval acceptance",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                PlatformTenantProjectionRecord(
+                    tenant_id=tenant_id,
+                    slug="http-tenant",
+                    name="HTTP Tenant",
+                    status="active",
+                    plan="team",
+                    home_region="cn-east-1",
+                    member_count=3,
+                    space_count=1,
+                    source_version=1,
+                    updated_at=now,
+                ),
+            ]
+        )
+    support = ValidatedPlatformPrincipal(
+        session_id=uuid4(),
+        principal_id=support_id,
+        security_version=1,
+        authn_method="passkey",
+        authenticated_at=now,
+        expires_at=now + timedelta(hours=1),
+        roles=frozenset({"support_agent"}),
+        permissions=PLATFORM_ROLE_PERMISSIONS["support_agent"],
+    )
+    operator = ValidatedPlatformPrincipal(
+        session_id=uuid4(),
+        principal_id=operator_id,
+        security_version=1,
+        authn_method="passkey",
+        authenticated_at=now,
+        expires_at=now + timedelta(hours=1),
+        roles=frozenset({"platform_operator"}),
+        permissions=PLATFORM_ROLE_PERMISSIONS["platform_operator"],
+    )
+    grant = governed.request_support_grant(
+        support,
+        tenant_id=tenant_id,
+        mode="standard",
+        scopes=("runtime.diagnostics.read",),
+        project_ids=(),
+        reason="Tenant Cookie governed diagnostics",
+        incident_ref=None,
+        expires_at=now + timedelta(minutes=30),
+        idempotency_key="tenant-http-support-request",
+        now=now,
+    )
+
+    listed = client.get(f"/saas/tenants/{tenant_id}/support-access-grants")
+    assert listed.status_code == 200
+    assert listed.json()["content_access"] == "none"
+    assert listed.json()["items"][0]["grant_id"] == str(grant.grant_id)
+    headers = {
+        "Origin": "http://testserver",
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": "tenant-http-support-approve",
+    }
+    approved_by_customer = client.post(
+        f"/saas/tenants/{tenant_id}/support-access-grants/{grant.grant_id}/approve",
+        headers=headers,
+        json={
+            "expected_version": 1,
+            "reason": "Tenant Owner authorizes diagnostics",
+        },
+    )
+    assert approved_by_customer.status_code == 200
+    assert approved_by_customer.json()["status"] == "pending_staff_approval"
+    approved = governed.decide_staff_approval(
+        operator,
+        grant_id=grant.grant_id,
+        expected_version=2,
+        decision="approve",
+        reason="independent Staff approval",
+        idempotency_key="tenant-http-staff-approve",
+        now=now + timedelta(seconds=1),
+    )
+    issued = governed.issue_support_session(
+        support,
+        grant_id=grant.grant_id,
+        expected_version=approved.version,
+        idempotency_key="tenant-http-support-session",
+        now=now + timedelta(seconds=2),
+    )
+    revoked = client.post(
+        f"/saas/tenants/{tenant_id}/support-access-grants/{grant.grant_id}/revoke",
+        headers={**headers, "Idempotency-Key": "tenant-http-support-revoke"},
+        json={"expected_version": 3, "reason": "Tenant stops Staff access"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    with pytest.raises(PlatformSecurityError) as stopped:
+        governed.validate_support_session(
+            issued.token,
+            tenant_id=tenant_id,
+            required_scope="runtime.diagnostics.read",
+            now=now + timedelta(seconds=3),
+        )
+    assert stopped.value.code == "support_session_invalid"
 
 
 def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:

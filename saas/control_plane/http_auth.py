@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from saas.control_plane.bindings import RuntimeBindingService
     from saas.control_plane.enterprise_access import EnterpriseAccessService
     from saas.control_plane.member_admin import TenantMemberAdministrationService
+    from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -1125,6 +1126,7 @@ def create_saas_http_integration(
     member_admin: TenantMemberAdministrationService | None = None,
     member_lifecycle: MembershipLifecycleService | None = None,
     billing: BillingControlPlane | None = None,
+    platform_support_access: PlatformGovernedAccessService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1182,6 +1184,15 @@ def create_saas_http_integration(
 
         router.include_router(
             create_billing_admin_router(auth_provider=auth_provider, billing=billing)
+        )
+    if platform_support_access is not None:
+        from saas.control_plane.platform_support_http import create_tenant_support_access_router
+
+        router.include_router(
+            create_tenant_support_access_router(
+                auth_provider=auth_provider,
+                governed_access=platform_support_access,
+            )
         )
     public_api_router = None
     if api_credentials is not None:

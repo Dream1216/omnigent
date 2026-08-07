@@ -58,14 +58,20 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
         )
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_seventy_three_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 75
+def test_canonical_control_plane_rls_inventory_has_exactly_eighty_one_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 81
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_auth_sessions" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_tenant_projections" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_user_projections" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_admin_operations" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_support_grants" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_support_sessions" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_audit_chain_heads" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_audit_events" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_platform_audit_exports" in CONTROL_PLANE_RLS_TABLES
     assert "saas_service_accounts" in CONTROL_PLANE_RLS_TABLES
     assert "saas_api_credentials" in CONTROL_PLANE_RLS_TABLES
     assert "saas_enterprise_groups" in CONTROL_PLANE_RLS_TABLES

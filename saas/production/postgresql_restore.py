@@ -441,12 +441,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc2b00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc3a00000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc2b00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc3a00000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -1174,7 +1174,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc2b00000001":
+            if saas_head != "pc3a00000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()

@@ -38,7 +38,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "pc2b00000001"
+        assert revision == "pc3a00000001"
         preflight_indexes = {
             value["name"] for value in inspector.get_indexes("saas_enterprise_access_preflights")
         }

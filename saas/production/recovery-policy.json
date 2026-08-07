@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "policy_id": "omnigent-saas-single-region-recovery-v1",
-  "reviewed_at": "2026-08-07",
+  "reviewed_at": "2026-08-08",
   "revision_contract": {
     "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "pc2b00000001"
+    "control_plane_schema_revision": "pc3a00000001"
   },
   "evidence_directory": "saas/production/recovery-evidence",
   "max_evidence_age_days": 90,
@@ -32,7 +32,7 @@
     "restore_completed",
     "source_schema_exact",
     "source_revision_exact",
-    "forced_rls_control_plane_73",
+    "forced_rls_control_plane_81",
     "forced_rls_runtime_17",
     "cross_tenant_negative",
     "tombstone_replay",

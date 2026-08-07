@@ -799,3 +799,18 @@ verified signatures, protected production workflow identity, vulnerability/licen
 admission, Canary or N-1 rollback. They close only this executable-image candidate
 subcheck; P0 and all eleven aggregate production gates remain blocked. The compatibility
 and image records bring the evidence-successor Wheel requirement to 197 artifacts.
+
+PC3 governed-access working candidate advances the schema to `pc3a00000001` and the
+forced-RLS inventory to 81 control-plane plus 17 Runtime tables. It adds Tenant-visible
+JIT Support Grants, independent Staff approval, exact short-lived Support Sessions,
+customer immediate revoke, Admin Operations, a serialized immutable audit hash chain,
+and two-person signed exports. Staff, Tenant and Support database roles remain separate
+from emergency `saas_platform`; real PostgreSQL 16 tests exercise PC1, PC2 downgrade,
+PC3 exact-token/Tenant isolation, immutability and failed emergency escalation in
+isolated databases.
+
+This is current local code evidence, not an accepted immutable release record. It still
+requires an exact-SHA compatibility run, image run, non-empty PC3 backup/restore and
+replay proof, production KMS/HSM signer and rotation evidence, protected deployment,
+authenticated production E2E, and PC4/PC5 completion. All eleven aggregate gates and
+release status remain `NO-GO`.

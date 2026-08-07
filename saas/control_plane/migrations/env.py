@@ -15,6 +15,7 @@ from saas.control_plane import execution_models as _execution_models  # noqa: F4
 from saas.control_plane import gateway_models as _gateway_models  # noqa: F401
 from saas.control_plane import isolation_models as _isolation_models  # noqa: F401
 from saas.control_plane import placement_models as _placement_models  # noqa: F401
+from saas.control_plane import platform_governed_models as _platform_governed_models  # noqa: F401
 from saas.control_plane import platform_models as _platform_models  # noqa: F401
 from saas.control_plane import scheduling_models as _scheduling_models  # noqa: F401
 from saas.control_plane import webhook_models as _webhook_models  # noqa: F401

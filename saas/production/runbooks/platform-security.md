@@ -1,9 +1,9 @@
 # Platform Security Foundation operations
 
-This runbook operates the PC1 Staff Realm plus the PC2 content-blind Global User and
-Tenant lifecycle authority. It does not authorize customer-content access, support
-impersonation, break-glass, destructive User/Tenant deletion, or production release.
-Those remain separate governed capabilities and acceptance gates.
+This runbook operates the PC1 Staff Realm, PC2 content-blind lifecycle authority, and
+PC3 governed JIT Support/Admin Operation/audit-evidence boundary. It never grants
+ambient customer-content access or makes the emergency database role an application
+role. Destructive User/Tenant deletion and production release remain separate gates.
 
 ## Trust boundary and deployment
 
@@ -14,15 +14,16 @@ Those remain separate governed capabilities and acceptance gates.
 2. Require Passkey/WebAuthn or an equivalent phishing-resistant IdP assertion. Password
    authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
    incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `pc2b00000001`, then apply
-   `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 75 control-plane
+3. Migrate through `pc3a00000001`, then apply
+   `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 81 control-plane
    tables and 17 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
 
    - Staff assertion and session service: `saas_platform_authenticator`;
    - Platform browser API: `saas_platform_app`;
    - approved Staff and Assignment administration: `saas_platform_governance`;
-   - content-blind projection writer: `saas_platform_projector`.
+   - content-blind projection writer: `saas_platform_projector`;
+   - exact opaque JIT-session validation: `saas_platform_support`.
 
    None may inherit `saas_platform`, `saas_app`, `saas_governance`, or another platform
    process role. The emergency `saas_platform` credential is not application
@@ -97,6 +98,32 @@ Those remain separate governed capabilities and acceptance gates.
   refused while any reviewed case or Identity Conflict operation exists; use an
   explicitly approved forward archival migration rather than deleting audit facts.
 
+## PC3 governed Support and audit evidence
+
+- Standard Support access is Tenant-bound, expires within one hour, and requires an
+  active Tenant Owner/Admin/Security Auditor decision followed by a different Staff
+  approver. The requester cannot self-approve. Customer identity status and
+  `security_version` are rechecked in the same transaction.
+- Break-glass access requires an incident reference, expires within 15 minutes, skips
+  only customer pre-approval, and still requires a distinct Staff approver. It never
+  inherits `saas_platform`, bypasses RLS, or broadens its requested scopes.
+- Content scope is bound to exact Project IDs. A one-time disclosed Support token
+  resolves only its active Grant, Tenant, Staff principal, scope and Project set. Store
+  only its digest; revoke or expiry invalidates access immediately.
+- Tenant administrators can list metadata, approve/reject, and immediately revoke an
+  exact Grant from the Tenant Cookie/Origin/CSRF Realm. Customer revocation terminates
+  all active Grant sessions in the same transaction and emits a redacted Outbox fact.
+- Admin Operations, Grant transitions and export approvals are versioned and
+  idempotent. The audit chain has a permanent locked head, monotonic sequence, payload
+  hash, previous hash and event hash. Audit Event and Export rows reject update/delete.
+- Audit exports require an authorized auditor request plus a different Staff approver.
+  Production must inject an `AuditSigner` backed by an independently permissioned
+  KMS/HSM HMAC key. `AuditSigningKey` is only for local tests; a plaintext production
+  key is a release blocker.
+- Run application traffic through `saas_platform_governance` only for governed
+  mutations and through `saas_platform_support` only for exact token validation. Never
+  grant either role membership in the emergency `saas_platform` role.
+
 ## Verification
 
 Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
@@ -107,13 +134,16 @@ uv run pytest -q \
   tests/saas/test_platform_http.py \
   tests/saas/test_platform_security_browser.py \
   tests/saas/test_platform_lifecycle.py \
-  tests/saas/test_platform_lifecycle_http.py
+  tests/saas/test_platform_lifecycle_http.py \
+  tests/saas/test_platform_governed_access.py \
+  tests/saas/test_http_cookie_auth.py
 
 export OMNIGENT_SAAS_TEST_POSTGRES_URL=\
 postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
 uv run pytest -q \
   tests/saas/test_platform_security_postgresql.py \
-  tests/saas/test_platform_lifecycle_postgresql.py
+  tests/saas/test_platform_lifecycle_postgresql.py \
+  tests/saas/test_platform_governed_access_postgresql.py
 ```
 
 The PostgreSQL check must prove exact Staff identity and session lookup, role-less
@@ -124,7 +154,7 @@ role-less denial.
 
 Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
 compatibility matrix. The restore must retain non-empty Staff, Assignment, Session and
-both projection tables, lifecycle receipts, exact `pc2b00000001`, and the 75/17
+both projection tables, lifecycle receipts, exact `pc3a00000001`, and the 81/17
 forced-RLS inventories.
 
 ## Revocation, incident response and rollback
@@ -136,20 +166,26 @@ forced-RLS inventories.
 - For an Origin, Audience, cookie or RLS composition error, disable the Platform feature
   flag and remove its ingress before changing data. Tenant administration remains on its
   independent Realm.
+- For suspected Support-token exposure, revoke the exact Grant first, confirm every
+  linked Session has `revoked_at`, disable the Support data-plane login if containment
+  is uncertain, and verify the audit chain before resuming. Do not widen a Grant during
+  an incident; request a new versioned Grant instead.
 - A code rollback may leave the PC1 tables and forced policies in place. Do not downgrade
   the schema while a Platform process or session is active. Before a destructive
   downgrade, disable ingress, revoke all Staff sessions, stop authenticator/app/
   governance/projector processes, preserve approved Assignment evidence, take an
   immutable backup and rehearse restoration.
+- Downgrade from `pc3a00000001` is refused while any Grant, Session, Admin Operation,
+  Audit Event or Export fact exists. Archive and verify evidence through an approved
+  forward migration; never delete PC3 facts to make an older binary start.
 - Emergency recovery uses the separate incident and break-glass process. Never add
   `saas_platform` inheritance to make an application outage disappear.
 
 ## Acceptance boundary
 
-Passing this runbook establishes the PC1 security foundation and current PC2 lifecycle
-slice: independent Staff Realm, versioned permissions and built-in roles, governed
+Passing this runbook establishes the code contracts for the PC1 security foundation,
+PC2 lifecycle, and PC3 governed-access slice: independent Staff Realm, governed
 Assignments, content-blind projections, least-privilege target-bound database roles,
 User/Tenant suspend/restore, Session revocation and Owner Recovery. It does not
-establish User/Tenant deletion, identity-conflict case management, a complete Platform
-Console, JIT Support, immutable audit/export, enterprise identity, production evidence,
-or release GO.
+establish User/Tenant deletion, a complete Platform Console UI, production KMS signing,
+deployed Staff IdP/Origins, multi-AZ/PITR evidence, or release GO.

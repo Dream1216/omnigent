@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc2-conflict"
+POLICY_VERSION: Final = "2026-08-08.pc3-governed-access"
 
 
 class PermissionScope(StrEnum):
@@ -233,6 +233,16 @@ _DEFINITIONS = (
         audit_event="platform.support_access.requested",
     ),
     _permission(
+        "platform.break_glass.request",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/support-access-grants",),
+        ui_surface="support-access",
+        audit_event="platform.break_glass.requested",
+    ),
+    _permission(
         "platform.support_grant.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
@@ -252,6 +262,16 @@ _DEFINITIONS = (
         api_surfaces=("GET /v2/platform-admin/operations",),
         ui_surface="operations",
         audit_event="platform.operations.read",
+    ),
+    _permission(
+        "platform.operation.approve",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/operations/{id}/approve",),
+        ui_surface="operations",
+        audit_event="platform.operation.approved",
     ),
     _permission(
         "platform.runner.manage",
@@ -465,9 +485,11 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.read",
                 "platform.identity_conflict.manage",
                 "platform.operations.read",
+                "platform.operation.approve",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",
+                "platform.support_grant.manage",
             }
         ),
         "platform_security_auditor": frozenset(
@@ -493,6 +515,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.user.read",
                 "platform.support.read",
                 "platform.support.request",
+                "platform.break_glass.request",
                 "platform.operations.read",
             }
         ),

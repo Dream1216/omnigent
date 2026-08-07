@@ -306,7 +306,7 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
 
     permissions = client.get("/saas/admin/permissions")
     assert permissions.status_code == 200
-    assert permissions.json()["policy_version"] == "2026-08-08.pc2-conflict"
+    assert permissions.json()["policy_version"] == "2026-08-08.pc3-governed-access"
     catalog = {value["name"] for value in permissions.json()["permissions"]}
     assert {"group.manage", "custom_role.manage"} <= catalog
 

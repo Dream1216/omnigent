@@ -1467,3 +1467,43 @@ PC3 governed support and signed audit,
 PC4 `/platform-admin` UI, PC5 enterprise/operations completion, Provider-native
 Receipt/Kill-Window recovery, payment, invoice or tax integrations. The 11 aggregate
 production gates and release `NO-GO` remain unchanged.
+
+## PC3 governed Support and audit-evidence implementation candidate
+
+The downstream head `pc3a00000001` adds six isolated platform tables for versioned
+Admin Operations, Tenant-bound JIT Support Grants, opaque one-time Support Sessions, a
+serialized hash-chain head, immutable Audit Events and signed Audit Exports. It does
+not modify the official Agent/Harness loop. The forced-RLS inventory is now 81
+control-plane tables plus the existing 17 Runtime tables.
+
+Standard Support access has a one-hour maximum and requires fresh approval from an
+active Tenant Owner/Admin/Security Auditor followed by a different Staff approver.
+Break-glass has a 15-minute maximum and mandatory incident reference; it skips only
+customer pre-approval and still requires separation of duties. Both modes bind exact
+Tenant, scope, expiry and optional Project IDs. The short-lived Support token is shown
+once, persisted only as a SHA-256 digest, and can be validated only through the
+independent `saas_platform_support` role. That role neither inherits nor can `SET ROLE`
+to the emergency `saas_platform` authority.
+
+The Staff application exposes request/list/approve/reject/revoke/session endpoints and
+content-blind Admin Operation/Audit queries. The Tenant Cookie application exposes
+Grant metadata plus approve/reject/immediate-revoke controls; it rechecks Global User
+status, session security version and active Tenant role. Every accepted transition,
+session issuance and revocation commits its redacted Outbox fact and hash-chained audit
+event in the same transaction. The permanent empty chain head serializes the first
+writer, and PostgreSQL triggers reject mutation or deletion of Audit Events/Exports.
+
+Audit Export requires an authorized auditor request and a distinct Staff approval.
+`AuditSigner` is the production abstraction for an external KMS/HSM HMAC-SHA256 key;
+the in-process `AuditSigningKey` exists only for deterministic local acceptance. A
+production plaintext signing key, missing KMS identity/rotation proof, or unverified
+chain/export signature remains a release blocker.
+
+Local acceptance covers SQLite migration/downgrade, Staff and Tenant HTTP Cookie/CSRF
+flows, stale customer security-version denial, exact Project scope, customer and Staff
+revocation, two-person Export signing, hash-chain verification, and isolated real
+PostgreSQL 16 PC1/PC2/PC3 role/RLS regression. These code checks do not prove the exact
+candidate through hosted CI, non-empty logical backup/restore of PC3 facts, production
+KMS signing, a complete PC4 UI, deployed Origins/IdPs, multi-AZ/PITR, or any aggregate
+production gate. Release remains `NO-GO` until those artifacts exist for one immutable
+revision.
