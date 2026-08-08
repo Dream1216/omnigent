@@ -596,6 +596,29 @@ because pricing, billing reconciliation, customer acceptance, and other commerci
 evidence are absent. The evidence-successor wheel requires 156 artifacts, and the
 release remains `NO-GO`.
 
+The next accepted official sync advances the baseline from `63035f92` to `9dab48b4`
+through 23 commits and 64 changed files with zero merge conflicts. The first exact
+candidate correctly fails closed after 982 passing tests because whitespace cleanup
+made the regenerated managed-runtime patch corrupt on a clean checkout. Corrected run
+`31236956326` at `59562d32e807caa0d38fb71d4a4975ef13d7f8fc` passes 983 compatibility
+tests, a 4.294-second PostgreSQL restore with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions, the 39/22 Linux security
+matrix, Pyrefly, migration round trip, two clean patch replays and the 214-artifact
+implementation wheel. Intrusion remains within budget at nine files, 485 lines, two
+patches and a 0.9958 isolated-code ratio. Managed mode adopts the upstream per-session
+workspace contract but rejects both `SSH_AUTH_SOCK` and `KUBECONFIG` authority paths;
+local mode retains the official SSH Agent behavior.
+
+Manually dispatched image run `31236978641` verifies the same exact revision because
+the patch-only correction is outside the image workflow's automatic path filter. It
+passes 982 tests plus one platform skip, then builds Server and Host twice for both
+`linux/amd64` and `linux/arm64`; all repeated Manifest/Config facts match and every
+label binds Product `59562d32`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter
+`0.2.0`. These are still unpublished candidate archives without registry promotion,
+signature, vulnerability/license admission, canary or N-1 rollback proof. The paired
+evidence-successor wheel requires 216 artifacts; all eleven aggregate gates and release
+`NO-GO` remain unchanged.
+
 The seventh P6 contract slice introduces ten Tenant billing tables at migration
 `p6a000000008`: Subscription, immutable versioned Pricing, scoped Entitlement,
 immutable Usage, a rebuildable Balance projection, Reservation, append-only Customer

@@ -1615,3 +1615,25 @@ attestation descriptors. Artifact `9015030365` has digest
 The archives remain unpublished and are not signed, vulnerability/license admitted,
 canaried or N-1 rollback proven. All omitted protocol, privacy, federation, operations
 and production gates remain open; this is not PC5 completion or production proof.
+
+The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
+files after `63035f92`, without a merge conflict. Upstream now launches each Runner in
+the session workspace, recovers cleanly after a failed snapshot, isolates malformed
+snapshot metadata and skips bubblewrap masks that target escaping symlinks. It also
+forwards `SSH_AUTH_SOCK` for local Hosts. The managed composition keeps that upstream
+local behavior outside SaaS while failing closed on both `SSH_AUTH_SOCK` and
+`KUBECONFIG`, since either path confers signing or cluster authority to a tenant process.
+
+Exact corrected revision `59562d32e807caa0d38fb71d4a4975ef13d7f8fc` is verified by
+compatibility run `31236956326`: 983 tests pass with 232 warnings in 189.58 seconds,
+the PostgreSQL restore completes in 4.294 seconds with 85/17 forced-RLS inventories and
+two Tenant-isolated SCIM fact sets, 63 official regressions pass, and the Linux security
+matrix records 39 passes plus 22 platform skips. Pyrefly reports zero errors, migrations
+round trip without drift, both patches replay from the clean official tree, the wheel
+contains 214 required artifacts and source intrusion stays within budget at nine files,
+485 lines, two patches and a 0.9958 isolated-code ratio. Image run `31236978641` passes
+982 tests plus one platform skip and reproduces Server/Host Manifest and Config facts
+across two `linux/amd64` and `linux/arm64` builds. All labels bind Product `59562d32`,
+Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, with two attestation
+descriptors per build. The images remain unpublished candidates and do not change the
+eleven pending aggregate gates or release `NO-GO`.
