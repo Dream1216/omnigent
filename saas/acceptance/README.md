@@ -861,11 +861,27 @@ KMS/HSM, live customer-approved Support, registry promotion, signature, scan, Ca
 N-1 rollback, PC5 or release `GO`. PC5 has no exact-SHA machine record until its own
 implementation commit and workflows pass.
 
-The local PC5 SCIM foundation has no machine record yet. Its directed checks cover
+PC5 SCIM foundation implementation `e71a46652a153e9e23f5b3959de59f375cf9a89e`
+now has exact compatibility record `31233595734`. Its directed checks cover
 fresh-authenticated one-time Directory credential issuance, User/Group convergence,
 deprovision-before-late-group ordering, owner recovery blocking, SCIM JSON errors and
 ETags, 85/17 forced RLS, immutable Events and a nonempty two-Tenant logical restore.
 Directory/subject state and Event Receipts are explicit deletion surfaces, but receipt
 anonymization and Legal Hold are not implemented and external identity/display fields
-may remain in immutable receipts. This privacy gap, the bounded protocol surface, exact
-SHA CI/image absence and all production gates keep PC5 and release `NO-GO`.
+may remain in immutable receipts. The exact run passes 960 tests in 188.36 seconds, a
+4.144-second PostgreSQL 16 restore with two Tenant-isolated SCIM fact sets, 57 official
+regressions in 38.91 seconds, the 36-pass/22-platform-skip Linux security matrix in
+17.19 seconds, Pyrefly with zero errors, drift-free migration, both patch replays and
+the 212-artifact implementation Wheel. Artifact `9014716414` contains the machine
+reports.
+
+Exact image run `31233595699` verifies the same SHA with 959 tests and one platform
+skip in 188.65 seconds. Server and Host each build twice for both supported
+architectures; repeated platform Manifest/Config facts are identical, every label binds
+Product `e71a4665`, Upstream `63035f92`, Schema `pc5a00000001` and Adapter `0.2.0`, and
+each build includes two attestation descriptors. Artifact `9015030365` has digest
+`7f12d12fcda35386b8a61a5855746fd21bf8723d1d21527e154bc0b715b2024c`.
+
+These records close only the first PC5 code, exact-SHA compatibility and unpublished
+reproducible image-candidate subchecks. The privacy gap, bounded protocol surface,
+federation/operations omissions and all production gates keep PC5 and release `NO-GO`.

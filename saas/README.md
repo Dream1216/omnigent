@@ -1595,9 +1595,23 @@ immutable receipts may still carry external identity/display fields, so Privacy 
 a production blocker rather than a completed property. Local evidence currently consists
 of four convergence tests, one HTTP ETag/ordering test, SQLite model/migration checks, one
 isolated PostgreSQL 16 token-RLS/immutable-event test and a 79.649-second nonempty logical
-restore covering two Tenant-isolated Directory/User/Group/Event fact sets. The exact local
-compatibility scope passes 960 tests with 232 existing warnings in 479.82 seconds, Pyrefly
-reports zero errors, the 212-artifact Wheel passes, both patches replay and source intrusion
-remains nine direct files/479 lines with a 0.9958 isolation ratio. This remains an
-uncommitted development slice until a clean full matrix, exact commit CI and reproducible
-image candidate are archived; it is not PC5 completion or production proof.
+restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
+implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
+compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
+seconds, the PostgreSQL 16 logical restore completes in 4.144 seconds with 85/17
+forced-RLS inventories and two Tenant-isolated SCIM fact sets, 57 official regressions
+pass in 38.91 seconds, and the Linux hard-sandbox matrix records 36 passes plus 22
+platform skips in 17.19 seconds. Pyrefly reports zero errors, the migration round trip
+has no drift, both downstream patches replay, and the 212-artifact implementation Wheel
+passes. Source intrusion remains nine direct files/479 lines with a 0.9958 isolation
+ratio. Artifact `9014716414` contains the exact machine reports.
+
+The same exact SHA image run `31233595699` passes 959 tests plus one platform skip in
+188.65 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+all repeated Manifest/Config pairs match, labels bind exact Product `e71a4665`, Upstream
+`63035f92`, Schema `pc5a00000001` and Adapter `0.2.0`, and every build carries two
+attestation descriptors. Artifact `9015030365` has digest
+`7f12d12fcda35386b8a61a5855746fd21bf8723d1d21527e154bc0b715b2024c`.
+The archives remain unpublished and are not signed, vulnerability/license admitted,
+canaried or N-1 rollback proven. All omitted protocol, privacy, federation, operations
+and production gates remain open; this is not PC5 completion or production proof.

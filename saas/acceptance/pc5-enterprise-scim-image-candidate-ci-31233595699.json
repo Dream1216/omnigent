@@ -1,0 +1,68 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31233595699,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595699",
+  "job_id": 93042013595,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595699/job/93042013595",
+  "artifact_id": 9015030365,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595699/artifacts/9015030365",
+  "artifact_sha256": "7f12d12fcda35386b8a61a5855746fd21bf8723d1d21527e154bc0b715b2024c",
+  "head_sha": "e71a46652a153e9e23f5b3959de59f375cf9a89e",
+  "implementation_sha": "e71a46652a153e9e23f5b3959de59f375cf9a89e",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "control_plane_schema_revision": "pc5a00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "959 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 188.65,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 479 lines, and 0.9958 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786153814,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:ed5810b297c8985c52787542a2958dd5080fbcb55ad730424552754187dbef43",
+          "config_digest": "sha256:1bbd5f06e62a30f7e6c375c530f77bf3755dfffadffe16c6bb4357b28401b651"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:aaa5f84b3e16a17054dc2fa642f552c31854f79fd04aa1ade2379965cd900f8a",
+          "config_digest": "sha256:74cb7f74939123dd0cf0bf8bcd5f41f7d7a1b82ffdde630c7fb338318781135d"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:ebf4ca338714692e84cdf998f73b469607e0d14550177c00fc60cfc810288033",
+          "config_digest": "sha256:b7881019ae1003965aac3f43b6352519d848c29ec6dbbccbe8084dc338b3afdb"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:170373f634394769fef595b2f031119a096205316bb85507a20ef2edde1f305e",
+          "config_digest": "sha256:7df1ae391fce6950f767bdf43bef6b9522edc160a0ba1df10a062417006dea89"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact first PC5 Enterprise SCIM implementation. It does not prove complete SCIM protocol behavior, receipt anonymization or Legal Hold, enterprise federation, real IdP acceptance, production image promotion, deployment, or release GO.",
+  "evidence_successor_policy": "A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at e71a46652a153e9e23f5b3959de59f375cf9a89e."
+}
