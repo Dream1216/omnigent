@@ -1023,11 +1023,27 @@ POST/PUT/PATCH/DELETE, dependency-aware forward/backward `bulkId` resolution,
 failures. A required top-level idempotency key is bound to the complete normalized
 request. Two immutable Bulk Event receipts retain the request claim and final response;
 deterministic child Event IDs recover already committed operations after interruption.
-PostgreSQL serializes the Directory/key pair with an advisory transaction lock, while
-the existing Directory token and Tenant forced-RLS boundary remains authoritative.
-Service, HTTP, migration and real-PostgreSQL tests cover exact replay, changed-payload
-conflict, dependency ordering, interruption recovery, bounds and multi-session lock
-behavior. This is local code evidence only until exact implementation-SHA compatibility
-and image-candidate workflows pass. It does not close full filter/PATCH, credential
-overlap, federation, privacy, operations, production promotion, PC5 or any of the eleven
-aggregate release gates; release remains `NO-GO`.
+PostgreSQL serializes the Directory/key pair with a session advisory lock held on a
+dedicated connection across request claim, child commits and final receipt, while the
+existing Directory token and Tenant forced-RLS boundary remains authoritative. Service,
+HTTP, migration and real-PostgreSQL tests cover exact replay, changed-payload conflict,
+dependency ordering, interruption recovery, bounds and multi-session lock behavior.
+
+Exact compatibility run `31254116952` passes 991 tests with 232 warnings in 171.74
+seconds, a 3.842-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 33.90 seconds, the
+39-pass/22-platform-skip Linux matrix in 14.74 seconds, Pyrefly with zero errors, a
+drift-free migration round trip, both patch replays and the 225-artifact implementation
+Wheel. Artifact `9020926068` has archive digest
+`55cb74ad63d1418a85d274875fb6facf9698d99f682b7161e00cac21b709a933`.
+
+Exact image run `31254116960` passes 990 tests plus one platform skip with 232 warnings
+in 193.98 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`a484bcfe`, Upstream `9dab48b4`, Schema `pc5a00000002` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9021152363` has archive digest
+`8ac5791ff94c330a9def460486dd740fa9b36221dae35dea0e6ea8cadcf079db`.
+These records close only the bounded Bulk code, exact-SHA compatibility and unpublished
+image-candidate subchecks. Comparison/value-path filter gaps, complete PATCH grammar,
+overlapping credential rotation, federation, privacy, production promotion and all
+eleven aggregate gates remain open; release remains `NO-GO`.

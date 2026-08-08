@@ -1743,14 +1743,30 @@ references become per-operation 409 results, and `failOnErrors` stops further pr
 at the declared threshold. A required top-level `Idempotency-Key` is hash-bound to the
 entire normalized request. Immutable Bulk request and result Events make a lost response
 replay exact; deterministic child Event IDs resume work committed before an interrupted
-batch. PostgreSQL uses a Directory/key advisory transaction lock so concurrent replicas
+batch. PostgreSQL uses a Directory/key session advisory lock held on a dedicated
+connection across request claim, child commits and final receipt, so concurrent replicas
 cannot execute one Bulk key in parallel. The protocol remains deliberately non-atomic,
 as RFC Bulk reports each operation independently. Local SQLite and real PostgreSQL tests
 cover replay conflicts, interruption recovery, dependency ordering, payload/operation
-limits and multi-session serialization. Exact-SHA compatibility and image-candidate
-evidence are still required before this slice closes; comparison filters, full PATCH value
-paths, rotation overlap, federation, privacy, production promotion and all eleven
-aggregate gates remain open.
+limits and multi-session serialization.
+
+Exact compatibility run `31254116952` passes 991 tests with 232 warnings in 171.74
+seconds, a 3.842-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 33.90 seconds, the
+39-pass/22-platform-skip Linux matrix in 14.74 seconds, Pyrefly with zero errors, a
+drift-free migration round trip, two patch replays and the 225-artifact implementation
+Wheel. Artifact `9020926068` has archive digest
+`55cb74ad63d1418a85d274875fb6facf9698d99f682b7161e00cac21b709a933`.
+
+Exact image run `31254116960` passes 990 tests plus one platform skip with 232 warnings
+in 193.98 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+repeated Manifest/Config facts match, every label binds Product `a484bcfe`, Upstream
+`9dab48b4`, Schema `pc5a00000002` and Adapter `0.2.0`, and every build contains two
+attestation descriptors. Artifact `9021152363` has archive digest
+`8ac5791ff94c330a9def460486dd740fa9b36221dae35dea0e6ea8cadcf079db`.
+This closes only the bounded Bulk code, exact-SHA compatibility and unpublished
+image-candidate subchecks. Comparison filters, full PATCH value paths, rotation overlap,
+federation, privacy, production promotion and all eleven aggregate gates remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in
