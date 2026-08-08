@@ -985,3 +985,33 @@ exact-SHA compatibility and unpublished image-candidate subchecks. Bulk,
 general/compound filters, sorting, complete RFC PATCH path/value grammar, scheduled or
 overlapping credential rotation, federation, privacy, production promotion and every
 aggregate release gate remain open; release remains `NO-GO`.
+
+The fifth PC5 implementation `3d1f56778f61090fa3b0e0f26a100e14f8279bab`
+replaces the single-equality collection filter with a bounded expression tree and adds
+deterministic allowlisted sorting without widening Directory authority. The parser
+enforces a 1,024-character, 16-comparison and four-parenthesis-level budget, follows
+`not`/`and`/`or` precedence, and accepts `eq`, `ne`, `co`, `sw`, `ew` and `pr` only on
+resource-specific scalar attributes. SQL wildcard input is escaped; nullable predicates
+are converted to two-valued filter results before logical composition. Sorting accepts
+only resource attributes, uses UUID as a stable tie-breaker and places missing values
+last ascending or first descending.
+
+Exact compatibility run `31249990283` passes 989 tests with 232 warnings in 186.16
+seconds, a 3.895-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 39.75 seconds, the
+39-pass/22-platform-skip Linux matrix in 18.27 seconds, Pyrefly with zero errors, a
+drift-free migration round trip, both patch replays and the 222-artifact implementation
+Wheel. Artifact `9019748005` has archive digest
+`62fd99742e5d563ef16c774e9e511fde4dcac4b5855da612122babb99de39d24`.
+
+Exact image run `31250015114` passes 988 tests plus one platform skip with 232 warnings
+in 190.17 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`3d1f5677`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9020044923` has archive digest
+`9a4befd83bb5bb422a4cf1a4dd3ee7c09bd472e16ae7a413710463e5dd5e258b`.
+These records close only the bounded compound-filter and deterministic-sort code,
+exact-SHA compatibility and unpublished image-candidate subchecks. Bulk, comparison
+operators and complex value paths outside this allowlist, complete PATCH grammar,
+overlapping credential rotation, federation, privacy, production promotion and all
+eleven aggregate gates remain open; release remains `NO-GO`.

@@ -1704,6 +1704,33 @@ compatibility and unpublished image-candidate subchecks. Bulk, general/compound 
 sorting, complete RFC PATCH path/value grammar, overlapping credential rotation,
 federation, privacy, production promotion and all eleven aggregate gates remain open.
 
+The fifth PC5 implementation `3d1f56778f61090fa3b0e0f26a100e14f8279bab`
+adds a bounded compound filter grammar and deterministic sorting to both User and Group
+collections. Filters are capped at 1,024 characters, 16 comparison terms and four
+parenthesis levels; `not`, `and` and `or` follow protocol precedence, while `eq`, `ne`,
+`co`, `sw`, `ew` and `pr` are restricted to each resource's scalar allowlist. Client
+wildcards are escaped before SQL comparison, missing attributes keep two-valued filter
+semantics, and sorting uses a UUID tie-breaker with protocol-compatible missing-value
+placement. The authenticated Directory remains the outer predicate for every query.
+
+Exact compatibility run `31249990283` passes 989 tests with 232 warnings in 186.16
+seconds, a 3.895-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 39.75 seconds, the
+39-pass/22-platform-skip Linux matrix in 18.27 seconds, Pyrefly, migration round trip,
+two patch replays and the 222-artifact implementation Wheel. Artifact `9019748005` has
+archive digest `62fd99742e5d563ef16c774e9e511fde4dcac4b5855da612122babb99de39d24`.
+
+Exact image run `31250015114` passes 988 tests plus one platform skip with 232 warnings
+in 190.17 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+repeated Manifest/Config facts match, every label binds Product `3d1f5677`, Upstream
+`9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every build contains two
+attestation descriptors. Artifact `9020044923` has archive digest
+`9a4befd83bb5bb422a4cf1a4dd3ee7c09bd472e16ae7a413710463e5dd5e258b`.
+This closes only the bounded compound-filter and deterministic-sort code, exact-SHA
+compatibility and unpublished image-candidate subchecks. Bulk, `gt/ge/lt/le`, complex or
+multi-valued value paths, complete PATCH grammar, overlapping credential rotation,
+federation, privacy, production promotion and all eleven aggregate gates remain open.
+
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in
 the session workspace, recovers cleanly after a failed snapshot, isolates malformed
