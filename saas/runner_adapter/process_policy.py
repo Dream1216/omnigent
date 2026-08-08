@@ -46,6 +46,7 @@ from saas.runner_adapter.metering import (
 
 _CANONICAL_ZYGOTE_DISABLED = "0"
 _METERING_LAUNCH_ERROR = "managed_metering_grant_denied"
+_MANAGED_CREDENTIAL_AUTHORITY_ENV_VARS = frozenset({"KUBECONFIG", "SSH_AUTH_SOCK"})
 
 
 class ManagedRunnerProcessPolicyError(RuntimeError):
@@ -66,7 +67,7 @@ def _ambient_credential_names(environment: Mapping[str, str]) -> tuple[str, ...]
     return tuple(
         sorted(
             name
-            for name in HARNESS_CREDENTIAL_ENV_VARS
+            for name in HARNESS_CREDENTIAL_ENV_VARS | _MANAGED_CREDENTIAL_AUTHORITY_ENV_VARS
             if (value := environment.get(name)) is not None and value.strip()
         )
     )
@@ -76,10 +77,11 @@ def build_managed_host_environment(base: Mapping[str, str]) -> dict[str, str]:
     """Build a fail-closed environment for one managed SaaS Host process.
 
     The caller supplies a server-owned base environment.  Known provider/Git
-    credentials and operator-selected passthrough variables are rejected: Run
-    and Tool credentials must arrive through the mTLS Secret Broker after the
-    launch grant is validated.  A truthy zygote override is also rejected
-    instead of silently weakening an explicit operator setting.
+    credentials, credential-authority paths, and operator-selected passthrough
+    variables are rejected: Run and Tool credentials must arrive through the
+    mTLS Secret Broker after the launch grant is validated.  A truthy zygote
+    override is also rejected instead of silently weakening an explicit
+    operator setting.
 
     This function does not mutate ``base``.
     """
@@ -202,7 +204,10 @@ class ManagedHostProcess(HostProcess):
             self._pending_metering.pop(runner_id, None)
 
     def _spawn_runner_proc(
-        self, env: dict[str, str], session_slug: str
+        self,
+        env: dict[str, str],
+        session_slug: str,
+        workspace: Path,
     ) -> tuple[subprocess.Popen[bytes] | ZygoteRunnerProc, Path]:
         runner_id = env.get(RUNNER_ID_ENV_VAR, "")
         grant = self._pending_metering.pop(runner_id, None)
@@ -219,7 +224,7 @@ class ManagedHostProcess(HostProcess):
         env[MANAGED_METERING_ENVELOPE_ENV_VAR] = str(envelope)
         self._metering_envelopes[runner_id] = envelope
         try:
-            return super()._spawn_runner_proc(env, session_slug)
+            return super()._spawn_runner_proc(env, session_slug, workspace)
         except BaseException:
             self._cleanup_metering_envelope(runner_id)
             raise

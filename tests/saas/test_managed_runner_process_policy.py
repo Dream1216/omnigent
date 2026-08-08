@@ -40,6 +40,14 @@ def test_managed_environment_rejects_explicit_zygote_enable(value: str) -> None:
     [
         ({"OPENAI_API_KEY": "do-not-log-this-value"}, "managed_runner_ambient_credentials"),
         (
+            {"SSH_AUTH_SOCK": "/private/tmp/managed-ssh-agent"},
+            "managed_runner_ambient_credentials",
+        ),
+        (
+            {"KUBECONFIG": "/private/tmp/managed-kubeconfig"},
+            "managed_runner_ambient_credentials",
+        ),
+        (
             {"OMNIGENT_RUNNER_ENV_PASSTHROUGH": "CUSTOM_PROVIDER_TOKEN"},
             "managed_runner_ambient_passthrough",
         ),
@@ -53,6 +61,8 @@ def test_managed_environment_rejects_ambient_secret_paths_without_logging_values
 
     assert error.value.code == code
     assert "do-not-log-this-value" not in str(error.value)
+    assert "/private/tmp/managed-ssh-agent" not in str(error.value)
+    assert "/private/tmp/managed-kubeconfig" not in str(error.value)
 
 
 def test_activate_policy_makes_official_host_choose_direct_spawn(

@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-08-07",
+  "audit_verified_at": "2026-08-08",
   "downstream_owned_prefixes": [
     "saas/",
     "tests/saas/"
@@ -45,6 +45,6 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
   "upstream_version": "0.9.0.dev0"
 }

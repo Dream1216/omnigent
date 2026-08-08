@@ -1,16 +1,19 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 945665df..a7166519 100644
+index 378e2525..ec420a76 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -127,4 +127,6 @@ from omnigent.version import VERSION
- _logger = logging.getLogger(__name__)
+@@ -128,6 +128,8 @@ from omnigent.version import VERSION
+
+_logger = logging.getLogger(__name__)
 
 +RUNNER_ENTRY_MODULE_ENV_VAR = "OMNIGENT_RUNNER_ENTRY_MODULE"
 +
 
- class _WaitidInfo(Protocol):
-@@ -1376,5 +1378,9 @@ class HostProcess:
-             with child_logging_popen_kwargs(env) as logging_kwargs:
+class _WaitidInfo(Protocol):
+     si_pid: int
+@@ -1370,7 +1372,11 @@ class HostProcess:
+
+            with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
 -                    [sys.executable, "-m", "omnigent.runner._entry"],
 +                    [
@@ -19,37 +22,47 @@ index 945665df..a7166519 100644
 +                        os.environ.get(RUNNER_ENTRY_MODULE_ENV_VAR, "omnigent.runner._entry"),
 +                    ],
                      env=env,
-                     # Runners are WS-tunnel clients with no interactive input.
-@@ -2847,4 +2853,5 @@ def run_host_process(
+                     # A daemon may outlive the checkout it started from.
+                     cwd=str(workspace),
+@@ -2862,6 +2868,7 @@ class HostProcess:
+ def run_host_process(
      server_url: str,
      config_path: Path | None = None,
 +    host_factory: Callable[[HostIdentity, str], HostProcess] = HostProcess,
  ) -> None:
      """Entry point for ``omnigent host``.
-@@ -2857,4 +2864,5 @@ def run_host_process(
+
+@@ -2872,6 +2879,7 @@ def run_host_process(
+         ``"https://omnigent-app.databricksapps.com"``.
      :param config_path: Optional path to ``config.yaml``.
          Defaults to ``~/.omnigent/config.yaml``.
 +    :param host_factory: Downstream-neutral HostProcess construction seam.
      :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
          fails permanently (auth / authorization / outdated server). The
-@@ -2890,5 +2898,5 @@ def run_host_process(
+         actionable cause is printed to stderr first.
+@@ -2905,7 +2913,7 @@ def run_host_process(
+     if _cli_log is not None and _cli_log != host_log_path:
          print(f"CLI diagnostics: {display_log_path(_cli_log)}")
 
 -    host = HostProcess(identity, server_url)
 +    host = host_factory(identity, server_url)
      try:
          asyncio.run(host.run())
+     except HostConnectError as exc:
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
 index 970fa7eb..04cd40c0 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
-@@ -81,4 +81,5 @@ class _UsageBucket(_ModelUsage):
+@@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
+     by_model: dict[str, _ModelUsage]
 
 
 +_REQUIRED_OBSERVERS: list[UsageObserver] = []
  _OBSERVERS: list[UsageObserver] = []
  _RECORDS: dict[str, _UsageBucket] = {}
-@@ -139,4 +140,20 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
+ _CURRENT_NODEID: str | None = None
+@@ -138,6 +139,22 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
+     return remove
 
 
 +def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
@@ -70,7 +83,9 @@ index 970fa7eb..04cd40c0 100644
 +
  def notify_from_dict(
      *,
-@@ -174,11 +191,15 @@ def notify(
+     model: str | None,
+@@ -173,13 +190,17 @@ def notify(
+     output_tokens: int,
      total_tokens: int,
  ) -> None:
 -    """Dispatch usage to observers and (if enabled) the auto-recorder.
@@ -90,10 +105,12 @@ index 970fa7eb..04cd40c0 100644
 +        )
      for cb in list(_OBSERVERS):
          try:
-@@ -336,4 +357,5 @@ def _write_records() -> None:
+             cb(
+@@ -335,6 +356,7 @@ def _write_records() -> None:
  __all__ = [
      "UsageObserver",
      "add_observer",
 +    "add_required_observer",
      "notify",
      "notify_from_dict",
+     "set_current_test",

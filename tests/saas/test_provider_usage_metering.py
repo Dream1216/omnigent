@@ -329,9 +329,9 @@ def test_staged_authority_is_one_time_and_managed_host_injects_only_envelope_pat
         pid = 123
 
     def fake_spawn(
-        self: HostProcess, env: dict[str, str], session_slug: str
+        self: HostProcess, env: dict[str, str], session_slug: str, workspace: Path
     ) -> tuple[_Process, Path]:
-        del self, session_slug
+        del self, session_slug, workspace
         captured.update(env)
         return _Process(), tmp_path / "runner.log"
 
@@ -343,7 +343,11 @@ def test_staged_authority_is_one_time_and_managed_host_injects_only_envelope_pat
         envelope_directory=(tmp_path / "host-envelopes").absolute(),
     )
     host._pending_metering[official_runner] = grant
-    host._spawn_runner_proc({RUNNER_ID_ENV_VAR: official_runner}, "session-")
+    host._spawn_runner_proc(
+        {RUNNER_ID_ENV_VAR: official_runner},
+        "session-",
+        tmp_path,
+    )
 
     assert grant.capability_token not in str(captured)
     envelope_path = Path(captured[MANAGED_METERING_ENVELOPE_ENV_VAR])
@@ -367,9 +371,9 @@ def test_managed_host_claims_staged_grant_on_official_launch_frame(
             return None
 
     def fake_spawn(
-        self: HostProcess, env: dict[str, str], session_slug: str
+        self: HostProcess, env: dict[str, str], session_slug: str, workspace: Path
     ) -> tuple[_Process, Path]:
-        del self, session_slug
+        del self, session_slug, workspace
         captured.update(env)
         return _Process(), tmp_path / "runner.log"
 

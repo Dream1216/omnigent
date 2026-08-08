@@ -78,6 +78,11 @@ jobs:
           tests/host/test_connect.py::test_handle_runner_status_alive_for_running_process
           tests/host/test_connect.py::test_handle_runner_status_dead_for_exited_process
           tests/host/test_connect.py::test_launch_cancelled_midspawn_does_not_leak_untracked_runner
+          tests/host/test_connect.py::test_host_spawned_runner_has_parent_pid_env
+          tests/host/test_connect.py::test_build_runner_env_allowlists_host_env_and_strips_secrets
+          tests/runner/test_session_resources.py::test_failed_snapshot_does_not_latch_session_workspace
+          tests/server/routes/test_sessions_snapshot.py::test_snapshot_metadata_resolvers_ignore_malformed_agent_ids
+          tests/test_agent_spawn_env_canary.py::test_real_builders_pass_ssh_auth_sock
           tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
           tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
           tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
@@ -90,6 +95,7 @@ jobs:
       - name: Run official hard-sandbox and credential-proxy acceptance
         run: >-
           uv run pytest
+          tests/inner/test_bwrap_symlink_mask_3265.py
           tests/inner/sandbox/test_sandbox_behavior.py
           tests/inner/sandbox/test_egress_e2e.py::test_egress_direct_tcp_bypass_is_blocked
           tests/inner/sandbox/test_egress_e2e.py::test_s2_egress_blocks_private_destination_by_default
