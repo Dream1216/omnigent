@@ -1786,10 +1786,27 @@ Disable destroys both slots immediately. An in-progress overlap blocks another r
 and downgrade to `pc5a00000002` fails closed while a successor exists. SQLite/HTTP,
 real PostgreSQL RLS and a nonempty logical restore fixture cover activation, overlap,
 expiry, compaction, idempotent replay, payload conflict, hash non-disclosure, successor
-RLS lookup, disable and downgrade refusal. Exact implementation-SHA compatibility and
-image-candidate evidence are still required; production IdP rollout telemetry, clock
-monitoring, federation, privacy, full Filter/PATCH and all eleven aggregate gates remain
-open.
+RLS lookup, disable and downgrade refusal.
+
+Exact compatibility run `31257782799` verifies implementation `43569c8c`: 994 tests pass
+with 232 warnings in 189.68 seconds, the PostgreSQL 16 logical restore completes in
+3.908 seconds with schema `pc5a00000003`, 85/17 forced-RLS inventories, two
+Tenant-isolated SCIM fact sets and one active successor fixture, 63 official regressions
+pass in 41.28 seconds, and the Linux matrix records 39 passes plus 22 platform skips in
+17.31 seconds. Pyrefly reports zero errors, migrations round trip without drift, both
+patches replay, and the Wheel contains 228 required artifacts. Artifact `9021950175` has
+archive digest `5f5dae29b7ed64aa76614b0b84e3c0b142c4d21c033df847526314ab3d67803c`.
+
+Exact image run `31257782706` passes 993 tests plus one platform skip with 232 warnings
+in 192.61 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+repeated Manifest/Config facts match, every label binds Product `43569c8c`, Upstream
+`9dab48b4`, Schema `pc5a00000003` and Adapter `0.2.0`, and every build contains two
+attestation descriptors. Artifact `9022168960` has archive digest
+`62e6cd3d72c6adb3946f23a7c2b770de1c9dc2e4ec4105799d9272b54b09c412`.
+This closes only bounded credential-overlap code, exact-SHA compatibility and
+unpublished image-candidate subchecks. Production IdP rollout/clock evidence, full
+Filter/PATCH, federation, privacy, production promotion and all eleven aggregate gates
+remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in
