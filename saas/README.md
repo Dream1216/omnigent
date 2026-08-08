@@ -1588,22 +1588,24 @@ interactive access or silently transferring ownership. Group convergence refuses
 re-add an inactive User, so a late Group update cannot undo a newer deprovision.
 
 The HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
-POST/GET-by-id/PATCH plus ListResponse for Users and Groups, weak ETags/If-Match, bearer
-authentication and `application/scim+json` responses. Collection reads use stable
+POST/GET-by-id/PUT/PATCH/DELETE plus ListResponse for Users and Groups, weak
+ETags/If-Match, bearer authentication and `application/scim+json` responses. Collection reads use stable
 one-based pagination, a maximum count of 100 and one strict equality filter over an
 allowlisted resource attribute; every query remains bound to the exact authenticated
 Directory. Tenant management routes expose fresh-authenticated, idempotent Directory
-credential rotation and disable with one-time token delivery. PUT, DELETE resource
-semantics, Bulk, compound/general filters, sorting, complete PATCH paths, transport-level
-lost-response replay, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
+credential rotation and disable with one-time token delivery. PUT performs guarded full
+replacement without changing `externalId`; DELETE retains an inactive tombstone while
+revoking User access or archiving Group authority. Resource-specific Add/Replace/Remove
+PATCH paths and lost-response replay execute under one replay-before-CAS transaction.
+Bulk, compound/general filters, sorting, complete RFC PATCH paths, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
 Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
 state and identity Event Receipts are now separate deletion
 surfaces with token-hash destruction, subject erasure and non-resurrecting receipt
 anonymization checks. The anonymization/Legal Hold workflow is not implemented yet and
 immutable receipts may still carry external identity/display fields, so Privacy remains
 a production blocker rather than a completed property. Local evidence currently consists
-of six convergence/lifecycle tests, three HTTP tests, SQLite model/migration checks, one
-isolated PostgreSQL 16 token-RLS/rotation/disable/list/immutable-event test and a 79.649-second
+of seven convergence/lifecycle tests, four HTTP tests, SQLite model/migration checks, one
+isolated PostgreSQL 16 token-RLS/rotation/disable/list/concurrent-CAS/immutable-event test and a 79.649-second
 nonempty logical restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
 implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
 compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
@@ -1666,6 +1668,36 @@ attestation descriptors. Artifact `9017915363` has archive digest
 This closes only the ListResponse and bounded equality-filter code, exact-SHA
 compatibility and unpublished image candidate subchecks. PUT/DELETE/Bulk, general filter
 grammar, sorting, complete PATCH, lost-response replay, overlapping credential rotation,
+federation, privacy, production promotion and all eleven aggregate gates remain open.
+
+The fourth PC5 implementation `626841b1bb8544fe8d3784b828c27193f7df7396`
+adds guarded User/Group PUT, retained-tombstone DELETE and resource-specific
+Add/Replace/Remove PATCH paths. The service authenticates one Directory, checks immutable
+event replay before locking the exact resource, then applies ETag CAS, derives the next
+source version and persists the converged state plus Event/Outbox in one transaction.
+Consequently a lost response retried with the same key, payload and old ETag returns the
+committed result without another mutation; a changed payload conflicts, while a different
+key with a stale ETag returns 412. PostgreSQL 16 runs two transactions against one User
+version and proves exactly one winner and one CAS loser. `externalId` is immutable, User
+deletion keeps deprovision precedence and Owner Recovery, and Group deletion archives the
+mapped authority and removes active members.
+
+Exact compatibility run `31246087422` passes 989 tests with 232 warnings in 186.11 seconds,
+a 3.798-second PostgreSQL logical restore with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions in 40.31 seconds, the
+39-pass/22-platform-skip Linux matrix in 17.49 seconds, Pyrefly, migration round trip, two
+patch replays and the 220-artifact implementation Wheel. Artifact `9018593020` has archive
+digest `14b2fb49f0f87b13dc19f8b561c56d5db547686ada64a9925caba67c5945a384`.
+
+Exact image run `31246057815` passes 988 tests plus one platform skip with 232 warnings in
+183.93 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+repeated Manifest/Config facts match, every label binds Product `626841b1`, Upstream
+`9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every build contains two
+attestation descriptors. Artifact `9018836641` has archive digest
+`5474cec818f0c6f946defdba7c91629cc7e4ff98b53040f514eb91cfc68fd5e5`.
+This closes only the bounded resource lifecycle, replay-before-CAS code, exact-SHA
+compatibility and unpublished image-candidate subchecks. Bulk, general/compound filters,
+sorting, complete RFC PATCH path/value grammar, overlapping credential rotation,
 federation, privacy, production promotion and all eleven aggregate gates remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64

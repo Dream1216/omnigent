@@ -956,3 +956,32 @@ Artifact `9017915363` has digest
 These records do not cover PUT/DELETE/Bulk, general filters, sort, complete PATCH,
 transport replay, overlapping rotation, federation, privacy, production promotion or
 any aggregate release gate; release remains `NO-GO`.
+
+The fourth PC5 implementation `626841b1bb8544fe8d3784b828c27193f7df7396`
+adds guarded User/Group PUT, retained-tombstone DELETE and resource-specific
+Add/Replace/Remove PATCH paths. Replay lookup by immutable Event receipt runs before the
+resource row lock and ETag CAS, so a lost response can be retried with the same key,
+payload and old ETag without a second state change. The same key with changed content
+conflicts; a different key with an old ETag returns 412. `externalId` cannot be replaced,
+User deletion preserves deprovision/Owner Recovery behavior, and Group deletion archives
+the mapped authority and removes active members. A real PostgreSQL 16 two-transaction
+test proves one winner and one CAS loser for the same User version.
+
+Exact compatibility run `31246087422` passes 989 tests with 232 warnings in 186.11
+seconds, a 3.798-second PostgreSQL logical restore with 85/17 forced-RLS inventories and
+two Tenant-isolated SCIM fact sets, 63 official regressions in 40.31 seconds, the
+39-pass/22-platform-skip Linux matrix in 17.49 seconds, Pyrefly, migration round trip,
+two patch replays and the 220-artifact implementation Wheel. Artifact `9018593020` has
+archive digest `14b2fb49f0f87b13dc19f8b561c56d5db547686ada64a9925caba67c5945a384`.
+
+Exact image run `31246057815` passes 988 tests plus one platform skip with 232 warnings
+in 183.93 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`626841b1`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9018836641` has archive digest
+`5474cec818f0c6f946defdba7c91629cc7e4ff98b53040f514eb91cfc68fd5e5`.
+These records close only the bounded resource lifecycle, replay-before-CAS code,
+exact-SHA compatibility and unpublished image-candidate subchecks. Bulk,
+general/compound filters, sorting, complete RFC PATCH path/value grammar, scheduled or
+overlapping credential rotation, federation, privacy, production promotion and every
+aggregate release gate remain open; release remains `NO-GO`.
