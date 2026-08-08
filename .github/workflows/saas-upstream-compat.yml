@@ -82,7 +82,12 @@ jobs:
           tests/host/test_connect.py::test_build_runner_env_allowlists_host_env_and_strips_secrets
           tests/runner/test_session_resources.py::test_failed_snapshot_does_not_latch_session_workspace
           tests/server/routes/test_sessions_snapshot.py::test_snapshot_metadata_resolvers_ignore_malformed_agent_ids
-          tests/test_agent_spawn_env_canary.py::test_real_builders_pass_ssh_auth_sock
+          tests/inner/test_acp_executor.py
+          tests/onboarding/test_acp_auth.py
+          tests/runner/test_orchestrator_skill_injection.py
+          tests/runtime/test_acp_spawn_env.py
+          tests/test_agent_spawn_env_canary.py
+          tests/test_claude_native_forwarder.py
           tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
           tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
           tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
