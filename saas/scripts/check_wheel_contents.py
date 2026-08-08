@@ -220,6 +220,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/adr-approval-authorities.json",
     "saas/production/adr-approval-candidate.json",
     "saas/production/adr-approvals/README.md",
+    "saas/production/adr-approvals/omnigent-saas-p0-sole-owner-waiver-2026-08-09-59c80f30abe891bb.json",
     "saas/production/adrs/README.md",
     "saas/production/adrs/ADR-001-postgresql-topology-and-transactions.md",
     "saas/production/adrs/ADR-002-runtime-placement-and-migration.md",

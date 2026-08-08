@@ -20,21 +20,21 @@ def _baseline() -> dict[str, object]:
     return json.loads((_repo() / "saas/production/baseline.json").read_text(encoding="utf-8"))
 
 
-def test_adr_contract_is_structurally_valid_but_waiver_record_is_not_faked() -> None:
+def test_current_adr_contract_is_approved_by_explicit_degraded_waiver() -> None:
     report = validate_approval_contract(_repo(), _baseline())
 
     assert report["status"] == "pass"
-    assert report["approval_readiness"] == "blocked"
+    assert report["approval_readiness"] == "approved"
     assert report["metrics"] == {
         "approval_mode": "sole-owner-risk-waiver",
         "governance_classification": "degraded",
         "decision_file_count": 11,
         "required_signing_role_count": 4,
         "configured_authority_role_count": 8,
-        "signature_count": 0,
-        "technical_owner_confirmation_count": 0,
+        "signature_count": 1,
+        "technical_owner_confirmation_count": 11,
     }
-    assert "no immutable ADR approval record is referenced" in report["blockers"]
+    assert report["blockers"] == []
 
 
 def test_decision_bundle_detects_document_tampering(tmp_path: Path) -> None:
@@ -59,8 +59,12 @@ def test_distinct_signer_assignment_rejects_one_human_for_four_roles() -> None:
 def test_standard_four_party_mode_remains_available(tmp_path: Path) -> None:
     shutil.copytree(_repo() / "saas/production", tmp_path / "saas/production")
     baseline = copy.deepcopy(_baseline())
+    baseline["approval"]["state"] = "review_required"  # type: ignore[index]
+    baseline["approval"]["record"] = None  # type: ignore[index]
     baseline["approval"]["mode"] = "four-party-github-reviews"  # type: ignore[index]
     baseline["approval"]["governance_classification"] = "independent"  # type: ignore[index]
+    for adr in baseline["adrs"]:  # type: ignore[index]
+        adr["status"] = "proposed"
     policy_path = tmp_path / str(baseline["approval"]["policy"])  # type: ignore[index]
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     policy["active_mode"] = "four-party-github-reviews"

@@ -1131,3 +1131,22 @@ build contains two attestation descriptors. Artifact `9025955208` has archive di
 digest `0942f179dc9abe46527252df55578460b20a56d9507e95e43cbe273b5feed7b4`.
 The images are still unpublished candidates and do not satisfy registry, signature,
 scan, Canary, N-1 rollback or any aggregate production gate.
+
+The P0 ADR decision contract is now closed under an explicitly degraded
+`sole-owner-risk-waiver`, not under independent four-party review. Repository Owner
+`Dream1216` assumes all eight approval roles and accepts all eleven ADRs, while the
+standard four-party policy remains available for a future governance upgrade. Decision
+PR [#1](https://github.com/Dream1216/omnigent/pull/1) binds exact Head
+`c029904e38e8b93eea8cba70ced2778a758c387b` to successful required compatibility run
+`31281867274` / check run `93164403415`, and merged as
+`804acd93b2147619668e4b1e97930925e87ca9ec` at `2026-08-08T22:41:38Z`. The immutable
+approval record captures the authenticated Owner/Admin identity, author/merger equality,
+11 technical-owner acceptances, four accepted governance risks and the
+`2027-02-04T22:07:14Z` mandatory review date. Four-review branch protection was restored
+immediately after the controlled merge.
+
+This closes only `p0-approved-production-adrs-and-owners`. It does not waive the
+production image, SLO, RPO/RTO, recovery, deletion, capacity, security or commercial
+acceptance gates. The aggregate ledger therefore advances to 41/51 with ten pending
+gates and remains `NO-GO`. The evidence-successor wheel requires 252 artifacts so the
+append-only approval record is carried with the deployable SaaS boundary.
