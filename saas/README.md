@@ -1291,6 +1291,7 @@ checks during development and add `--require-ready` only to a protected
 production promotion workflow:
 
 ```bash
+uv run python -m saas.scripts.check_adr_approvals
 uv run python -m saas.scripts.check_production_baseline
 uv run python -m saas.scripts.check_recovery_readiness
 uv run python -m saas.scripts.check_slo_capacity_readiness
@@ -1303,6 +1304,39 @@ uv run python -m saas.scripts.check_slo_capacity_readiness \
 uv run python -m saas.scripts.check_image_supply_chain \
   --product-revision "$(git rev-parse HEAD)" --require-ready
 ```
+
+ADR approval is a two-PR evidence flow so generation of the record cannot alter
+the commit that people reviewed:
+
+1. Fill `saas/production/adr-approval-authorities.json` with authorized
+   corporate GitHub logins and set it to `active`. Four signing roles must map
+   to four distinct people; all technical-owner roles need at least one person.
+2. Open the decision PR with the candidate, policy, authority map, baseline,
+   and all eleven ADR documents. Freeze its head and obtain an `APPROVED`
+   GitHub Review on that exact head from every ADR owner and from four distinct
+   non-author signers. Merge only after native branch protection is satisfied.
+3. On a successor evidence branch, export a token with read access and run:
+
+   ```bash
+   export GH_TOKEN=<read-only-token>
+   uv run python -m saas.scripts.finalize_adr_approval \
+     --repository Dream1216/omnigent --pull-request <merged-decision-pr-number>
+   ```
+
+4. Reference the generated record from `baseline.json`, set approval to
+   `approved`, set all eleven registry statuses to `accepted`, and open
+   the evidence PR. CI re-fetches every GitHub Review, checks exact commit and
+   authority binding, rejects dismissed Reviews and record mutation, and runs:
+
+   ```bash
+   uv run python -m saas.scripts.check_adr_approvals \
+     --verify-github --require-approved
+   ```
+
+5. Only after that CI run succeeds may
+   `p0-approved-production-adrs-and-owners` move from `pending` to `passed` and
+   cite the immutable record and exact CI run. Other P0 blockers remain and the
+   overall release stays `NO-GO`.
 
 Run the focused checks:
 

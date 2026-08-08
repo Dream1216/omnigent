@@ -11,14 +11,19 @@
   },
   "approval": {
     "state": "review_required",
+    "mode": "sole-owner-risk-waiver",
+    "governance_classification": "degraded",
+    "policy": "saas/production/adr-approval-policy.json",
+    "authorities": "saas/production/adr-approval-authorities.json",
+    "candidate": "saas/production/adr-approval-candidate.json",
+    "record": null,
     "required_roles": [
       "product-owner",
       "platform-architecture",
       "security",
       "site-reliability"
     ],
-    "approvals": [],
-    "rule": "All required roles must approve the exact Git revision before a production release may proceed."
+    "rule": "The standard four-party contract remains defined, but this candidate uses an explicit sole-owner risk waiver. Dream1216 assumes all eleven technical-owner decisions without impersonating independent reviewers; exact-head CI, merged PR facts, repository-admin identity, candidate lineage, risk acknowledgements, expiry, and an append-only waiver record remain mandatory."
   },
   "adrs": [
     {

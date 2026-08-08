@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "state": "active",
+  "governance_mode": "sole-owner-risk-waiver",
+  "governance_classification": "degraded",
+  "reviewed_at": "2026-08-08T22:07:14Z",
+  "review_due_at": "2027-02-04T22:07:14Z",
+  "sole_owner": {
+    "github_login": "Dream1216",
+    "github_user_id": 39821512,
+    "github_actor_type": "User",
+    "repository_permission": "admin",
+    "authorization_source": "authenticated-repository-owner-directive",
+    "authorized_at": "2026-08-08T22:07:14Z"
+  },
+  "roles": {
+    "product-owner": {
+      "github_logins": ["Dream1216"]
+    },
+    "platform-architecture": {
+      "github_logins": ["Dream1216"]
+    },
+    "security": {
+      "github_logins": ["Dream1216"]
+    },
+    "site-reliability": {
+      "github_logins": ["Dream1216"]
+    },
+    "runtime-compatibility": {
+      "github_logins": ["Dream1216"]
+    },
+    "control-plane": {
+      "github_logins": ["Dream1216"]
+    },
+    "execution-platform": {
+      "github_logins": ["Dream1216"]
+    },
+    "billing-platform": {
+      "github_logins": ["Dream1216"]
+    }
+  },
+  "instructions": "Governance is explicitly degraded under the sole-owner risk waiver. Dream1216 assumes all eight roles without pretending to be multiple reviewers. Restore four distinct authorized humans before production GA or by review_due_at, whichever comes first."
+}

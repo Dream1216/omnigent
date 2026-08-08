@@ -59,6 +59,14 @@ symlink evidence is rejected. Both commands have `--require-ready` modes that
 fail until their external evidence is complete. The evidence paths on a pending
 gate therefore show implemented controls, not a passed gate.
 
+The ADR gate additionally uses `check_adr_approvals` from the existing upstream
+compatibility workflow. Its structural report may pass while approval readiness is blocked.
+The gate stays pending until a merged decision PR has exact-head Reviews from
+all technical owners and four distinct authorized humans, a successor PR adds
+the append-only record, live Review verification passes, and that exact CI
+evidence is added to the ledger. A proposed ADR document, empty authority map,
+single collaborator, or green structural check is not approval evidence.
+
 The P4 records separately close the credential-free Repository/ChangeSet/
 Worktree control plane, the physical Git/filesystem Runner adapter, the
 isolation/Secret/Preview control-plane contract, and the crash-safe Secret
