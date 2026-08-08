@@ -36,6 +36,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/pc5-scim-bulk-image-candidate-ci-31254116960.json",
     "saas/acceptance/pc5-scim-credential-overlap-ci-31257782799.json",
     "saas/acceptance/pc5-scim-credential-overlap-image-candidate-ci-31257782706.json",
+    "saas/acceptance/pc5-scim-comparison-value-path-ci-31271156219.json",
+    "saas/acceptance/pc5-scim-comparison-value-path-image-candidate-ci-31271156205.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",

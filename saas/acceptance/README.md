@@ -1081,3 +1081,45 @@ These records close only bounded credential-overlap code, exact-SHA compatibilit
 unpublished image-candidate subchecks. Production IdP rollout/clock evidence, full
 Filter/PATCH, federation, privacy, production promotion and all eleven aggregate gates
 remain open; release remains `NO-GO`.
+
+The eighth PC5 implementation `53f81e1dfd9907e8b4cd592dbe51a70f86148d23`
+also incorporates official `de8aee826c48d632ce335a702f2cca2f6240a6b9` through the
+zero-conflict merge `0453d9cf` and revision-contract rebind `af8a46fd`. A shared bounded
+RFC 7644 parser now covers schema-qualified `attrPath`, JSON scalar literals, comparison
+operators and Group `members[...]` Value Paths for both Filter and PATCH. Collection
+queries add typed `gt/ge/lt/le`, `members[...]` and `members.value` without moving the
+active Directory outside the outer authorization predicate.
+
+For the persisted User scalar and Group member resource model, PATCH accepts pathless
+Add/Replace, `attrPath`, `valuePath` and an optional selected `subAttr`. Operations are
+applied to an in-memory candidate and only one replay-before-CAS service mutation is
+allowed, so a late error is atomic. Duplicate Add and no-match Remove preserve the ETag
+but commit a secret-free immutable no-op receipt; exact replay and Bulk use the same
+path. Group member identity subattributes remain immutable. Negative tests distinguish
+typed `invalidFilter`, `noTarget`, `mutability`, `invalidPath`, `invalidSyntax` and
+`invalidValue`, including schema mismatch and full-request rollback.
+
+Exact compatibility run `31271156219` passes 997 tests with 232 warnings in 177.72
+seconds, a 4.067-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 325 changed-official regressions with two warnings
+in 60.05 seconds, and the 39-pass/22-platform-skip Linux matrix in 15.60 seconds.
+Pyrefly reports zero errors, migrations round trip without drift, both patches replay,
+and the Wheel contains 230 required artifacts. Source intrusion remains inside budget at
+nine official files, 490 net lines, two patches and a 0.996 isolated-code ratio.
+Artifact `9025705851` has archive digest
+`89ebc0693e043c8ea997a3eca2210cadb692c21400b39a8a51c567c4c6684230`.
+
+This record closes only the bounded comparison and Filter/PATCH Value Path code for the
+currently persisted local schema. Optional RFC 7643 complex/multi-valued User attributes
+and extension schemas, federation, privacy, production promotion and every aggregate
+release gate remain open; release remains `NO-GO`.
+
+Exact image run `31271156205` passes 996 tests plus one platform skip with 232 warnings
+in 190.38 seconds. Server and Host each build twice for `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`53f81e1d`, Upstream `de8aee82`, Schema `pc5a00000003` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9025955208` has archive digest
+`5bc8344ed6a144661568cde72afcbe680a2adc704c71acffa88b1fdbf32c8a78` and JSON
+digest `0942f179dc9abe46527252df55578460b20a56d9507e95e43cbe273b5feed7b4`.
+The images are still unpublished candidates and do not satisfy registry, signature,
+scan, Canary, N-1 rollback or any aggregate production gate.

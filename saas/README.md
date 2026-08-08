@@ -1829,3 +1829,58 @@ across two `linux/amd64` and `linux/arm64` builds. All labels bind Product `5956
 Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, with two attestation
 descriptors per build. The images remain unpublished candidates and do not change the
 eleven pending aggregate gates or release `NO-GO`.
+
+The next low-intrusion synchronization merges official `de8aee826c48d632ce335a702f2cca2f6240a6b9`
+at `0453d9cf` and rebinds the permanent compatibility contract at `af8a46fd`. The three
+new official commits cover Claude-native transcript cursor resumption, generic ACP
+authentication environment declaration and package-root skill injection. The downstream
+patch queue still contains two clean-tree-replayable patches, and the official regression
+matrix now explicitly includes the changed ACP, spawn-environment, runner-skill and
+Claude-native forwarder tests.
+
+The eighth PC5 implementation `53f81e1dfd9907e8b4cd592dbe51a70f86148d23`
+adds one shared bounded RFC 7644 syntax layer for collection Filter and PATCH paths.
+User and Group scalar filters now accept schema-qualified paths, JSON `null` and all
+locally meaningful `gt/ge/lt/le` comparisons in addition to the existing operators.
+Boolean ordering and a numeric literal compared with a persisted string fail with
+`invalidFilter`. Group collection reads support both `members[...]` Value Path
+expressions and `members.value`; each becomes an active-member correlated predicate
+inside the already authenticated active Directory.
+
+PATCH now supports pathless Add/Replace, schema-qualified `attrPath`, `valuePath` and an
+optional selected `subAttr` for the persisted User scalar and Group member resource
+model. Every operation first transforms one in-memory candidate, so a later invalid
+operation rolls the entire request back before the single replay-before-CAS mutation.
+Compound member removal, duplicate-safe Add, no-match Remove, exact replay and Bulk
+delegation share the same implementation. A semantic no-op retains the ETag while
+writing an immutable secret-free no-op Event/Outbox receipt. Group member subattributes
+remain immutable as required by the local Group contract; a selected identity may be
+removed but not rewritten. Error mapping distinguishes `noTarget`, `mutability`,
+`invalidPath`, `invalidSyntax` and `invalidValue`.
+
+Exact compatibility run `31271156219` verifies `53f81e1d` against official `de8aee82`:
+997 tests pass with 232 warnings in 177.72 seconds, the PostgreSQL 16 logical restore
+completes in 4.067 seconds with schema `pc5a00000003`, 85/17 forced-RLS inventories and
+two Tenant-isolated SCIM fact sets, 325 changed-official regressions pass with two
+warnings in 60.05 seconds, and the Linux matrix records 39 passes plus 22 platform skips
+in 15.60 seconds. Pyrefly reports zero errors, migrations round trip without drift,
+both patches replay, and the Wheel contains 230 required artifacts. Source intrusion
+stays within budget at nine official files, 490 net lines, two patches and a 0.996
+isolated-code ratio. Artifact `9025705851` has archive digest
+`89ebc0693e043c8ea997a3eca2210cadb692c21400b39a8a51c567c4c6684230`.
+
+This closes comparison operators and Filter/PATCH Value Path semantics only for the
+attributes persisted by the current local User and Group schemas. It does not implement
+every optional RFC 7643 complex/multi-valued User attribute or extension schema, nor
+federation, privacy, production promotion or any of the eleven aggregate gates. PC5 and
+release remain `NO-GO`.
+
+Exact image run `31271156205` passes 996 tests plus one platform skip with 232 warnings
+in 190.38 seconds. Server and Host each build twice for `linux/amd64` and
+`linux/arm64`; every repeated Manifest/Config pair matches, labels bind Product
+`53f81e1d`, Upstream `de8aee82`, Schema `pc5a00000003` and Adapter `0.2.0`, and each
+build carries two attestation descriptors. Artifact `9025955208` has archive digest
+`5bc8344ed6a144661568cde72afcbe680a2adc704c71acffa88b1fdbf32c8a78` and JSON
+digest `0942f179dc9abe46527252df55578460b20a56d9507e95e43cbe273b5feed7b4`.
+These remain unpublished candidates, not registry promotion, signature, vulnerability
+or license admission, Canary, N-1 rollback, PC5 completion or release `GO`.
