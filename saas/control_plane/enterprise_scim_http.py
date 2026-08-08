@@ -147,6 +147,11 @@ class DirectoryMutationBody(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class DirectoryRotationScheduleBody(DirectoryMutationBody):
+    activates_at: datetime
+    grace_period_seconds: int = Field(ge=60, le=86_400)
+
+
 class ScimMemberBody(BaseModel):
     value: str = Field(min_length=1, max_length=64)
 
@@ -266,6 +271,8 @@ def _directory_management_error(error: LifecycleError) -> HTTPException:
         status = 404
     elif error.code in {
         "invalid_idempotency_key",
+        "scim_directory_rotation_grace_invalid",
+        "scim_directory_rotation_time_invalid",
         "scim_directory_version_invalid",
     }:
         status = 400
@@ -283,6 +290,17 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
         "tenant_id": str(value.tenant_id),
         "display_name": value.display_name,
         "token_prefix": value.token_prefix,
+        "successor_token_prefix": value.successor_token_prefix,
+        "rotation_activates_at": (
+            value.rotation_activates_at.isoformat()
+            if value.rotation_activates_at is not None
+            else None
+        ),
+        "rotation_grace_expires_at": (
+            value.rotation_grace_expires_at.isoformat()
+            if value.rotation_grace_expires_at is not None
+            else None
+        ),
         "bearer_token": value.bearer_token,
         "status": value.status,
         "version": value.version,
@@ -1035,6 +1053,40 @@ def create_enterprise_scim_router(
                 context,
                 directory_id=directory_id,
                 expected_version=body.expected_version,
+                reauthenticated_at=reauthenticated_at,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return _directory_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate-overlap",
+        status_code=201,
+    )
+    def schedule_directory_credential_rotation(
+        tenant_id: UUID,
+        directory_id: UUID,
+        body: DirectoryRotationScheduleBody,
+        request: Request,
+        response: Response,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context, reauthenticated_at = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = service.schedule_directory_credential_rotation(
+                context,
+                directory_id=directory_id,
+                expected_version=body.expected_version,
+                activates_at=body.activates_at,
+                grace_period_seconds=body.grace_period_seconds,
                 reauthenticated_at=reauthenticated_at,
                 idempotency_key=idempotency_key,
             )

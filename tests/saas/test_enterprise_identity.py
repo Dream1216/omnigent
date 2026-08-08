@@ -300,6 +300,152 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         assert rotated.bearer_token not in serialized_outbox
 
 
+def test_directory_scheduled_rotation_enforces_activation_grace_and_compaction(
+    scim_fixture,
+) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    issued = service.issue_directory(
+        _context(ids, ids.owner),
+        display_name="Overlapping IdP",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="overlap-directory",
+    )
+    assert issued.bearer_token is not None
+    old_token = issued.bearer_token
+    scheduled_at = datetime.now(timezone.utc)
+    activation = scheduled_at + timedelta(minutes=2)
+    scheduled = service.schedule_directory_credential_rotation(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=1,
+        activates_at=activation,
+        grace_period_seconds=300,
+        reauthenticated_at=scheduled_at,
+        idempotency_key="overlap-1",
+        now=scheduled_at,
+    )
+    assert scheduled.version == 2
+    assert scheduled.bearer_token is not None
+    successor_token = scheduled.bearer_token
+    assert scheduled.successor_token_prefix == successor_token[:24]
+    assert scheduled.rotation_activates_at == activation
+    assert scheduled.rotation_grace_expires_at == activation + timedelta(minutes=5)
+
+    replay_at = scheduled_at + timedelta(days=2)
+    replay = service.schedule_directory_credential_rotation(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=1,
+        activates_at=activation,
+        grace_period_seconds=300,
+        reauthenticated_at=replay_at,
+        idempotency_key="overlap-1",
+        now=replay_at,
+    )
+    assert replay.replayed is True
+    assert replay.bearer_token is None
+    assert replay.rotation_activates_at == activation
+
+    assert service.list_users(old_token).total_results == 0
+    with pytest.raises(LifecycleError) as successor_early:
+        service.list_users(successor_token)
+    assert successor_early.value.code == "scim_authentication_failed"
+
+    now = datetime.now(timezone.utc)
+    with sessions.begin() as db:
+        stored = db.get(EnterpriseScimDirectoryRecord, issued.id)
+        assert stored is not None
+        stored.rotation_activates_at = now - timedelta(minutes=1)
+        stored.rotation_grace_expires_at = now + timedelta(minutes=1)
+
+    assert service.list_users(old_token).total_results == 0
+    assert service.list_users(successor_token).total_results == 0
+    with pytest.raises(LifecycleError) as in_progress:
+        service.schedule_directory_credential_rotation(
+            _context(ids, ids.owner),
+            directory_id=issued.id,
+            expected_version=2,
+            activates_at=now,
+            grace_period_seconds=60,
+            reauthenticated_at=now,
+            idempotency_key="overlap-in-progress",
+            now=now,
+        )
+    assert in_progress.value.code == "scim_directory_rotation_in_progress"
+
+    with sessions.begin() as db:
+        stored = db.get(EnterpriseScimDirectoryRecord, issued.id)
+        assert stored is not None
+        stored.rotation_grace_expires_at = now - timedelta(seconds=1)
+
+    with pytest.raises(LifecycleError) as old_expired:
+        service.list_users(old_token)
+    assert old_expired.value.code == "scim_authentication_failed"
+    assert service.list_users(successor_token).total_results == 0
+
+    second = service.schedule_directory_credential_rotation(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=2,
+        activates_at=now + timedelta(minutes=1),
+        grace_period_seconds=120,
+        reauthenticated_at=now,
+        idempotency_key="overlap-2",
+        now=now,
+    )
+    assert second.version == 3
+    assert second.bearer_token is not None
+    with sessions() as db:
+        stored = db.get(EnterpriseScimDirectoryRecord, issued.id)
+        assert stored is not None
+        assert stored.token_hash == sha256(successor_token.encode()).hexdigest()
+        assert stored.successor_token_hash == sha256(second.bearer_token.encode()).hexdigest()
+        serialized_outbox = json.dumps(
+            [event.payload for event in db.scalars(sa.select(ControlPlaneOutboxEvent))],
+            sort_keys=True,
+        )
+        assert old_token not in serialized_outbox
+        assert successor_token not in serialized_outbox
+        assert second.bearer_token not in serialized_outbox
+
+
+def test_directory_scheduled_rotation_rejects_unbounded_or_ambiguous_windows(
+    scim_fixture,
+) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    issued = service.issue_directory(
+        _context(ids, ids.owner),
+        display_name="Bounded IdP",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="bounded-directory",
+    )
+    now = datetime.now(timezone.utc)
+
+    cases = (
+        (now.replace(tzinfo=None), 300, "scim_directory_rotation_time_invalid"),
+        (now - timedelta(minutes=2), 300, "scim_directory_rotation_time_invalid"),
+        (now + timedelta(days=31), 300, "scim_directory_rotation_time_invalid"),
+        (datetime.max.replace(tzinfo=timezone.utc), 300, "scim_directory_rotation_time_invalid"),
+        (now + timedelta(minutes=1), 59, "scim_directory_rotation_grace_invalid"),
+        (now + timedelta(minutes=1), 86_401, "scim_directory_rotation_grace_invalid"),
+    )
+    for index, (activation, grace, expected_code) in enumerate(cases):
+        with pytest.raises(LifecycleError) as rejected:
+            service.schedule_directory_credential_rotation(
+                _context(ids, ids.owner),
+                directory_id=issued.id,
+                expected_version=1,
+                activates_at=activation,
+                grace_period_seconds=grace,
+                reauthenticated_at=now,
+                idempotency_key=f"bounded-{index}",
+                now=now,
+            )
+        assert rejected.value.code == expected_code
+
+
 def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixture) -> None:
     sessions, ids = scim_fixture
     service = EnterpriseScimService(sessions)

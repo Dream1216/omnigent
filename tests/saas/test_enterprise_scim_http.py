@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -321,6 +321,81 @@ def test_scim_directory_http_rotation_and_disable_destroy_old_authority() -> Non
         },
     )
     assert new_denied.status_code == 401
+
+
+def test_scim_directory_http_schedules_one_time_overlap_credential() -> None:
+    client, old_token, tenant_id, directory_id = _app()
+    path = f"/saas/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate-overlap"
+    activation = datetime.now(timezone.utc) + timedelta(minutes=2)
+    body = {
+        "expected_version": 1,
+        "activates_at": activation.isoformat(),
+        "grace_period_seconds": 300,
+    }
+    naive = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap-naive"},
+        json={**body, "activates_at": activation.replace(tzinfo=None).isoformat()},
+    )
+    assert naive.status_code == 400
+    assert naive.json()["detail"]["code"] == "scim_directory_rotation_time_invalid"
+
+    unbounded = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap-unbounded"},
+        json={**body, "activates_at": (activation + timedelta(days=31)).isoformat()},
+    )
+    assert unbounded.status_code == 400
+    assert unbounded.json()["detail"]["code"] == "scim_directory_rotation_time_invalid"
+
+    invalid_grace = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap-grace"},
+        json={**body, "grace_period_seconds": 59},
+    )
+    assert invalid_grace.status_code == 422
+
+    scheduled = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap"},
+        json=body,
+    )
+    assert scheduled.status_code == 201
+    assert scheduled.headers["cache-control"] == "no-store"
+    payload = scheduled.json()
+    assert payload["version"] == 2
+    successor_token = payload["bearer_token"]
+    assert isinstance(successor_token, str)
+    assert payload["successor_token_prefix"] == successor_token[:24]
+    assert payload["rotation_activates_at"] == activation.isoformat()
+
+    replay = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap"},
+        json=body,
+    )
+    assert replay.status_code == 201
+    assert replay.json()["replayed"] is True
+    assert replay.json()["bearer_token"] is None
+
+    changed = client.post(
+        path,
+        headers={"Idempotency-Key": "http-directory-overlap"},
+        json={**body, "grace_period_seconds": 301},
+    )
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "idempotency_conflict"
+
+    old_allowed = client.get(
+        "/saas/scim/v2/Users?count=0",
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert old_allowed.status_code == 200
+    successor_early = client.get(
+        "/saas/scim/v2/Users?count=0",
+        headers={"Authorization": f"Bearer {successor_token}"},
+    )
+    assert successor_early.status_code == 401
 
 
 def test_scim_collection_list_filter_and_bounded_pagination() -> None:

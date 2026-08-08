@@ -48,6 +48,9 @@ class IssuedScimDirectory:
     tenant_id: UUID
     display_name: str
     token_prefix: str
+    successor_token_prefix: str | None
+    rotation_activates_at: datetime | None
+    rotation_grace_expires_at: datetime | None
     status: str
     version: int
     bearer_token: str | None
@@ -158,6 +161,38 @@ def _integer(payload: Mapping[str, object], key: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise LifecycleError("scim_receipt_invalid", f"{key} is invalid")
     return value
+
+
+def _optional_datetime(payload: Mapping[str, object], key: str) -> datetime | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LifecycleError("scim_receipt_invalid", f"{key} is invalid")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise LifecycleError("scim_receipt_invalid", f"{key} is invalid") from error
+    if parsed.tzinfo is None:
+        raise LifecycleError("scim_receipt_invalid", f"{key} is invalid")
+    return parsed.astimezone(timezone.utc)
+
+
+def _rotation_time(value: datetime, *, code: str) -> datetime:
+    if value.tzinfo is None:
+        raise LifecycleError(code, "rotation time must include a timezone")
+    try:
+        return value.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as error:
+        raise LifecycleError(code, "rotation time is invalid") from error
+
+
+def _stored_rotation_time(value: datetime, *, code: str) -> datetime:
+    stored = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    try:
+        return stored.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as error:
+        raise LifecycleError(code, "stored rotation time is invalid") from error
 
 
 def _require_fresh_auth(reauthenticated_at: datetime, now: datetime) -> None:
@@ -294,6 +329,53 @@ class EnterpriseScimService:
             changed_at=disabled_at,
         )
 
+    def schedule_directory_credential_rotation(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+        expected_version: int,
+        activates_at: datetime,
+        grace_period_seconds: int,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> IssuedScimDirectory:
+        """Issue a successor token with bounded activation and dual-token grace windows."""
+
+        scheduled_at = now or _utcnow()
+        _require_fresh_auth(reauthenticated_at, scheduled_at)
+        activation = _rotation_time(
+            activates_at,
+            code="scim_directory_rotation_time_invalid",
+        )
+        if (
+            not isinstance(grace_period_seconds, int)
+            or isinstance(grace_period_seconds, bool)
+            or not 60 <= grace_period_seconds <= 86_400
+        ):
+            raise LifecycleError(
+                "scim_directory_rotation_grace_invalid",
+                "rotation grace period must be between 60 and 86400 seconds",
+            )
+        try:
+            grace_expires_at = activation + timedelta(seconds=grace_period_seconds)
+        except OverflowError as error:
+            raise LifecycleError(
+                "scim_directory_rotation_time_invalid",
+                "rotation time is invalid",
+            ) from error
+        return self._mutate_directory_credential(
+            request,
+            directory_id=directory_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action="schedule",
+            changed_at=scheduled_at,
+            rotation_activates_at=activation,
+            rotation_grace_expires_at=grace_expires_at,
+        )
+
     def _mutate_directory_credential(
         self,
         request: RequestContext,
@@ -303,6 +385,8 @@ class EnterpriseScimService:
         idempotency_key: str,
         action: str,
         changed_at: datetime,
+        rotation_activates_at: datetime | None = None,
+        rotation_grace_expires_at: datetime | None = None,
     ) -> IssuedScimDirectory:
         if expected_version < 1:
             raise LifecycleError("scim_directory_version_invalid", "version is invalid")
@@ -314,6 +398,15 @@ class EnterpriseScimService:
             "directory_id": str(directory_id),
             "expected_version": expected_version,
         }
+        if action == "schedule":
+            if rotation_activates_at is None or rotation_grace_expires_at is None:
+                raise ValueError("scheduled rotation requires activation and grace deadlines")
+            request_payload.update(
+                {
+                    "rotation_activates_at": rotation_activates_at.isoformat(),
+                    "rotation_grace_expires_at": rotation_grace_expires_at.isoformat(),
+                }
+            )
         request_hash = _hash(request_payload)
         receipt_key = (
             f"scim-directory-{action}:{request.tenant_id}:{_digest(f'{directory_id}:{key}')[:48]}"
@@ -343,6 +436,17 @@ class EnterpriseScimService:
                         "idempotency_conflict", "idempotency key has a different request"
                     )
                 return self._issued_directory(receipt.payload, bearer_token=None, replayed=True)
+            if action == "schedule" and (
+                rotation_activates_at is None
+                or rotation_grace_expires_at is None
+                or rotation_activates_at < changed_at - timedelta(minutes=1)
+                or rotation_activates_at > changed_at + timedelta(days=30)
+                or rotation_grace_expires_at <= changed_at
+            ):
+                raise LifecycleError(
+                    "scim_directory_rotation_time_invalid",
+                    "rotation activation must be current or within 30 days",
+                )
             if directory.version != expected_version:
                 raise LifecycleError(
                     "scim_directory_version_conflict", "SCIM Directory version changed"
@@ -352,6 +456,26 @@ class EnterpriseScimService:
                     "scim_directory_not_active", "active SCIM Directory is required"
                 )
 
+            if directory.successor_token_hash is not None and action != "disable":
+                grace_expires_at = directory.rotation_grace_expires_at
+                if grace_expires_at is None:
+                    raise LifecycleError(
+                        "scim_directory_rotation_state_invalid",
+                        "SCIM Directory rotation state is invalid",
+                    )
+                grace_expires = _stored_rotation_time(
+                    grace_expires_at,
+                    code="scim_directory_rotation_state_invalid",
+                )
+                if changed_at < grace_expires:
+                    raise LifecycleError(
+                        "scim_directory_rotation_in_progress",
+                        "SCIM Directory credential rotation is still in progress",
+                    )
+                directory.token_hash = directory.successor_token_hash
+                directory.token_prefix = cast(str, directory.successor_token_prefix)
+                self._clear_directory_successor(directory)
+
             raw_token: str | None = None
             if action == "rotate":
                 raw_token = f"omniscim_{secrets.token_urlsafe(8)}_{secrets.token_urlsafe(32)}"
@@ -359,6 +483,14 @@ class EnterpriseScimService:
                 directory.token_prefix = raw_token[:24]
                 directory.rotated_at = changed_at
                 event_type = "enterprise.scim_directory.credential_rotated"
+            elif action == "schedule":
+                raw_token = f"omniscim_{secrets.token_urlsafe(8)}_{secrets.token_urlsafe(32)}"
+                directory.successor_token_hash = _digest(raw_token)
+                directory.successor_token_prefix = raw_token[:24]
+                directory.rotation_activates_at = rotation_activates_at
+                directory.rotation_grace_expires_at = rotation_grace_expires_at
+                directory.rotated_at = changed_at
+                event_type = "enterprise.scim_directory.credential_rotation_scheduled"
             elif action == "disable":
                 directory.token_hash = _digest(
                     f"disabled:{directory.id}:{secrets.token_urlsafe(32)}"
@@ -366,6 +498,7 @@ class EnterpriseScimService:
                 directory.token_prefix = "disabled"
                 directory.status = "disabled"
                 directory.disabled_at = changed_at
+                self._clear_directory_successor(directory)
                 event_type = "enterprise.scim_directory.disabled"
             else:  # pragma: no cover - private call contract
                 raise ValueError("unsupported SCIM Directory action")
@@ -376,6 +509,17 @@ class EnterpriseScimService:
                 **request_payload,
                 "display_name": directory.display_name,
                 "token_prefix": directory.token_prefix,
+                "successor_token_prefix": directory.successor_token_prefix,
+                "rotation_activates_at": (
+                    directory.rotation_activates_at.isoformat()
+                    if directory.rotation_activates_at is not None
+                    else None
+                ),
+                "rotation_grace_expires_at": (
+                    directory.rotation_grace_expires_at.isoformat()
+                    if directory.rotation_grace_expires_at is not None
+                    else None
+                ),
                 "status": directory.status,
                 "version": directory.version,
             }
@@ -392,6 +536,13 @@ class EnterpriseScimService:
                 )
             )
             return self._issued_directory(result, bearer_token=raw_token, replayed=False)
+
+    @staticmethod
+    def _clear_directory_successor(directory: EnterpriseScimDirectoryRecord) -> None:
+        directory.successor_token_hash = None
+        directory.successor_token_prefix = None
+        directory.rotation_activates_at = None
+        directory.rotation_grace_expires_at = None
 
     @contextmanager
     def bulk_request(
@@ -1138,12 +1289,30 @@ class EnterpriseScimService:
         apply_rls_context(db, RlsContext(scim_token_hash=token_hash))
         directory = db.execute(
             sa.select(EnterpriseScimDirectoryRecord).where(
-                EnterpriseScimDirectoryRecord.token_hash == token_hash,
+                sa.or_(
+                    EnterpriseScimDirectoryRecord.token_hash == token_hash,
+                    EnterpriseScimDirectoryRecord.successor_token_hash == token_hash,
+                ),
                 EnterpriseScimDirectoryRecord.status == "active",
             )
         ).scalar_one_or_none()
         if directory is None:
             raise LifecycleError("scim_authentication_failed", "SCIM credential is invalid")
+        now = _utcnow()
+        if directory.successor_token_hash == token_hash:
+            activates_at = directory.rotation_activates_at
+            if activates_at is None or now < _stored_rotation_time(
+                activates_at,
+                code="scim_directory_rotation_state_invalid",
+            ):
+                raise LifecycleError("scim_authentication_failed", "SCIM credential is invalid")
+        elif directory.successor_token_hash is not None:
+            grace_expires_at = directory.rotation_grace_expires_at
+            if grace_expires_at is None or now >= _stored_rotation_time(
+                grace_expires_at,
+                code="scim_directory_rotation_state_invalid",
+            ):
+                raise LifecycleError("scim_authentication_failed", "SCIM credential is invalid")
         apply_rls_context(
             db,
             RlsContext(tenant_id=directory.tenant_id, scim_token_hash=token_hash),
@@ -1637,6 +1806,16 @@ class EnterpriseScimService:
             tenant_id=UUID(str(payload["tenant_id"])),
             display_name=str(payload["display_name"]),
             token_prefix=str(payload["token_prefix"]),
+            successor_token_prefix=(
+                str(payload["successor_token_prefix"])
+                if payload.get("successor_token_prefix") is not None
+                else None
+            ),
+            rotation_activates_at=_optional_datetime(payload, "rotation_activates_at"),
+            rotation_grace_expires_at=_optional_datetime(
+                payload,
+                "rotation_grace_expires_at",
+            ),
             status=str(payload["status"]),
             version=_integer(payload, "version"),
             bearer_token=bearer_token,

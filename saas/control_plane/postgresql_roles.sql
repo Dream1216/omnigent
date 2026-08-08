@@ -381,7 +381,8 @@ TO saas_app;
 -- before the Tenant RLS context is established.
 GRANT SELECT (
     id, tenant_id, display_name, token_prefix, status, version, configured_by,
-    created_at, updated_at, rotated_at, disabled_at
+    created_at, updated_at, rotated_at, disabled_at, successor_token_prefix,
+    rotation_activates_at, rotation_grace_expires_at
 ) ON saas_enterprise_scim_directories TO saas_app;
 
 GRANT INSERT, UPDATE ON

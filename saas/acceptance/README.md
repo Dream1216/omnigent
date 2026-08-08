@@ -1047,3 +1047,20 @@ These records close only the bounded Bulk code, exact-SHA compatibility and unpu
 image-candidate subchecks. Comparison/value-path filter gaps, complete PATCH grammar,
 overlapping credential rotation, federation, privacy, production promotion and all
 eleven aggregate gates remain open; release remains `NO-GO`.
+
+The seventh PC5 implementation slice advances the migration head to `pc5a00000003` and
+adds a bounded scheduled/overlap Directory credential lifecycle. Fresh authentication,
+`enterprise_identity.manage`, expected-version CAS and a hash-bound idempotency key gate
+the new `rotate-overlap` route. Activation is limited to current through 30 days and the
+dual-token grace window to 60–86400 seconds. The successor bearer is shown once under
+`no-store`; only its digest, prefix and UTC boundaries persist. Authentication rejects it
+before activation, accepts both tokens only during grace and rejects the predecessor at
+expiry. The next mutation atomically compacts an expired generation; an active overlap
+blocks another rotation, while Disable destroys both digests. PostgreSQL RLS recognizes
+either digest only for the same Directory before Tenant binding, `saas_app` cannot read
+either hash, and downgrade refuses a live overlap. Service, HTTP, real-PostgreSQL and
+nonempty logical-restore tests cover timing, replay/conflict, compaction, RLS, disable and
+rollback behavior. This remains local code evidence until exact implementation-SHA
+compatibility and image-candidate workflows pass; production IdP rollout/clock evidence,
+full Filter/PATCH, federation, privacy and all eleven aggregate gates remain open, so
+release remains `NO-GO`.

@@ -23,6 +23,10 @@ class EnterpriseScimDirectoryRecord(SaasBase):
     display_name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     token_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     token_prefix: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    successor_token_hash: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    successor_token_prefix: Mapped[str | None] = mapped_column(sa.String(24))
+    rotation_activates_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    rotation_grace_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="active")
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     configured_by: Mapped[UUID] = mapped_column(
@@ -44,6 +48,22 @@ class EnterpriseScimDirectoryRecord(SaasBase):
         sa.CheckConstraint("length(display_name) > 0", name="ck_scim_directory_name_nonempty"),
         sa.CheckConstraint("length(token_hash) = 64", name="ck_scim_directory_token_hash"),
         sa.CheckConstraint("length(token_prefix) > 0", name="ck_scim_directory_token_prefix"),
+        sa.CheckConstraint(
+            "successor_token_hash IS NULL OR length(successor_token_hash) = 64",
+            name="ck_scim_directory_successor_hash",
+        ),
+        sa.CheckConstraint(
+            "successor_token_prefix IS NULL OR length(successor_token_prefix) > 0",
+            name="ck_scim_directory_successor_prefix",
+        ),
+        sa.CheckConstraint(
+            "(successor_token_hash IS NULL AND successor_token_prefix IS NULL "
+            "AND rotation_activates_at IS NULL AND rotation_grace_expires_at IS NULL) OR "
+            "(successor_token_hash IS NOT NULL AND successor_token_prefix IS NOT NULL "
+            "AND rotation_activates_at IS NOT NULL AND rotation_grace_expires_at IS NOT NULL "
+            "AND rotation_activates_at < rotation_grace_expires_at)",
+            name="ck_scim_directory_rotation_state",
+        ),
         sa.CheckConstraint("status IN ('active', 'disabled')", name="ck_scim_directory_status"),
         sa.CheckConstraint("version > 0", name="ck_scim_directory_version"),
         sa.CheckConstraint(

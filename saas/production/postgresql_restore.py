@@ -246,6 +246,7 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "scim_event_b": "bc400000-0000-4000-8000-000000000002",
         "scim_token_hash_a": "1" * 64,
         "scim_token_hash_b": "2" * 64,
+        "scim_successor_token_hash_a": "3" * 64,
         "identity_a": "40000000-0000-4000-8000-000000000001",
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
@@ -455,12 +456,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5a00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5a00000003', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5a00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5a00000003', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -672,11 +673,14 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                 sa.text(
                     "INSERT INTO saas_enterprise_scim_directories "
                     "(id, tenant_id, display_name, token_hash, token_prefix, status, version, "
-                    "configured_by) VALUES "
+                    "configured_by, successor_token_hash, successor_token_prefix, "
+                    "rotation_activates_at, rotation_grace_expires_at) VALUES "
                     "(:scim_directory_a, :tenant_a, 'Recovery SCIM A', :scim_token_hash_a, "
-                    "'omniscim_recovery_a', 'active', 1, :actor_a), "
+                    "'omniscim_recovery_a', 'active', 2, :actor_a, "
+                    ":scim_successor_token_hash_a, 'omniscim_successor_a', "
+                    "'2026-08-08T12:00:00+00:00', '2026-08-08T13:00:00+00:00'), "
                     "(:scim_directory_b, :tenant_b, 'Recovery SCIM B', :scim_token_hash_b, "
-                    "'omniscim_recovery_b', 'active', 1, :actor_b)"
+                    "'omniscim_recovery_b', 'active', 1, :actor_b, NULL, NULL, NULL, NULL)"
                 ),
                 identifiers,
             )
@@ -1245,7 +1249,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc5a00000002":
+            if saas_head != "pc5a00000003":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1330,10 +1334,12 @@ def _verify_restored_database(
                 sa.text(
                     "SELECT has_column_privilege('saas_app', "
                     "'saas_enterprise_scim_directories', 'token_hash', 'SELECT'), "
+                    "has_column_privilege('saas_app', "
+                    "'saas_enterprise_scim_directories', 'successor_token_hash', 'SELECT'), "
                     "has_table_privilege('saas_app', 'saas_enterprise_scim_events', 'SELECT')"
                 )
             ).one()
-            if tuple(directory_privileges) != (False, False):
+            if tuple(directory_privileges) != (False, False, False):
                 raise PostgreSqlRestoreContractError(
                     "application role can read SCIM bearer digests or immutable receipts"
                 )
@@ -1354,6 +1360,21 @@ def _verify_restored_database(
             if token_directories != {identifiers["scim_directory_a"]} or token_users:
                 raise PostgreSqlRestoreContractError(
                     "SCIM token lookup was not restricted before Tenant binding"
+                )
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "SET LOCAL ROLE saas_governance; "
+                f"SET LOCAL app.scim_token_hash = "
+                f"'{identifiers['scim_successor_token_hash_a']}'"
+            )
+            successor_directories = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_directories")
+                ).scalars()
+            )
+            if successor_directories != {identifiers["scim_directory_a"]}:
+                raise PostgreSqlRestoreContractError(
+                    "SCIM successor token lookup was not restored under the Directory boundary"
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
@@ -1597,10 +1618,12 @@ def _verify_restored_database(
                     "(SELECT count(*) FROM saas_enterprise_scim_directories), "
                     "(SELECT count(*) FROM saas_enterprise_scim_users), "
                     "(SELECT count(*) FROM saas_enterprise_scim_groups), "
-                    "(SELECT count(*) FROM saas_enterprise_scim_events)"
+                    "(SELECT count(*) FROM saas_enterprise_scim_events), "
+                    "(SELECT count(*) FROM saas_enterprise_scim_directories "
+                    "WHERE successor_token_hash IS NOT NULL)"
                 )
             ).one()
-            if tuple(scim_rows) != (2, 2, 2, 2):
+            if tuple(scim_rows) != (2, 2, 2, 2, 1):
                 raise PostgreSqlRestoreContractError(
                     "restored nonempty enterprise SCIM facts are incomplete"
                 )

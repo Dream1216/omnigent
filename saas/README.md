@@ -1572,15 +1572,20 @@ production gate remain open; release remains `NO-GO`.
 
 ## PC5 enterprise SCIM convergence foundation
 
-The foundation began at `pc5a00000001`; the bounded Bulk receipt migration advances the
-current local head to `pc5a00000002`. It provides Tenant-owned, hash-credentialed SCIM
+The foundation began at `pc5a00000001`; Bulk receipts and bounded overlapping credential
+rotation advance the current local head to `pc5a00000003`. It provides Tenant-owned,
+hash-credentialed SCIM
 directories, User/Group resource mappings and
 immutable provisioning receipts under 85 control-plane plus 17 Runtime forced-RLS
 tables. Directory issuance and credential rotation require authentication no older than
 five minutes, return the bearer only once under `Cache-Control: no-store`, and persist
-only its digest and safe prefix. Rotation uses a version CAS and invalidates the old
-credential in the same transaction. Disable also uses version CAS, destroys the active
-digest, and immediately removes all bearer authority; both transitions persist a
+only its digest and safe prefix. Immediate rotation uses a version CAS and invalidates
+the old credential in the same transaction. Scheduled rotation reveals one successor
+token once, activates it no more than 30 days later and keeps the prior token for a
+bounded 60–86400-second grace window. Authentication enforces both time boundaries;
+the next mutation atomically compacts an expired predecessor before issuing another
+successor. Disable uses version CAS, destroys both active and successor digests, and
+immediately removes all bearer authority; all transitions persist a
 secret-free idempotency receipt and replay without returning the token. Provisioning
 never treats email equality as identity proof. A User deprovision
 revokes Tenant, Space, Project, exact Resource, enterprise Group and active Session
@@ -1596,8 +1601,8 @@ filter budget and deterministic allowlisted sorting with UUID tie-breaking. The 
 grammar supports `and`/`or`/`not`, `eq`/`ne`/`co`/`sw`/`ew`/`pr` over resource-specific
 attributes, escapes SQL wildcard input and converts nullable comparisons to SCIM
 two-valued behavior; every query remains bound to the exact authenticated Directory.
-Tenant management routes expose fresh-authenticated, idempotent Directory
-credential rotation and disable with one-time token delivery. PUT performs guarded full
+Tenant management routes expose fresh-authenticated, idempotent Directory immediate
+rotation, scheduled overlap rotation and disable with one-time token delivery. PUT performs guarded full
 replacement without changing `externalId`; DELETE retains an inactive tombstone while
 revoking User access or archiving Group authority. Resource-specific Add/Replace/Remove
 PATCH paths and lost-response replay execute under one replay-before-CAS transaction.
@@ -1605,7 +1610,7 @@ Bulk accepts at most 32 operations and 1 MiB, supports User/Group POST/PUT/PATCH
 resolves backward and forward `bulkId` dependencies, rejects circular/unresolved graphs,
 honors `failOnErrors`, and stores immutable request/result receipts for exact replay. Full
 RFC filter attributes/operators/value paths, complete RFC PATCH paths, larger/provider-
-specific Bulk profiles, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
+specific Bulk profiles, automated IdP rollout telemetry, SAML/enterprise OIDC activation,
 Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
 state and identity Event Receipts are now separate deletion
 surfaces with token-hash destruction, subject erasure and non-resurrecting receipt
@@ -1767,6 +1772,24 @@ attestation descriptors. Artifact `9021152363` has archive digest
 This closes only the bounded Bulk code, exact-SHA compatibility and unpublished
 image-candidate subchecks. Comparison filters, full PATCH value paths, rotation overlap,
 federation, privacy, production promotion and all eleven aggregate gates remain open.
+
+The seventh PC5 code slice advances the schema to `pc5a00000003` and adds bounded
+scheduled/overlap Directory credential rotation without weakening immediate rotation.
+`POST .../rotate-overlap` requires fresh authentication, permission, expected-version
+CAS and a hash-bound idempotency key. Activation may be current or at most 30 days in
+the future; grace is restricted to 60–86400 seconds. The successor token is returned
+once under `no-store`, while only its digest, safe prefix and UTC boundaries persist.
+Before activation the successor is denied; during grace both digests resolve only the
+same Directory/Tenant; at expiry the predecessor is denied. A later rotation compacts
+the expired successor into the active slot in the same locked transaction, while
+Disable destroys both slots immediately. An in-progress overlap blocks another rotation,
+and downgrade to `pc5a00000002` fails closed while a successor exists. SQLite/HTTP,
+real PostgreSQL RLS and a nonempty logical restore fixture cover activation, overlap,
+expiry, compaction, idempotent replay, payload conflict, hash non-disclosure, successor
+RLS lookup, disable and downgrade refusal. Exact implementation-SHA compatibility and
+image-candidate evidence are still required; production IdP rollout telemetry, clock
+monitoring, federation, privacy, full Filter/PATCH and all eleven aggregate gates remain
+open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in

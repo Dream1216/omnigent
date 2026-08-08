@@ -400,18 +400,75 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 {"directory": issued.id},
             )
 
-    disabled = service.disable_directory(
+    overlap_now = datetime.now(timezone.utc)
+    overlap = service.schedule_directory_credential_rotation(
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         directory_id=issued.id,
         expected_version=2,
+        activates_at=overlap_now,
+        grace_period_seconds=60,
+        reauthenticated_at=overlap_now,
+        idempotency_key=f"pc5-directory-overlap-{suffix}",
+        now=overlap_now,
+    )
+    assert overlap.version == 3
+    assert overlap.bearer_token is not None
+    overlap_token = overlap.bearer_token
+    assert service.list_groups(token).total_results == 1
+    assert service.list_groups(overlap_token).total_results == 1
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 0
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.scim_token_hash', :token_hash, true)"),
+            {"token_hash": sha256(overlap_token.encode()).hexdigest()},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 1
+        )
+    with pytest.raises(LifecycleError) as overlap_in_progress:
+        service.rotate_directory_credential(
+            _context(actor=owner_id, tenant=tenant_id, space=space_id),
+            directory_id=issued.id,
+            expected_version=3,
+            reauthenticated_at=overlap_now,
+            idempotency_key=f"pc5-directory-overlap-conflict-{suffix}",
+            now=overlap_now,
+        )
+    assert overlap_in_progress.value.code == "scim_directory_rotation_in_progress"
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            config = Config(root / "saas/control_plane/alembic.ini")
+            config.set_main_option(
+                "script_location",
+                str(root / "saas/control_plane/migrations"),
+            )
+            config.attributes["connection"] = connection
+            command.downgrade(config, "pc5a00000002")
+
+    disabled = service.disable_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=3,
         reauthenticated_at=datetime.now(timezone.utc),
         idempotency_key=f"pc5-directory-disable-{suffix}",
     )
     assert disabled.status == "disabled"
-    assert disabled.version == 3
+    assert disabled.version == 4
     with pytest.raises(LifecycleError) as disabled_token:
         service.get_group(token, scim_group_id=group.id)
     assert disabled_token.value.code == "scim_authentication_failed"
+    with pytest.raises(LifecycleError) as disabled_overlap_token:
+        service.get_group(overlap_token, scim_group_id=group.id)
+    assert disabled_overlap_token.value.code == "scim_authentication_failed"
 
     assert len(CONTROL_PLANE_RLS_TABLES) == 85
     assert {
