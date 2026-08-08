@@ -152,6 +152,33 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert listed.total_results == listed.items_per_page == 1
     assert listed.resources[0].id == created.id
+    no_op_user = service.upsert_user(
+        token,
+        event_id=f"pc5-user-noop-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name="PC5 Employee",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert no_op_user.version == no_op_user.source_version == 1
+    replayed_no_op_user = service.upsert_user(
+        token,
+        event_id=f"pc5-user-noop-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name="PC5 Employee",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert replayed_no_op_user.replayed is True
+    assert replayed_no_op_user.version == 1
     missing_display_name = service.upsert_user(
         token,
         event_id=f"pc5-user-no-display-{suffix}",
@@ -242,6 +269,20 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         source_version=1,
     )
     assert group.active_member_count == 1
+    no_op_group = service.sync_group(
+        token,
+        event_id=f"pc5-group-noop-{suffix}",
+        external_id=f"engineering-{suffix}",
+        display_name=f"Engineering {suffix}",
+        member_external_ids=[f"employee-{suffix}"],
+        active=True,
+        source_version=None,
+        scim_group_id=group.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert no_op_group.version == no_op_group.source_version == 1
+    assert no_op_group.active_member_count == 1
     listed_groups = service.list_groups(
         token,
         filter_expression=ScimFilterExpression(
@@ -260,11 +301,11 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     assert listed_groups.total_results == listed_groups.items_per_page == 1
     assert listed_groups.resources[0].id == group.id
 
-    bulk_payload = {
+    bulk_payload: dict[str, object] = {
         "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
         "Operations": [{"method": "POST", "path": "/Users"}],
     }
-    bulk_response = {
+    bulk_response: dict[str, object] = {
         "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkResponse"],
         "Operations": [{"method": "POST", "status": "201"}],
     }

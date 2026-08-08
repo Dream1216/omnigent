@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection, CursorResult, Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from saas.compatibility import RequestContext
 from saas.control_plane.db_models import (
@@ -40,6 +40,7 @@ from saas.control_plane.enterprise_models import (
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.permissions import TENANT_ROLE_PERMISSIONS
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.scim_syntax import ScimFilterExpression, expected_core_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,14 +109,6 @@ class ScimGroupPage:
     total_results: int
     start_index: int
     items_per_page: int
-
-
-@dataclass(frozen=True, slots=True)
-class ScimFilterExpression:
-    operator: str
-    attribute: str | None = None
-    value: str | bool | None = None
-    operands: tuple[ScimFilterExpression, ...] = ()
 
 
 @dataclass(slots=True)
@@ -781,6 +774,32 @@ class EnterpriseScimService:
                     )
                 if user.version != expected_version:
                     raise LifecycleError("scim_etag_mismatch", "SCIM User ETag changed")
+                if (
+                    operation == "patch"
+                    and user.user_name_normalized == normalized
+                    and user.display_name == shown_name
+                    and user.active is active
+                ):
+                    result = self._user_payload(
+                        db,
+                        user,
+                        disposition="applied",
+                        requires_owner_recovery=False,
+                        revoked_session_count=0,
+                    )
+                    self._record_event(
+                        db,
+                        directory,
+                        event_key,
+                        request_hash,
+                        "User",
+                        user.id,
+                        user.source_version,
+                        "applied",
+                        result,
+                        event_type="enterprise.scim_user.noop",
+                    )
+                    return self._user_result(result)
                 source_version = user.source_version + 1
             assert source_version is not None
             state_hash = _hash(
@@ -1089,6 +1108,31 @@ class EnterpriseScimService:
                     )
                 if group.version != expected_version:
                     raise LifecycleError("scim_etag_mismatch", "SCIM Group ETag changed")
+                if (
+                    operation == "patch"
+                    and group.display_name == name
+                    and group.active is active
+                    and self._current_group_member_external_ids(
+                        db,
+                        directory=directory,
+                        group=group,
+                    )
+                    == members
+                ):
+                    result = self._group_payload(db, group, (), "applied")
+                    self._record_event(
+                        db,
+                        directory,
+                        event_key,
+                        request_hash,
+                        "Group",
+                        group.id,
+                        group.source_version,
+                        "applied",
+                        result,
+                        event_type="enterprise.scim_group.noop",
+                    )
+                    return self._group_result(result)
                 source_version = group.source_version + 1
             assert source_version is not None
             state_hash = _hash(
@@ -1385,6 +1429,8 @@ class EnterpriseScimService:
                 expression.attribute is not None
                 or expression.value is not None
                 or len(expression.operands) != 2
+                or expression.schema is not None
+                or expression.sub_attribute is not None
             ):
                 raise LifecycleError("invalidFilter", "SCIM logical filter is invalid")
             return sum(
@@ -1400,6 +1446,8 @@ class EnterpriseScimService:
                 expression.attribute is not None
                 or expression.value is not None
                 or len(expression.operands) != 1
+                or expression.schema is not None
+                or expression.sub_attribute is not None
             ):
                 raise LifecycleError("invalidFilter", "SCIM not filter is invalid")
             return cls._validate_filter_expression(
@@ -1407,13 +1455,42 @@ class EnterpriseScimService:
                 resource_type=resource_type,
                 depth=depth + 1,
             )
-        allowed_attributes = {
-            "User": {"id", "externalId", "userName", "displayName", "active"},
-            "Group": {"id", "externalId", "displayName", "active"},
-        }[resource_type]
-        attribute = expression.attribute
-        if expression.operands or attribute not in allowed_attributes:
-            raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
+        if operator == "valuePath":
+            attribute, sub_attribute = cls._resolved_filter_attribute(
+                expression,
+                resource_type=resource_type,
+            )
+            if (
+                resource_type != "Group"
+                or attribute != "members"
+                or sub_attribute is not None
+                or expression.value is not None
+                or len(expression.operands) != 1
+            ):
+                raise LifecycleError("invalidFilter", "SCIM valuePath is unsupported")
+            return cls._validate_member_filter_expression(expression.operands[0], depth=depth + 1)
+
+        if expression.operands:
+            raise LifecycleError("invalidFilter", "SCIM comparison filter is invalid")
+        attribute, sub_attribute = cls._resolved_filter_attribute(
+            expression,
+            resource_type=resource_type,
+        )
+        if attribute == "members":
+            if resource_type != "Group":
+                raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
+            if sub_attribute is None:
+                if operator == "pr" and expression.value is None:
+                    return 1
+                raise LifecycleError("invalidFilter", "SCIM members filter requires value")
+            return cls._validate_member_filter_expression(
+                ScimFilterExpression(
+                    operator=operator,
+                    attribute=sub_attribute,
+                    value=expression.value,
+                ),
+                depth=depth + 1,
+            )
         if operator == "pr":
             if expression.value is not None:
                 raise LifecycleError("invalidFilter", "SCIM presence filter is invalid")
@@ -1423,7 +1500,11 @@ class EnterpriseScimService:
             if operator not in {"eq", "ne"} or type(value) is not bool:
                 raise LifecycleError("invalidFilter", "SCIM Boolean filter is invalid")
             return 1
-        if not isinstance(value, str) or not value or len(value) > 320:
+        if value is None:
+            if operator not in {"eq", "ne"}:
+                raise LifecycleError("invalidFilter", "SCIM null filter is invalid")
+            return 1
+        if not isinstance(value, str) or len(value) > 320:
             raise LifecycleError("invalidFilter", "SCIM filter value is invalid")
         if attribute == "id":
             if operator not in {"eq", "ne"}:
@@ -1433,13 +1514,114 @@ class EnterpriseScimService:
             except ValueError as error:
                 raise LifecycleError("invalidFilter", "SCIM filter value is invalid") from error
             return 1
-        if operator not in {"eq", "ne", "co", "sw", "ew"}:
+        if operator not in {"eq", "ne", "co", "sw", "ew", "gt", "ge", "lt", "le"}:
             raise LifecycleError("invalidFilter", "SCIM filter operator is unsupported")
         if attribute == "userName" and operator in {"eq", "ne"}:
             try:
                 _normalize_user_name(value)
             except LifecycleError as error:
                 raise LifecycleError("invalidFilter", "SCIM filter value is invalid") from error
+        return 1
+
+    @staticmethod
+    def _resolved_filter_attribute(
+        expression: ScimFilterExpression,
+        *,
+        resource_type: str,
+    ) -> tuple[str, str | None]:
+        if (
+            expression.schema is not None
+            and expression.schema.casefold() != expected_core_schema(resource_type).casefold()
+        ):
+            raise LifecycleError("invalidFilter", "SCIM filter schema does not match resource")
+        attribute_map = {
+            "User": {
+                "id": "id",
+                "externalid": "externalId",
+                "username": "userName",
+                "displayname": "displayName",
+                "active": "active",
+            },
+            "Group": {
+                "id": "id",
+                "externalid": "externalId",
+                "displayname": "displayName",
+                "active": "active",
+                "members": "members",
+            },
+        }[resource_type]
+        raw_attribute = expression.attribute
+        attribute = (
+            attribute_map.get(raw_attribute.casefold()) if isinstance(raw_attribute, str) else None
+        )
+        if attribute is None:
+            raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
+        raw_sub_attribute = expression.sub_attribute
+        if raw_sub_attribute is None:
+            return attribute, None
+        if attribute != "members" or raw_sub_attribute.casefold() != "value":
+            raise LifecycleError("invalidFilter", "SCIM filter sub-attribute is unsupported")
+        return attribute, "value"
+
+    @classmethod
+    def _validate_member_filter_expression(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        depth: int,
+    ) -> int:
+        if depth > 16 or expression.schema is not None:
+            raise LifecycleError("invalidFilter", "SCIM member filter is invalid")
+        if expression.operator in {"and", "or"}:
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or expression.sub_attribute is not None
+                or len(expression.operands) != 2
+            ):
+                raise LifecycleError("invalidFilter", "SCIM member filter is invalid")
+            return sum(
+                cls._validate_member_filter_expression(item, depth=depth + 1)
+                for item in expression.operands
+            )
+        if expression.operator == "not":
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or expression.sub_attribute is not None
+                or len(expression.operands) != 1
+            ):
+                raise LifecycleError("invalidFilter", "SCIM member filter is invalid")
+            return cls._validate_member_filter_expression(expression.operands[0], depth=depth + 1)
+        if (
+            expression.operator == "valuePath"
+            or expression.operands
+            or expression.sub_attribute is not None
+            or (expression.attribute or "").casefold() != "value"
+        ):
+            raise LifecycleError("invalidFilter", "SCIM member filter is unsupported")
+        if expression.operator == "pr":
+            if expression.value is not None:
+                raise LifecycleError("invalidFilter", "SCIM member presence filter is invalid")
+            return 1
+        if expression.value is None:
+            if expression.operator not in {"eq", "ne"}:
+                raise LifecycleError("invalidFilter", "SCIM member null filter is invalid")
+            return 1
+        if not isinstance(expression.value, str) or len(expression.value) > 320:
+            raise LifecycleError("invalidFilter", "SCIM member filter value is invalid")
+        if expression.operator not in {
+            "eq",
+            "ne",
+            "co",
+            "sw",
+            "ew",
+            "gt",
+            "ge",
+            "lt",
+            "le",
+        }:
+            raise LifecycleError("invalidFilter", "SCIM member filter operator is unsupported")
         return 1
 
     @classmethod
@@ -1467,11 +1649,30 @@ class EnterpriseScimService:
             return sa.not_(
                 cls._filter_predicate(expression.operands[0], resource_type=resource_type)
             )
-        attribute = cast(str, expression.attribute)
+        if expression.operator == "valuePath":
+            return cls._member_exists_predicate(expression.operands[0])
+        attribute, sub_attribute = cls._resolved_filter_attribute(
+            expression,
+            resource_type=resource_type,
+        )
+        if attribute == "members":
+            if sub_attribute is None:
+                return cls._member_exists_predicate(
+                    ScimFilterExpression(operator="pr", attribute="value")
+                )
+            return cls._member_exists_predicate(
+                ScimFilterExpression(
+                    operator=expression.operator,
+                    attribute=sub_attribute,
+                    value=expression.value,
+                )
+            )
         column = cls._filter_column(resource_type=resource_type, attribute=attribute)
         if expression.operator == "pr":
             return column.is_not(None)
         value = expression.value
+        if value is None:
+            return column.is_(None) if expression.operator == "eq" else column.is_not(None)
         if attribute == "id":
             predicate = column == UUID(cast(str, value))
         elif attribute == "active":
@@ -1490,11 +1691,98 @@ class EnterpriseScimService:
                 predicate = comparison_column.contains(text_value, autoescape=True)
             elif expression.operator == "sw":
                 predicate = comparison_column.startswith(text_value, autoescape=True)
-            else:
+            elif expression.operator == "ew":
                 predicate = comparison_column.endswith(text_value, autoescape=True)
+            elif expression.operator == "gt":
+                predicate = comparison_column > text_value
+            elif expression.operator == "ge":
+                predicate = comparison_column >= text_value
+            elif expression.operator == "lt":
+                predicate = comparison_column < text_value
+            else:
+                predicate = comparison_column <= text_value
         if expression.operator == "ne":
             predicate = sa.not_(predicate)
         return sa.func.coalesce(predicate, sa.false())
+
+    @classmethod
+    def _member_exists_predicate(
+        cls,
+        expression: ScimFilterExpression,
+    ) -> sa.ColumnElement[bool]:
+        membership = aliased(EnterpriseGroupMembershipRecord)
+        user = aliased(EnterpriseScimUserRecord)
+        member_predicate = cls._member_value_predicate(expression, user=user)
+        return sa.exists(
+            sa.select(1)
+            .select_from(membership)
+            .join(
+                user,
+                sa.and_(
+                    user.tenant_id == membership.tenant_id,
+                    user.user_id == membership.user_id,
+                ),
+            )
+            .where(
+                membership.tenant_id == EnterpriseScimGroupRecord.tenant_id,
+                membership.group_id == EnterpriseScimGroupRecord.enterprise_group_id,
+                membership.status == "active",
+                user.directory_id == EnterpriseScimGroupRecord.directory_id,
+                user.active.is_(True),
+                member_predicate,
+            )
+            .correlate(EnterpriseScimGroupRecord)
+        )
+
+    @classmethod
+    def _member_value_predicate(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        user: Any,
+    ) -> sa.ColumnElement[bool]:
+        if expression.operator == "and":
+            return sa.and_(
+                *(cls._member_value_predicate(item, user=user) for item in expression.operands)
+            )
+        if expression.operator == "or":
+            return sa.or_(
+                *(cls._member_value_predicate(item, user=user) for item in expression.operands)
+            )
+        if expression.operator == "not":
+            return sa.not_(cls._member_value_predicate(expression.operands[0], user=user))
+        if expression.operator == "pr":
+            return user.id.is_not(None)
+        if expression.value is None:
+            return sa.false() if expression.operator == "eq" else sa.true()
+        text_value = cast(str, expression.value).casefold()
+        if expression.operator in {"eq", "ne"}:
+            try:
+                predicate = user.id == UUID(text_value)
+            except ValueError:
+                predicate = sa.false()
+            return sa.not_(predicate) if expression.operator == "ne" else predicate
+        comparison_column = sa.func.replace(
+            sa.func.lower(sa.cast(user.id, sa.String())),
+            "-",
+            "",
+        )
+        text_value = text_value.replace("-", "")
+        if expression.operator == "co":
+            predicate = comparison_column.contains(text_value, autoescape=True)
+        elif expression.operator == "sw":
+            predicate = comparison_column.startswith(text_value, autoescape=True)
+        elif expression.operator == "ew":
+            predicate = comparison_column.endswith(text_value, autoescape=True)
+        elif expression.operator == "gt":
+            predicate = comparison_column > text_value
+        elif expression.operator == "ge":
+            predicate = comparison_column >= text_value
+        elif expression.operator == "lt":
+            predicate = comparison_column < text_value
+        else:
+            predicate = comparison_column <= text_value
+        return predicate
 
     @staticmethod
     def _filter_column(*, resource_type: str, attribute: str) -> sa.ColumnElement[Any]:
@@ -1678,6 +1966,36 @@ class EnterpriseScimService:
         if global_user is not None:
             global_user.security_version += 1
         return requires_owner_recovery, int(revoked or 0)
+
+    @staticmethod
+    def _current_group_member_external_ids(
+        db: Session,
+        *,
+        directory: EnterpriseScimDirectoryRecord,
+        group: EnterpriseScimGroupRecord,
+    ) -> tuple[str, ...]:
+        return tuple(
+            db.scalars(
+                sa.select(EnterpriseScimUserRecord.external_id)
+                .join(
+                    EnterpriseGroupMembershipRecord,
+                    sa.and_(
+                        EnterpriseGroupMembershipRecord.tenant_id
+                        == EnterpriseScimUserRecord.tenant_id,
+                        EnterpriseGroupMembershipRecord.user_id
+                        == EnterpriseScimUserRecord.user_id,
+                    ),
+                )
+                .where(
+                    EnterpriseGroupMembershipRecord.tenant_id == directory.tenant_id,
+                    EnterpriseGroupMembershipRecord.group_id == group.enterprise_group_id,
+                    EnterpriseGroupMembershipRecord.status == "active",
+                    EnterpriseScimUserRecord.directory_id == directory.id,
+                    EnterpriseScimUserRecord.active.is_(True),
+                )
+                .order_by(EnterpriseScimUserRecord.external_id)
+            )
+        )
 
     @staticmethod
     def _converge_group_members(

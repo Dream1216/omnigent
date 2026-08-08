@@ -443,6 +443,42 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     assert filtered_user.json()["totalResults"] == 1
     assert filtered_user.json()["Resources"][0]["externalId"] == "employee-alpha"
 
+    ordered_user = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'displayName gt "Employee 1"'},
+    )
+    assert ordered_user.status_code == 200
+    assert [item["externalId"] for item in ordered_user.json()["Resources"]] == ["employee-beta"]
+    schema_qualified = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={
+            "filter": (
+                "urn:ietf:params:scim:schemas:core:2.0:User:userName "
+                'le "employee-alpha@example.test"'
+            )
+        },
+    )
+    assert schema_qualified.status_code == 200
+    assert [item["externalId"] for item in schema_qualified.json()["Resources"]] == [
+        "employee-alpha"
+    ]
+    greater_or_equal = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'externalId ge "employee-beta"'},
+    )
+    less_than = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'externalId lt "employee-beta"'},
+    )
+    assert [item["externalId"] for item in greater_or_equal.json()["Resources"]] == [
+        "employee-beta"
+    ]
+    assert [item["externalId"] for item in less_than.json()["Resources"]] == ["employee-alpha"]
+
     inactive = client.get(
         "/saas/scim/v2/Users?filter=active%20eq%20false&count=0",
         headers=headers,
@@ -461,7 +497,7 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
                 "schemas": [_GROUP_SCHEMA],
                 "externalId": external_id,
                 "displayName": f"Group {index}",
-                "members": [],
+                "members": ([{"value": created_users["employee-alpha"]}] if index == 1 else []),
             },
         )
         assert response.status_code == 201
@@ -479,6 +515,25 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     assert filtered_group.status_code == 200
     assert filtered_group.json()["totalResults"] == 1
     assert filtered_group.json()["Resources"][0]["externalId"] == "group-beta"
+
+    member_value_path = client.get(
+        "/saas/scim/v2/Groups",
+        headers=headers,
+        params={
+            "filter": (f'members[(value eq "{created_users["employee-alpha"]}") and value pr]')
+        },
+    )
+    assert member_value_path.status_code == 200
+    assert [item["externalId"] for item in member_value_path.json()["Resources"]] == [
+        "group-alpha"
+    ]
+    direct_member_sub_attribute = client.get(
+        "/saas/scim/v2/Groups",
+        headers=headers,
+        params={"filter": f'members.value eq "{created_users["employee-alpha"]}"'},
+    )
+    assert direct_member_sub_attribute.status_code == 200
+    assert direct_member_sub_attribute.json()["totalResults"] == 1
 
     compound_users = client.get(
         "/saas/scim/v2/Users",
@@ -555,6 +610,13 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     assert missing_presence.status_code == 200
     assert missing_presence.json()["totalResults"] == 1
     assert missing_presence.json()["Resources"][0]["externalId"] == "employee-no-display"
+    null_comparison = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "displayName eq null"},
+    )
+    assert null_comparison.status_code == 200
+    assert null_comparison.json()["Resources"][0]["externalId"] == "employee-no-display"
     two_valued_not = client.get(
         "/saas/scim/v2/Users",
         headers=headers,
@@ -610,6 +672,30 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     )
     assert compound.status_code == 400
     assert compound.json()["scimType"] == "invalidFilter"
+
+    boolean_ordering = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "active gt false"},
+    )
+    assert boolean_ordering.status_code == 400
+    assert boolean_ordering.json()["scimType"] == "invalidFilter"
+
+    numeric_string_comparison = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "displayName ge 2"},
+    )
+    assert numeric_string_comparison.status_code == 400
+    assert numeric_string_comparison.json()["scimType"] == "invalidFilter"
+
+    wrong_schema = client.get(
+        "/saas/scim/v2/Groups",
+        headers=headers,
+        params={"filter": ('urn:ietf:params:scim:schemas:core:2.0:User:displayName eq "Group 1"')},
+    )
+    assert wrong_schema.status_code == 400
+    assert wrong_schema.json()["scimType"] == "invalidFilter"
 
     group_sort_unsupported = client.get(
         "/saas/scim/v2/Groups?sortBy=userName",
@@ -826,6 +912,225 @@ def test_scim_resource_lifecycle_put_patch_delete_and_lost_response_replay() -> 
         headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "stale-delete"},
     )
     assert stale_delete.status_code == 412
+
+
+def test_scim_patch_value_path_mutability_no_target_and_atomic_noops() -> None:
+    client, token, _, _ = _app()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def create_user(name: str) -> str:
+        response = client.post(
+            "/saas/scim/v2/Users",
+            headers={**headers, "Idempotency-Key": f"value-path-user-{name}"},
+            json={
+                "schemas": [_USER_SCHEMA],
+                "externalId": name,
+                "userName": f"{name}@example.test",
+                "displayName": name,
+                "active": True,
+            },
+        )
+        assert response.status_code == 201
+        return cast(str, response.json()["id"])
+
+    first_id = create_user("value-path-first")
+    second_id = create_user("value-path-second")
+    group = client.post(
+        "/saas/scim/v2/Groups",
+        headers={**headers, "Idempotency-Key": "value-path-group-create"},
+        json={
+            "schemas": [_GROUP_SCHEMA],
+            "externalId": "value-path-group",
+            "displayName": "Value Path Group",
+            "members": [{"value": first_id}, {"value": second_id}],
+        },
+    )
+    assert group.status_code == 201
+    group_path = f"/saas/scim/v2/Groups/{group.json()['id']}"
+
+    removed = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "compound-remove"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "remove",
+                    "path": f'members[(value eq "{first_id}") or value eq "{uuid4()}"]',
+                }
+            ],
+        },
+    )
+    assert removed.status_code == 200
+    assert removed.headers["etag"] == 'W/"2"'
+    assert [member["value"] for member in removed.json()["members"]] == [second_id]
+
+    absent_remove = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "absent-remove"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "remove", "path": f'members[value eq "{uuid4()}"]'}],
+        },
+    )
+    assert absent_remove.status_code == 200
+    assert absent_remove.headers["etag"] == 'W/"2"'
+
+    duplicate_add = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "duplicate-add"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "add", "path": "members", "value": {"value": second_id}}],
+        },
+    )
+    assert duplicate_add.status_code == 200
+    assert duplicate_add.headers["etag"] == 'W/"2"'
+    duplicate_add_replay = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "duplicate-add"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "add", "path": "members", "value": {"value": second_id}}],
+        },
+    )
+    assert duplicate_add_replay.status_code == 200
+    assert duplicate_add_replay.headers["etag"] == 'W/"2"'
+
+    qualified_pathless = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "qualified-pathless"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "value": {
+                        "urn:ietf:params:scim:schemas:core:2.0:Group:displayName": (
+                            "Qualified Group"
+                        )
+                    },
+                }
+            ],
+        },
+    )
+    assert qualified_pathless.status_code == 200
+    assert qualified_pathless.headers["etag"] == 'W/"3"'
+    assert qualified_pathless.json()["displayName"] == "Qualified Group"
+
+    atomic_failure = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "atomic-failure"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {"op": "replace", "path": "displayName", "value": "Must Roll Back"},
+                {"op": "remove"},
+            ],
+        },
+    )
+    assert atomic_failure.status_code == 400
+    assert atomic_failure.json()["scimType"] == "noTarget"
+    unchanged = client.get(group_path, headers=headers)
+    assert unchanged.headers["etag"] == 'W/"3"'
+    assert unchanged.json()["displayName"] == "Qualified Group"
+
+    selected_replace = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "immutable-replace"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "path": f'members[value eq "{second_id}"]',
+                    "value": {"value": first_id},
+                }
+            ],
+        },
+    )
+    assert selected_replace.status_code == 400
+    assert selected_replace.json()["scimType"] == "mutability"
+
+    missing_replace = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "missing-replace"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "path": f'members[value eq "{uuid4()}"]',
+                    "value": {"value": first_id},
+                }
+            ],
+        },
+    )
+    assert missing_replace.status_code == 400
+    assert missing_replace.json()["scimType"] == "noTarget"
+
+    immutable_sub_attribute = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "immutable-sub"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "remove", "path": f'members[value eq "{second_id}"].value'}],
+        },
+    )
+    assert immutable_sub_attribute.status_code == 400
+    assert immutable_sub_attribute.json()["scimType"] == "mutability"
+
+    wrong_schema = client.patch(
+        group_path,
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "wrong-schema"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "path": "urn:ietf:params:scim:schemas:core:2.0:User:displayName",
+                    "value": "Wrong",
+                }
+            ],
+        },
+    )
+    assert wrong_schema.status_code == 400
+    assert wrong_schema.json()["scimType"] == "invalidPath"
+
+    user_path = f"/saas/scim/v2/Users/{first_id}"
+    user_pathless = client.patch(
+        user_path,
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "user-pathless"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "add", "value": {"DisplayName": "Pathless User"}}],
+        },
+    )
+    assert user_pathless.status_code == 200
+    assert user_pathless.headers["etag"] == 'W/"2"'
+    assert user_pathless.json()["displayName"] == "Pathless User"
+
+    immutable_user = client.patch(
+        user_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "immutable-user-patch"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "replace", "path": "externalId", "value": "changed"}],
+        },
+    )
+    assert immutable_user.status_code == 400
+    assert immutable_user.json()["scimType"] == "mutability"
+
+    missing_value = client.patch(
+        user_path,
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "missing-value"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "replace", "path": "displayName"}],
+        },
+    )
+    assert missing_value.status_code == 400
+    assert missing_value.json()["scimType"] == "invalidValue"
 
 
 def test_scim_bulk_back_references_replay_conflict_limits_and_fail_on_errors() -> None:

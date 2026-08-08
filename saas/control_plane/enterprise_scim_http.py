@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Coroutine, Mapping
+from contextlib import suppress
 from datetime import datetime
 from hashlib import sha256
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -20,13 +21,20 @@ from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_identity import (
     EnterpriseScimService,
     IssuedScimDirectory,
-    ScimFilterExpression,
     ScimGroupView,
     ScimUserView,
 )
 from saas.control_plane.http_auth import SaasAuthProvider
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
+from saas.control_plane.scim_syntax import (
+    ScimFilterExpression,
+    ScimPatchPath,
+    ScimSyntaxError,
+    expected_core_schema,
+    parse_scim_filter,
+    parse_scim_patch_path,
+)
 
 _USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 _GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
@@ -46,9 +54,6 @@ _FILTER_ATTRIBUTES = {
     "displayname": "displayName",
     "active": "active",
 }
-_MEMBER_FILTER_PATH = re.compile(
-    r'^members\s*\[\s*value\s+eq\s+"([0-9a-f-]{36})"\s*\]$', re.IGNORECASE
-)
 _BULK_ID = re.compile(r"^[A-Za-z0-9._~-]{1,64}$")
 _BULK_REFERENCE = re.compile(r"bulkId:([A-Za-z0-9._~-]{1,64})")
 _BULK_RESOURCE_PATH = re.compile(
@@ -308,152 +313,15 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
     }
 
 
-class _ScimFilterParser:
-    def __init__(self, value: str) -> None:
-        self._tokens = self._tokenize(value)
-        self._index = 0
-        self._depth = 0
-
-    def parse(self) -> ScimFilterExpression:
-        if not self._tokens:
-            self._invalid()
-        expression = self._parse_or()
-        if self._index != len(self._tokens):
-            self._invalid()
-        return expression
-
-    def _parse_or(self) -> ScimFilterExpression:
-        expression = self._parse_and()
-        while self._word_at("or"):
-            self._index += 1
-            expression = ScimFilterExpression(
-                operator="or",
-                operands=(expression, self._parse_and()),
-            )
-        return expression
-
-    def _parse_and(self) -> ScimFilterExpression:
-        expression = self._parse_not()
-        while self._word_at("and"):
-            self._index += 1
-            expression = ScimFilterExpression(
-                operator="and",
-                operands=(expression, self._parse_not()),
-            )
-        return expression
-
-    def _parse_not(self) -> ScimFilterExpression:
-        if self._word_at("not"):
-            self._index += 1
-            return ScimFilterExpression(operator="not", operands=(self._parse_not(),))
-        return self._parse_primary()
-
-    def _parse_primary(self) -> ScimFilterExpression:
-        if self._kind_at("left"):
-            self._index += 1
-            self._depth += 1
-            if self._depth > 4:
-                self._invalid("SCIM filter nesting is too deep")
-            expression = self._parse_or()
-            if not self._kind_at("right"):
-                self._invalid()
-            self._index += 1
-            self._depth -= 1
-            return expression
-        attribute_word = self._consume_word()
-        attribute = _FILTER_ATTRIBUTES.get(attribute_word.casefold())
-        if attribute is None:
-            self._invalid("SCIM filter attribute is unsupported")
-        operator = self._consume_word().casefold()
-        if operator == "pr":
-            return ScimFilterExpression(operator=operator, attribute=attribute)
-        if operator not in {"eq", "ne", "co", "sw", "ew"}:
-            self._invalid("SCIM filter operator is unsupported")
-        if self._index >= len(self._tokens):
-            self._invalid()
-        kind, value = self._tokens[self._index]
-        if kind not in {"string", "boolean"}:
-            self._invalid()
-        self._index += 1
-        return ScimFilterExpression(operator=operator, attribute=attribute, value=value)
-
-    def _consume_word(self) -> str:
-        if not self._kind_at("word"):
-            self._invalid()
-        value = self._tokens[self._index][1]
-        self._index += 1
-        return cast(str, value)
-
-    def _kind_at(self, kind: str) -> bool:
-        return self._index < len(self._tokens) and self._tokens[self._index][0] == kind
-
-    def _word_at(self, value: str) -> bool:
-        return self._kind_at("word") and str(self._tokens[self._index][1]).casefold() == value
-
-    @staticmethod
-    def _tokenize(value: str) -> list[tuple[str, str | bool]]:
-        tokens: list[tuple[str, str | bool]] = []
-        index = 0
-        while index < len(value):
-            if value[index].isspace():
-                index += 1
-                continue
-            if value[index] == "(":
-                tokens.append(("left", "("))
-                index += 1
-                continue
-            if value[index] == ")":
-                tokens.append(("right", ")"))
-                index += 1
-                continue
-            if value[index] == '"':
-                start = index
-                index += 1
-                escaped = False
-                while index < len(value):
-                    character = value[index]
-                    index += 1
-                    if escaped:
-                        escaped = False
-                    elif character == "\\":
-                        escaped = True
-                    elif character == '"':
-                        break
-                else:
-                    _ScimFilterParser._invalid()
-                try:
-                    decoded = json.loads(value[start:index])
-                except json.JSONDecodeError as error:
-                    raise _error(
-                        LifecycleError("invalidFilter", "SCIM filter is invalid")
-                    ) from error
-                if not isinstance(decoded, str) or len(decoded) > 320:
-                    _ScimFilterParser._invalid()
-                tokens.append(("string", decoded))
-                continue
-            start = index
-            while index < len(value) and not value[index].isspace() and value[index] not in "()":
-                index += 1
-            word = value[start:index]
-            if not word or len(word) > 320:
-                _ScimFilterParser._invalid()
-            if word.casefold() in {"true", "false"}:
-                tokens.append(("boolean", word.casefold() == "true"))
-            else:
-                tokens.append(("word", word))
-        return tokens
-
-    @staticmethod
-    def _invalid(message: str = "SCIM filter is invalid") -> NoReturn:
-        raise _error(LifecycleError("invalidFilter", message))
-
-
 def _filter_expression(value: str | None) -> ScimFilterExpression | None:
     if value is None:
         return None
     if len(value) > 1024:
         raise _error(LifecycleError("invalidFilter", "SCIM filter is too long"))
-    return _ScimFilterParser(value).parse()
+    try:
+        return parse_scim_filter(value)
+    except ScimSyntaxError as error:
+        raise _error(LifecycleError(error.scim_type, str(error))) from error
 
 
 def _sort_parts(sort_by: str | None, sort_order: str) -> tuple[str | None, str]:
@@ -565,6 +433,114 @@ def _group_payload(value: ScimGroupView, request: Request) -> dict[str, object]:
     }
 
 
+_PATCH_ATTRIBUTES = {
+    "User": {
+        "id": "id",
+        "externalid": "externalId",
+        "username": "userName",
+        "displayname": "displayName",
+        "active": "active",
+        "schemas": "schemas",
+        "meta": "meta",
+    },
+    "Group": {
+        "id": "id",
+        "externalid": "externalId",
+        "displayname": "displayName",
+        "members": "members",
+        "schemas": "schemas",
+        "meta": "meta",
+    },
+}
+_MEMBER_SUB_ATTRIBUTES = {"value": "value", "$ref": "$ref", "display": "display"}
+
+
+def _patch_error(scim_type: str, message: str) -> _ScimHttpError:
+    return _error(LifecycleError(scim_type, message))
+
+
+def _patch_path(value: object, *, resource_type: str) -> ScimPatchPath:
+    if not isinstance(value, str) or not value or len(value) > 1024:
+        raise _patch_error("invalidPath", "PATCH path is invalid")
+    try:
+        parsed = parse_scim_patch_path(value)
+    except ScimSyntaxError as error:
+        raise _patch_error(error.scim_type, str(error)) from error
+    if (
+        parsed.schema is not None
+        and parsed.schema.casefold() != expected_core_schema(resource_type).casefold()
+    ):
+        raise _patch_error("invalidPath", "PATCH schema URI does not match the resource")
+    attribute = _PATCH_ATTRIBUTES[resource_type].get(parsed.attribute.casefold())
+    if attribute is None:
+        raise _patch_error("invalidPath", "PATCH attribute is unsupported")
+    sub_attribute = parsed.sub_attribute
+    if sub_attribute is not None:
+        sub_attribute = _MEMBER_SUB_ATTRIBUTES.get(sub_attribute.casefold())
+        if attribute != "members" or sub_attribute is None:
+            raise _patch_error("invalidPath", "PATCH sub-attribute is unsupported")
+    if parsed.value_filter is not None and attribute != "members":
+        raise _patch_error("invalidPath", "PATCH valuePath requires a multi-valued attribute")
+    return ScimPatchPath(
+        attribute=attribute,
+        schema=parsed.schema,
+        value_filter=parsed.value_filter,
+        sub_attribute=sub_attribute,
+    )
+
+
+def _patch_operation(
+    operation: Mapping[str, object], *, resource_type: str
+) -> tuple[str, ScimPatchPath | None, object]:
+    raw_action = operation.get("op")
+    if not isinstance(raw_action, str) or raw_action.casefold() not in {
+        "add",
+        "replace",
+        "remove",
+    }:
+        raise _patch_error("invalidSyntax", "PATCH op is invalid")
+    action = raw_action.casefold()
+    raw_path = operation.get("path")
+    if raw_path is None:
+        if action == "remove":
+            raise _patch_error("noTarget", "PATCH remove requires a path")
+        path = None
+    else:
+        path = _patch_path(raw_path, resource_type=resource_type)
+    if action in {"add", "replace"} and "value" not in operation:
+        raise _patch_error("invalidValue", "PATCH add and replace require a value")
+    return action, path, operation.get("value")
+
+
+def _pathless_values(value: object, *, resource_type: str) -> list[tuple[str, object]]:
+    if not isinstance(value, Mapping) or not value:
+        raise _patch_error("invalidValue", "pathless PATCH value must contain attributes")
+    resolved: list[tuple[str, object]] = []
+    for raw_attribute, item in value.items():
+        path = _patch_path(raw_attribute, resource_type=resource_type)
+        if path.value_filter is not None or path.sub_attribute is not None:
+            raise _patch_error("invalidPath", "pathless PATCH value contains an invalid path")
+        resolved.append((path.attribute, item))
+    return resolved
+
+
+def _immutable(attribute: str) -> _ScimHttpError:
+    return _patch_error("mutability", f"{attribute} cannot be modified")
+
+
+def _apply_user_attribute(
+    state: dict[str, object], *, action: str, attribute: str, value: object
+) -> None:
+    if attribute in {"id", "externalId", "schemas", "meta"}:
+        raise _immutable(attribute)
+    if action == "remove":
+        if attribute != "displayName":
+            raise _immutable(attribute)
+        state[attribute] = None
+    else:
+        state[attribute] = value
+
+
 def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, object]:
     if _PATCH_SCHEMA not in patch.schemas:
         raise _error(LifecycleError("scim_schema_invalid", "SCIM PatchOp schema is required"))
@@ -574,35 +550,14 @@ def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, obje
         "active": current.active,
     }
     for operation in patch.operations:
-        action = str(operation.get("op", "")).casefold()
-        if action not in {"add", "replace", "remove"}:
-            raise _error(LifecycleError("scim_patch_unsupported", "PATCH op is unsupported"))
-        path = operation.get("path")
-        value = operation.get("value")
-        if path is None and action in {"add", "replace"} and isinstance(value, Mapping):
-            for key in ("userName", "displayName", "active"):
-                if key in value:
-                    state[key] = value[key]
-        elif isinstance(path, str) and path.casefold() in {
-            "username",
-            "displayname",
-            "active",
-        }:
-            key = {
-                "username": "userName",
-                "displayname": "displayName",
-                "active": "active",
-            }[path.casefold()]
-            if action == "remove":
-                if key != "displayName":
-                    raise _error(
-                        LifecycleError("scim_patch_path_invalid", f"{key} cannot be removed")
-                    )
-                state[key] = None
-            else:
-                state[key] = value
-        else:
-            raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
+        action, path, value = _patch_operation(operation, resource_type="User")
+        if path is None:
+            for attribute, item in _pathless_values(value, resource_type="User"):
+                _apply_user_attribute(state, action=action, attribute=attribute, value=item)
+            continue
+        if path.value_filter is not None or path.sub_attribute is not None:
+            raise _patch_error("invalidPath", "User PATCH valuePath is unsupported")
+        _apply_user_attribute(state, action=action, attribute=path.attribute, value=value)
     if not isinstance(state["userName"], str):
         raise _error(LifecycleError("scim_user_name_invalid", "userName is invalid"))
     if state["displayName"] is not None and not isinstance(state["displayName"], str):
@@ -610,6 +565,85 @@ def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, obje
     if type(state["active"]) is not bool:
         raise _error(LifecycleError("scim_active_invalid", "active must be a Boolean"))
     return state
+
+
+def _member_filter_matches(expression: ScimFilterExpression, member: Mapping[str, str]) -> bool:
+    if expression.operator == "and":
+        return all(_member_filter_matches(item, member) for item in expression.operands)
+    if expression.operator == "or":
+        return any(_member_filter_matches(item, member) for item in expression.operands)
+    if expression.operator == "not":
+        return not _member_filter_matches(expression.operands[0], member)
+    if expression.operator == "valuePath" or expression.schema is not None:
+        raise _patch_error("invalidPath", "nested or schema-qualified member filters are invalid")
+    if expression.sub_attribute is not None or (expression.attribute or "").casefold() != "value":
+        raise _patch_error("invalidPath", "member valuePath may filter only value")
+    actual = member["value"]
+    if expression.operator == "pr":
+        return True
+    expected = expression.value
+    if expected is None:
+        return expression.operator == "ne"
+    if not isinstance(expected, str):
+        raise _patch_error("invalidPath", "member valuePath comparison must use a string")
+    if expression.operator in {"eq", "ne"}:
+        with suppress(ValueError):
+            expected = str(UUID(expected))
+    left, right = actual.casefold(), expected.casefold()
+    matched = {
+        "eq": left == right,
+        "ne": left != right,
+        "co": right in left,
+        "sw": left.startswith(right),
+        "ew": left.endswith(right),
+        "gt": left > right,
+        "ge": left >= right,
+        "lt": left < right,
+        "le": left <= right,
+    }.get(expression.operator)
+    if matched is None:
+        raise _patch_error("invalidPath", "member valuePath operator is invalid")
+    return matched
+
+
+def _apply_group_attribute(
+    state: dict[str, object], *, action: str, attribute: str, value: object
+) -> None:
+    if attribute in {"id", "externalId", "schemas", "meta"}:
+        raise _immutable(attribute)
+    if attribute == "displayName":
+        if action == "remove":
+            raise _immutable(attribute)
+        state[attribute] = value
+        return
+    if action == "remove":
+        state["members"] = []
+    elif action == "add":
+        state["members"] = _merged_members(state["members"], value)
+    else:
+        state["members"] = value
+
+
+def _apply_member_value_path(
+    state: dict[str, object], *, action: str, path: ScimPatchPath
+) -> None:
+    assert path.value_filter is not None
+    members = _member_values(state["members"])
+    selected = [
+        index
+        for index, member in enumerate(members)
+        if _member_filter_matches(path.value_filter, member)
+    ]
+    if action == "remove" and path.sub_attribute is None:
+        state["members"] = [
+            member for index, member in enumerate(members) if index not in selected
+        ]
+        return
+    if not selected:
+        if action == "remove":
+            return
+        raise _patch_error("noTarget", "PATCH valuePath selected no members")
+    raise _immutable(f"members.{path.sub_attribute or 'value'}")
 
 
 def _patched_group(current: ScimGroupView, patch: ScimPatchBody) -> dict[str, object]:
@@ -620,43 +654,22 @@ def _patched_group(current: ScimGroupView, patch: ScimPatchBody) -> dict[str, ob
         "members": [{"value": str(item)} for item in current.member_scim_user_ids],
     }
     for operation in patch.operations:
-        action = str(operation.get("op", "")).casefold()
-        if action not in {"add", "replace", "remove"}:
-            raise _error(LifecycleError("scim_patch_unsupported", "PATCH op is unsupported"))
-        path = operation.get("path")
-        value = operation.get("value")
-        if path is None and action in {"add", "replace"} and isinstance(value, Mapping):
-            for key in ("displayName", "members"):
-                if key in value:
-                    if key == "members" and action == "add":
-                        state[key] = _merged_members(state[key], value[key])
-                    else:
-                        state[key] = value[key]
-        elif isinstance(path, str) and path.casefold() == "displayname":
-            if action == "remove":
-                raise _error(
-                    LifecycleError("scim_patch_path_invalid", "displayName cannot be removed")
-                )
-            state["displayName"] = value
-        elif isinstance(path, str) and path.casefold() == "members":
-            if action == "remove":
-                state["members"] = []
-            elif action == "add":
-                state["members"] = _merged_members(state["members"], value)
-            else:
-                state["members"] = value
-        elif isinstance(path, str) and action == "remove":
-            match = _MEMBER_FILTER_PATH.fullmatch(path)
-            if match is None:
-                raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
-            member_id = str(UUID(match.group(1)))
-            state["members"] = [
-                member
-                for member in _member_values(state["members"])
-                if member["value"] != member_id
-            ]
+        action, path, value = _patch_operation(operation, resource_type="Group")
+        if path is None:
+            for attribute, item in _pathless_values(value, resource_type="Group"):
+                _apply_group_attribute(state, action=action, attribute=attribute, value=item)
+            continue
+        if path.value_filter is not None:
+            _apply_member_value_path(state, action=action, path=path)
+        elif path.sub_attribute is not None:
+            raise _immutable(f"members.{path.sub_attribute}")
         else:
-            raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
+            _apply_group_attribute(
+                state,
+                action=action,
+                attribute=path.attribute,
+                value=value,
+            )
     if not isinstance(state["displayName"], str):
         raise _error(LifecycleError("scim_group_name_invalid", "displayName is invalid"))
     state["members"] = _member_values(state["members"])
@@ -1363,6 +1376,7 @@ def create_enterprise_scim_router(
         try:
             current = service.get_user(token, scim_user_id=scim_user_id)
             state = _patched_user(current, body)
+            expected_version = _required_version(if_match)
             value = service.upsert_user(
                 token,
                 event_id=idempotency_key,
@@ -1374,7 +1388,7 @@ def create_enterprise_scim_router(
                 active=cast(bool, state["active"]),
                 source_version=None,
                 scim_user_id=scim_user_id,
-                expected_version=_required_version(if_match),
+                expected_version=expected_version,
                 operation="patch",
             )
         except LifecycleError as error:
@@ -1516,6 +1530,7 @@ def create_enterprise_scim_router(
         try:
             current = service.get_group(token, scim_group_id=scim_group_id)
             state = _patched_group(current, body)
+            expected_version = _required_version(if_match)
             value = service.sync_group(
                 token,
                 event_id=idempotency_key,
@@ -1525,7 +1540,7 @@ def create_enterprise_scim_router(
                 active=current.active,
                 source_version=None,
                 scim_group_id=scim_group_id,
-                expected_version=_required_version(if_match),
+                expected_version=expected_version,
                 operation="patch",
             )
         except LifecycleError as error:
