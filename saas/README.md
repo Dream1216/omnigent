@@ -1572,8 +1572,9 @@ production gate remain open; release remains `NO-GO`.
 
 ## PC5 enterprise SCIM convergence foundation
 
-The next isolated slice advances the local migration head to `pc5a00000001` and adds
-Tenant-owned, hash-credentialed SCIM directories, User/Group resource mappings and
+The foundation began at `pc5a00000001`; the bounded Bulk receipt migration advances the
+current local head to `pc5a00000002`. It provides Tenant-owned, hash-credentialed SCIM
+directories, User/Group resource mappings and
 immutable provisioning receipts under 85 control-plane plus 17 Runtime forced-RLS
 tables. Directory issuance and credential rotation require authentication no older than
 five minutes, return the bearer only once under `Cache-Control: no-store`, and persist
@@ -1588,7 +1589,7 @@ interactive access or silently transferring ownership. Group convergence refuses
 re-add an inactive User, so a late Group update cannot undo a newer deprovision.
 
 The HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
-POST/GET-by-id/PUT/PATCH/DELETE plus ListResponse for Users and Groups, weak
+POST/GET-by-id/PUT/PATCH/DELETE plus ListResponse for Users and Groups, bounded Bulk, weak
 ETags/If-Match, bearer authentication and `application/scim+json` responses. Collection reads use stable
 one-based pagination, a maximum count of 100, a 1,024-character/16-term/four-level
 filter budget and deterministic allowlisted sorting with UUID tie-breaking. The bounded
@@ -1600,16 +1601,19 @@ credential rotation and disable with one-time token delivery. PUT performs guard
 replacement without changing `externalId`; DELETE retains an inactive tombstone while
 revoking User access or archiving Group authority. Resource-specific Add/Replace/Remove
 PATCH paths and lost-response replay execute under one replay-before-CAS transaction.
-Bulk, full RFC filter attributes/operators/value paths, complete RFC PATCH paths,
-scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
+Bulk accepts at most 32 operations and 1 MiB, supports User/Group POST/PUT/PATCH/DELETE,
+resolves backward and forward `bulkId` dependencies, rejects circular/unresolved graphs,
+honors `failOnErrors`, and stores immutable request/result receipts for exact replay. Full
+RFC filter attributes/operators/value paths, complete RFC PATCH paths, larger/provider-
+specific Bulk profiles, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
 Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
 state and identity Event Receipts are now separate deletion
 surfaces with token-hash destruction, subject erasure and non-resurrecting receipt
 anonymization checks. The anonymization/Legal Hold workflow is not implemented yet and
 immutable receipts may still carry external identity/display fields, so Privacy remains
 a production blocker rather than a completed property. Local evidence currently consists
-of seven convergence/lifecycle tests, four HTTP tests, SQLite model/migration checks, one
-isolated PostgreSQL 16 token-RLS/rotation/disable/list/concurrent-CAS/immutable-event test and a 79.649-second
+of eight convergence/lifecycle tests, five HTTP tests, SQLite model/migration checks, one
+isolated PostgreSQL 16 token-RLS/rotation/disable/list/concurrent-CAS/Bulk-lock/immutable-event test and a 79.649-second
 nonempty logical restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
 implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
 compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
@@ -1730,6 +1734,23 @@ This closes only the bounded compound-filter and deterministic-sort code, exact-
 compatibility and unpublished image-candidate subchecks. Bulk, `gt/ge/lt/le`, complex or
 multi-valued value paths, complete PATCH grammar, overlapping credential rotation,
 federation, privacy, production promotion and all eleven aggregate gates remain open.
+
+The sixth PC5 code slice implements the bounded RFC 7644 Bulk profile and advances the
+schema to `pc5a00000002`. ServiceProviderConfig advertises 32 operations and a 1 MiB
+payload ceiling. Request order is preserved across dependency scheduling: forward and
+backward `bulkId` references are resolved before dependent work, circular or unknown
+references become per-operation 409 results, and `failOnErrors` stops further processing
+at the declared threshold. A required top-level `Idempotency-Key` is hash-bound to the
+entire normalized request. Immutable Bulk request and result Events make a lost response
+replay exact; deterministic child Event IDs resume work committed before an interrupted
+batch. PostgreSQL uses a Directory/key advisory transaction lock so concurrent replicas
+cannot execute one Bulk key in parallel. The protocol remains deliberately non-atomic,
+as RFC Bulk reports each operation independently. Local SQLite and real PostgreSQL tests
+cover replay conflicts, interruption recovery, dependency ordering, payload/operation
+limits and multi-session serialization. Exact-SHA compatibility and image-candidate
+evidence are still required before this slice closes; comparison filters, full PATCH value
+paths, rotation overlap, federation, privacy, production promotion and all eleven
+aggregate gates remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in

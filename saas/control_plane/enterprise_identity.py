@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from threading import Lock
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.engine import CursorResult
+from sqlalchemy.engine import Connection, CursorResult, Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import RequestContext
@@ -113,6 +115,21 @@ class ScimFilterExpression:
     operands: tuple[ScimFilterExpression, ...] = ()
 
 
+@dataclass(slots=True)
+class ScimBulkExecution:
+    """One serialized Bulk request with an optional immutable replay result."""
+
+    replay_result: dict[str, object] | None = None
+    response: dict[str, object] | None = None
+
+    def complete(self, response: dict[str, object]) -> None:
+        if self.replay_result is not None or self.response is not None:
+            raise LifecycleError(
+                "scim_bulk_state_invalid", "SCIM Bulk request is already complete"
+            )
+        self.response = response
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -159,6 +176,7 @@ class EnterpriseScimService:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+        self._bulk_locks = tuple(Lock() for _ in range(64))
 
     def issue_directory(
         self,
@@ -374,6 +392,168 @@ class EnterpriseScimService:
                 )
             )
             return self._issued_directory(result, bearer_token=raw_token, replayed=False)
+
+    @contextmanager
+    def bulk_request(
+        self,
+        bearer_token: str,
+        *,
+        event_id: str,
+        request_payload: Mapping[str, object],
+        operation_count: int,
+    ) -> Iterator[ScimBulkExecution]:
+        """Serialize one Bulk key and persist immutable request/result receipts."""
+
+        event_key = _clean(event_id, maximum=256, code="scim_event_id_invalid")
+        if not 1 <= operation_count <= 32:
+            raise LifecycleError("tooMany", "SCIM Bulk operation count is invalid")
+        request_hash = _hash(request_payload)
+        event_digest = _digest(event_key)
+        request_event_id = f"bulk-request:{event_digest}"
+        result_event_id = f"bulk-result:{event_digest}"
+        with self._session_factory() as probe:
+            bind = probe.get_bind()
+            dialect = bind.dialect.name
+        if dialect == "postgresql":
+            with self._session_factory.begin() as db:
+                directory_id = self._authenticate(db, bearer_token).id
+            advisory_key = f"scim-bulk:{directory_id}:{event_digest}"
+            engine = bind.engine if isinstance(bind, Connection) else cast(Engine, bind)
+            lock_connection = engine.connect()
+            try:
+                lock_connection.execute(
+                    sa.text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"),
+                    {"key": advisory_key},
+                )
+                with self._session_factory.begin() as db:
+                    directory = self._authenticate(db, bearer_token)
+                    if directory.id != directory_id:
+                        raise LifecycleError(
+                            "scim_authentication_failed", "SCIM Directory changed during Bulk"
+                        )
+                    execution = self._prepare_bulk_execution(
+                        db,
+                        directory,
+                        request_event_id=request_event_id,
+                        result_event_id=result_event_id,
+                        request_hash=request_hash,
+                        operation_count=operation_count,
+                    )
+                yield execution
+                if execution.replay_result is None:
+                    with self._session_factory.begin() as db:
+                        directory = self._authenticate(db, bearer_token)
+                        if directory.id != directory_id:
+                            raise LifecycleError(
+                                "scim_authentication_failed",
+                                "SCIM Directory changed during Bulk",
+                            )
+                        self._finish_bulk_execution(
+                            db,
+                            directory,
+                            execution=execution,
+                            result_event_id=result_event_id,
+                            request_hash=request_hash,
+                            operation_count=operation_count,
+                        )
+            finally:
+                lock_connection.execute(
+                    sa.text("SELECT pg_advisory_unlock(hashtextextended(:key, 0))"),
+                    {"key": advisory_key},
+                )
+                lock_connection.close()
+            return
+
+        lock = self._bulk_locks[int(event_digest[:8], 16) % len(self._bulk_locks)]
+        with lock:
+            with self._session_factory.begin() as db:
+                directory = self._authenticate(db, bearer_token)
+                execution = self._prepare_bulk_execution(
+                    db,
+                    directory,
+                    request_event_id=request_event_id,
+                    result_event_id=result_event_id,
+                    request_hash=request_hash,
+                    operation_count=operation_count,
+                )
+                directory_id = directory.id
+            yield execution
+            if execution.replay_result is None:
+                with self._session_factory.begin() as db:
+                    directory = self._authenticate(db, bearer_token)
+                    if directory.id != directory_id:
+                        raise LifecycleError(
+                            "scim_authentication_failed", "SCIM Directory changed during Bulk"
+                        )
+                    self._finish_bulk_execution(
+                        db,
+                        directory,
+                        execution=execution,
+                        result_event_id=result_event_id,
+                        request_hash=request_hash,
+                        operation_count=operation_count,
+                    )
+
+    def _prepare_bulk_execution(
+        self,
+        db: Session,
+        directory: EnterpriseScimDirectoryRecord,
+        *,
+        request_event_id: str,
+        result_event_id: str,
+        request_hash: str,
+        operation_count: int,
+    ) -> ScimBulkExecution:
+        completed = self._event_replay(db, directory.id, result_event_id, request_hash)
+        if completed is not None:
+            return ScimBulkExecution(replay_result=dict(completed.result))
+        claimed = self._event_replay(db, directory.id, request_event_id, request_hash)
+        if claimed is None:
+            self._record_event(
+                db,
+                directory,
+                request_event_id,
+                request_hash,
+                "Bulk",
+                directory.id,
+                1,
+                "applied",
+                {"phase": "requested", "operationCount": operation_count},
+                event_type="enterprise.scim_bulk.requested",
+            )
+        return ScimBulkExecution()
+
+    def _finish_bulk_execution(
+        self,
+        db: Session,
+        directory: EnterpriseScimDirectoryRecord,
+        *,
+        execution: ScimBulkExecution,
+        result_event_id: str,
+        request_hash: str,
+        operation_count: int,
+    ) -> None:
+        if execution.replay_result is not None:
+            return
+        if execution.response is None:
+            raise LifecycleError("scim_bulk_incomplete", "SCIM Bulk response was not completed")
+        operations = execution.response.get("Operations")
+        if not isinstance(operations, list) or len(operations) > operation_count:
+            raise LifecycleError("scim_bulk_state_invalid", "SCIM Bulk response is invalid")
+        existing = self._event_replay(db, directory.id, result_event_id, request_hash)
+        if existing is None:
+            self._record_event(
+                db,
+                directory,
+                result_event_id,
+                request_hash,
+                "Bulk",
+                directory.id,
+                1,
+                "applied",
+                execution.response,
+                event_type="enterprise.scim_bulk.completed",
+            )
 
     def upsert_user(
         self,
@@ -1410,6 +1590,8 @@ class EnterpriseScimService:
         source_version: int,
         disposition: str,
         result: dict[str, object],
+        *,
+        event_type: str | None = None,
     ) -> None:
         db.add(
             EnterpriseScimEventRecord(
@@ -1431,7 +1613,9 @@ class EnterpriseScimService:
                 tenant_id=directory.tenant_id,
                 aggregate_type=f"enterprise_scim_{resource_type.casefold()}",
                 aggregate_key=str(resource_id),
-                event_type=f"enterprise.scim_{resource_type.casefold()}.{disposition}",
+                event_type=(
+                    event_type or f"enterprise.scim_{resource_type.casefold()}.{disposition}"
+                ),
                 payload={
                     "directory_id": str(directory.id),
                     "resource_id": str(resource_id),

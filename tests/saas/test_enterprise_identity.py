@@ -769,3 +769,72 @@ def test_guarded_resource_mutations_replay_before_etag_cas(scim_fixture) -> None
             "guarded-user-create",
             "guarded-user-replace",
         }
+
+
+def test_bulk_request_receipts_replay_conflict_and_resume_incomplete_work(scim_fixture) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    token = _directory(service, ids)
+    request = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+        "Operations": [{"method": "POST", "path": "/Users"}],
+    }
+    response = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkResponse"],
+        "Operations": [{"method": "POST", "status": "201"}],
+    }
+    with service.bulk_request(
+        token,
+        event_id="bulk-receipt",
+        request_payload=request,
+        operation_count=1,
+    ) as execution:
+        assert execution.replay_result is None
+        execution.complete(response)
+
+    with service.bulk_request(
+        token,
+        event_id="bulk-receipt",
+        request_payload=request,
+        operation_count=1,
+    ) as replay:
+        assert replay.replay_result == response
+
+    with pytest.raises(LifecycleError) as conflict:
+        with service.bulk_request(
+            token,
+            event_id="bulk-receipt",
+            request_payload={**request, "failOnErrors": 1},
+            operation_count=1,
+        ):
+            pass
+    assert conflict.value.code == "scim_event_conflict"
+
+    with pytest.raises(LifecycleError) as interrupted:
+        with service.bulk_request(
+            token,
+            event_id="bulk-interrupted",
+            request_payload=request,
+            operation_count=1,
+        ):
+            pass
+    assert interrupted.value.code == "scim_bulk_incomplete"
+    with service.bulk_request(
+        token,
+        event_id="bulk-interrupted",
+        request_payload=request,
+        operation_count=1,
+    ) as resumed:
+        assert resumed.replay_result is None
+        resumed.complete(response)
+
+    with sessions() as db:
+        bulk_events = tuple(
+            db.scalars(
+                sa.select(EnterpriseScimEventRecord)
+                .where(EnterpriseScimEventRecord.resource_type == "Bulk")
+                .order_by(EnterpriseScimEventRecord.event_id)
+            )
+        )
+        assert len(bulk_events) == 4
+        assert {event.disposition for event in bulk_events} == {"applied"}

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Event
 from uuid import UUID, uuid4
 
 import pytest
@@ -258,6 +259,61 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert listed_groups.total_results == listed_groups.items_per_page == 1
     assert listed_groups.resources[0].id == group.id
+
+    bulk_payload = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+        "Operations": [{"method": "POST", "path": "/Users"}],
+    }
+    bulk_response = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkResponse"],
+        "Operations": [{"method": "POST", "status": "201"}],
+    }
+    first_entered = Event()
+    release_first = Event()
+    second_attempted = Event()
+
+    def _first_bulk() -> dict[str, object]:
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload=bulk_payload,
+            operation_count=1,
+        ) as execution:
+            first_entered.set()
+            assert release_first.wait(timeout=10)
+            execution.complete(bulk_response)
+            return bulk_response
+
+    def _replayed_bulk() -> dict[str, object] | None:
+        assert first_entered.wait(timeout=10)
+        second_attempted.set()
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload=bulk_payload,
+            operation_count=1,
+        ) as execution:
+            return execution.replay_result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(_first_bulk)
+        assert first_entered.wait(timeout=10)
+        replay_future = executor.submit(_replayed_bulk)
+        assert second_attempted.wait(timeout=10)
+        assert replay_future.done() is False
+        release_first.set()
+        assert first_future.result(timeout=10) == bulk_response
+        assert replay_future.result(timeout=10) == bulk_response
+    with pytest.raises(LifecycleError) as bulk_conflict:
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload={**bulk_payload, "failOnErrors": 1},
+            operation_count=1,
+        ):
+            pass
+    assert bulk_conflict.value.code == "scim_event_conflict"
+
     deprovisioned = service.upsert_user(
         token,
         event_id=f"pc5-user-delete-{suffix}",

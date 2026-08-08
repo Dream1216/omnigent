@@ -123,6 +123,7 @@ from saas.control_plane.enterprise_http import (
 from saas.control_plane.enterprise_identity import (
     EnterpriseScimService,
     IssuedScimDirectory,
+    ScimBulkExecution,
     ScimFilterExpression,
     ScimGroupView,
     ScimUserView,
@@ -651,6 +652,7 @@ __all__ = [
     "SandboxLaunchContract",
     "SchedulingControlPlane",
     "SchedulingError",
+    "ScimBulkExecution",
     "ScimFilterExpression",
     "ScimGroupView",
     "ScimUserView",

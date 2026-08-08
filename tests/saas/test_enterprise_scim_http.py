@@ -26,6 +26,8 @@ from saas.control_plane.enterprise_scim_http import create_enterprise_scim_route
 _USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 _GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 _PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+_BULK_REQUEST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkRequest"
+_BULK_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkResponse"
 
 
 def _app() -> tuple[TestClient, str, UUID, UUID]:
@@ -749,3 +751,236 @@ def test_scim_resource_lifecycle_put_patch_delete_and_lost_response_replay() -> 
         headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "stale-delete"},
     )
     assert stale_delete.status_code == 412
+
+
+def test_scim_bulk_back_references_replay_conflict_limits_and_fail_on_errors() -> None:
+    client, token, _, _ = _app()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Idempotency-Key": "bulk-create-and-disable",
+    }
+    config = client.get("/saas/scim/v2/ServiceProviderConfig")
+    assert config.json()["bulk"] == {
+        "supported": True,
+        "maxOperations": 32,
+        "maxPayloadSize": 1_048_576,
+    }
+    body = {
+        "schemas": [_BULK_REQUEST_SCHEMA],
+        "Operations": [
+            {
+                "method": "POST",
+                "bulkId": "employee",
+                "path": "/Users",
+                "data": {
+                    "schemas": [_USER_SCHEMA],
+                    "externalId": "bulk-employee",
+                    "userName": "bulk.employee@example.test",
+                    "displayName": "Bulk Employee",
+                    "active": True,
+                },
+            },
+            {
+                "method": "POST",
+                "bulkId": "team",
+                "path": "/Groups",
+                "data": {
+                    "schemas": [_GROUP_SCHEMA],
+                    "externalId": "bulk-team",
+                    "displayName": "Bulk Team",
+                    "members": [{"value": "bulkId:employee"}],
+                },
+            },
+            {
+                "method": "PATCH",
+                "version": 'W/"1"',
+                "path": "/Users/bulkId:employee",
+                "data": {
+                    "schemas": [_PATCH_SCHEMA],
+                    "Operations": [{"op": "replace", "path": "active", "value": False}],
+                },
+            },
+        ],
+    }
+    created = client.post("/saas/scim/v2/Bulk", headers=headers, json=body)
+    assert created.status_code == 200
+    assert created.json()["schemas"] == [_BULK_RESPONSE_SCHEMA]
+    operations = created.json()["Operations"]
+    assert [item["status"] for item in operations] == ["201", "201", "200"]
+    user_id = operations[0]["response"]["id"]
+    assert operations[1]["response"]["members"] == [
+        {
+            "value": user_id,
+            "$ref": f"http://testserver/saas/scim/v2/Users/{user_id}",
+        }
+    ]
+    assert operations[2]["response"]["active"] is False
+
+    replay = client.post("/saas/scim/v2/Bulk", headers=headers, json=body)
+    assert replay.status_code == 200
+    assert replay.json() == created.json()
+    conflict_body = cast(dict[str, object], {**body})
+    conflict_operations = [
+        dict(item) for item in cast(list[dict[str, object]], body["Operations"])
+    ]
+    conflict_user = dict(cast(dict[str, object], conflict_operations[0]["data"]))
+    conflict_user["displayName"] = "Changed Bulk Employee"
+    conflict_operations[0]["data"] = conflict_user
+    conflict_body["Operations"] = conflict_operations
+    conflict = client.post("/saas/scim/v2/Bulk", headers=headers, json=conflict_body)
+    assert conflict.status_code == 409
+    assert conflict.json()["scimType"] == "scim_event_conflict"
+
+    forward = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-forward-reference",
+        },
+        json={
+            "schemas": [_BULK_REQUEST_SCHEMA],
+            "Operations": [
+                {
+                    "method": "POST",
+                    "bulkId": "forward-group",
+                    "path": "/Groups",
+                    "data": {
+                        "schemas": [_GROUP_SCHEMA],
+                        "externalId": "forward-group",
+                        "displayName": "Forward Group",
+                        "members": [{"value": "bulkId:forward-user"}],
+                    },
+                },
+                {
+                    "method": "POST",
+                    "bulkId": "forward-user",
+                    "path": "/Users",
+                    "data": {
+                        "schemas": [_USER_SCHEMA],
+                        "externalId": "forward-user",
+                        "userName": "forward-user@example.test",
+                        "active": True,
+                    },
+                },
+            ],
+        },
+    )
+    assert forward.status_code == 200
+    forward_operations = forward.json()["Operations"]
+    assert [item["status"] for item in forward_operations] == ["201", "201"]
+    assert (
+        forward_operations[0]["response"]["members"][0]["value"]
+        == (forward_operations[1]["response"]["id"])
+    )
+
+    stopped = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-stop-on-first-error",
+        },
+        json={
+            "schemas": [_BULK_REQUEST_SCHEMA],
+            "failOnErrors": 1,
+            "Operations": [
+                {
+                    "method": "POST",
+                    "bulkId": "failed-group",
+                    "path": "/Groups",
+                    "data": {
+                        "schemas": [_GROUP_SCHEMA],
+                        "externalId": "forward-reference-group",
+                        "displayName": "Forward Reference",
+                        "members": [{"value": "bulkId:missing-user"}],
+                    },
+                },
+                {
+                    "method": "POST",
+                    "bulkId": "later-user",
+                    "path": "/Users",
+                    "data": {
+                        "schemas": [_USER_SCHEMA],
+                        "externalId": "must-not-run",
+                        "userName": "must-not-run@example.test",
+                        "active": True,
+                    },
+                },
+            ],
+        },
+    )
+    assert stopped.status_code == 200
+    assert len(stopped.json()["Operations"]) == 1
+    assert stopped.json()["Operations"][0]["status"] == "409"
+    absent = client.get(
+        '/saas/scim/v2/Users?filter=externalId%20eq%20"must-not-run"',
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert absent.json()["totalResults"] == 0
+
+    invalid_syntax = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-invalid-syntax",
+        },
+        json={
+            "schemas": [_BULK_REQUEST_SCHEMA],
+            "Operations": [{"method": "post", "bulkId": "bad", "path": "/Users"}],
+        },
+    )
+    assert invalid_syntax.status_code == 400
+    assert invalid_syntax.json()["scimType"] == "invalidSyntax"
+    missing_bulk_id = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-missing-id",
+        },
+        json={
+            "schemas": [_BULK_REQUEST_SCHEMA],
+            "Operations": [
+                {
+                    "method": "POST",
+                    "path": "/Users",
+                    "data": {
+                        "schemas": [_USER_SCHEMA],
+                        "externalId": "missing-id",
+                        "userName": "missing-id@example.test",
+                    },
+                }
+            ],
+        },
+    )
+    assert missing_bulk_id.status_code == 400
+    assert missing_bulk_id.json()["scimType"] == "invalidValue"
+
+    oversized = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-too-large",
+            "Content-Type": "application/json",
+        },
+        content=b"{}" + b" " * 1_048_575,
+    )
+    assert oversized.status_code == 413
+    assert "maxPayloadSize (1048576)" in oversized.json()["detail"]
+    assert "scimType" not in oversized.json()
+
+    too_many = client.post(
+        "/saas/scim/v2/Bulk",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "bulk-too-many",
+        },
+        json={
+            "schemas": [_BULK_REQUEST_SCHEMA],
+            "Operations": [
+                {"method": "DELETE", "path": f"/Users/{uuid4()}", "version": 'W/"1"'}
+                for _ in range(33)
+            ],
+        },
+    )
+    assert too_many.status_code == 413
+    assert "maxOperations (32)" in too_many.json()["detail"]
+    assert "scimType" not in too_many.json()

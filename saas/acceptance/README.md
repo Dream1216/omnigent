@@ -1015,3 +1015,19 @@ exact-SHA compatibility and unpublished image-candidate subchecks. Bulk, compari
 operators and complex value paths outside this allowlist, complete PATCH grammar,
 overlapping credential rotation, federation, privacy, production promotion and all
 eleven aggregate gates remain open; release remains `NO-GO`.
+
+The sixth PC5 implementation slice advances the migration head to `pc5a00000002` and
+adds a bounded RFC 7644 Bulk profile: 32 operations, 1 MiB payloads, User/Group
+POST/PUT/PATCH/DELETE, dependency-aware forward/backward `bulkId` resolution,
+`failOnErrors`, per-operation SCIM results, and explicit circular/unresolved-reference
+failures. A required top-level idempotency key is bound to the complete normalized
+request. Two immutable Bulk Event receipts retain the request claim and final response;
+deterministic child Event IDs recover already committed operations after interruption.
+PostgreSQL serializes the Directory/key pair with an advisory transaction lock, while
+the existing Directory token and Tenant forced-RLS boundary remains authoritative.
+Service, HTTP, migration and real-PostgreSQL tests cover exact replay, changed-payload
+conflict, dependency ordering, interruption recovery, bounds and multi-session lock
+behavior. This is local code evidence only until exact implementation-SHA compatibility
+and image-candidate workflows pass. It does not close full filter/PATCH, credential
+overlap, federation, privacy, operations, production promotion, PC5 or any of the eleven
+aggregate release gates; release remains `NO-GO`.

@@ -203,7 +203,7 @@ class EnterpriseScimEventRecord(SaasBase):
         ),
         sa.CheckConstraint("length(event_id) > 0", name="ck_scim_event_id_nonempty"),
         sa.CheckConstraint(
-            "resource_type IN ('User', 'Group')", name="ck_scim_event_resource_type"
+            "resource_type IN ('User', 'Group', 'Bulk')", name="ck_scim_event_resource_type"
         ),
         sa.CheckConstraint("source_version > 0", name="ck_scim_event_source_version"),
         sa.CheckConstraint("length(request_hash) = 64", name="ck_scim_event_request_hash"),

@@ -157,6 +157,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/pc2b00000001_identity_conflict_platform_review.py",
     "saas/control_plane/migrations/versions/pc3a00000001_platform_governed_access.py",
     "saas/control_plane/migrations/versions/pc5a00000001_enterprise_scim_convergence.py",
+    "saas/control_plane/migrations/versions/pc5a00000002_scim_bulk_receipts.py",
     "saas/control_plane/migrations/versions/p6b000000001_billing_period_close.py",
     "saas/control_plane/platform_lifecycle.py",
     "saas/control_plane/platform_governed_access.py",
