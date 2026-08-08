@@ -889,6 +889,11 @@ now has exact compatibility record `31233595734`. Its directed checks cover
 fresh-authenticated one-time Directory credential issuance, User/Group convergence,
 deprovision-before-late-group ordering, owner recovery blocking, SCIM JSON errors and
 ETags, 85/17 forced RLS, immutable Events and a nonempty two-Tenant logical restore.
+The next isolated code candidate adds fresh-authenticated, version-CAS Directory
+credential rotation and disable: rotation reveals a replacement once and invalidates
+the predecessor atomically; disable destroys the active digest and bearer authority.
+Both actions use secret-free idempotency receipts, and PostgreSQL token-RLS plus HTTP
+negative tests prove that superseded and disabled tokens cannot regain access.
 Directory/subject state and Event Receipts are explicit deletion surfaces, but receipt
 anonymization and Legal Hold are not implemented and external identity/display fields
 may remain in immutable receipts. The exact run passes 960 tests in 188.36 seconds, a

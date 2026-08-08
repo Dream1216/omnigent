@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -189,6 +190,114 @@ def test_directory_token_is_one_time_hash_stored_and_permission_guarded(scim_fix
             idempotency_key="stale-auth-directory",
         )
     assert stale.value.code == "fresh_auth_required"
+
+
+def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_fixture) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    issued = service.issue_directory(
+        _context(ids, ids.owner),
+        display_name="Rotating IdP",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="rotation-directory",
+    )
+    assert issued.bearer_token is not None
+    old_token = issued.bearer_token
+
+    rotated = service.rotate_directory_credential(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=1,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="rotate-1",
+    )
+    assert rotated.version == 2
+    assert rotated.bearer_token is not None
+    assert rotated.bearer_token != old_token
+    assert rotated.token_prefix == rotated.bearer_token[:24]
+
+    replay = service.rotate_directory_credential(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=1,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="rotate-1",
+    )
+    assert replay.replayed is True
+    assert replay.version == 2
+    assert replay.bearer_token is None
+
+    with pytest.raises(LifecycleError) as old_denied:
+        service.upsert_user(
+            old_token,
+            event_id="old-token-user",
+            external_id="old-token-user",
+            user_name="old-token@example.test",
+            display_name=None,
+            active=True,
+            source_version=1,
+        )
+    assert old_denied.value.code == "scim_authentication_failed"
+
+    with pytest.raises(LifecycleError) as stale:
+        service.rotate_directory_credential(
+            _context(ids, ids.owner),
+            directory_id=issued.id,
+            expected_version=1,
+            reauthenticated_at=datetime.now(timezone.utc),
+            idempotency_key="rotate-stale",
+        )
+    assert stale.value.code == "scim_directory_version_conflict"
+
+    with pytest.raises(LifecycleError) as forbidden:
+        service.disable_directory(
+            _context(ids, ids.member),
+            directory_id=issued.id,
+            expected_version=2,
+            reauthenticated_at=datetime.now(timezone.utc),
+            idempotency_key="disable-forbidden",
+        )
+    assert forbidden.value.code == "enterprise_identity_manage_forbidden"
+
+    disabled = service.disable_directory(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=2,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="disable-1",
+    )
+    assert disabled.status == "disabled"
+    assert disabled.version == 3
+    assert disabled.token_prefix == "disabled"
+    assert disabled.bearer_token is None
+
+    disabled_replay = service.disable_directory(
+        _context(ids, ids.owner),
+        directory_id=issued.id,
+        expected_version=2,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="disable-1",
+    )
+    assert disabled_replay.replayed is True
+    assert disabled_replay.version == 3
+
+    with pytest.raises(LifecycleError) as rotated_denied:
+        service.get_user(rotated.bearer_token, scim_user_id=uuid4())
+    assert rotated_denied.value.code == "scim_authentication_failed"
+
+    with sessions() as db:
+        stored = db.get(EnterpriseScimDirectoryRecord, issued.id)
+        assert stored is not None
+        assert stored.status == "disabled"
+        assert stored.disabled_at is not None
+        assert stored.token_hash not in {
+            sha256(old_token.encode()).hexdigest(),
+            sha256(rotated.bearer_token.encode()).hexdigest(),
+        }
+        outbox = list(db.scalars(sa.select(ControlPlaneOutboxEvent)))
+        serialized_outbox = json.dumps([event.payload for event in outbox], sort_keys=True)
+        assert old_token not in serialized_outbox
+        assert rotated.bearer_token not in serialized_outbox
 
 
 def test_deprovision_wins_over_late_group_update_and_replay_is_idempotent(scim_fixture) -> None:

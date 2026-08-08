@@ -120,8 +120,21 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         idempotency_key=f"pc5-directory-{suffix}",
     )
     assert issued.bearer_token is not None
+    old_token = issued.bearer_token
+    rotated = service.rotate_directory_credential(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=1,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-directory-rotate-{suffix}",
+    )
+    assert rotated.bearer_token is not None
+    token = rotated.bearer_token
+    with pytest.raises(LifecycleError) as old_token_denied:
+        service.get_user(old_token, scim_user_id=uuid4())
+    assert old_token_denied.value.code == "scim_authentication_failed"
     created = service.upsert_user(
-        issued.bearer_token,
+        token,
         event_id=f"pc5-user-create-{suffix}",
         external_id=f"employee-{suffix}",
         user_name=f"employee-{suffix}@example.test",
@@ -131,7 +144,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert created.user_id is not None
     group = service.sync_group(
-        issued.bearer_token,
+        token,
         event_id=f"pc5-group-1-{suffix}",
         external_id=f"engineering-{suffix}",
         display_name=f"Engineering {suffix}",
@@ -141,7 +154,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert group.active_member_count == 1
     deprovisioned = service.upsert_user(
-        issued.bearer_token,
+        token,
         event_id=f"pc5-user-delete-{suffix}",
         external_id=f"employee-{suffix}",
         user_name=f"employee-{suffix}@example.test",
@@ -151,7 +164,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert deprovisioned.membership_status == "removed"
     late_group = service.sync_group(
-        issued.bearer_token,
+        token,
         event_id=f"pc5-group-2-{suffix}",
         external_id=f"engineering-{suffix}",
         display_name=f"Engineering {suffix}",
@@ -184,7 +197,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         )
         connection.execute(
             sa.text("SELECT set_config('app.scim_token_hash', :token_hash, true)"),
-            {"token_hash": sha256(issued.bearer_token.encode()).hexdigest()},
+            {"token_hash": sha256(token.encode()).hexdigest()},
         )
         assert (
             connection.execute(
@@ -208,6 +221,19 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 ),
                 {"directory": issued.id},
             )
+
+    disabled = service.disable_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=2,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-directory-disable-{suffix}",
+    )
+    assert disabled.status == "disabled"
+    assert disabled.version == 3
+    with pytest.raises(LifecycleError) as disabled_token:
+        service.get_group(token, scim_group_id=group.id)
+    assert disabled_token.value.code == "scim_authentication_failed"
 
     assert len(CONTROL_PLANE_RLS_TABLES) == 85
     assert {

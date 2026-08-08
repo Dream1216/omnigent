@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_identity import (
     EnterpriseScimService,
+    IssuedScimDirectory,
     ScimGroupView,
     ScimUserView,
 )
@@ -62,6 +63,10 @@ class _ScimRoute(APIRoute):
 
 class DirectoryCreateBody(BaseModel):
     display_name: str = Field(min_length=1, max_length=128)
+
+
+class DirectoryMutationBody(BaseModel):
+    expected_version: int = Field(ge=1)
 
 
 class ScimMemberBody(BaseModel):
@@ -146,6 +151,39 @@ def _tenant_context(
     if context.user_security_version != principal.session.security_version:
         raise HTTPException(status_code=401, detail={"code": "authorization_snapshot_stale"})
     return context, principal.session.authenticated_at
+
+
+def _directory_management_error(error: LifecycleError) -> HTTPException:
+    if error.code == "fresh_auth_required":
+        status = 401
+    elif error.code.endswith("_forbidden"):
+        status = 403
+    elif error.code == "scim_directory_not_found":
+        status = 404
+    elif error.code in {
+        "invalid_idempotency_key",
+        "scim_directory_version_invalid",
+    }:
+        status = 400
+    else:
+        status = 409
+    return HTTPException(
+        status_code=status,
+        detail={"code": error.code, "message": str(error)},
+    )
+
+
+def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
+    return {
+        "id": str(value.id),
+        "tenant_id": str(value.tenant_id),
+        "display_name": value.display_name,
+        "token_prefix": value.token_prefix,
+        "bearer_token": value.bearer_token,
+        "status": value.status,
+        "version": value.version,
+        "replayed": value.replayed,
+    }
 
 
 def _etag(version: int) -> str:
@@ -321,29 +359,71 @@ def create_enterprise_scim_router(
                 idempotency_key=idempotency_key,
             )
         except LifecycleError as error:
-            status = (
-                401
-                if error.code == "fresh_auth_required"
-                else 403
-                if error.code.endswith("_forbidden")
-                else 409
-            )
-            raise HTTPException(
-                status_code=status,
-                detail={"code": error.code, "message": str(error)},
-            ) from error
+            raise _directory_management_error(error) from error
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
-        return {
-            "id": str(value.id),
-            "tenant_id": str(value.tenant_id),
-            "display_name": value.display_name,
-            "token_prefix": value.token_prefix,
-            "bearer_token": value.bearer_token,
-            "status": value.status,
-            "version": value.version,
-            "replayed": value.replayed,
-        }
+        return _directory_payload(value)
+
+    @router.post(
+        "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate",
+        status_code=201,
+    )
+    def rotate_directory_credential(
+        tenant_id: UUID,
+        directory_id: UUID,
+        body: DirectoryMutationBody,
+        request: Request,
+        response: Response,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context, reauthenticated_at = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = service.rotate_directory_credential(
+                context,
+                directory_id=directory_id,
+                expected_version=body.expected_version,
+                reauthenticated_at=reauthenticated_at,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return _directory_payload(value)
+
+    @router.post("/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/disable")
+    def disable_directory(
+        tenant_id: UUID,
+        directory_id: UUID,
+        body: DirectoryMutationBody,
+        request: Request,
+        response: Response,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context, reauthenticated_at = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = service.disable_directory(
+                context,
+                directory_id=directory_id,
+                expected_version=body.expected_version,
+                reauthenticated_at=reauthenticated_at,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return _directory_payload(value)
 
     @router.get("/scim/v2/ServiceProviderConfig")
     def service_provider_config() -> JSONResponse:

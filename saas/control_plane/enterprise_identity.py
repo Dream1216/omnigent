@@ -206,6 +206,151 @@ class EnterpriseScimService:
             )
             return self._issued_directory(result, bearer_token=raw_token, replayed=False)
 
+    def rotate_directory_credential(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+        expected_version: int,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> IssuedScimDirectory:
+        """Replace one active Directory credential and reveal the new token once."""
+
+        rotated_at = now or _utcnow()
+        _require_fresh_auth(reauthenticated_at, rotated_at)
+        return self._mutate_directory_credential(
+            request,
+            directory_id=directory_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action="rotate",
+            changed_at=rotated_at,
+        )
+
+    def disable_directory(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+        expected_version: int,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> IssuedScimDirectory:
+        """Disable one Directory and destroy its credential digest atomically."""
+
+        disabled_at = now or _utcnow()
+        _require_fresh_auth(reauthenticated_at, disabled_at)
+        return self._mutate_directory_credential(
+            request,
+            directory_id=directory_id,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+            action="disable",
+            changed_at=disabled_at,
+        )
+
+    def _mutate_directory_credential(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+        expected_version: int,
+        idempotency_key: str,
+        action: str,
+        changed_at: datetime,
+    ) -> IssuedScimDirectory:
+        if expected_version < 1:
+            raise LifecycleError("scim_directory_version_invalid", "version is invalid")
+        key = _clean(idempotency_key, maximum=128, code="invalid_idempotency_key")
+        request_payload: dict[str, object] = {
+            "action": action,
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "directory_id": str(directory_id),
+            "expected_version": expected_version,
+        }
+        request_hash = _hash(request_payload)
+        receipt_key = (
+            f"scim-directory-{action}:{request.tenant_id}:{_digest(f'{directory_id}:{key}')[:48]}"
+        )
+        with self._session_factory.begin() as db:
+            self._apply_request_context(db, request)
+            self._require_manage(db, request)
+            directory = db.execute(
+                sa.select(EnterpriseScimDirectoryRecord)
+                .where(
+                    EnterpriseScimDirectoryRecord.tenant_id == request.tenant_id,
+                    EnterpriseScimDirectoryRecord.id == directory_id,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if directory is None:
+                raise LifecycleError("scim_directory_not_found", "SCIM Directory was not found")
+
+            receipt = db.execute(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
+                )
+            ).scalar_one_or_none()
+            if receipt is not None:
+                if receipt.request_hash != request_hash:
+                    raise LifecycleError(
+                        "idempotency_conflict", "idempotency key has a different request"
+                    )
+                return self._issued_directory(receipt.payload, bearer_token=None, replayed=True)
+            if directory.version != expected_version:
+                raise LifecycleError(
+                    "scim_directory_version_conflict", "SCIM Directory version changed"
+                )
+            if directory.status != "active":
+                raise LifecycleError(
+                    "scim_directory_not_active", "active SCIM Directory is required"
+                )
+
+            raw_token: str | None = None
+            if action == "rotate":
+                raw_token = f"omniscim_{secrets.token_urlsafe(8)}_{secrets.token_urlsafe(32)}"
+                directory.token_hash = _digest(raw_token)
+                directory.token_prefix = raw_token[:24]
+                directory.rotated_at = changed_at
+                event_type = "enterprise.scim_directory.credential_rotated"
+            elif action == "disable":
+                directory.token_hash = _digest(
+                    f"disabled:{directory.id}:{secrets.token_urlsafe(32)}"
+                )
+                directory.token_prefix = "disabled"
+                directory.status = "disabled"
+                directory.disabled_at = changed_at
+                event_type = "enterprise.scim_directory.disabled"
+            else:  # pragma: no cover - private call contract
+                raise ValueError("unsupported SCIM Directory action")
+            directory.configured_by = request.actor_id
+            directory.version += 1
+            db.flush()
+            result: dict[str, object] = {
+                **request_payload,
+                "display_name": directory.display_name,
+                "token_prefix": directory.token_prefix,
+                "status": directory.status,
+                "version": directory.version,
+            }
+            db.add(
+                ControlPlaneOutboxEvent(
+                    id=uuid4(),
+                    tenant_id=request.tenant_id,
+                    aggregate_type="enterprise_scim_directory",
+                    aggregate_key=str(directory.id),
+                    event_type=event_type,
+                    payload=result,
+                    idempotency_key=receipt_key,
+                    request_hash=request_hash,
+                )
+            )
+            return self._issued_directory(result, bearer_token=raw_token, replayed=False)
+
     def upsert_user(
         self,
         bearer_token: str,

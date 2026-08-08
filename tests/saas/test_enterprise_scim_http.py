@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from fastapi import FastAPI
@@ -27,7 +28,7 @@ _GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 _PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 
 
-def _app() -> tuple[TestClient, str]:
+def _app() -> tuple[TestClient, str, UUID, UUID]:
     engine = sa.create_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -104,20 +105,53 @@ def _app() -> tuple[TestClient, str]:
         idempotency_key="http-directory",
     )
     assert issued.bearer_token is not None
+
+    class _Auth:
+        @staticmethod
+        def get_principal(_request: object) -> object:
+            return SimpleNamespace(
+                session=SimpleNamespace(
+                    user_id=owner_id,
+                    security_version=1,
+                    authenticated_at=datetime.now(timezone.utc),
+                )
+            )
+
+    class _Resolver:
+        @staticmethod
+        def list_available_scopes(*, actor_id: UUID) -> tuple[object, ...]:
+            assert actor_id == owner_id
+            return (SimpleNamespace(tenant_id=tenant_id, space_id=space_id),)
+
+        @staticmethod
+        def resolve_request_context(
+            *, actor_id: UUID, tenant_id: UUID, space_id: UUID, trace_id: str
+        ) -> RequestContext:
+            return RequestContext(
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=None,
+                user_security_version=1,
+                tenant_membership_version=1,
+                space_membership_version=1,
+                trace_id=trace_id,
+            )
+
     app = FastAPI()
     app.include_router(
         create_enterprise_scim_router(
-            auth_provider=cast(Any, None),
-            resolver=cast(Any, None),
+            auth_provider=cast(Any, _Auth()),
+            resolver=cast(Any, _Resolver()),
             service=service,
         ),
         prefix="/saas",
     )
-    return TestClient(app), issued.bearer_token
+    return TestClient(app), issued.bearer_token, tenant_id, issued.id
 
 
 def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
-    client, token = _app()
+    client, token, _, _ = _app()
     headers = {"Authorization": f"Bearer {token}"}
 
     config = client.get("/saas/scim/v2/ServiceProviderConfig")
@@ -217,3 +251,69 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     assert governance["disposition"] == "blocked"
     assert governance["blockedExternalIds"] == ["employee-http"]
     assert payload["members"] == []
+
+
+def test_scim_directory_http_rotation_and_disable_destroy_old_authority() -> None:
+    client, old_token, tenant_id, directory_id = _app()
+    rotate_path = f"/saas/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate"
+    rotated = client.post(
+        rotate_path,
+        headers={"Idempotency-Key": "http-directory-rotate"},
+        json={"expected_version": 1},
+    )
+    assert rotated.status_code == 201
+    assert rotated.headers["cache-control"] == "no-store"
+    assert rotated.json()["version"] == 2
+    new_token = rotated.json()["bearer_token"]
+    assert isinstance(new_token, str)
+    assert new_token != old_token
+
+    replay = client.post(
+        rotate_path,
+        headers={"Idempotency-Key": "http-directory-rotate"},
+        json={"expected_version": 1},
+    )
+    assert replay.status_code == 201
+    assert replay.json()["replayed"] is True
+    assert replay.json()["bearer_token"] is None
+
+    old_denied = client.post(
+        "/saas/scim/v2/Users",
+        headers={
+            "Authorization": f"Bearer {old_token}",
+            "Idempotency-Key": "old-http-token",
+        },
+        json={
+            "schemas": [_USER_SCHEMA],
+            "externalId": "old-token-user",
+            "userName": "old-token@example.test",
+            "active": True,
+        },
+    )
+    assert old_denied.status_code == 401
+
+    disable_path = f"/saas/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/disable"
+    disabled = client.post(
+        disable_path,
+        headers={"Idempotency-Key": "http-directory-disable"},
+        json={"expected_version": 2},
+    )
+    assert disabled.status_code == 200
+    assert disabled.headers["cache-control"] == "no-store"
+    assert disabled.json()["status"] == "disabled"
+    assert disabled.json()["version"] == 3
+
+    new_denied = client.post(
+        "/saas/scim/v2/Users",
+        headers={
+            "Authorization": f"Bearer {new_token}",
+            "Idempotency-Key": "disabled-http-token",
+        },
+        json={
+            "schemas": [_USER_SCHEMA],
+            "externalId": "disabled-token-user",
+            "userName": "disabled-token@example.test",
+            "active": True,
+        },
+    )
+    assert new_denied.status_code == 401

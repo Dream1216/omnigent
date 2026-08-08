@@ -1575,9 +1575,13 @@ production gate remain open; release remains `NO-GO`.
 The next isolated slice advances the local migration head to `pc5a00000001` and adds
 Tenant-owned, hash-credentialed SCIM directories, User/Group resource mappings and
 immutable provisioning receipts under 85 control-plane plus 17 Runtime forced-RLS
-tables. Directory issuance requires authentication no older than five minutes, returns
-the bearer only once under `Cache-Control: no-store`, and persists only its digest and
-safe prefix. Provisioning never treats email equality as identity proof. A User deprovision
+tables. Directory issuance and credential rotation require authentication no older than
+five minutes, return the bearer only once under `Cache-Control: no-store`, and persist
+only its digest and safe prefix. Rotation uses a version CAS and invalidates the old
+credential in the same transaction. Disable also uses version CAS, destroys the active
+digest, and immediately removes all bearer authority; both transitions persist a
+secret-free idempotency receipt and replay without returning the token. Provisioning
+never treats email equality as identity proof. A User deprovision
 revokes Tenant, Space, Project, exact Resource, enterprise Group and active Session
 access; a managed Owner is suspended and flagged for Owner Recovery rather than leaving
 interactive access or silently transferring ownership. Group convergence refuses to
@@ -1585,16 +1589,18 @@ re-add an inactive User, so a late Group update cannot undo a newer deprovision.
 
 The initial HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
 POST/GET/PATCH for Users and Groups, weak ETags/If-Match, bearer authentication and
-`application/scim+json` responses. PUT, DELETE resource semantics, list/filter, Bulk,
-complete PATCH paths, transport-level lost-response replay, credential rotation, SAML/
-enterprise OIDC activation, Domain Claim, JIT, MFA and recovery policy remain explicit
-PC5 work. Directory/subject state and identity Event Receipts are now separate deletion
+`application/scim+json` responses. Tenant management routes now expose fresh-authenticated,
+idempotent Directory credential rotation and disable with one-time token delivery. PUT,
+DELETE resource semantics, list/filter, Bulk, complete PATCH paths, transport-level
+lost-response replay, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
+Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
+state and identity Event Receipts are now separate deletion
 surfaces with token-hash destruction, subject erasure and non-resurrecting receipt
 anonymization checks. The anonymization/Legal Hold workflow is not implemented yet and
 immutable receipts may still carry external identity/display fields, so Privacy remains
 a production blocker rather than a completed property. Local evidence currently consists
-of four convergence tests, one HTTP ETag/ordering test, SQLite model/migration checks, one
-isolated PostgreSQL 16 token-RLS/immutable-event test and a 79.649-second nonempty logical
+of five convergence/lifecycle tests, two HTTP tests, SQLite model/migration checks, one
+isolated PostgreSQL 16 token-RLS/rotation/disable/immutable-event test and a 79.649-second nonempty logical
 restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
 implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
 compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
