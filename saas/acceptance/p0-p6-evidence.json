@@ -28,9 +28,18 @@
           "status": "pending",
           "evidence": [
             "saas/production/baseline.json",
+            "saas/production/adr-approval-policy.json",
+            "saas/production/adr-approval-authorities.json",
+            "saas/production/adr-approval-candidate.json",
+            "saas/production/adrs/README.md",
+            "saas/production/adr-approvals/README.md",
+            "saas/scripts/check_adr_approvals.py",
+            "saas/scripts/finalize_adr_approval.py",
             "saas/scripts/check_production_baseline.py",
+            ".github/workflows/saas-upstream-compat.yml",
             "saas/production/runbooks/control-plane-degradation.md",
             "saas/production/runbooks/incident-response.md",
+            "tests/saas/test_adr_approvals.py",
             "tests/saas/test_production_baseline.py"
           ]
         },

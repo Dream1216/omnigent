@@ -11,14 +11,17 @@
   },
   "approval": {
     "state": "review_required",
+    "policy": "saas/production/adr-approval-policy.json",
+    "authorities": "saas/production/adr-approval-authorities.json",
+    "candidate": "saas/production/adr-approval-candidate.json",
+    "record": null,
     "required_roles": [
       "product-owner",
       "platform-architecture",
       "security",
       "site-reliability"
     ],
-    "approvals": [],
-    "rule": "All required roles must approve the exact Git revision before a production release may proceed."
+    "rule": "All eleven technical owners and four distinct authorized human signing roles must approve the exact merged decision PR commit; CI then binds the GitHub Reviews, candidate lineage, decision digest, and authority digest into an append-only record."
   },
   "adrs": [
     {

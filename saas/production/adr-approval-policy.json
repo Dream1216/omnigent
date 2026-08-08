@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "repository": "Dream1216/omnigent",
+  "candidate_path": "saas/production/adr-approval-candidate.json",
+  "authority_path": "saas/production/adr-approval-authorities.json",
+  "record_directory": "saas/production/adr-approvals",
+  "required_signing_roles": [
+    "product-owner",
+    "platform-architecture",
+    "security",
+    "site-reliability"
+  ],
+  "rules": {
+    "review_source": "github_pull_request_review",
+    "required_review_state": "APPROVED",
+    "require_merged_decision_pr": true,
+    "require_exact_reviewed_commit": true,
+    "require_distinct_signing_humans": true,
+    "forbid_pull_request_author_as_signer": true,
+    "require_every_adr_technical_owner": true,
+    "allow_one_human_to_confirm_multiple_technical_owner_roles": true,
+    "record_is_append_only": true,
+    "record_hash_algorithm": "sha256",
+    "authority_identity_namespace": "github-login"
+  },
+  "invalidation": {
+    "decision_file_change": "invalidate",
+    "candidate_revision_change": "invalidate",
+    "authority_mapping_change": "require-new-record",
+    "github_review_dismissed": "invalidate",
+    "github_review_commit_mismatch": "invalidate",
+    "approval_record_modified_or_deleted": "reject"
+  }
+}

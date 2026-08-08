@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from saas.scripts.check_adr_approvals import validate_approval_contract
+
 _ADR_IDS = {f"ADR-{index:03d}" for index in range(1, 12)}
 _SERVICE_IDS = {
     "control-plane",
@@ -96,37 +98,12 @@ def validate_baseline(repo: Path, baseline: dict[str, Any]) -> dict[str, Any]:
         if revision.get("deployment_scope") != "single-region-multi-az":
             violations.append("P0 deployment_scope must be single-region-multi-az")
 
-    approval = baseline.get("approval")
-    if not isinstance(approval, dict):
-        violations.append("approval must be an object")
-    else:
-        required_roles = approval.get("required_roles")
-        if not isinstance(required_roles, list) or len(set(required_roles)) < 4:
-            violations.append("approval requires at least four distinct roles")
-            required_roles = []
-        if any(not _owner(role) for role in required_roles):
-            violations.append("approval roles must be stable role identifiers")
-        approvals = approval.get("approvals")
-        if not isinstance(approvals, list):
-            violations.append("approval.approvals must be a list")
-            approvals = []
-        approved_roles: set[str] = set()
-        for item in approvals:
-            if not isinstance(item, dict):
-                violations.append("approval entries must be objects")
-                continue
-            required = {"role", "approver", "approved_at", "product_revision"}
-            if not required.issubset(item) or any(not _nonempty(item[key]) for key in required):
-                violations.append(
-                    "approval entries require role, approver, time, and product revision"
-                )
-                continue
-            approved_roles.add(str(item["role"]))
-        missing = sorted(set(required_roles) - approved_roles)
-        if approval.get("state") != "approved" or missing:
-            blockers.append(
-                f"production baseline approval is incomplete; missing roles: {missing}"
-            )
+    approval_report = validate_approval_contract(repo, baseline)
+    violations.extend(
+        f"ADR approval contract: {violation}" for violation in approval_report["violations"]
+    )
+    if approval_report["approval_readiness"] != "approved":
+        blockers.append("production baseline approval is incomplete")
 
     adrs = baseline.get("adrs")
     if _ids(adrs) != _ADR_IDS:

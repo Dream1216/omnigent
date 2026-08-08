@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: saas-upstream-${{ github.workflow }}-${{ github.ref }}
@@ -135,6 +136,8 @@ jobs:
         run: uv run python -m saas.scripts.check_acceptance_manifest
       - name: Validate P0 production baselines
         run: |
+          uv run python -m saas.scripts.check_adr_approvals \
+            --verify-github --require-approved-if-declared
           uv run python -m saas.scripts.check_production_baseline \
             --output artifacts/production-baseline-report.json
           uv run python -m saas.scripts.check_recovery_readiness \

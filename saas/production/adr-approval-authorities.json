@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "state": "configuration_required",
+  "reviewed_at": null,
+  "roles": {
+    "product-owner": {
+      "github_logins": []
+    },
+    "platform-architecture": {
+      "github_logins": []
+    },
+    "security": {
+      "github_logins": []
+    },
+    "site-reliability": {
+      "github_logins": []
+    },
+    "runtime-compatibility": {
+      "github_logins": []
+    },
+    "control-plane": {
+      "github_logins": []
+    },
+    "execution-platform": {
+      "github_logins": []
+    },
+    "billing-platform": {
+      "github_logins": []
+    }
+  },
+  "instructions": "Replace empty arrays with authorized corporate GitHub logins, set state to active, and record the governance review date. The four signing roles must resolve to four distinct people. Do not add aliases, bots, shared accounts, or the same person under multiple logins."
+}
