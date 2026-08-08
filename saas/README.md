@@ -1587,11 +1587,14 @@ access; a managed Owner is suspended and flagged for Owner Recovery rather than 
 interactive access or silently transferring ownership. Group convergence refuses to
 re-add an inactive User, so a late Group update cannot undo a newer deprovision.
 
-The initial HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
-POST/GET/PATCH for Users and Groups, weak ETags/If-Match, bearer authentication and
-`application/scim+json` responses. Tenant management routes now expose fresh-authenticated,
-idempotent Directory credential rotation and disable with one-time token delivery. PUT,
-DELETE resource semantics, list/filter, Bulk, complete PATCH paths, transport-level
+The HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
+POST/GET-by-id/PATCH plus ListResponse for Users and Groups, weak ETags/If-Match, bearer
+authentication and `application/scim+json` responses. Collection reads use stable
+one-based pagination, a maximum count of 100 and one strict equality filter over an
+allowlisted resource attribute; every query remains bound to the exact authenticated
+Directory. Tenant management routes expose fresh-authenticated, idempotent Directory
+credential rotation and disable with one-time token delivery. PUT, DELETE resource
+semantics, Bulk, compound/general filters, sorting, complete PATCH paths, transport-level
 lost-response replay, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
 Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
 state and identity Event Receipts are now separate deletion
@@ -1599,8 +1602,8 @@ surfaces with token-hash destruction, subject erasure and non-resurrecting recei
 anonymization checks. The anonymization/Legal Hold workflow is not implemented yet and
 immutable receipts may still carry external identity/display fields, so Privacy remains
 a production blocker rather than a completed property. Local evidence currently consists
-of five convergence/lifecycle tests, two HTTP tests, SQLite model/migration checks, one
-isolated PostgreSQL 16 token-RLS/rotation/disable/immutable-event test and a 79.649-second
+of six convergence/lifecycle tests, three HTTP tests, SQLite model/migration checks, one
+isolated PostgreSQL 16 token-RLS/rotation/disable/list/immutable-event test and a 79.649-second
 nonempty logical restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
 implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
 compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
@@ -1639,6 +1642,17 @@ descriptors. Artifact `9016902247` has archive digest
 `471db65a5d4c3972f2d576d4273e4a9ca14db2921f8fc04e91a49457405e2ed7`.
 These are unpublished candidates, not registry publication, signature, scan, Canary,
 N-1 rollback, complete SCIM/federation/privacy behavior, PC5 completion or release `GO`.
+
+The third PC5 code candidate adds Directory-scoped User and Group collection reads.
+`startIndex` is one-based, `count` is bounded from zero through 100, ordering is stable,
+and the adapter accepts only one strict `eq` filter over the resource-specific allowlist.
+Unsupported, compound, malformed and over-limit requests fail with SCIM error payloads;
+User-name comparison is normalized, Group filters cannot use User attributes, and both
+SQLite and real PostgreSQL checks assert that the token-selected Directory remains the
+query boundary. This closes only the ListResponse and bounded equality-filter code
+subcheck after exact-SHA workflows pass. PUT/DELETE/Bulk, general filter grammar, sorting,
+complete PATCH, lost-response replay, overlapping credential rotation, federation,
+privacy, production promotion and all eleven aggregate gates remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in

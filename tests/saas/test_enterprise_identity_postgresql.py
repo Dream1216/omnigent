@@ -143,6 +143,13 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         source_version=1,
     )
     assert created.user_id is not None
+    listed = service.list_users(
+        token,
+        filter_attribute="externalId",
+        filter_value=f"employee-{suffix}",
+    )
+    assert listed.total_results == listed.items_per_page == 1
+    assert listed.resources[0].id == created.id
     group = service.sync_group(
         token,
         event_id=f"pc5-group-1-{suffix}",
@@ -153,6 +160,13 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         source_version=1,
     )
     assert group.active_member_count == 1
+    listed_groups = service.list_groups(
+        token,
+        filter_attribute="externalId",
+        filter_value=f"engineering-{suffix}",
+    )
+    assert listed_groups.total_results == listed_groups.items_per_page == 1
+    assert listed_groups.resources[0].id == group.id
     deprovisioned = service.upsert_user(
         token,
         event_id=f"pc5-user-delete-{suffix}",

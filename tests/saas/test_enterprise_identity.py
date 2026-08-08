@@ -300,6 +300,92 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         assert rotated.bearer_token not in serialized_outbox
 
 
+def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixture) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    first_token = _directory(service, ids)
+    second_directory = service.issue_directory(
+        _context(ids, ids.owner),
+        display_name="Second IdP",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key="directory-2",
+    )
+    assert second_directory.bearer_token is not None
+
+    first_user = service.upsert_user(
+        first_token,
+        event_id="first-directory-user",
+        external_id="first-user",
+        user_name="First.User@example.test",
+        display_name="First User",
+        active=True,
+        source_version=1,
+    )
+    service.upsert_user(
+        second_directory.bearer_token,
+        event_id="second-directory-user",
+        external_id="second-user",
+        user_name="second.user@example.test",
+        display_name="Second User",
+        active=True,
+        source_version=1,
+    )
+
+    first_page = service.list_users(first_token, start_index=1, count=1)
+    assert first_page.total_results == first_page.items_per_page == 1
+    assert first_page.resources[0].id == first_user.id
+    filtered = service.list_users(
+        first_token,
+        filter_attribute="userName",
+        filter_value="FIRST.USER@example.test",
+    )
+    assert filtered.total_results == 1
+    assert filtered.resources[0].external_id == "first-user"
+    assert (
+        service.list_users(
+            first_token,
+            filter_attribute="externalId",
+            filter_value="second-user",
+        ).total_results
+        == 0
+    )
+
+    group = service.sync_group(
+        first_token,
+        event_id="first-directory-group",
+        external_id="first-group",
+        display_name="First Group",
+        member_external_ids=["first-user"],
+        active=True,
+        source_version=1,
+    )
+    group_page = service.list_groups(
+        first_token,
+        filter_attribute="id",
+        filter_value=str(group.id),
+    )
+    assert group_page.total_results == 1
+    assert group_page.resources[0].member_scim_user_ids == (first_user.id,)
+
+    with pytest.raises(LifecycleError) as unsupported:
+        service.list_groups(
+            first_token,
+            filter_attribute="userName",
+            filter_value="first.user@example.test",
+        )
+    assert unsupported.value.code == "invalidFilter"
+    with pytest.raises(LifecycleError) as unbounded:
+        service.list_users(first_token, count=101)
+    assert unbounded.value.code == "invalidValue"
+    with pytest.raises(LifecycleError) as invalid_user_name:
+        service.list_users(
+            first_token,
+            filter_attribute="userName",
+            filter_value="   ",
+        )
+    assert invalid_user_name.value.code == "invalidFilter"
+
+
 def test_deprovision_wins_over_late_group_update_and_replay_is_idempotent(scim_fixture) -> None:
     sessions, ids = scim_fixture
     service = EnterpriseScimService(sessions)

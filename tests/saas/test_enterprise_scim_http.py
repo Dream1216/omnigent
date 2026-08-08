@@ -157,6 +157,7 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     config = client.get("/saas/scim/v2/ServiceProviderConfig")
     assert config.status_code == 200
     assert config.json()["etag"]["supported"] is True
+    assert config.json()["filter"] == {"supported": True, "maxResults": 100}
 
     invalid = client.post(
         "/saas/scim/v2/Users",
@@ -317,3 +318,104 @@ def test_scim_directory_http_rotation_and_disable_destroy_old_authority() -> Non
         },
     )
     assert new_denied.status_code == 401
+
+
+def test_scim_collection_list_filter_and_bounded_pagination() -> None:
+    client, token, _, _ = _app()
+    headers = {"Authorization": f"Bearer {token}"}
+    created_users: dict[str, str] = {}
+    for index, external_id in enumerate(("employee-alpha", "employee-beta"), start=1):
+        response = client.post(
+            "/saas/scim/v2/Users",
+            headers={**headers, "Idempotency-Key": f"list-user-{index}"},
+            json={
+                "schemas": [_USER_SCHEMA],
+                "externalId": external_id,
+                "userName": f"{external_id}@example.test",
+                "displayName": f"Employee {index}",
+                "active": index == 1,
+            },
+        )
+        assert response.status_code == 201
+        created_users[external_id] = response.json()["id"]
+
+    first = client.get(
+        "/saas/scim/v2/Users?startIndex=1&count=1",
+        headers=headers,
+    )
+    second = client.get(
+        "/saas/scim/v2/Users?startIndex=2&count=1",
+        headers=headers,
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+    assert first.json()["totalResults"] == second.json()["totalResults"] == 2
+    assert first.json()["itemsPerPage"] == second.json()["itemsPerPage"] == 1
+    listed_ids = {
+        first.json()["Resources"][0]["id"],
+        second.json()["Resources"][0]["id"],
+    }
+    assert listed_ids == set(created_users.values())
+
+    filtered_user = client.get(
+        '/saas/scim/v2/Users?filter=userName%20eq%20"EMPLOYEE-ALPHA@example.test"',
+        headers=headers,
+    )
+    assert filtered_user.status_code == 200
+    assert filtered_user.json()["totalResults"] == 1
+    assert filtered_user.json()["Resources"][0]["externalId"] == "employee-alpha"
+
+    inactive = client.get(
+        "/saas/scim/v2/Users?filter=active%20eq%20false&count=0",
+        headers=headers,
+    )
+    assert inactive.status_code == 200
+    assert inactive.json()["totalResults"] == 1
+    assert inactive.json()["itemsPerPage"] == 0
+    assert inactive.json()["Resources"] == []
+
+    created_groups: dict[str, str] = {}
+    for index, external_id in enumerate(("group-alpha", "group-beta"), start=1):
+        response = client.post(
+            "/saas/scim/v2/Groups",
+            headers={**headers, "Idempotency-Key": f"list-group-{index}"},
+            json={
+                "schemas": [_GROUP_SCHEMA],
+                "externalId": external_id,
+                "displayName": f"Group {index}",
+                "members": [],
+            },
+        )
+        assert response.status_code == 201
+        created_groups[external_id] = response.json()["id"]
+
+    groups = client.get("/saas/scim/v2/Groups?startIndex=1&count=100", headers=headers)
+    assert groups.status_code == 200
+    assert groups.json()["totalResults"] == 2
+    assert {item["id"] for item in groups.json()["Resources"]} == set(created_groups.values())
+
+    filtered_group = client.get(
+        '/saas/scim/v2/Groups?filter=displayName%20eq%20"GROUP%202"',
+        headers=headers,
+    )
+    assert filtered_group.status_code == 200
+    assert filtered_group.json()["totalResults"] == 1
+    assert filtered_group.json()["Resources"][0]["externalId"] == "group-beta"
+
+    unsupported = client.get(
+        '/saas/scim/v2/Groups?filter=userName%20eq%20"nobody@example.test"',
+        headers=headers,
+    )
+    assert unsupported.status_code == 400
+    assert unsupported.json()["scimType"] == "invalidFilter"
+
+    compound = client.get(
+        '/saas/scim/v2/Users?filter=active%20eq%20"true"%20and%20userName%20eq%20"x"',
+        headers=headers,
+    )
+    assert compound.status_code == 400
+    assert compound.json()["scimType"] == "invalidFilter"
+
+    too_many = client.get("/saas/scim/v2/Users?count=101", headers=headers)
+    assert too_many.status_code == 400
+    assert too_many.json()["scimType"] == "invalidValue"

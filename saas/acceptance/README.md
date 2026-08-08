@@ -932,3 +932,14 @@ descriptors. Artifact `9016902247` has digest
 This closes only the second PC5 code, exact-SHA compatibility and unpublished image
 candidate subchecks. Scheduled/overlap rotation, complete SCIM, federation, privacy,
 production promotion and all eleven aggregate gates remain open; release stays `NO-GO`.
+
+The third PC5 candidate adds User and Group ListResponse contracts without widening
+Directory authority. Collection reads use stable one-based pagination, allow `count`
+from zero through 100 and accept only one strict equality filter over an allowlisted
+resource attribute. User names normalize before comparison; Group filters reject User
+attributes; malformed, compound and over-limit requests return SCIM error payloads.
+Service, HTTP and real-PostgreSQL tests cover pagination, zero-count totals, exact filters,
+unsupported filters and the exact token-selected Directory boundary. This is a code
+candidate until its exact compatibility and image workflows pass, and it does not cover
+PUT/DELETE/Bulk, general filters, sort, complete PATCH, transport replay, overlapping
+rotation, federation, privacy, production promotion or any aggregate release gate.

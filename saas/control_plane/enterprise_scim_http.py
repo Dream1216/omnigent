@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,9 +27,22 @@ from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyC
 _USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 _GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 _PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _ETAG = re.compile(r'^W/"([1-9][0-9]*)"$')
+_FILTER = re.compile(
+    r"^\s*(id|externalId|userName|displayName|active)\s+eq\s+"
+    r'(?:"([^"\\]{1,320})"|(true|false))\s*$',
+    re.IGNORECASE,
+)
+_FILTER_ATTRIBUTES = {
+    "id": "id",
+    "externalid": "externalId",
+    "username": "userName",
+    "displayname": "displayName",
+    "active": "active",
+}
 
 
 class _ScimHttpError(Exception):
@@ -183,6 +196,39 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
         "status": value.status,
         "version": value.version,
         "replayed": value.replayed,
+    }
+
+
+def _filter_parts(value: str | None) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    if len(value) > 384:
+        raise _error(LifecycleError("invalidFilter", "SCIM filter is too long"))
+    match = _FILTER.fullmatch(value)
+    if match is None:
+        raise _error(
+            LifecycleError("invalidFilter", "only one exact equality filter is supported")
+        )
+    attribute = _FILTER_ATTRIBUTES[match.group(1).casefold()]
+    quoted_value, boolean_value = match.group(2), match.group(3)
+    if boolean_value is not None and attribute != "active":
+        raise _error(LifecycleError("invalidFilter", "SCIM filter value is invalid"))
+    return attribute, quoted_value if quoted_value is not None else boolean_value
+
+
+def _list_payload(
+    resources: list[dict[str, object]],
+    *,
+    total_results: int,
+    start_index: int,
+    items_per_page: int,
+) -> dict[str, object]:
+    return {
+        "schemas": [_LIST_SCHEMA],
+        "totalResults": total_results,
+        "startIndex": start_index,
+        "itemsPerPage": items_per_page,
+        "Resources": resources,
     }
 
 
@@ -432,7 +478,7 @@ def create_enterprise_scim_router(
                 "schemas": [_CONFIG_SCHEMA],
                 "patch": {"supported": True},
                 "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
-                "filter": {"supported": False, "maxResults": 0},
+                "filter": {"supported": True, "maxResults": 100},
                 "changePassword": {"supported": False},
                 "sort": {"supported": False},
                 "etag": {"supported": True},
@@ -471,6 +517,33 @@ def create_enterprise_scim_router(
         location = str(request.base_url).rstrip("/") + f"/saas/scim/v2/Users/{value.id}"
         return _response(
             _user_payload(value, request), status=201, version=value.version, location=location
+        )
+
+    @router.get("/scim/v2/Users")
+    def list_users(
+        request: Request,
+        filter_value: str | None = Query(default=None, alias="filter"),
+        start_index: int = Query(default=1, alias="startIndex"),
+        count: int = Query(default=100),
+    ) -> JSONResponse:
+        filter_attribute, resolved_filter_value = _filter_parts(filter_value)
+        try:
+            page = service.list_users(
+                _token(request),
+                start_index=start_index,
+                count=count,
+                filter_attribute=filter_attribute,
+                filter_value=resolved_filter_value,
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return _response(
+            _list_payload(
+                [_user_payload(value, request) for value in page.resources],
+                total_results=page.total_results,
+                start_index=page.start_index,
+                items_per_page=page.items_per_page,
+            )
         )
 
     @router.get("/scim/v2/Users/{scim_user_id}")
@@ -535,6 +608,33 @@ def create_enterprise_scim_router(
         location = str(request.base_url).rstrip("/") + f"/saas/scim/v2/Groups/{value.id}"
         return _response(
             _group_payload(value, request), status=201, version=value.version, location=location
+        )
+
+    @router.get("/scim/v2/Groups")
+    def list_groups(
+        request: Request,
+        filter_value: str | None = Query(default=None, alias="filter"),
+        start_index: int = Query(default=1, alias="startIndex"),
+        count: int = Query(default=100),
+    ) -> JSONResponse:
+        filter_attribute, resolved_filter_value = _filter_parts(filter_value)
+        try:
+            page = service.list_groups(
+                _token(request),
+                start_index=start_index,
+                count=count,
+                filter_attribute=filter_attribute,
+                filter_value=resolved_filter_value,
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return _response(
+            _list_payload(
+                [_group_payload(value, request) for value in page.resources],
+                total_results=page.total_results,
+                start_index=page.start_index,
+                items_per_page=page.items_per_page,
+            )
         )
 
     @router.get("/scim/v2/Groups/{scim_group_id}")

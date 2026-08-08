@@ -89,6 +89,22 @@ class ScimGroupView:
     replayed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ScimUserPage:
+    resources: tuple[ScimUserView, ...]
+    total_results: int
+    start_index: int
+    items_per_page: int
+
+
+@dataclass(frozen=True, slots=True)
+class ScimGroupPage:
+    resources: tuple[ScimGroupView, ...]
+    total_results: int
+    start_index: int
+    items_per_page: int
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -552,24 +568,84 @@ class EnterpriseScimService:
             ).scalar_one_or_none()
             if user is None:
                 raise LifecycleError("scim_resource_not_found", "SCIM User was not found")
-            membership = (
-                db.get(TenantMembership, (directory.tenant_id, user.user_id))
-                if user.user_id is not None
-                else None
+            return self._user_view(db, directory=directory, user=user)
+
+    def list_users(
+        self,
+        bearer_token: str,
+        *,
+        start_index: int = 1,
+        count: int = 100,
+        filter_attribute: str | None = None,
+        filter_value: str | None = None,
+    ) -> ScimUserPage:
+        """List one Directory's Users with bounded stable pagination and exact equality."""
+
+        self._validate_list_request(
+            start_index=start_index,
+            count=count,
+            filter_attribute=filter_attribute,
+            filter_value=filter_value,
+        )
+        with self._session_factory.begin() as db:
+            directory = self._authenticate(db, bearer_token)
+            predicates: list[sa.ColumnElement[bool]] = [
+                EnterpriseScimUserRecord.directory_id == directory.id
+            ]
+            if filter_attribute == "id":
+                try:
+                    predicates.append(EnterpriseScimUserRecord.id == UUID(str(filter_value)))
+                except ValueError as error:
+                    raise LifecycleError(
+                        "invalidFilter", "SCIM filter value is invalid"
+                    ) from error
+            elif filter_attribute == "externalId":
+                predicates.append(EnterpriseScimUserRecord.external_id == filter_value)
+            elif filter_attribute == "userName":
+                try:
+                    normalized_filter = _normalize_user_name(str(filter_value))
+                except LifecycleError as error:
+                    raise LifecycleError(
+                        "invalidFilter", "SCIM filter value is invalid"
+                    ) from error
+                predicates.append(
+                    EnterpriseScimUserRecord.user_name_normalized == normalized_filter
+                )
+            elif filter_attribute == "displayName":
+                predicates.append(
+                    sa.func.lower(EnterpriseScimUserRecord.display_name)
+                    == str(filter_value).lower()
+                )
+            elif filter_attribute == "active":
+                predicates.append(
+                    EnterpriseScimUserRecord.active == self._filter_boolean(str(filter_value))
+                )
+            total = int(
+                db.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(EnterpriseScimUserRecord)
+                    .where(*predicates)
+                )
+                or 0
             )
-            result = self._user_payload(
-                db,
-                user,
-                disposition="applied",
-                requires_owner_recovery=bool(
-                    not user.active
-                    and membership is not None
-                    and membership.role == "owner"
-                    and membership.status == "suspended"
-                ),
-                revoked_session_count=0,
+            users = tuple(
+                db.scalars(
+                    sa.select(EnterpriseScimUserRecord)
+                    .where(*predicates)
+                    .order_by(EnterpriseScimUserRecord.id)
+                    .offset(start_index - 1)
+                    .limit(count)
+                )
             )
-            return self._user_result(result)
+            resources = tuple(
+                self._user_view(db, directory=directory, user=user) for user in users
+            )
+            return ScimUserPage(
+                resources=resources,
+                total_results=total,
+                start_index=start_index,
+                items_per_page=len(resources),
+            )
 
     def sync_group(
         self,
@@ -742,6 +818,76 @@ class EnterpriseScimService:
                 raise LifecycleError("scim_resource_not_found", "SCIM Group was not found")
             return self._group_result(self._group_payload(db, group, (), "applied"))
 
+    def list_groups(
+        self,
+        bearer_token: str,
+        *,
+        start_index: int = 1,
+        count: int = 100,
+        filter_attribute: str | None = None,
+        filter_value: str | None = None,
+    ) -> ScimGroupPage:
+        """List one Directory's Groups with bounded stable pagination and exact equality."""
+
+        if filter_attribute == "userName":
+            raise LifecycleError("invalidFilter", "SCIM Group filter attribute is unsupported")
+        self._validate_list_request(
+            start_index=start_index,
+            count=count,
+            filter_attribute=filter_attribute,
+            filter_value=filter_value,
+        )
+        with self._session_factory.begin() as db:
+            directory = self._authenticate(db, bearer_token)
+            predicates: list[sa.ColumnElement[bool]] = [
+                EnterpriseScimGroupRecord.directory_id == directory.id
+            ]
+            if filter_attribute == "id":
+                try:
+                    predicates.append(EnterpriseScimGroupRecord.id == UUID(str(filter_value)))
+                except ValueError as error:
+                    raise LifecycleError(
+                        "invalidFilter", "SCIM filter value is invalid"
+                    ) from error
+            elif filter_attribute == "externalId":
+                predicates.append(EnterpriseScimGroupRecord.external_id == filter_value)
+            elif filter_attribute == "displayName":
+                predicates.append(
+                    sa.func.lower(EnterpriseScimGroupRecord.display_name)
+                    == str(filter_value).lower()
+                )
+            elif filter_attribute == "active":
+                predicates.append(
+                    EnterpriseScimGroupRecord.active == self._filter_boolean(str(filter_value))
+                )
+            total = int(
+                db.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(EnterpriseScimGroupRecord)
+                    .where(*predicates)
+                )
+                or 0
+            )
+            groups = tuple(
+                db.scalars(
+                    sa.select(EnterpriseScimGroupRecord)
+                    .where(*predicates)
+                    .order_by(EnterpriseScimGroupRecord.id)
+                    .offset(start_index - 1)
+                    .limit(count)
+                )
+            )
+            resources = tuple(
+                self._group_result(self._group_payload(db, group, (), "applied"))
+                for group in groups
+            )
+            return ScimGroupPage(
+                resources=resources,
+                total_results=total,
+                start_index=start_index,
+                items_per_page=len(resources),
+            )
+
     def _authenticate(self, db: Session, bearer_token: str) -> EnterpriseScimDirectoryRecord:
         token = _clean(bearer_token, maximum=256, code="scim_authentication_failed")
         token_hash = _digest(token)
@@ -759,6 +905,64 @@ class EnterpriseScimService:
             RlsContext(tenant_id=directory.tenant_id, scim_token_hash=token_hash),
         )
         return directory
+
+    @staticmethod
+    def _validate_list_request(
+        *,
+        start_index: int,
+        count: int,
+        filter_attribute: str | None,
+        filter_value: str | None,
+    ) -> None:
+        if start_index < 1 or count < 0 or count > 100:
+            raise LifecycleError("invalidValue", "SCIM pagination is invalid")
+        if (filter_attribute is None) != (filter_value is None):
+            raise LifecycleError("invalidFilter", "SCIM filter is invalid")
+        if filter_attribute is not None and filter_attribute not in {
+            "id",
+            "externalId",
+            "userName",
+            "displayName",
+            "active",
+        }:
+            raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
+        if filter_value is not None and (not filter_value or len(filter_value) > 320):
+            raise LifecycleError("invalidFilter", "SCIM filter value is invalid")
+
+    @staticmethod
+    def _filter_boolean(value: str) -> bool:
+        normalized = value.casefold()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        raise LifecycleError("invalidFilter", "SCIM Boolean filter is invalid")
+
+    def _user_view(
+        self,
+        db: Session,
+        *,
+        directory: EnterpriseScimDirectoryRecord,
+        user: EnterpriseScimUserRecord,
+    ) -> ScimUserView:
+        membership = (
+            db.get(TenantMembership, (directory.tenant_id, user.user_id))
+            if user.user_id is not None
+            else None
+        )
+        result = self._user_payload(
+            db,
+            user,
+            disposition="applied",
+            requires_owner_recovery=bool(
+                not user.active
+                and membership is not None
+                and membership.role == "owner"
+                and membership.status == "suspended"
+            ),
+            revoked_session_count=0,
+        )
+        return self._user_result(result)
 
     @staticmethod
     def _apply_request_context(db: Session, request: RequestContext) -> None:
