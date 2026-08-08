@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -150,6 +151,52 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert listed.total_results == listed.items_per_page == 1
     assert listed.resources[0].id == created.id
+
+    def _concurrent_user_replace(index: int) -> tuple[int, object]:
+        try:
+            result: object = service.upsert_user(
+                token,
+                event_id=f"pc5-user-concurrent-{index}-{suffix}",
+                external_id=f"employee-{suffix}",
+                user_name=f"employee-{suffix}@example.test",
+                display_name=f"PC5 Concurrent {index}",
+                active=True,
+                source_version=None,
+                scim_user_id=created.id,
+                expected_version=1,
+                operation="replace",
+            )
+        except LifecycleError as error:
+            result = error
+        return index, result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        concurrent_results = list(executor.map(_concurrent_user_replace, (1, 2)))
+    applied = [
+        (index, value) for index, value in concurrent_results if not isinstance(value, Exception)
+    ]
+    rejected = [
+        (index, value) for index, value in concurrent_results if isinstance(value, LifecycleError)
+    ]
+    assert len(applied) == len(rejected) == 1
+    rejected_error = rejected[0][1]
+    assert isinstance(rejected_error, LifecycleError)
+    assert rejected_error.code == "scim_etag_mismatch"
+    winner_index = applied[0][0]
+    replayed_winner = service.upsert_user(
+        token,
+        event_id=f"pc5-user-concurrent-{winner_index}-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name=f"PC5 Concurrent {winner_index}",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="replace",
+    )
+    assert replayed_winner.replayed is True
+    assert replayed_winner.version == replayed_winner.source_version == 2
     group = service.sync_group(
         token,
         event_id=f"pc5-group-1-{suffix}",
@@ -172,11 +219,28 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         event_id=f"pc5-user-delete-{suffix}",
         external_id=f"employee-{suffix}",
         user_name=f"employee-{suffix}@example.test",
-        display_name="PC5 Employee",
+        display_name=f"PC5 Concurrent {winner_index}",
         active=False,
-        source_version=2,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=2,
+        operation="delete",
     )
     assert deprovisioned.membership_status == "removed"
+    deprovision_replay = service.upsert_user(
+        token,
+        event_id=f"pc5-user-delete-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name=f"PC5 Concurrent {winner_index}",
+        active=False,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=2,
+        operation="delete",
+    )
+    assert deprovision_replay.replayed is True
+    assert deprovision_replay.version == 3
     late_group = service.sync_group(
         token,
         event_id=f"pc5-group-2-{suffix}",

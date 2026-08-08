@@ -376,7 +376,10 @@ class EnterpriseScimService:
         user_name: str,
         display_name: str | None,
         active: bool,
-        source_version: int,
+        source_version: int | None,
+        scim_user_id: UUID | None = None,
+        expected_version: int | None = None,
+        operation: str = "upsert",
     ) -> ScimUserView:
         event_key = _clean(event_id, maximum=256, code="scim_event_id_invalid")
         external = _clean(external_id, maximum=256, code="scim_external_id_invalid")
@@ -386,20 +389,32 @@ class EnterpriseScimService:
             if display_name is not None
             else None
         )
-        if source_version < 1:
+        guarded = scim_user_id is not None or expected_version is not None
+        if guarded:
+            if scim_user_id is None or expected_version is None or expected_version < 1:
+                raise LifecycleError("scim_etag_mismatch", "current User ETag is required")
+            if source_version is not None or operation not in {"replace", "patch", "delete"}:
+                raise LifecycleError("scim_request_invalid", "guarded User mutation is invalid")
+        elif source_version is None or source_version < 1 or operation != "upsert":
             raise LifecycleError("scim_source_version_invalid", "source version is invalid")
-        payload: dict[str, object] = {
+        desired: dict[str, object] = {
             "resource_type": "User",
             "external_id": external,
             "user_name": normalized,
             "display_name": shown_name,
             "active": active,
-            "source_version": source_version,
         }
-        request_hash = _hash(payload)
-        state_hash = _hash(
-            {key: value for key, value in payload.items() if key != "resource_type"}
+        request_payload = (
+            {
+                **desired,
+                "operation": operation,
+                "resource_id": str(scim_user_id),
+                "expected_version": expected_version,
+            }
+            if guarded
+            else {**desired, "source_version": source_version}
         )
+        request_hash = _hash(request_payload)
         with self._session_factory.begin() as db:
             directory = self._authenticate(db, bearer_token)
             replay = self._event_replay(db, directory.id, event_key, request_hash)
@@ -410,10 +425,32 @@ class EnterpriseScimService:
                 sa.select(EnterpriseScimUserRecord)
                 .where(
                     EnterpriseScimUserRecord.directory_id == directory.id,
-                    EnterpriseScimUserRecord.external_id == external,
+                    (
+                        EnterpriseScimUserRecord.id == scim_user_id
+                        if guarded
+                        else EnterpriseScimUserRecord.external_id == external
+                    ),
                 )
                 .with_for_update()
             ).scalar_one_or_none()
+            if guarded:
+                if user is None:
+                    raise LifecycleError("scim_resource_not_found", "SCIM User was not found")
+                if user.external_id != external:
+                    raise LifecycleError(
+                        "scim_external_id_immutable", "SCIM User externalId is immutable"
+                    )
+                if user.version != expected_version:
+                    raise LifecycleError("scim_etag_mismatch", "SCIM User ETag changed")
+                source_version = user.source_version + 1
+            assert source_version is not None
+            state_hash = _hash(
+                {
+                    key: value
+                    for key, value in {**desired, "source_version": source_version}.items()
+                    if key != "resource_type"
+                }
+            )
             now = _utcnow()
             if user is not None and source_version < user.source_version:
                 result = self._user_payload(
@@ -656,12 +693,21 @@ class EnterpriseScimService:
         display_name: str,
         member_external_ids: list[str],
         active: bool,
-        source_version: int,
+        source_version: int | None,
+        scim_group_id: UUID | None = None,
+        expected_version: int | None = None,
+        operation: str = "upsert",
     ) -> ScimGroupView:
         event_key = _clean(event_id, maximum=256, code="scim_event_id_invalid")
         external = _clean(external_id, maximum=256, code="scim_external_id_invalid")
         name = _clean(display_name, maximum=128, code="scim_group_name_invalid")
-        if source_version < 1:
+        guarded = scim_group_id is not None or expected_version is not None
+        if guarded:
+            if scim_group_id is None or expected_version is None or expected_version < 1:
+                raise LifecycleError("scim_etag_mismatch", "current Group ETag is required")
+            if source_version is not None or operation not in {"replace", "patch", "delete"}:
+                raise LifecycleError("scim_request_invalid", "guarded Group mutation is invalid")
+        elif source_version is None or source_version < 1 or operation != "upsert":
             raise LifecycleError("scim_source_version_invalid", "source version is invalid")
         if len(member_external_ids) > 1000:
             raise LifecycleError("scim_group_members_invalid", "too many group members")
@@ -673,18 +719,24 @@ class EnterpriseScimService:
                 }
             )
         )
-        payload: dict[str, object] = {
+        desired: dict[str, object] = {
             "resource_type": "Group",
             "external_id": external,
             "display_name": name,
             "members": list(members),
             "active": active,
-            "source_version": source_version,
         }
-        request_hash = _hash(payload)
-        state_hash = _hash(
-            {key: value for key, value in payload.items() if key != "resource_type"}
+        request_payload = (
+            {
+                **desired,
+                "operation": operation,
+                "resource_id": str(scim_group_id),
+                "expected_version": expected_version,
+            }
+            if guarded
+            else {**desired, "source_version": source_version}
         )
+        request_hash = _hash(request_payload)
         with self._session_factory.begin() as db:
             directory = self._authenticate(db, bearer_token)
             replay = self._event_replay(db, directory.id, event_key, request_hash)
@@ -694,10 +746,32 @@ class EnterpriseScimService:
                 sa.select(EnterpriseScimGroupRecord)
                 .where(
                     EnterpriseScimGroupRecord.directory_id == directory.id,
-                    EnterpriseScimGroupRecord.external_id == external,
+                    (
+                        EnterpriseScimGroupRecord.id == scim_group_id
+                        if guarded
+                        else EnterpriseScimGroupRecord.external_id == external
+                    ),
                 )
                 .with_for_update()
             ).scalar_one_or_none()
+            if guarded:
+                if group is None:
+                    raise LifecycleError("scim_resource_not_found", "SCIM Group was not found")
+                if group.external_id != external:
+                    raise LifecycleError(
+                        "scim_external_id_immutable", "SCIM Group externalId is immutable"
+                    )
+                if group.version != expected_version:
+                    raise LifecycleError("scim_etag_mismatch", "SCIM Group ETag changed")
+                source_version = group.source_version + 1
+            assert source_version is not None
+            state_hash = _hash(
+                {
+                    key: value
+                    for key, value in {**desired, "source_version": source_version}.items()
+                    if key != "resource_type"
+                }
+            )
             if group is not None and source_version < group.source_version:
                 result = self._group_payload(db, group, (), "stale")
                 self._record_event(

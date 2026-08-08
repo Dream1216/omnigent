@@ -588,3 +588,141 @@ def test_owner_deprovision_suspends_access_and_requires_recovery(scim_fixture) -
     assert result.disposition == "blocked"
     assert result.requires_owner_recovery is True
     assert result.membership_status == "suspended"
+
+
+def test_guarded_resource_mutations_replay_before_etag_cas(scim_fixture) -> None:
+    sessions, ids = scim_fixture
+    service = EnterpriseScimService(sessions)
+    token = _directory(service, ids)
+    created = service.upsert_user(
+        token,
+        event_id="guarded-user-create",
+        external_id="guarded-user",
+        user_name="guarded@example.test",
+        display_name="Guarded User",
+        active=True,
+        source_version=1,
+    )
+
+    replaced = service.upsert_user(
+        token,
+        event_id="guarded-user-replace",
+        external_id=created.external_id,
+        user_name=created.user_name,
+        display_name="Replaced User",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="replace",
+    )
+    assert replaced.version == replaced.source_version == 2
+    replay = service.upsert_user(
+        token,
+        event_id="guarded-user-replace",
+        external_id=created.external_id,
+        user_name=created.user_name,
+        display_name="Replaced User",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="replace",
+    )
+    assert replay.replayed is True
+    assert replay.version == 2
+
+    with pytest.raises(LifecycleError) as changed_replay:
+        service.upsert_user(
+            token,
+            event_id="guarded-user-replace",
+            external_id=created.external_id,
+            user_name=created.user_name,
+            display_name="Different Replay",
+            active=True,
+            source_version=None,
+            scim_user_id=created.id,
+            expected_version=1,
+            operation="replace",
+        )
+    assert changed_replay.value.code == "scim_event_conflict"
+    with pytest.raises(LifecycleError) as stale_etag:
+        service.upsert_user(
+            token,
+            event_id="guarded-user-stale",
+            external_id=created.external_id,
+            user_name=created.user_name,
+            display_name="Stale",
+            active=True,
+            source_version=None,
+            scim_user_id=created.id,
+            expected_version=1,
+            operation="replace",
+        )
+    assert stale_etag.value.code == "scim_etag_mismatch"
+    with pytest.raises(LifecycleError) as changed_external_id:
+        service.upsert_user(
+            token,
+            event_id="guarded-user-external",
+            external_id="changed-external-id",
+            user_name=created.user_name,
+            display_name="Replaced User",
+            active=True,
+            source_version=None,
+            scim_user_id=created.id,
+            expected_version=2,
+            operation="replace",
+        )
+    assert changed_external_id.value.code == "scim_external_id_immutable"
+
+    group = service.sync_group(
+        token,
+        event_id="guarded-group-create",
+        external_id="guarded-group",
+        display_name="Guarded Group",
+        member_external_ids=[created.external_id],
+        active=True,
+        source_version=1,
+    )
+    deleted = service.sync_group(
+        token,
+        event_id="guarded-group-delete",
+        external_id=group.external_id,
+        display_name=group.display_name,
+        member_external_ids=[],
+        active=False,
+        source_version=None,
+        scim_group_id=group.id,
+        expected_version=1,
+        operation="delete",
+    )
+    assert deleted.active is False
+    assert deleted.active_member_count == 0
+    deleted_replay = service.sync_group(
+        token,
+        event_id="guarded-group-delete",
+        external_id=group.external_id,
+        display_name=group.display_name,
+        member_external_ids=[],
+        active=False,
+        source_version=None,
+        scim_group_id=group.id,
+        expected_version=1,
+        operation="delete",
+    )
+    assert deleted_replay.replayed is True
+    assert deleted_replay.version == 2
+
+    with sessions() as db:
+        events = list(
+            db.scalars(
+                sa.select(EnterpriseScimEventRecord).order_by(EnterpriseScimEventRecord.event_id)
+            )
+        )
+        assert len(events) == 4
+        assert {event.event_id for event in events} == {
+            "guarded-group-create",
+            "guarded-group-delete",
+            "guarded-user-create",
+            "guarded-user-replace",
+        }

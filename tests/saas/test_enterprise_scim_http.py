@@ -419,3 +419,185 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     too_many = client.get("/saas/scim/v2/Users?count=101", headers=headers)
     assert too_many.status_code == 400
     assert too_many.json()["scimType"] == "invalidValue"
+
+
+def test_scim_resource_lifecycle_put_patch_delete_and_lost_response_replay() -> None:
+    client, token, _, _ = _app()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def create_user(external_id: str) -> dict[str, object]:
+        response = client.post(
+            "/saas/scim/v2/Users",
+            headers={**headers, "Idempotency-Key": f"create-{external_id}"},
+            json={
+                "schemas": [_USER_SCHEMA],
+                "externalId": external_id,
+                "userName": f"{external_id}@example.test",
+                "displayName": external_id,
+                "active": True,
+            },
+        )
+        assert response.status_code == 201
+        return cast(dict[str, object], response.json())
+
+    first = create_user("lifecycle-first")
+    second = create_user("lifecycle-second")
+    first_id, second_id = str(first["id"]), str(second["id"])
+    replace_body = {
+        "schemas": [_USER_SCHEMA],
+        "externalId": "lifecycle-first",
+        "userName": "lifecycle-first@example.test",
+        "displayName": "First Replaced",
+        "active": True,
+    }
+    replaced = client.put(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "replace-first"},
+        json=replace_body,
+    )
+    assert replaced.status_code == 200
+    assert replaced.headers["etag"] == 'W/"2"'
+    assert replaced.json()["displayName"] == "First Replaced"
+
+    lost_response_retry = client.put(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "replace-first"},
+        json=replace_body,
+    )
+    assert lost_response_retry.status_code == 200
+    assert lost_response_retry.headers["etag"] == 'W/"2"'
+    conflicting_retry = client.put(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "replace-first"},
+        json={**replace_body, "displayName": "Conflicting Retry"},
+    )
+    assert conflicting_retry.status_code == 409
+    assert conflicting_retry.json()["scimType"] == "scim_event_conflict"
+
+    removed_name = client.patch(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "remove-name"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "remove", "path": "displayName"}],
+        },
+    )
+    assert removed_name.status_code == 200
+    assert removed_name.headers["etag"] == 'W/"3"'
+    assert removed_name.json()["displayName"] is None
+    invalid_boolean = client.patch(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "invalid-active"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "replace", "path": "active", "value": "false"}],
+        },
+    )
+    assert invalid_boolean.status_code == 400
+    assert invalid_boolean.json()["scimType"] == "scim_active_invalid"
+    immutable_external = client.put(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "immutable-user"},
+        json={**replace_body, "externalId": "changed-external"},
+    )
+    assert immutable_external.status_code == 409
+    assert immutable_external.json()["scimType"] == "scim_external_id_immutable"
+
+    group = client.post(
+        "/saas/scim/v2/Groups",
+        headers={**headers, "Idempotency-Key": "lifecycle-group-create"},
+        json={
+            "schemas": [_GROUP_SCHEMA],
+            "externalId": "lifecycle-group",
+            "displayName": "Lifecycle Group",
+            "members": [{"value": first_id}],
+        },
+    )
+    assert group.status_code == 201
+    group_id = group.json()["id"]
+    added = client.patch(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "group-add"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "add", "path": "members", "value": {"value": second_id}}],
+        },
+    )
+    assert added.status_code == 200
+    assert added.headers["etag"] == 'W/"2"'
+    assert {member["value"] for member in added.json()["members"]} == {first_id, second_id}
+    added_replay = client.patch(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"1"', "Idempotency-Key": "group-add"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "add", "path": "members", "value": {"value": second_id}}],
+        },
+    )
+    assert added_replay.status_code == 200
+    assert added_replay.headers["etag"] == 'W/"2"'
+
+    removed_member = client.patch(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"2"', "Idempotency-Key": "group-remove"},
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [{"op": "remove", "path": f'members[value eq "{first_id}"]'}],
+        },
+    )
+    assert removed_member.status_code == 200
+    assert [member["value"] for member in removed_member.json()["members"]] == [second_id]
+    group_replace_body = {
+        "schemas": [_GROUP_SCHEMA],
+        "externalId": "lifecycle-group",
+        "displayName": "Lifecycle Replaced",
+        "members": [{"value": second_id}],
+    }
+    group_replaced = client.put(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "group-replace"},
+        json=group_replace_body,
+    )
+    assert group_replaced.status_code == 200
+    assert group_replaced.headers["etag"] == 'W/"4"'
+
+    group_deleted = client.delete(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"4"', "Idempotency-Key": "group-delete"},
+    )
+    assert group_deleted.status_code == 204
+    group_delete_replay = client.delete(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers={**headers, "If-Match": 'W/"4"', "Idempotency-Key": "group-delete"},
+    )
+    assert group_delete_replay.status_code == 204
+    group_tombstone = client.get(f"/saas/scim/v2/Groups/{group_id}", headers=headers)
+    assert group_tombstone.status_code == 200
+    assert group_tombstone.headers["etag"] == 'W/"5"'
+    assert group_tombstone.json()["members"] == []
+    assert (
+        group_tombstone.json()["urn:omnigent:params:scim:schemas:extension:governance:1.0:Group"][
+            "active"
+        ]
+        is False
+    )
+
+    user_deleted = client.delete(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "user-delete"},
+    )
+    assert user_deleted.status_code == 204
+    user_delete_replay = client.delete(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "user-delete"},
+    )
+    assert user_delete_replay.status_code == 204
+    user_tombstone = client.get(f"/saas/scim/v2/Users/{first_id}", headers=headers)
+    assert user_tombstone.status_code == 200
+    assert user_tombstone.headers["etag"] == 'W/"4"'
+    assert user_tombstone.json()["active"] is False
+    stale_delete = client.delete(
+        f"/saas/scim/v2/Users/{first_id}",
+        headers={**headers, "If-Match": 'W/"3"', "Idempotency-Key": "stale-delete"},
+    )
+    assert stale_delete.status_code == 412

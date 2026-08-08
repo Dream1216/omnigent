@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Coroutine, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -43,6 +43,9 @@ _FILTER_ATTRIBUTES = {
     "displayname": "displayName",
     "active": "active",
 }
+_MEMBER_FILTER_PATH = re.compile(
+    r'^members\s*\[\s*value\s+eq\s+"([0-9a-f-]{36})"\s*\]$', re.IGNORECASE
+)
 
 
 class _ScimHttpError(Exception):
@@ -93,7 +96,7 @@ class ScimUserBody(BaseModel):
     external_id: str = Field(alias="externalId", min_length=1, max_length=256)
     user_name: str = Field(alias="userName", min_length=1, max_length=320)
     display_name: str | None = Field(default=None, alias="displayName", max_length=256)
-    active: bool = True
+    active: bool = Field(default=True, strict=True)
 
 
 class ScimGroupBody(BaseModel):
@@ -120,7 +123,13 @@ def _error(error: Exception, *, status: int | None = None) -> _ScimHttpError:
             resolved = 401
         elif code in {"scim_resource_not_found"}:
             resolved = 404
-        elif code in {"scim_event_conflict", "scim_version_conflict"}:
+        elif code == "scim_etag_mismatch":
+            resolved = 412
+        elif code in {
+            "scim_event_conflict",
+            "scim_external_id_immutable",
+            "scim_version_conflict",
+        }:
             resolved = 409
         else:
             resolved = 400
@@ -236,14 +245,14 @@ def _etag(version: int) -> str:
     return f'W/"{version}"'
 
 
-def _expected_version(value: str | None, current: int) -> int:
+def _required_version(value: str | None) -> int:
     match = _ETAG.fullmatch(value or "")
-    if match is None or int(match.group(1)) != current:
+    if match is None:
         raise _error(
-            LifecycleError("scim_etag_mismatch", "If-Match must equal the current ETag"),
+            LifecycleError("scim_etag_mismatch", "a valid If-Match ETag is required"),
             status=412,
         )
-    return current
+    return int(match.group(1))
 
 
 def _response(
@@ -320,18 +329,41 @@ def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, obje
         "active": current.active,
     }
     for operation in patch.operations:
-        if str(operation.get("op", "")).casefold() != "replace":
-            raise _error(LifecycleError("scim_patch_unsupported", "only replace is supported"))
+        action = str(operation.get("op", "")).casefold()
+        if action not in {"add", "replace", "remove"}:
+            raise _error(LifecycleError("scim_patch_unsupported", "PATCH op is unsupported"))
         path = operation.get("path")
         value = operation.get("value")
-        if path is None and isinstance(value, Mapping):
+        if path is None and action in {"add", "replace"} and isinstance(value, Mapping):
             for key in ("userName", "displayName", "active"):
                 if key in value:
                     state[key] = value[key]
-        elif path in state:
-            state[str(path)] = value
+        elif isinstance(path, str) and path.casefold() in {
+            "username",
+            "displayname",
+            "active",
+        }:
+            key = {
+                "username": "userName",
+                "displayname": "displayName",
+                "active": "active",
+            }[path.casefold()]
+            if action == "remove":
+                if key != "displayName":
+                    raise _error(
+                        LifecycleError("scim_patch_path_invalid", f"{key} cannot be removed")
+                    )
+                state[key] = None
+            else:
+                state[key] = value
         else:
             raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
+    if not isinstance(state["userName"], str):
+        raise _error(LifecycleError("scim_user_name_invalid", "userName is invalid"))
+    if state["displayName"] is not None and not isinstance(state["displayName"], str):
+        raise _error(LifecycleError("scim_display_name_invalid", "displayName is invalid"))
+    if type(state["active"]) is not bool:
+        raise _error(LifecycleError("scim_active_invalid", "active must be a Boolean"))
     return state
 
 
@@ -343,19 +375,69 @@ def _patched_group(current: ScimGroupView, patch: ScimPatchBody) -> dict[str, ob
         "members": [{"value": str(item)} for item in current.member_scim_user_ids],
     }
     for operation in patch.operations:
-        if str(operation.get("op", "")).casefold() != "replace":
-            raise _error(LifecycleError("scim_patch_unsupported", "only replace is supported"))
+        action = str(operation.get("op", "")).casefold()
+        if action not in {"add", "replace", "remove"}:
+            raise _error(LifecycleError("scim_patch_unsupported", "PATCH op is unsupported"))
         path = operation.get("path")
         value = operation.get("value")
-        if path is None and isinstance(value, Mapping):
+        if path is None and action in {"add", "replace"} and isinstance(value, Mapping):
             for key in ("displayName", "members"):
                 if key in value:
-                    state[key] = value[key]
-        elif path in state:
-            state[str(path)] = value
+                    if key == "members" and action == "add":
+                        state[key] = _merged_members(state[key], value[key])
+                    else:
+                        state[key] = value[key]
+        elif isinstance(path, str) and path.casefold() == "displayname":
+            if action == "remove":
+                raise _error(
+                    LifecycleError("scim_patch_path_invalid", "displayName cannot be removed")
+                )
+            state["displayName"] = value
+        elif isinstance(path, str) and path.casefold() == "members":
+            if action == "remove":
+                state["members"] = []
+            elif action == "add":
+                state["members"] = _merged_members(state["members"], value)
+            else:
+                state["members"] = value
+        elif isinstance(path, str) and action == "remove":
+            match = _MEMBER_FILTER_PATH.fullmatch(path)
+            if match is None:
+                raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
+            member_id = str(UUID(match.group(1)))
+            state["members"] = [
+                member
+                for member in _member_values(state["members"])
+                if member["value"] != member_id
+            ]
         else:
             raise _error(LifecycleError("scim_patch_path_invalid", "PATCH path is invalid"))
+    if not isinstance(state["displayName"], str):
+        raise _error(LifecycleError("scim_group_name_invalid", "displayName is invalid"))
+    state["members"] = _member_values(state["members"])
     return state
+
+
+def _member_values(raw_members: object) -> list[dict[str, str]]:
+    values = raw_members if isinstance(raw_members, list) else [raw_members]
+    if len(values) > 1000:
+        raise _error(LifecycleError("scim_group_members_invalid", "members are invalid"))
+    normalized: dict[str, dict[str, str]] = {}
+    for raw in values:
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("value"), str):
+            raise _error(LifecycleError("scim_group_members_invalid", "members are invalid"))
+        try:
+            member_id = str(UUID(raw["value"]))
+        except ValueError as error:
+            raise _error(
+                LifecycleError("scim_group_members_invalid", "members are invalid")
+            ) from error
+        normalized[member_id] = {"value": member_id}
+    return [normalized[key] for key in sorted(normalized)]
+
+
+def _merged_members(current: object, added: object) -> list[dict[str, str]]:
+    return _member_values([*_member_values(current), *_member_values(added)])
 
 
 def _member_external_ids(
@@ -554,6 +636,33 @@ def create_enterprise_scim_router(
             raise _error(error) from error
         return _response(_user_payload(value, request), version=value.version)
 
+    @router.put("/scim/v2/Users/{scim_user_id}")
+    def replace_user(
+        scim_user_id: UUID,
+        body: ScimUserBody,
+        request: Request,
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=256),
+    ) -> JSONResponse:
+        if _USER_SCHEMA not in body.schemas:
+            raise _error(LifecycleError("scim_schema_invalid", "SCIM User schema is required"))
+        try:
+            value = service.upsert_user(
+                _token(request),
+                event_id=idempotency_key,
+                external_id=body.external_id,
+                user_name=body.user_name,
+                display_name=body.display_name,
+                active=body.active,
+                source_version=None,
+                scim_user_id=scim_user_id,
+                expected_version=_required_version(if_match),
+                operation="replace",
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return _response(_user_payload(value, request), version=value.version)
+
     @router.patch("/scim/v2/Users/{scim_user_id}")
     def patch_user(
         scim_user_id: UUID,
@@ -565,7 +674,6 @@ def create_enterprise_scim_router(
         token = _token(request)
         try:
             current = service.get_user(token, scim_user_id=scim_user_id)
-            _expected_version(if_match, current.version)
             state = _patched_user(current, body)
             value = service.upsert_user(
                 token,
@@ -575,12 +683,41 @@ def create_enterprise_scim_router(
                 display_name=(
                     str(state["displayName"]) if state.get("displayName") is not None else None
                 ),
-                active=bool(state["active"]),
-                source_version=current.source_version + 1,
+                active=cast(bool, state["active"]),
+                source_version=None,
+                scim_user_id=scim_user_id,
+                expected_version=_required_version(if_match),
+                operation="patch",
             )
         except LifecycleError as error:
             raise _error(error) from error
         return _response(_user_payload(value, request), version=value.version)
+
+    @router.delete("/scim/v2/Users/{scim_user_id}", status_code=204)
+    def delete_user(
+        scim_user_id: UUID,
+        request: Request,
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=256),
+    ) -> Response:
+        token = _token(request)
+        try:
+            current = service.get_user(token, scim_user_id=scim_user_id)
+            service.upsert_user(
+                token,
+                event_id=idempotency_key,
+                external_id=current.external_id,
+                user_name=current.user_name,
+                display_name=current.display_name,
+                active=False,
+                source_version=None,
+                scim_user_id=scim_user_id,
+                expected_version=_required_version(if_match),
+                operation="delete",
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return Response(status_code=204)
 
     @router.post("/scim/v2/Groups")
     def create_group(
@@ -645,6 +782,36 @@ def create_enterprise_scim_router(
             raise _error(error) from error
         return _response(_group_payload(value, request), version=value.version)
 
+    @router.put("/scim/v2/Groups/{scim_group_id}")
+    def replace_group(
+        scim_group_id: UUID,
+        body: ScimGroupBody,
+        request: Request,
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=256),
+    ) -> JSONResponse:
+        if _GROUP_SCHEMA not in body.schemas:
+            raise _error(LifecycleError("scim_schema_invalid", "SCIM Group schema is required"))
+        token = _token(request)
+        try:
+            value = service.sync_group(
+                token,
+                event_id=idempotency_key,
+                external_id=body.external_id,
+                display_name=body.display_name,
+                member_external_ids=_member_external_ids(
+                    service, token, [member.model_dump() for member in body.members]
+                ),
+                active=True,
+                source_version=None,
+                scim_group_id=scim_group_id,
+                expected_version=_required_version(if_match),
+                operation="replace",
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return _response(_group_payload(value, request), version=value.version)
+
     @router.patch("/scim/v2/Groups/{scim_group_id}")
     def patch_group(
         scim_group_id: UUID,
@@ -656,7 +823,6 @@ def create_enterprise_scim_router(
         token = _token(request)
         try:
             current = service.get_group(token, scim_group_id=scim_group_id)
-            _expected_version(if_match, current.version)
             state = _patched_group(current, body)
             value = service.sync_group(
                 token,
@@ -664,11 +830,40 @@ def create_enterprise_scim_router(
                 external_id=current.external_id,
                 display_name=str(state["displayName"]),
                 member_external_ids=_member_external_ids(service, token, state["members"]),
-                active=True,
-                source_version=current.source_version + 1,
+                active=current.active,
+                source_version=None,
+                scim_group_id=scim_group_id,
+                expected_version=_required_version(if_match),
+                operation="patch",
             )
         except LifecycleError as error:
             raise _error(error) from error
         return _response(_group_payload(value, request), version=value.version)
+
+    @router.delete("/scim/v2/Groups/{scim_group_id}", status_code=204)
+    def delete_group(
+        scim_group_id: UUID,
+        request: Request,
+        if_match: str | None = Header(default=None, alias="If-Match"),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=256),
+    ) -> Response:
+        token = _token(request)
+        try:
+            current = service.get_group(token, scim_group_id=scim_group_id)
+            service.sync_group(
+                token,
+                event_id=idempotency_key,
+                external_id=current.external_id,
+                display_name=current.display_name,
+                member_external_ids=[],
+                active=False,
+                source_version=None,
+                scim_group_id=scim_group_id,
+                expected_version=_required_version(if_match),
+                operation="delete",
+            )
+        except LifecycleError as error:
+            raise _error(error) from error
+        return Response(status_code=204)
 
     return router
