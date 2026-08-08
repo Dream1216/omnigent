@@ -950,6 +950,8 @@ def _build_session_response(
     subtree_usage: dict[str, Any] | None = None,
     model_options: list[dict[str, Any]] | None = None,
     viewer_id: str | None = None,
+    agent_store: AgentStore | None = None,
+    agent_cache: AgentCache | None = None,
 ) -> SessionResponse:
     """
     Build a :class:`SessionResponse` from store-side entities.
@@ -1016,6 +1018,8 @@ def _build_session_response(
     :param model_options: Runner-owned native model picker options,
         e.g. ``[{"id": "gpt-5.5", "displayName": "GPT-5.5"}]``.
         ``None`` is treated as ``[]``.
+    :param agent_store: Optional store used to resolve the session harness.
+    :param agent_cache: Optional cache used to load the session harness spec.
     :returns: The :class:`SessionResponse` for the API.
     :raises OmnigentError: If ``conv.agent_id`` is ``None``.
     """
@@ -1063,7 +1067,11 @@ def _build_session_response(
         parent_session_id=conv.parent_conversation_id,
         root_conversation_id=conv.root_conversation_id,
         llm_model=llm_model,
-        harness=_resolve_harness(conv),
+        harness=_resolve_harness(
+            conv,
+            agent_store=agent_store,
+            agent_cache=agent_cache,
+        ),
         model_override=conv.model_override,
         cost_control_mode_override=conv.cost_control_mode_override,
         subagent_routing_override=conv.subagent_routing_override,
@@ -4375,6 +4383,38 @@ def _publish_routed_model(session_id: str, model: str) -> None:
     session_stream.publish(session_id, event.model_dump())
 
 
+def _runner_reject_detail(response: httpx.Response) -> str:
+    """
+    Describe a runner's refusal of a forwarded event, for the user-visible error.
+
+    The runner's error bodies are ``{"error": <code>, "detail": <text>}``, but a
+    proxy or an unhandled path can return any shape, so this falls back to a
+    body preview and finally to the bare status code — the caller needs a
+    non-empty message either way. Tolerates response fakes that expose only
+    ``status_code``, since those stand in for the runner across the tests.
+
+    :param response: The runner's 4xx/5xx response to the forwarded event.
+    :returns: A one-line detail, e.g.
+        ``"harness_spawn_failed: harness spawn failed (see runner log)"``.
+    """
+    detail: str | None = None
+    code: str | None = None
+    payload: object = None
+    with contextlib.suppress(ValueError, AttributeError):
+        payload = response.json()
+    if isinstance(payload, dict):
+        raw_detail = payload.get("detail")
+        raw_code = payload.get("error")
+        detail = raw_detail.strip() if isinstance(raw_detail, str) and raw_detail.strip() else None
+        code = raw_code.strip() if isinstance(raw_code, str) and raw_code.strip() else None
+    if detail is None and code is not None:
+        return code
+    if detail is None:
+        body = getattr(response, "text", "") or ""
+        return body.strip()[:200] or f"runner returned status {response.status_code}"
+    return f"{code}: {detail}" if code else detail
+
+
 async def _forward_event_to_runner(
     session_id: str,
     conv: Conversation,
@@ -4832,11 +4872,44 @@ async def _forward_event_to_runner(
     # and starts the turn as a background task. No streaming
     # response to drain — events flow through GET /stream.
     try:
-        await runner_client.post(
+        _forward_resp = await runner_client.post(
             f"/v1/sessions/{session_id}/events",
             json=runner_body,
             timeout=_RUNNER_FORWARD_TIMEOUT,
         )
+        # httpx only raises on transport errors, so a rejection (e.g. a 400 on a
+        # malformed body, or a 501 from a runner with no process manager) would
+        # otherwise read as a started turn: input.consumed would tell the client
+        # the runner has the message and the session would sit "running" until
+        # something else moved it. The turn's own failures do NOT come back here
+        # — the runner accepts with 202 and reports them over the relay — so
+        # this only catches "the runner never took the message". Checked on the
+        # status rather than via ``raise_for_status`` so the runner-client fakes
+        # that only expose ``status_code`` behave as they do in production.
+        if _forward_resp.status_code >= 400:
+            # The live runner took nothing, so ``idle`` would read as a finished
+            # turn that never ran. Persist the reason: the status edge is
+            # SSE-only and would vanish on reload. Not strictly terminal — the
+            # item stays persisted, so a later reconnect can still replay it as
+            # a recovery turn.
+            _reject_detail = _runner_reject_detail(_forward_resp)
+            _logger.warning(
+                "Runner rejected forwarded event for session=%s status=%s detail=%s",
+                session_id,
+                _forward_resp.status_code,
+                _reject_detail,
+            )
+            _reject_error = ErrorDetail(code="runner_rejected_event", message=_reject_detail)
+            # Persist before publishing: a client that reloads on the ``failed``
+            # edge must not race a snapshot that has no ``last_task_error`` yet.
+            await _persist_session_status_error_labels(
+                session_id, _reject_error, conversation_store
+            )
+            _publish_status(session_id, "failed", _reject_error)
+            raise OmnigentError(
+                f"Runner rejected the message: {_reject_detail}",
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
         # Publish input.consumed AFTER the forward succeeds —
         # the runner has the message and will start the turn.
         _publish_input_consumed(session_id, persisted_items[0])
@@ -4923,6 +4996,11 @@ async def _forward_event_to_runner(
                     attempted_override=_overridden,
                 )
     except (httpx.HTTPError, ConnectionError) as exc:
+        # Transport failure — the runner never answered. The message is already
+        # persisted (invariant I1), and a trailing user item is what
+        # ``create_session`` replays as a recovery turn when the runner
+        # reconnects, so this really is a queued message rather than a failure.
+        # Keep publishing ``idle`` so the composer is released for a retry.
         _logger.exception(
             "Forward to runner failed for session=%s",
             session_id,
@@ -8785,7 +8863,10 @@ async def _get_session_snapshot(
                     # blocking IO that would otherwise stall the single-worker
                     # event loop on every page-load snapshot.
                     loaded = await asyncio.to_thread(
-                        agent_cache.load, agent.id, agent.bundle_location
+                        agent_cache.load,
+                        agent.id,
+                        agent.bundle_location,
+                        expand_env=agent.session_id is None,
                     )
                     spec = loaded.spec
                     if conv.sub_agent_name:
@@ -8898,6 +8979,8 @@ async def _get_session_snapshot(
         ),
         subtree_usage=subtree_usage,
         viewer_id=viewer_id,
+        agent_store=agent_store,
+        agent_cache=agent_cache,
     )
 
 
@@ -8958,6 +9041,7 @@ __all__ = [
     "_resolve_elicitation",
     "_run_managed_launch",
     "_run_managed_wake",
+    "_runner_reject_detail",
     "_schedule_deferred_elicitation_clear",
     "_spawn_archive_stop",
     "_spawn_gateway_backed",
