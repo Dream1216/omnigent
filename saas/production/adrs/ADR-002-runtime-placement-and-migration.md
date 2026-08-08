@@ -1,6 +1,6 @@
 # ADR-002: Runtime Placement and migration protocol
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `runtime-compatibility`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -40,6 +40,10 @@ identifiers remain internal and are never exposed as tenant authority.
 - N-1 adapter rollback preserves live bindings and fails on unsupported schema.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent runtime compatibility
+Review is claimed. Production verification gates remain mandatory.
 
 The technical owner confirms the Resolver inputs, migration state machine,
 fencing rules, compatibility window, and rollback retention for the candidate.

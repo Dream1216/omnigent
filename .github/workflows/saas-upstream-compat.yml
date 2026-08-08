@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  checks: read
   contents: read
   pull-requests: read
 
@@ -135,6 +136,8 @@ jobs:
       - name: Validate P0-P6 acceptance ledger
         run: uv run python -m saas.scripts.check_acceptance_manifest
       - name: Validate P0 production baselines
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           uv run python -m saas.scripts.check_adr_approvals \
             --verify-github --require-approved-if-declared

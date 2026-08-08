@@ -1,6 +1,6 @@
 # ADR-008: API, webhook, connector, and SSRF baseline
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `control-plane`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -40,6 +40,10 @@ remain available. Deprecated versions stay only for the contracted window.
 - Repository transfer, connector reinstallation, and cross-tenant binding fail closed.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent control-plane Review is
+claimed. Production verification gates remain mandatory.
 
 The owner confirms API lifecycle, machine identity isolation, delivery semantics,
 connector ownership, outbound filtering, and operational support boundaries.

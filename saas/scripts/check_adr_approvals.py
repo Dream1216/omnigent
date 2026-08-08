@@ -10,13 +10,16 @@ import re
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_STANDARD_MODE = "four-party-github-reviews"
+_WAIVER_MODE = "sole-owner-risk-waiver"
+_DEGRADED = "degraded"
 _CANDIDATE_REVISION_FIELDS = (
     "upstream_revision",
     "adapter_contract_version",
@@ -44,6 +47,12 @@ _REQUIRED_INVALIDATION = {
     "github_review_commit_mismatch": "invalidate",
     "approval_record_modified_or_deleted": "reject",
 }
+_REQUIRED_WAIVER_RISKS = [
+    "independent product architecture security and SRE review is waived",
+    "separation of duties is not present",
+    "single-person error or compromise can approve all eleven ADRs",
+    "production verification gates remain independent and are not waived",
+]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -75,7 +84,11 @@ def authority_bundle_sha256(authorities: dict[str, Any]) -> str:
     snapshot = {
         "schema_version": authorities.get("schema_version"),
         "state": authorities.get("state"),
+        "governance_mode": authorities.get("governance_mode"),
+        "governance_classification": authorities.get("governance_classification"),
         "reviewed_at": authorities.get("reviewed_at"),
+        "review_due_at": authorities.get("review_due_at"),
+        "sole_owner": authorities.get("sole_owner"),
         "roles": authorities.get("roles"),
     }
     return _canonical_sha256(snapshot)
@@ -130,6 +143,7 @@ def fetch_github_evidence(
     pull_request: int,
     *,
     token: str,
+    actor_login: str | None = None,
     api_url: str = "https://api.github.com",
 ) -> dict[str, Any]:
     """Fetch PR and paginated Review metadata from GitHub's REST API."""
@@ -169,7 +183,30 @@ def fetch_github_evidence(
         if len(batch) < 100:
             break
         page += 1
-    return {"pull_request": pull, "reviews": reviews}
+    result: dict[str, Any] = {"pull_request": pull, "reviews": reviews}
+    if actor_login:
+        actor, _ = request_json(f"{base}/users/{actor_login}")
+        permission, _ = request_json(
+            f"{base}/repos/{repository}/collaborators/{actor_login}/permission"
+        )
+        head = pull.get("head") if isinstance(pull, dict) else None
+        head_sha = head.get("sha") if isinstance(head, dict) else None
+        checks: list[dict[str, Any]] = []
+        if isinstance(head_sha, str) and _SHA1.fullmatch(head_sha):
+            payload, _ = request_json(
+                f"{base}/repos/{repository}/commits/{head_sha}/check-runs?per_page=100"
+            )
+            values = payload.get("check_runs") if isinstance(payload, dict) else None
+            if isinstance(values, list):
+                checks = [item for item in values if isinstance(item, dict)]
+        result.update(
+            {
+                "waiver_actor": actor,
+                "waiver_actor_permission": permission,
+                "check_runs": checks,
+            }
+        )
+    return result
 
 
 def _review_fields_valid(review: object) -> bool:
@@ -306,10 +343,10 @@ def validate_approval_contract(
     policy = loaded.get("policy", {})
     authorities = loaded.get("authorities", {})
     candidate = loaded.get("candidate", {})
-    if policy.get("schema_version") != 1:
-        violations.append("approval policy schema_version must be 1")
-    if authorities.get("schema_version") != 1:
-        violations.append("approval authorities schema_version must be 1")
+    if policy.get("schema_version") != 2:
+        violations.append("approval policy schema_version must be 2")
+    if authorities.get("schema_version") != 2:
+        violations.append("approval authorities schema_version must be 2")
     if candidate.get("schema_version") != 1:
         violations.append("approval candidate schema_version must be 1")
     if policy.get("repository") != "Dream1216/omnigent":
@@ -321,9 +358,56 @@ def validate_approval_contract(
     if policy.get("record_directory") != "saas/production/adr-approvals":
         violations.append("approval records must remain in the governed append-only directory")
     if policy.get("rules") != _REQUIRED_RULES:
-        violations.append("approval policy rules do not match the mandatory v1 contract")
+        violations.append("standard approval policy rules do not match the mandatory contract")
     if policy.get("invalidation") != _REQUIRED_INVALIDATION:
-        violations.append("approval invalidation rules do not match the mandatory v1 contract")
+        violations.append("approval invalidation rules do not match the mandatory contract")
+
+    approval_mode = approval.get("mode")
+    if approval_mode not in {_STANDARD_MODE, _WAIVER_MODE}:
+        violations.append("baseline approval mode is invalid")
+    if policy.get("active_mode") != approval_mode:
+        violations.append("baseline and policy active approval modes must match")
+    if approval_mode == _WAIVER_MODE:
+        if approval.get("governance_classification") != _DEGRADED:
+            violations.append("sole-owner waiver must be classified as degraded governance")
+        if policy.get("governance_classification") != _DEGRADED:
+            violations.append("waiver policy must be classified as degraded governance")
+        waiver_policy = policy.get("sole_owner_risk_waiver")
+        if not isinstance(waiver_policy, dict) or waiver_policy.get("enabled") is not True:
+            violations.append("sole-owner risk waiver must be explicitly enabled")
+            waiver_policy = {}
+        expected_waiver = {
+            "required_repository_permission": "admin",
+            "authorization_source": "authenticated-repository-owner-directive",
+            "require_merged_decision_pr": True,
+            "require_exact_head_ci": "compatibility-gate",
+            "require_pull_request_author_and_merger_match_owner": True,
+            "require_all_technical_roles_assumed_by_owner": True,
+            "require_append_only_waiver_record": True,
+            "risk_acceptance": _REQUIRED_WAIVER_RISKS,
+        }
+        for field, expected in expected_waiver.items():
+            if waiver_policy.get(field) != expected:
+                violations.append(f"sole-owner waiver {field} does not match the contract")
+        waiver_login = waiver_policy.get("authorized_login")
+        waiver_user_id = waiver_policy.get("authorized_github_user_id")
+        if not isinstance(waiver_login, str) or _GITHUB_LOGIN.fullmatch(waiver_login) is None:
+            violations.append("sole-owner waiver authorized_login is invalid")
+        if not isinstance(waiver_user_id, int) or waiver_user_id <= 0:
+            violations.append("sole-owner waiver authorized_github_user_id is invalid")
+        for field in ("authorized_at", "review_due_at"):
+            if not _iso_timestamp(waiver_policy.get(field)):
+                violations.append(f"sole-owner waiver {field} must be ISO-8601")
+        if _iso_timestamp(waiver_policy.get("review_due_at")):
+            review_due = datetime.fromisoformat(
+                str(waiver_policy["review_due_at"]).replace("Z", "+00:00")
+            )
+            if review_due <= datetime.now(UTC):
+                blockers.append("sole-owner risk waiver governance review is overdue")
+    else:
+        waiver_policy = {}
+        waiver_login = None
+        waiver_user_id = None
 
     required_roles = approval.get("required_roles")
     policy_roles = policy.get("required_signing_roles")
@@ -423,6 +507,34 @@ def validate_approval_contract(
             violations.append("active approval authorities require reviewed_at")
     elif authorities.get("state") == "active" and not _iso_timestamp(authorities["reviewed_at"]):
         violations.append("active approval authorities reviewed_at must be ISO-8601")
+    if approval_mode == _WAIVER_MODE:
+        sole_owner = authorities.get("sole_owner")
+        if not isinstance(sole_owner, dict):
+            violations.append("waiver authorities require a sole_owner object")
+            sole_owner = {}
+        if authorities.get("governance_mode") != _WAIVER_MODE:
+            violations.append("waiver authorities governance_mode does not match")
+        if authorities.get("governance_classification") != _DEGRADED:
+            violations.append("waiver authorities must be classified as degraded")
+        if authorities.get("review_due_at") != waiver_policy.get("review_due_at"):
+            violations.append("waiver authority and policy review_due_at must match")
+        expected_owner = {
+            "github_login": waiver_login,
+            "github_user_id": waiver_user_id,
+            "github_actor_type": "User",
+            "repository_permission": "admin",
+            "authorization_source": waiver_policy.get("authorization_source"),
+            "authorized_at": waiver_policy.get("authorized_at"),
+        }
+        for field, expected in expected_owner.items():
+            if sole_owner.get(field) != expected:
+                violations.append(f"waiver sole_owner {field} does not match policy")
+        normalized_owner = waiver_login.lower() if isinstance(waiver_login, str) else ""
+        for role in sorted(expected_authority_roles):
+            if normalized_authorities.get(role) != {normalized_owner}:
+                violations.append(
+                    f"waiver authority role {role} must be assumed only by {waiver_login}"
+                )
 
     record_value = approval.get("record")
     record: dict[str, Any] | None = None
@@ -472,8 +584,18 @@ def validate_approval_contract(
                 )
 
     if record is not None:
-        if record.get("schema_version") != 1 or record.get("state") != "approved":
-            violations.append("approval record must be schema version 1 and approved")
+        expected_record_schema = 2 if approval_mode == _WAIVER_MODE else 1
+        if (
+            record.get("schema_version") != expected_record_schema
+            or record.get("state") != "approved"
+        ):
+            violations.append(
+                f"approval record must be schema version {expected_record_schema} and approved"
+            )
+        if record.get("approval_mode") != approval_mode:
+            violations.append("approval record mode does not match baseline")
+        if approval_mode == _WAIVER_MODE and record.get("governance_classification") != _DEGRADED:
+            violations.append("waiver approval record must declare degraded governance")
         if record.get("candidate_id") != candidate.get("candidate_id"):
             violations.append("approval record candidate_id does not match")
         if record.get("decision_bundle_sha256") != computed_digest:
@@ -511,60 +633,120 @@ def validate_approval_contract(
             if record_path.name != expected_name:
                 violations.append("approval record filename does not bind candidate and digest")
 
-        signatures = record.get("signatures")
-        signature_items = signatures if isinstance(signatures, list) else []
-        if not isinstance(signatures, list):
-            violations.append("approval record signatures must be a list")
-        signature_roles = [item.get("role") for item in signature_items if isinstance(item, dict)]
-        if signature_roles != required_roles:
-            violations.append(
-                "approval record signatures must cover the four roles in policy order"
-            )
-        signing_logins: list[str] = []
-        signing_review_ids: list[int] = []
-        for item in signature_items:
-            if not isinstance(item, dict) or not _review_fields_valid(item):
-                violations.append("approval record contains an invalid signing Review")
-                continue
-            role = item.get("role")
-            login = str(item["login"]).lower()
-            signing_logins.append(login)
-            signing_review_ids.append(int(item["review_id"]))
-            if login not in normalized_authorities.get(str(role), set()):
-                violations.append(f"{item['login']} is not authorized for signing role {role}")
-            if item.get("commit_sha") != reviewed_commit:
-                violations.append(f"signing role {role} did not approve the reviewed commit")
-        if len(signing_logins) != len(set(signing_logins)):
-            violations.append("the four signing roles require four distinct human identities")
-        if len(signing_review_ids) != len(set(signing_review_ids)):
-            violations.append("the four signing roles require four distinct GitHub Reviews")
-        if isinstance(author, str) and author.lower() in signing_logins:
-            violations.append("the pull request author cannot be a four-party signer")
+        signature_items: list[dict[str, Any]] = []
+        confirmation_items: list[dict[str, Any]] = []
+        if approval_mode == _WAIVER_MODE:
+            waiver_signature = record.get("waiver_signature")
+            if not isinstance(waiver_signature, dict):
+                violations.append("waiver approval record requires waiver_signature")
+                waiver_signature = {}
+            expected_signature = {
+                "login": waiver_login,
+                "github_user_id": waiver_user_id,
+                "github_actor_type": "User",
+                "repository_permission": "admin",
+                "authorization_source": waiver_policy.get("authorization_source"),
+                "authorized_at": waiver_policy.get("authorized_at"),
+                "review_due_at": waiver_policy.get("review_due_at"),
+                "commit_sha": reviewed_commit,
+                "ci_name": waiver_policy.get("require_exact_head_ci"),
+                "risk_acceptance": _REQUIRED_WAIVER_RISKS,
+            }
+            for field, expected in expected_signature.items():
+                if waiver_signature.get(field) != expected:
+                    violations.append(f"waiver signature {field} does not match policy")
+            check_run_id = waiver_signature.get("check_run_id")
+            check_run_url = waiver_signature.get("check_run_url")
+            if not isinstance(check_run_id, int) or check_run_id <= 0:
+                violations.append("waiver signature check_run_id must be positive")
+            if not isinstance(check_run_url, str) or not check_run_url.startswith(
+                "https://github.com/"
+            ):
+                violations.append("waiver signature check_run_url is invalid")
+            acceptances = record.get("technical_owner_acceptances")
+            confirmation_items = acceptances if isinstance(acceptances, list) else []
+            if not isinstance(acceptances, list):
+                violations.append("waiver record technical_owner_acceptances must be a list")
+            by_adr = {
+                item.get("adr_id"): item for item in confirmation_items if isinstance(item, dict)
+            }
+            if set(by_adr) != {item.get("id") for item in adr_items}:
+                violations.append("waiver must accept every ADR exactly once")
+            if len(by_adr) != len(confirmation_items):
+                violations.append("waiver technical-owner acceptances contain duplicate ADR IDs")
+            for adr in adr_items:
+                item = by_adr.get(adr.get("id"))
+                expected_acceptance = {
+                    "adr_id": adr.get("id"),
+                    "owner_role": adr.get("owner"),
+                    "login": waiver_login,
+                    "acceptance_mode": _WAIVER_MODE,
+                    "commit_sha": reviewed_commit,
+                }
+                if not isinstance(item, dict):
+                    continue
+                for field, expected in expected_acceptance.items():
+                    if item.get(field) != expected:
+                        violations.append(
+                            f"{adr.get('id')} waiver acceptance {field} does not match"
+                        )
+        else:
+            signatures = record.get("signatures")
+            signature_items = signatures if isinstance(signatures, list) else []
+            if not isinstance(signatures, list):
+                violations.append("approval record signatures must be a list")
+            signature_roles = [
+                item.get("role") for item in signature_items if isinstance(item, dict)
+            ]
+            if signature_roles != required_roles:
+                violations.append(
+                    "approval record signatures must cover the four roles in policy order"
+                )
+            signing_logins: list[str] = []
+            signing_review_ids: list[int] = []
+            for item in signature_items:
+                if not isinstance(item, dict) or not _review_fields_valid(item):
+                    violations.append("approval record contains an invalid signing Review")
+                    continue
+                role = item.get("role")
+                login = str(item["login"]).lower()
+                signing_logins.append(login)
+                signing_review_ids.append(int(item["review_id"]))
+                if login not in normalized_authorities.get(str(role), set()):
+                    violations.append(f"{item['login']} is not authorized for signing role {role}")
+                if item.get("commit_sha") != reviewed_commit:
+                    violations.append(f"signing role {role} did not approve the reviewed commit")
+            if len(signing_logins) != len(set(signing_logins)):
+                violations.append("the four signing roles require four distinct human identities")
+            if len(signing_review_ids) != len(set(signing_review_ids)):
+                violations.append("the four signing roles require four distinct GitHub Reviews")
+            if isinstance(author, str) and author.lower() in signing_logins:
+                violations.append("the pull request author cannot be a four-party signer")
 
-        confirmations = record.get("technical_owner_confirmations")
-        confirmation_items = confirmations if isinstance(confirmations, list) else []
-        if not isinstance(confirmations, list):
-            violations.append("approval record technical_owner_confirmations must be a list")
-        by_adr = {
-            item.get("adr_id"): item for item in confirmation_items if isinstance(item, dict)
-        }
-        if set(by_adr) != {item.get("id") for item in adr_items}:
-            violations.append("every ADR requires exactly one technical-owner confirmation")
-        if len(by_adr) != len(confirmation_items):
-            violations.append("technical-owner confirmations contain duplicate ADR IDs")
-        for adr in adr_items:
-            item = by_adr.get(adr.get("id"))
-            if not isinstance(item, dict) or not _review_fields_valid(item):
-                violations.append(f"{adr.get('id')} has an invalid technical-owner Review")
-                continue
-            owner_role = adr.get("owner")
-            login = str(item["login"]).lower()
-            if item.get("owner_role") != owner_role:
-                violations.append(f"{adr.get('id')} technical-owner role does not match")
-            if login not in normalized_authorities.get(str(owner_role), set()):
-                violations.append(f"{item['login']} is not authorized for {owner_role}")
-            if item.get("commit_sha") != reviewed_commit:
-                violations.append(f"{adr.get('id')} owner did not approve the reviewed commit")
+            confirmations = record.get("technical_owner_confirmations")
+            confirmation_items = confirmations if isinstance(confirmations, list) else []
+            if not isinstance(confirmations, list):
+                violations.append("approval record technical_owner_confirmations must be a list")
+            by_adr = {
+                item.get("adr_id"): item for item in confirmation_items if isinstance(item, dict)
+            }
+            if set(by_adr) != {item.get("id") for item in adr_items}:
+                violations.append("every ADR requires exactly one technical-owner confirmation")
+            if len(by_adr) != len(confirmation_items):
+                violations.append("technical-owner confirmations contain duplicate ADR IDs")
+            for adr in adr_items:
+                item = by_adr.get(adr.get("id"))
+                if not isinstance(item, dict) or not _review_fields_valid(item):
+                    violations.append(f"{adr.get('id')} has an invalid technical-owner Review")
+                    continue
+                owner_role = adr.get("owner")
+                login = str(item["login"]).lower()
+                if item.get("owner_role") != owner_role:
+                    violations.append(f"{adr.get('id')} technical-owner role does not match")
+                if login not in normalized_authorities.get(str(owner_role), set()):
+                    violations.append(f"{item['login']} is not authorized for {owner_role}")
+                if item.get("commit_sha") != reviewed_commit:
+                    violations.append(f"{adr.get('id')} owner did not approve the reviewed commit")
 
         if github_evidence is not None:
             pull = github_evidence.get("pull_request")
@@ -594,14 +776,66 @@ def validate_approval_contract(
                     )
                 if pull.get("merged_at") != record.get("merged_at"):
                     violations.append("the live decision PR merge time does not match the record")
-                live_reviews = {
-                    item["id"]: item
-                    for item in reviews
-                    if isinstance(item, dict) and isinstance(item.get("id"), int)
-                }
-                for item in signature_items + confirmation_items:
-                    if isinstance(item, dict):
-                        _validate_live_review(item, live_reviews, violations)
+                if approval_mode == _WAIVER_MODE:
+                    merged_by = pull.get("merged_by")
+                    merged_login = merged_by.get("login") if isinstance(merged_by, dict) else None
+                    if pull_login != waiver_login or merged_login != waiver_login:
+                        violations.append(
+                            "waiver decision PR author and merger must match the sole owner"
+                        )
+                    actor = github_evidence.get("waiver_actor")
+                    permission = github_evidence.get("waiver_actor_permission")
+                    if not isinstance(actor, dict) or not isinstance(permission, dict):
+                        violations.append("live sole-owner identity evidence is missing")
+                    else:
+                        if actor.get("login") != waiver_login:
+                            violations.append("live sole-owner login does not match")
+                        if actor.get("id") != waiver_user_id or actor.get("type") != "User":
+                            violations.append("live sole-owner GitHub identity does not match")
+                        if permission.get("permission") != "admin":
+                            violations.append("live sole-owner repository permission is not admin")
+                    check_runs = github_evidence.get("check_runs")
+                    matching_checks = (
+                        [
+                            item
+                            for item in check_runs
+                            if isinstance(item, dict)
+                            and item.get("name") == waiver_policy.get("require_exact_head_ci")
+                            and item.get("head_sha") == reviewed_commit
+                            and item.get("status") == "completed"
+                            and item.get("conclusion") == "success"
+                        ]
+                        if isinstance(check_runs, list)
+                        else []
+                    )
+                    waiver_signature = record.get("waiver_signature")
+                    expected_check_id = (
+                        waiver_signature.get("check_run_id")
+                        if isinstance(waiver_signature, dict)
+                        else None
+                    )
+                    expected_check_url = (
+                        waiver_signature.get("check_run_url")
+                        if isinstance(waiver_signature, dict)
+                        else None
+                    )
+                    if not any(
+                        item.get("id") == expected_check_id
+                        and item.get("html_url") == expected_check_url
+                        for item in matching_checks
+                    ):
+                        violations.append(
+                            "live exact-head compatibility-gate does not match waiver record"
+                        )
+                else:
+                    live_reviews = {
+                        item["id"]: item
+                        for item in reviews
+                        if isinstance(item, dict) and isinstance(item.get("id"), int)
+                    }
+                    for item in signature_items + confirmation_items:
+                        if isinstance(item, dict):
+                            _validate_live_review(item, live_reviews, violations)
 
     state = approval.get("state")
     adr_statuses = {item.get("status") for item in adr_items}
@@ -623,19 +857,31 @@ def validate_approval_contract(
         "violations": sorted(set(violations)),
         "blockers": sorted(set(blockers)),
         "metrics": {
+            "approval_mode": approval_mode,
+            "governance_classification": approval.get("governance_classification"),
             "decision_file_count": len(decision_files) if isinstance(decision_files, list) else 0,
             "required_signing_role_count": len(required_roles),
             "configured_authority_role_count": len(expected_authority_roles)
             - len(missing_authority_roles),
-            "signature_count": len(record.get("signatures", []))
-            if isinstance(record, dict) and isinstance(record.get("signatures"), list)
-            else 0,
-            "technical_owner_confirmation_count": len(
-                record.get("technical_owner_confirmations", [])
-            )
-            if isinstance(record, dict)
-            and isinstance(record.get("technical_owner_confirmations"), list)
-            else 0,
+            "signature_count": (
+                1
+                if isinstance(record, dict)
+                and approval_mode == _WAIVER_MODE
+                and isinstance(record.get("waiver_signature"), dict)
+                else len(record.get("signatures", []))
+                if isinstance(record, dict) and isinstance(record.get("signatures"), list)
+                else 0
+            ),
+            "technical_owner_confirmation_count": (
+                len(record.get("technical_owner_acceptances", []))
+                if isinstance(record, dict)
+                and approval_mode == _WAIVER_MODE
+                and isinstance(record.get("technical_owner_acceptances"), list)
+                else len(record.get("technical_owner_confirmations", []))
+                if isinstance(record, dict)
+                and isinstance(record.get("technical_owner_confirmations"), list)
+                else 0
+            ),
         },
     }
 
@@ -671,13 +917,18 @@ def main() -> int:
             record = _read_json(record_path)
             policy_path = _repo_file(repo, approval.get("policy"))
             policy = _read_json(policy_path) if policy_path is not None else {}
+            authorities_path = _repo_file(repo, approval.get("authorities"))
+            authorities = _read_json(authorities_path) if authorities_path is not None else {}
             repository = policy.get("repository")
             pull_request = record.get("pull_request")
+            sole_owner = authorities.get("sole_owner")
+            actor_login = sole_owner.get("github_login") if isinstance(sole_owner, dict) else None
             if isinstance(repository, str) and isinstance(pull_request, int):
                 github_evidence = fetch_github_evidence(
                     repository,
                     pull_request,
                     token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
+                    actor_login=actor_login if isinstance(actor_login, str) else None,
                     api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
                 )
     report = validate_approval_contract(

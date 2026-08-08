@@ -1,6 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repository": "Dream1216/omnigent",
+  "active_mode": "sole-owner-risk-waiver",
+  "governance_classification": "degraded",
   "candidate_path": "saas/production/adr-approval-candidate.json",
   "authority_path": "saas/production/adr-approval-authorities.json",
   "record_directory": "saas/production/adr-approvals",
@@ -22,6 +24,26 @@
     "record_is_append_only": true,
     "record_hash_algorithm": "sha256",
     "authority_identity_namespace": "github-login"
+  },
+  "sole_owner_risk_waiver": {
+    "enabled": true,
+    "authorized_login": "Dream1216",
+    "authorized_github_user_id": 39821512,
+    "required_repository_permission": "admin",
+    "authorization_source": "authenticated-repository-owner-directive",
+    "authorized_at": "2026-08-08T22:07:14Z",
+    "review_due_at": "2027-02-04T22:07:14Z",
+    "require_merged_decision_pr": true,
+    "require_exact_head_ci": "compatibility-gate",
+    "require_pull_request_author_and_merger_match_owner": true,
+    "require_all_technical_roles_assumed_by_owner": true,
+    "require_append_only_waiver_record": true,
+    "risk_acceptance": [
+      "independent product architecture security and SRE review is waived",
+      "separation of duties is not present",
+      "single-person error or compromise can approve all eleven ADRs",
+      "production verification gates remain independent and are not waived"
+    ]
   },
   "invalidation": {
     "decision_file_change": "invalidate",

@@ -1,6 +1,6 @@
 # ADR-003: Authorization snapshot and degradation
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `control-plane`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -41,6 +41,10 @@ it cannot extend snapshot lifetime.
 - Degradation entry, exit, and every allowed request are auditable.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent control-plane Review is
+claimed. Production verification gates remain mandatory.
 
 The technical owner confirms live revalidation coverage, the exact degraded
 allowlist, key rotation, invalidation, and incident ownership.

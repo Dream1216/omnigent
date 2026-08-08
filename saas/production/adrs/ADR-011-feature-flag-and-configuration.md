@@ -1,6 +1,6 @@
 # ADR-011: Feature flag and configuration governance
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `platform-architecture`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -40,6 +40,10 @@ allow old clients to select retired behavior.
 - Expired flags page an owner and cannot remain silently active.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent architecture Review is
+claimed. Production verification gates remain mandatory.
 
 Architecture confirms resolution order, immutable invariants, expiry ownership,
 high-risk approval, drift detection, observability, and rollback behavior.

@@ -1,6 +1,6 @@
 # ADR-004: Runner isolation and responsibility modes
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `execution-platform`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -40,6 +40,10 @@ cannot resume merely because its process is alive.
 - Negative tests prove no ambient credential or cross-sandbox state inheritance.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent execution-platform
+Review is claimed. Production verification gates remain mandatory.
 
 The technical owner confirms all three responsibility modes, canonical managed
 process policy, capacity ownership, quarantine, and rollback behavior.

@@ -1,6 +1,6 @@
 # ADR-007: Metering, ledgers, reconciliation, and quota
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `billing-platform`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -41,6 +41,10 @@ from a recorded version and time boundary.
 - Webhook replay and period-close recovery are idempotent and fully audited.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent billing-platform Review
+is claimed. Production verification gates remain mandatory.
 
 Billing confirms authoritative sources, fixed-point units, correction policy,
 quota behavior, reconciliation ownership, close, invoice, payment, and tax gaps.

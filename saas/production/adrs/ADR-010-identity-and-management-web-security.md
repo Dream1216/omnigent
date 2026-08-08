@@ -1,6 +1,6 @@
 # ADR-010: Identity and management-web security
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `security`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -41,6 +41,10 @@ a vulnerable redirect, session, or mixed-credential behavior.
 - Staff MFA, JIT expiry, dual control, tenant visibility, and break-glass audit pass.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent security Review is
+claimed. Production verification gates remain mandatory.
 
 Security confirms identity proofing, session lifecycle, browser controls,
 recovery, Staff separation, MFA, support access, and incident procedures.

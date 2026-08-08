@@ -1,6 +1,6 @@
 # ADR-009: Single-region production boundary
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `product-owner`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -39,6 +39,10 @@ verified multi-AZ or isolated recovery material.
 - Dedicated Placement responsibility and limits are visible before purchase.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent product Review is
+claimed. Production verification gates remain mandatory.
 
 The Product Owner confirms offer language, supported regions, residency,
 dedicated-placement terms, outage expectations, and absence of multi-region claims.

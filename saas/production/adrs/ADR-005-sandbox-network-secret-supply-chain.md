@@ -1,6 +1,6 @@
 # ADR-005: Sandbox, network, secret, and supply-chain policy
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `security`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -40,6 +40,10 @@ back to a mutable tag or disables admission controls.
 - Unsigned, stale-scan, critical-vulnerability, and non-reproducible images fail.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent security Review is
+claimed. Production verification gates remain mandatory.
 
 Security confirms threat coverage, exception ownership, secret lifecycle,
 supply-chain admission, incident response, and signed rollback artifacts.

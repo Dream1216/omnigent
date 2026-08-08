@@ -1,6 +1,6 @@
 # ADR-001: PostgreSQL topology and transaction boundary
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `platform-architecture`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -43,6 +43,10 @@ partially committed cross-Placement operation without compensation.
 - Backup and restore preserve bindings, generations, audit, usage, and Outbox.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent architecture Review is
+claimed. Production verification gates remain mandatory.
 
 The technical owner confirms role separation, migration order, failure
 semantics, operational ownership, and rollback material for this exact decision

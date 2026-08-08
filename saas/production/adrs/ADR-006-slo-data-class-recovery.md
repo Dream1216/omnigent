@@ -1,6 +1,6 @@
 # ADR-006: SLO, data class, RPO, RTO, and recovery
 
-- Status: Proposed
+- Status: Accepted under sole-owner risk waiver
 - Technical owner: `site-reliability`
 - Candidate: `omnigent-saas-p0-2026-08-09`
 
@@ -39,6 +39,10 @@ does not claim recovery based on an untested backup catalog entry.
 - Two consecutive drills meet objectives with signed evidence and remediation owners.
 
 ## Owner confirmation
+
+Governance downgrade: repository Owner `Dream1216` assumes this technical-owner
+decision under `sole-owner-risk-waiver`; no independent SRE Review is claimed.
+SLO measurement and recovery verification gates remain mandatory.
 
 SRE confirms monitoring, paging, backup ownership, failure-domain independence,
 measured objectives, drill cadence, and recovery escalation.

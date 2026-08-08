@@ -11,6 +11,8 @@
   },
   "approval": {
     "state": "review_required",
+    "mode": "sole-owner-risk-waiver",
+    "governance_classification": "degraded",
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",
@@ -21,7 +23,7 @@
       "security",
       "site-reliability"
     ],
-    "rule": "All eleven technical owners and four distinct authorized human signing roles must approve the exact merged decision PR commit; CI then binds the GitHub Reviews, candidate lineage, decision digest, and authority digest into an append-only record."
+    "rule": "The standard four-party contract remains defined, but this candidate uses an explicit sole-owner risk waiver. Dream1216 assumes all eleven technical-owner decisions without impersonating independent reviewers; exact-head CI, merged PR facts, repository-admin identity, candidate lineage, risk acknowledgements, expiry, and an append-only waiver record remain mandatory."
   },
   "adrs": [
     {
