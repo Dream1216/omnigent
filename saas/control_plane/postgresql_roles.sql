@@ -312,8 +312,12 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_enterprise_custom_roles,
     saas_enterprise_group_role_assignments,
     saas_enterprise_access_preflights,
+    saas_enterprise_scim_directories,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups,
     saas_control_plane_outbox
 TO saas_governance;
+GRANT SELECT, INSERT ON saas_enterprise_scim_events TO saas_governance;
 
 GRANT SELECT ON
     saas_runs,
@@ -346,6 +350,8 @@ GRANT SELECT ON
     saas_enterprise_custom_roles,
     saas_enterprise_group_role_assignments,
     saas_enterprise_access_preflights,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups,
     saas_repositories,
     saas_changeset_groups,
     saas_changesets,
@@ -369,6 +375,14 @@ GRANT INSERT, UPDATE ON
     saas_changesets,
     saas_worktree_quotas
 TO saas_app;
+
+-- Tenant application readers never receive the SCIM bearer digest. Directory
+-- authentication stays in the governance boundary and binds one exact token
+-- before the Tenant RLS context is established.
+GRANT SELECT (
+    id, tenant_id, display_name, token_prefix, status, version, configured_by,
+    created_at, updated_at, rotated_at, disabled_at
+) ON saas_enterprise_scim_directories TO saas_app;
 
 GRANT INSERT, UPDATE ON
     saas_egress_policies,
@@ -613,6 +627,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_ownership_transfers,
     saas_member_removal_preflights,
     saas_enterprise_access_preflights,
+    saas_enterprise_scim_directories,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups,
+    saas_enterprise_scim_events,
     saas_service_accounts,
     saas_api_credentials,
     saas_tasks,

@@ -94,6 +94,9 @@ _REQUIRED_CHECKS = {
     "webhook_endpoints_disabled_and_secrets_destroyed",
     "service_accounts_suspended_or_deleted_and_keys_revoked",
     "provider_and_connector_access_revoked",
+    "scim_directory_tokens_revoked_and_hashes_destroyed",
+    "scim_subject_mappings_erased",
+    "scim_receipts_anonymized_without_replay_resurrection",
     "runner_worktree_and_recovery_material_destroyed",
     "kms_grants_and_data_keys_revoked",
     "backup_tombstone_replay_verified",
@@ -110,6 +113,8 @@ _REQUIRED_SURFACES = {
     "caches": ("erase", 0),
     "queues_and_dlq": ("erase", 0),
     "provider_and_connector_state": ("erase", 0),
+    "enterprise_identity_provisioning_state": ("erase", 0),
+    "enterprise_identity_event_receipts": ("anonymize_and_retain", 2555),
     "runner_worktree_and_recovery_material": ("erase", 0),
     "webhook_state": ("erase", 0),
     "secret_and_kms_references": ("cryptographic_erase", 0),
@@ -238,12 +243,7 @@ def _validate_policy(
         violations.append("evidence_directory must exist")
 
     max_age = policy.get("max_evidence_age_days")
-    if (
-        not isinstance(max_age, int)
-        or isinstance(max_age, bool)
-        or max_age <= 0
-        or max_age > 90
-    ):
+    if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age <= 0 or max_age > 90:
         violations.append("max_evidence_age_days must be between 1 and 90")
     if _string_set(policy.get("required_preconditions")) != _REQUIRED_PRECONDITIONS:
         violations.append("required_preconditions must match the deletion safety matrix")

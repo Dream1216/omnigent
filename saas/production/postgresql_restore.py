@@ -64,6 +64,10 @@ _SELECTED_HASH_TABLES = (
     "saas_enterprise_custom_roles",
     "saas_enterprise_group_role_assignments",
     "saas_enterprise_access_preflights",
+    "saas_enterprise_scim_directories",
+    "saas_enterprise_scim_users",
+    "saas_enterprise_scim_groups",
+    "saas_enterprise_scim_events",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -232,6 +236,16 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "group_role_assignment_b": "93000000-0000-4000-8000-000000000002",
         "enterprise_preflight_a": "94000000-0000-4000-8000-000000000001",
         "enterprise_preflight_b": "94000000-0000-4000-8000-000000000002",
+        "scim_directory_a": "bc100000-0000-4000-8000-000000000001",
+        "scim_directory_b": "bc100000-0000-4000-8000-000000000002",
+        "scim_user_a": "bc200000-0000-4000-8000-000000000001",
+        "scim_user_b": "bc200000-0000-4000-8000-000000000002",
+        "scim_group_a": "bc300000-0000-4000-8000-000000000001",
+        "scim_group_b": "bc300000-0000-4000-8000-000000000002",
+        "scim_event_a": "bc400000-0000-4000-8000-000000000001",
+        "scim_event_b": "bc400000-0000-4000-8000-000000000002",
+        "scim_token_hash_a": "1" * 64,
+        "scim_token_hash_b": "2" * 64,
         "identity_a": "40000000-0000-4000-8000-000000000001",
         "identity_b": "40000000-0000-4000-8000-000000000002",
         "session_a": "50000000-0000-4000-8000-000000000001",
@@ -441,12 +455,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc3a00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5a00000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc3a00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5a00000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -652,6 +666,63 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     ),
                     "group_hash": "a" * 64,
                     "role_hash": "b" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_scim_directories "
+                    "(id, tenant_id, display_name, token_hash, token_prefix, status, version, "
+                    "configured_by) VALUES "
+                    "(:scim_directory_a, :tenant_a, 'Recovery SCIM A', :scim_token_hash_a, "
+                    "'omniscim_recovery_a', 'active', 1, :actor_a), "
+                    "(:scim_directory_b, :tenant_b, 'Recovery SCIM B', :scim_token_hash_b, "
+                    "'omniscim_recovery_b', 'active', 1, :actor_b)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_scim_users "
+                    "(id, tenant_id, directory_id, external_id, user_id, "
+                    "user_name_normalized, display_name, active, version, source_version, "
+                    "source_state_hash) VALUES "
+                    "(:scim_user_a, :tenant_a, :scim_directory_a, 'recovery-user-a', "
+                    ":actor_a, 'a@example.test', 'Recovery A', true, 1, 1, :state_hash_a), "
+                    "(:scim_user_b, :tenant_b, :scim_directory_b, 'recovery-user-b', "
+                    ":actor_b, 'b@example.test', 'Recovery B', true, 1, 1, :state_hash_b)"
+                ),
+                {**identifiers, "state_hash_a": "3" * 64, "state_hash_b": "4" * 64},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_scim_groups "
+                    "(id, tenant_id, directory_id, external_id, enterprise_group_id, "
+                    "display_name, active, version, source_version, source_state_hash) VALUES "
+                    "(:scim_group_a, :tenant_a, :scim_directory_a, 'recovery-group-a', "
+                    ":group_a, 'Recovery Group A', true, 1, 1, :state_hash_a), "
+                    "(:scim_group_b, :tenant_b, :scim_directory_b, 'recovery-group-b', "
+                    ":group_b, 'Recovery Group B', true, 1, 1, :state_hash_b)"
+                ),
+                {**identifiers, "state_hash_a": "5" * 64, "state_hash_b": "6" * 64},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_scim_events "
+                    "(id, tenant_id, directory_id, event_id, resource_type, resource_id, "
+                    "source_version, request_hash, disposition, result) VALUES "
+                    "(:scim_event_a, :tenant_a, :scim_directory_a, 'recovery-event-a', "
+                    "'User', :scim_user_a, 1, :request_hash_a, 'applied', "
+                    "CAST(:result_a AS jsonb)), "
+                    "(:scim_event_b, :tenant_b, :scim_directory_b, 'recovery-event-b', "
+                    "'User', :scim_user_b, 1, :request_hash_b, 'applied', "
+                    "CAST(:result_b AS jsonb))"
+                ),
+                {
+                    **identifiers,
+                    "request_hash_a": "7" * 64,
+                    "request_hash_b": "8" * 64,
+                    "result_a": json.dumps({"resource_type": "User", "disposition": "applied"}),
+                    "result_b": json.dumps({"resource_type": "User", "disposition": "applied"}),
                 },
             )
             connection.execute(
@@ -1174,7 +1245,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc3a00000001":
+            if saas_head != "pc5a00000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1230,6 +1301,59 @@ def _verify_restored_database(
             ):
                 raise PostgreSqlRestoreContractError(
                     "restored enterprise access RLS exposed another tenant"
+                )
+            visible_scim_directories = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_directories")
+                ).scalars()
+            )
+            visible_scim_users = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_users")
+                ).scalars()
+            )
+            visible_scim_groups = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_groups")
+                ).scalars()
+            )
+            if (
+                visible_scim_directories != {identifiers["scim_directory_a"]}
+                or visible_scim_users != {identifiers["scim_user_a"]}
+                or visible_scim_groups != {identifiers["scim_group_a"]}
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored enterprise SCIM RLS exposed another tenant"
+                )
+        with engine.begin() as connection:
+            directory_privileges = connection.execute(
+                sa.text(
+                    "SELECT has_column_privilege('saas_app', "
+                    "'saas_enterprise_scim_directories', 'token_hash', 'SELECT'), "
+                    "has_table_privilege('saas_app', 'saas_enterprise_scim_events', 'SELECT')"
+                )
+            ).one()
+            if tuple(directory_privileges) != (False, False):
+                raise PostgreSqlRestoreContractError(
+                    "application role can read SCIM bearer digests or immutable receipts"
+                )
+            connection.exec_driver_sql(
+                "SET LOCAL ROLE saas_governance; "
+                f"SET LOCAL app.scim_token_hash = '{identifiers['scim_token_hash_a']}'"
+            )
+            token_directories = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_directories")
+                ).scalars()
+            )
+            token_users = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_enterprise_scim_users")
+                ).scalars()
+            )
+            if token_directories != {identifiers["scim_directory_a"]} or token_users:
+                raise PostgreSqlRestoreContractError(
+                    "SCIM token lookup was not restricted before Tenant binding"
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
@@ -1467,6 +1591,32 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "restored billing period-close immutability trigger is missing"
                 )
+            scim_rows = connection.execute(
+                sa.text(
+                    "SELECT "
+                    "(SELECT count(*) FROM saas_enterprise_scim_directories), "
+                    "(SELECT count(*) FROM saas_enterprise_scim_users), "
+                    "(SELECT count(*) FROM saas_enterprise_scim_groups), "
+                    "(SELECT count(*) FROM saas_enterprise_scim_events)"
+                )
+            ).one()
+            if tuple(scim_rows) != (2, 2, 2, 2):
+                raise PostgreSqlRestoreContractError(
+                    "restored nonempty enterprise SCIM facts are incomplete"
+                )
+            scim_immutable_trigger = connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM pg_trigger trigger "
+                    "JOIN pg_class relation ON relation.oid = trigger.tgrelid "
+                    "WHERE relation.relname = 'saas_enterprise_scim_events' "
+                    "AND trigger.tgname = 'trg_scim_event_immutable' "
+                    "AND NOT trigger.tgisinternal"
+                )
+            ).scalar_one()
+            if scim_immutable_trigger != 1:
+                raise PostgreSqlRestoreContractError(
+                    "restored SCIM event immutability trigger is missing"
+                )
         return {
             "saas_migration_head": saas_head,
             "official_migration_heads": official_heads,
@@ -1481,6 +1631,7 @@ def _verify_restored_database(
             "post_backup_billing_authority_replay": "passed",
             "machine_metering_receipt_restore": "passed",
             "billing_period_close_restore": "passed with one backed-up and one replayed fact",
+            "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
             "platform_security_restore": "passed",
         }
     finally:

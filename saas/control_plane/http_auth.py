@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from saas.control_plane.billing import BillingControlPlane
     from saas.control_plane.bindings import RuntimeBindingService
     from saas.control_plane.enterprise_access import EnterpriseAccessService
+    from saas.control_plane.enterprise_identity import EnterpriseScimService
     from saas.control_plane.member_admin import TenantMemberAdministrationService
     from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
@@ -505,6 +506,11 @@ class SaasAuthContextMiddleware:
 
     def _is_public_request(self, path: str, method: str) -> bool:
         if path in self._public_paths:
+            return True
+        scim_resources = ("/saas/scim/v2/Users", "/saas/scim/v2/Groups")
+        if path == "/saas/scim/v2/ServiceProviderConfig" or any(
+            path == resource or path.startswith(f"{resource}/") for resource in scim_resources
+        ):
             return True
         parts = path.split("/")
         return (
@@ -1123,6 +1129,7 @@ def create_saas_http_integration(
     degraded_read_paths: frozenset[str] = frozenset(),
     api_credentials: ApiCredentialService | None = None,
     enterprise_access: EnterpriseAccessService | None = None,
+    enterprise_scim: EnterpriseScimService | None = None,
     member_admin: TenantMemberAdministrationService | None = None,
     member_lifecycle: MembershipLifecycleService | None = None,
     billing: BillingControlPlane | None = None,
@@ -1164,6 +1171,16 @@ def create_saas_http_integration(
                 auth_provider=auth_provider,
                 resolver=context_resolver,
                 enterprise_access=enterprise_access,
+            )
+        )
+    if enterprise_scim is not None:
+        from saas.control_plane.enterprise_scim_http import create_enterprise_scim_router
+
+        router.include_router(
+            create_enterprise_scim_router(
+                auth_provider=auth_provider,
+                resolver=context_resolver,
+                service=enterprise_scim,
             )
         )
     if (member_admin is None) != (member_lifecycle is None):

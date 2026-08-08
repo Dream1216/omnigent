@@ -1526,7 +1526,7 @@ and Tenant approval operations, PC4 exact-SHA acceptance, deployed Origins/IdPs,
 multi-AZ/PITR and all aggregate production gates remain open. Release therefore remains
 `NO-GO`.
 
-## PC4 Platform Console implementation candidate
+## PC4 Platform Console exact-SHA candidate
 
 The standalone Staff application now serves `/platform-admin` from its dedicated
 Cookie/Origin/CSRF Realm. The static HTML, CSS and JavaScript are packaged with the
@@ -1550,7 +1550,54 @@ Real Chromium acceptance covers `platform_operator`, `compliance_operator`,
 `support_agent` and role-less Staff against a live HTTPS server, including User CAS
 suspension, Identity Conflict blocking, break-glass approval, one-time Support token
 handling, audit-export request/two-person signed approval and the unified Operations
-view. These are implementation tests only until the exact successor compatibility and
-image-candidate runs are archived. Production Origin/IdP, external KMS signing,
-customer-approved live Support, observability, accessibility/performance review and
-aggregate production gates remain open; release remains `NO-GO`.
+view.
+
+Exact implementation commit `90c0334eb9ff01a930d7e94589ec458a98107d6f` is archived
+by compatibility run `31230374740`: 954 tests pass in 181.93 seconds, the PostgreSQL 16
+logical restore completes in 3.823 seconds with 81/17 forced-RLS inventories, 57
+official regressions pass in 38.92 seconds, and the Linux hard-sandbox matrix records
+36 passes plus 22 platform skips in 17.49 seconds. Pyrefly reports zero errors, the
+migration round trip has no drift, both downstream patches replay, and the 206-artifact
+implementation Wheel passes. Source intrusion remains nine files, 479 lines, two
+patches and a 0.9957 isolated-code ratio.
+
+The same exact SHA image run `31230374738` passes 953 tests plus one platform skip in
+217.04 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+all repeated Manifest/Config pairs match, labels bind exact Product `90c0334e`, Upstream
+`63035f92`, Schema `pc3a00000001` and Adapter `0.2.0`, and every build carries two
+attestation descriptors. The archives remain unpublished and are not signed,
+vulnerability/license admitted, canaried or N-1 rollback proven. Production Origin/IdP,
+external KMS signing, customer-approved live Support, observability and every aggregate
+production gate remain open; release remains `NO-GO`.
+
+## PC5 enterprise SCIM convergence foundation
+
+The next isolated slice advances the local migration head to `pc5a00000001` and adds
+Tenant-owned, hash-credentialed SCIM directories, User/Group resource mappings and
+immutable provisioning receipts under 85 control-plane plus 17 Runtime forced-RLS
+tables. Directory issuance requires authentication no older than five minutes, returns
+the bearer only once under `Cache-Control: no-store`, and persists only its digest and
+safe prefix. Provisioning never treats email equality as identity proof. A User deprovision
+revokes Tenant, Space, Project, exact Resource, enterprise Group and active Session
+access; a managed Owner is suspended and flagged for Owner Recovery rather than leaving
+interactive access or silently transferring ownership. Group convergence refuses to
+re-add an inactive User, so a late Group update cannot undo a newer deprovision.
+
+The initial HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
+POST/GET/PATCH for Users and Groups, weak ETags/If-Match, bearer authentication and
+`application/scim+json` responses. PUT, DELETE resource semantics, list/filter, Bulk,
+complete PATCH paths, transport-level lost-response replay, credential rotation, SAML/
+enterprise OIDC activation, Domain Claim, JIT, MFA and recovery policy remain explicit
+PC5 work. Directory/subject state and identity Event Receipts are now separate deletion
+surfaces with token-hash destruction, subject erasure and non-resurrecting receipt
+anonymization checks. The anonymization/Legal Hold workflow is not implemented yet and
+immutable receipts may still carry external identity/display fields, so Privacy remains
+a production blocker rather than a completed property. Local evidence currently consists
+of four convergence tests, one HTTP ETag/ordering test, SQLite model/migration checks, one
+isolated PostgreSQL 16 token-RLS/immutable-event test and a 79.649-second nonempty logical
+restore covering two Tenant-isolated Directory/User/Group/Event fact sets. The exact local
+compatibility scope passes 960 tests with 232 existing warnings in 479.82 seconds, Pyrefly
+reports zero errors, the 212-artifact Wheel passes, both patches replay and source intrusion
+remains nine direct files/479 lines with a 0.9958 isolation ratio. This remains an
+uncommitted development slice until a clean full matrix, exact commit CI and reproducible
+image candidate are archived; it is not PC5 completion or production proof.

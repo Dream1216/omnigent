@@ -100,8 +100,7 @@ def _record() -> dict[str, object]:
             True,
         ),
         "surface_outcomes": {
-            name: _outcome(name, requirement)
-            for name, requirement in surfaces.items()
+            name: _outcome(name, requirement) for name, requirement in surfaces.items()
         },
         "checks": dict.fromkeys(
             policy["required_checks"],  # type: ignore[arg-type]
@@ -137,13 +136,11 @@ def test_empty_deletion_evidence_is_structurally_valid_but_production_blocked() 
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
-    assert report["blockers"] == [
-        "no current qualifying production tenant deletion evidence"
-    ]
+    assert report["blockers"] == ["no current qualifying production tenant deletion evidence"]
     assert report["metrics"] == {
         "evidence_record_count": 0,
         "qualified_record_count": 0,
-        "required_surface_count": 13,
+        "required_surface_count": 15,
         "violation_count": 0,
         "readiness_blocker_count": 1,
     }
@@ -201,17 +198,17 @@ def test_legal_hold_identifier_retention_and_overdue_backup_block_completion() -
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
-    assert "tenant-deletion-20260805: unresolved legal hold blocks deletion completion" in report[
-        "blockers"
-    ]
+    assert (
+        "tenant-deletion-20260805: unresolved legal hold blocks deletion completion"
+        in report["blockers"]
+    )
     assert (
         "tenant-deletion-20260805: surface logs_and_traces retains direct identifiers"
         in report["blockers"]
     )
     assert (
         "tenant-deletion-20260805: surface backups_and_snapshots retention deadline passed "
-        "without erasure"
-        in report["blockers"]
+        "without erasure" in report["blockers"]
     )
 
 
@@ -245,9 +242,7 @@ def test_stale_or_different_release_deletion_is_rejected_for_promotion() -> None
         expected_product_revision="b" * 40,
     )
 
-    assert "tenant-deletion-20260805: deletion evidence is older than policy" in report[
-        "blockers"
-    ]
+    assert "tenant-deletion-20260805: deletion evidence is older than policy" in report["blockers"]
     assert (
         "tenant-deletion-20260805: product revision does not match the release candidate"
         in report["blockers"]
@@ -263,8 +258,7 @@ def test_policy_drift_and_unsafe_evidence_directory_fail_closed(tmp_path: Path) 
 
     assert report["status"] == "fail"
     assert (
-        "deletion policy revision_contract must match production baseline"
-        in report["violations"]
+        "deletion policy revision_contract must match production baseline" in report["violations"]
     )
     assert "evidence_directory must be a safe repository-relative path" in report["violations"]
 
@@ -289,6 +283,5 @@ def test_duplicate_evidence_ids_and_incomplete_attestations_fail_closed() -> Non
     assert report["status"] == "fail"
     assert "duplicate deletion evidence_id tenant-deletion-20260805" in report["violations"]
     assert (
-        "tenant-deletion-20260805: independent attestations are incomplete"
-        in report["blockers"]
+        "tenant-deletion-20260805: independent attestations are incomplete" in report["blockers"]
     )

@@ -837,3 +837,35 @@ rotation, protected deployment, real Staff/Tenant approval operations, authentic
 production E2E, and PC4/PC5 remain open. All eleven aggregate gates and release status
 remain `NO-GO`. The two PC3 records bring the evidence-successor Wheel requirement to
 203 artifacts.
+
+PC4 implementation commit `90c0334eb9ff01a930d7e94589ec458a98107d6f` provides the
+standalone `/platform-admin` Staff Console and its real-HTTPS Chromium role/action
+matrix. Exact compatibility run `31230374740` passes 954 tests in 181.93 seconds, a
+3.823-second PostgreSQL 16 logical restore with 81/17 forced-RLS inventories, 57
+official regressions in 38.92 seconds, the 36-pass/22-platform-skip Linux security
+matrix in 17.49 seconds, Pyrefly with zero errors, a drift-free migration round trip,
+both patch replays and the 206-artifact implementation Wheel. Source intrusion remains
+nine files, 479 lines, two patches and a 0.9957 isolated-code ratio. Artifact
+`9013655717` contains the exact machine reports.
+
+Exact image run `31230374738` verifies the same SHA with 953 tests and one platform skip
+in 217.04 seconds. Server and Host each build twice for both supported architectures;
+the repeated platform Manifest/Config facts are identical, every label binds Product
+`90c0334e`, Upstream `63035f92`, Schema `pc3a00000001` and Adapter `0.2.0`, and each
+build includes two attestation descriptors. Artifact `9014099594` has digest
+`729661862748fb6ab16b87d38d0597f655ddef5a5719d66cf518214ad9a40c6e`.
+
+These records close only PC4 code, exact-SHA compatibility and unpublished reproducible
+image-candidate subchecks. They do not prove a deployed Staff Origin/IdP, production
+KMS/HSM, live customer-approved Support, registry promotion, signature, scan, Canary,
+N-1 rollback, PC5 or release `GO`. PC5 has no exact-SHA machine record until its own
+implementation commit and workflows pass.
+
+The local PC5 SCIM foundation has no machine record yet. Its directed checks cover
+fresh-authenticated one-time Directory credential issuance, User/Group convergence,
+deprovision-before-late-group ordering, owner recovery blocking, SCIM JSON errors and
+ETags, 85/17 forced RLS, immutable Events and a nonempty two-Tenant logical restore.
+Directory/subject state and Event Receipts are explicit deletion surfaces, but receipt
+anonymization and Legal Hold are not implemented and external identity/display fields
+may remain in immutable receipts. This privacy gap, the bounded protocol surface, exact
+SHA CI/image absence and all production gates keep PC5 and release `NO-GO`.

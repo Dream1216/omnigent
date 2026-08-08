@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc4-console-mvp"
+POLICY_VERSION: Final = "2026-08-08.pc5-scim-foundation"
 
 
 class PermissionScope(StrEnum):
@@ -366,6 +366,13 @@ _DEFINITIONS = (
     _permission("membership.remove", PermissionScope.TENANT, PermissionRisk.HIGH),
     _permission("group.read", PermissionScope.TENANT, PermissionRisk.LOW),
     _permission("group.manage", PermissionScope.TENANT, PermissionRisk.HIGH),
+    _permission("enterprise_identity.read", PermissionScope.TENANT, PermissionRisk.MEDIUM),
+    _permission(
+        "enterprise_identity.manage",
+        PermissionScope.TENANT,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+    ),
     _permission("space.create", PermissionScope.TENANT, PermissionRisk.MEDIUM),
     _permission("space.read", PermissionScope.SPACE, PermissionRisk.LOW),
     _permission("space.update", PermissionScope.SPACE, PermissionRisk.MEDIUM),
@@ -598,6 +605,8 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "membership.remove",
                 "group.read",
                 "group.manage",
+                "enterprise_identity.read",
+                "enterprise_identity.manage",
                 "space.create",
                 "project.create",
                 "billing.read",
@@ -621,6 +630,8 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "membership.remove",
                 "group.read",
                 "group.manage",
+                "enterprise_identity.read",
+                "enterprise_identity.manage",
                 "space.create",
                 "project.create",
                 "billing.read",
@@ -638,6 +649,7 @@ TENANT_ROLE_PERMISSIONS = MappingProxyType(
                 "tenant.read",
                 "membership.read",
                 "group.read",
+                "enterprise_identity.read",
                 "audit.read",
                 "audit.export",
                 "project.read_metadata",

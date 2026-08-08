@@ -120,6 +120,18 @@ from saas.control_plane.enterprise_http import (
     create_enterprise_admin_router,
     validate_enterprise_admin_route_permissions,
 )
+from saas.control_plane.enterprise_identity import (
+    EnterpriseScimService,
+    IssuedScimDirectory,
+    ScimGroupView,
+    ScimUserView,
+)
+from saas.control_plane.enterprise_identity_models import (
+    EnterpriseScimDirectoryRecord,
+    EnterpriseScimEventRecord,
+    EnterpriseScimGroupRecord,
+    EnterpriseScimUserRecord,
+)
 from saas.control_plane.enterprise_models import (
     EnterpriseAccessPreflightRecord,
     EnterpriseCustomRoleRecord,
@@ -481,6 +493,11 @@ __all__ = [
     "EnterpriseGroupRoleAssignmentRecord",
     "EnterpriseGroupRoleAssignmentView",
     "EnterpriseGroupView",
+    "EnterpriseScimDirectoryRecord",
+    "EnterpriseScimEventRecord",
+    "EnterpriseScimGroupRecord",
+    "EnterpriseScimService",
+    "EnterpriseScimUserRecord",
     "EntitlementView",
     "ExecutionControlPlane",
     "ExecutionControlPlaneError",
@@ -508,6 +525,7 @@ __all__ = [
     "IssuedIsolationGrant",
     "IssuedPlatformSession",
     "IssuedPreviewLease",
+    "IssuedScimDirectory",
     "IssuedSupportSession",
     "LifecycleError",
     "MemberLoginMethodView",
@@ -632,6 +650,8 @@ __all__ = [
     "SandboxLaunchContract",
     "SchedulingControlPlane",
     "SchedulingError",
+    "ScimGroupView",
+    "ScimUserView",
     "ScopedGrantChanged",
     "SecretAccessLeaseRecord",
     "SecretBindingRecord",

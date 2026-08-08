@@ -15,7 +15,7 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 2. Require Passkey/WebAuthn or an equivalent phishing-resistant IdP assertion. Password
    authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
    incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `pc3a00000001`, then apply
+3. Migrate through `pc5a00000001`, then apply
    `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 81 control-plane
    tables and 17 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
@@ -177,9 +177,9 @@ must use HTTPS and prove the four-role PC4 page/action matrix plus Staff success
 mixed-cookie, wrong-Origin, bearer and role-less denial.
 
 Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
-compatibility matrix. The restore must retain non-empty Staff, Assignment, Session and
-both projection tables, lifecycle receipts, exact `pc3a00000001`, and the 81/17
-forced-RLS inventories.
+compatibility matrix. The restore must retain non-empty Staff, Assignment, Session,
+both projection tables and SCIM Directory/User/Group/Event facts, exact
+`pc5a00000001`, and the 85/17 forced-RLS inventories.
 
 ## Revocation, incident response and rollback
 
@@ -199,9 +199,12 @@ forced-RLS inventories.
   downgrade, disable ingress, revoke all Staff sessions, stop authenticator/app/
   governance/projector processes, preserve approved Assignment evidence, take an
   immutable backup and rehearse restoration.
-- Downgrade from `pc3a00000001` is refused while any Grant, Session, Admin Operation,
+- Downgrade through `pc3a00000001` is refused while any Grant, Session, Admin Operation,
   Audit Event or Export fact exists. Archive and verify evidence through an approved
   forward migration; never delete PC3 facts to make an older binary start.
+- Downgrade from `pc5a00000001` is additionally refused while an immutable SCIM Event
+  exists. Stop SCIM ingress and preserve Directory/User/Group/Event evidence; use an
+  approved forward archival migration rather than deleting receipts to start an older binary.
 - Emergency recovery uses the separate incident and break-glass process. Never add
   `saas_platform` inheritance to make an application outage disappear.
 

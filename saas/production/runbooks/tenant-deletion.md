@@ -26,19 +26,22 @@ re-enable traffic merely to reconstruct deleted content.
 
 ## Complete surface inventory
 
-The approved workflow must reconcile all thirteen policy surfaces:
+The approved workflow must reconcile all fifteen policy surfaces:
 
 - control-plane and official Runtime PostgreSQL;
 - object/artifact stores and vector/search indexes;
 - caches and queues/DLQs;
 - Provider/Connector state and Webhook state;
+- enterprise identity provisioning state plus immutable identity Event Receipts;
 - Runner Worktrees, checkpoints, bundles, recovery material, and writable layers;
 - Secret references, KMS grants, and data keys;
 - logs/traces, immutable audit/ledger facts, and backups/snapshots.
 
 Primary, derived, external, and Runner surfaces must reach zero or cryptographic
-erasure. Logs and immutable audit/ledger facts may remain only after direct identifiers
-are removed and a bounded retention basis/deadline is recorded. Immutable backups may
+erasure. SCIM Directory credentials and subject mappings must be erased; identity Event
+Receipts, logs, and immutable audit/ledger facts may remain only after direct identifiers
+are removed without making replay resurrect deleted identity, and a bounded retention
+basis/deadline is recorded. Immutable backups may
 remain only while runtime-inaccessible, bound to a deletion tombstone, and scheduled
 for purge within the policy maximum. A missed deadline blocks readiness.
 
@@ -46,8 +49,9 @@ for purge within the policy maximum. A missed deadline blocks readiness.
 
 Run every policy check against authoritative APIs and stores, including both forced-RLS
 layers, cross-Tenant canaries, zero object/index enumeration, cache invalidation,
-queue/DLQ payload clearing, external revocation, Runner material destruction, KMS
-revocation, restore-with-tombstone, and audit/ledger anonymization. Record one SHA-256
+queue/DLQ payload clearing, external revocation, SCIM token/mapping erasure and receipt
+anonymization, Runner material destruction, KMS revocation, restore-with-tombstone,
+and audit/ledger anonymization. Record one SHA-256
 evidence digest per surface; do not embed raw records.
 
 Publish the canonical manifest and DSSE envelope in an approved immutable store. The

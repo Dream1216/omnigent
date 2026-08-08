@@ -18,6 +18,7 @@ class RlsContext:
     space_id: UUID | None = None
     api_credential_id: UUID | None = None
     invitation_token_hash: str | None = None
+    scim_token_hash: str | None = None
     target_support_grant_id: UUID | None = None
     target_admin_operation_id: UUID | None = None
 
@@ -70,6 +71,7 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
         str(context.api_credential_id) if context.api_credential_id else "",
     )
     _set_local(session, "app.invitation_token_hash", context.invitation_token_hash or "")
+    _set_local(session, "app.scim_token_hash", context.scim_token_hash or "")
     _set_local(
         session,
         "app.platform_target_support_grant_id",
@@ -94,6 +96,7 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         "app.space_id",
         "app.api_credential_id",
         "app.invitation_token_hash",
+        "app.scim_token_hash",
     ):
         _set_local(session, name, "")
     _set_local(

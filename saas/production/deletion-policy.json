@@ -5,7 +5,7 @@
   "revision_contract": {
     "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "pc3a00000001"
+    "control_plane_schema_revision": "pc5a00000001"
   },
   "evidence_directory": "saas/production/deletion-evidence",
   "max_evidence_age_days": 90,
@@ -46,6 +46,14 @@
       "disposition": "erase",
       "max_retention_days": 0
     },
+    "enterprise_identity_provisioning_state": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "enterprise_identity_event_receipts": {
+      "disposition": "anonymize_and_retain",
+      "max_retention_days": 2555
+    },
     "runner_worktree_and_recovery_material": {
       "disposition": "erase",
       "max_retention_days": 0
@@ -82,6 +90,9 @@
     "webhook_endpoints_disabled_and_secrets_destroyed",
     "service_accounts_suspended_or_deleted_and_keys_revoked",
     "provider_and_connector_access_revoked",
+    "scim_directory_tokens_revoked_and_hashes_destroyed",
+    "scim_subject_mappings_erased",
+    "scim_receipts_anonymized_without_replay_resurrection",
     "runner_worktree_and_recovery_material_destroyed",
     "kms_grants_and_data_keys_revoked",
     "backup_tombstone_replay_verified",
