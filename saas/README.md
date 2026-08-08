@@ -1600,8 +1600,8 @@ anonymization checks. The anonymization/Legal Hold workflow is not implemented y
 immutable receipts may still carry external identity/display fields, so Privacy remains
 a production blocker rather than a completed property. Local evidence currently consists
 of five convergence/lifecycle tests, two HTTP tests, SQLite model/migration checks, one
-isolated PostgreSQL 16 token-RLS/rotation/disable/immutable-event test and a 79.649-second nonempty logical
-restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
+isolated PostgreSQL 16 token-RLS/rotation/disable/immutable-event test and a 79.649-second
+nonempty logical restore covering two Tenant-isolated Directory/User/Group/Event fact sets. Exact
 implementation commit `e71a46652a153e9e23f5b3959de59f375cf9a89e` is archived by
 compatibility run `31233595734`: 960 tests pass with 232 existing warnings in 188.36
 seconds, the PostgreSQL 16 logical restore completes in 4.144 seconds with 85/17
@@ -1621,6 +1621,24 @@ attestation descriptors. Artifact `9015030365` has digest
 The archives remain unpublished and are not signed, vulnerability/license admitted,
 canaried or N-1 rollback proven. All omitted protocol, privacy, federation, operations
 and production gates remain open; this is not PC5 completion or production proof.
+
+The second PC5 implementation `226dc6d8b3b90faf35d12d1aa499506654be3797`
+closes the isolated Directory credential rotation/disable code subcheck. Exact
+compatibility run `31239595356` passes 985 tests with 232 warnings in 172.49 seconds,
+a 6.015-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions, the 39-pass/22-platform-skip
+Linux matrix, Pyrefly, migration round trip, two patch replays and the 216-artifact
+implementation Wheel. Artifact `9016637067` has archive digest
+`df9629a91dd231ba4261232f7d1426bfe1a941c7aef33b32b787afcb42147d62`.
+
+Exact image run `31239616246` passes 984 tests plus one platform skip in 189.55 seconds.
+Server and Host each build twice for `linux/amd64` and `linux/arm64`; repeated platform
+Manifest/Config facts match, every label binds Product `226dc6d8`, Upstream `9dab48b4`,
+Schema `pc5a00000001` and Adapter `0.2.0`, and every build carries two attestation
+descriptors. Artifact `9016902247` has archive digest
+`471db65a5d4c3972f2d576d4273e4a9ca14db2921f8fc04e91a49457405e2ed7`.
+These are unpublished candidates, not registry publication, signature, scan, Canary,
+N-1 rollback, complete SCIM/federation/privacy behavior, PC5 completion or release `GO`.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in

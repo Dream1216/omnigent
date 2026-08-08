@@ -889,7 +889,7 @@ now has exact compatibility record `31233595734`. Its directed checks cover
 fresh-authenticated one-time Directory credential issuance, User/Group convergence,
 deprovision-before-late-group ordering, owner recovery blocking, SCIM JSON errors and
 ETags, 85/17 forced RLS, immutable Events and a nonempty two-Tenant logical restore.
-The next isolated code candidate adds fresh-authenticated, version-CAS Directory
+The second isolated implementation adds fresh-authenticated, version-CAS Directory
 credential rotation and disable: rotation reveals a replacement once and invalidates
 the predecessor atomically; disable destroys the active digest and bearer authority.
 Both actions use secret-free idempotency receipts, and PostgreSQL token-RLS plus HTTP
@@ -913,3 +913,22 @@ each build includes two attestation descriptors. Artifact `9015030365` has diges
 These records close only the first PC5 code, exact-SHA compatibility and unpublished
 reproducible image-candidate subchecks. The privacy gap, bounded protocol surface,
 federation/operations omissions and all production gates keep PC5 and release `NO-GO`.
+
+PC5 Directory credential lifecycle implementation
+`226dc6d8b3b90faf35d12d1aa499506654be3797` now has exact compatibility record
+`31239595356`: 985 tests pass with 232 warnings in 172.49 seconds, the PostgreSQL 16
+logical restore completes in 6.015 seconds with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions and the 39/22 Linux matrix pass,
+Pyrefly reports zero errors, migrations round trip without drift, both patches replay,
+and the implementation Wheel contains 216 required artifacts. Artifact `9016637067`
+has digest `df9629a91dd231ba4261232f7d1426bfe1a941c7aef33b32b787afcb42147d62`.
+
+Exact image run `31239616246` passes 984 tests plus one platform skip in 189.55 seconds.
+Server and Host each build twice for `linux/amd64` and `linux/arm64`; every repeated
+Manifest/Config pair matches, labels bind Product `226dc6d8`, Upstream `9dab48b4`,
+Schema `pc5a00000001` and Adapter `0.2.0`, and every build contains two attestation
+descriptors. Artifact `9016902247` has digest
+`471db65a5d4c3972f2d576d4273e4a9ca14db2921f8fc04e91a49457405e2ed7`.
+This closes only the second PC5 code, exact-SHA compatibility and unpublished image
+candidate subchecks. Scheduled/overlap rotation, complete SCIM, federation, privacy,
+production promotion and all eleven aggregate gates remain open; release stays `NO-GO`.
