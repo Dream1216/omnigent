@@ -1643,16 +1643,30 @@ descriptors. Artifact `9016902247` has archive digest
 These are unpublished candidates, not registry publication, signature, scan, Canary,
 N-1 rollback, complete SCIM/federation/privacy behavior, PC5 completion or release `GO`.
 
-The third PC5 code candidate adds Directory-scoped User and Group collection reads.
+The third PC5 implementation `29c815e7d34f5d8674aebe06740a35131f416598`
+adds Directory-scoped User and Group collection reads.
 `startIndex` is one-based, `count` is bounded from zero through 100, ordering is stable,
 and the adapter accepts only one strict `eq` filter over the resource-specific allowlist.
 Unsupported, compound, malformed and over-limit requests fail with SCIM error payloads;
 User-name comparison is normalized, Group filters cannot use User attributes, and both
 SQLite and real PostgreSQL checks assert that the token-selected Directory remains the
-query boundary. This closes only the ListResponse and bounded equality-filter code
-subcheck after exact-SHA workflows pass. PUT/DELETE/Bulk, general filter grammar, sorting,
-complete PATCH, lost-response replay, overlapping credential rotation, federation,
-privacy, production promotion and all eleven aggregate gates remain open.
+query boundary. Exact compatibility run `31242675519` passes 987 tests with 232 warnings
+in 194.86 seconds, a 4.027-second PostgreSQL 16 logical restore with 85/17 forced-RLS
+inventories and two Tenant-isolated SCIM fact sets, 63 official regressions, the
+39-pass/22-platform-skip Linux matrix, Pyrefly, migration round trip, two patch replays
+and the 218-artifact implementation Wheel. Artifact `9017571045` has archive digest
+`1d4d7c62a1e75beacdcaf51f4d3f1f2c7e00b673f1a8ed69f7fca280e3316918`.
+
+Exact image run `31242683505` passes 986 tests plus one platform skip with 232 warnings
+in 200.75 seconds. Server and Host each build twice for `linux/amd64` and `linux/arm64`;
+repeated Manifest/Config facts match, every label binds Product `29c815e7`, Upstream
+`9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every build contains two
+attestation descriptors. Artifact `9017915363` has archive digest
+`94081a3587406d32c044974f6e3eb1fdae08ae5e15c7b5c37f08f1d911571d4d`.
+This closes only the ListResponse and bounded equality-filter code, exact-SHA
+compatibility and unpublished image candidate subchecks. PUT/DELETE/Bulk, general filter
+grammar, sorting, complete PATCH, lost-response replay, overlapping credential rotation,
+federation, privacy, production promotion and all eleven aggregate gates remain open.
 
 The next upstream compatibility slice accepts official `9dab48b4`, 23 commits and 64
 files after `63035f92`, without a merge conflict. Upstream now launches each Runner in

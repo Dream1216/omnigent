@@ -26,6 +26,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/pc5-enterprise-scim-image-candidate-ci-31233595699.json",
     "saas/acceptance/pc5-scim-credential-lifecycle-ci-31239595356.json",
     "saas/acceptance/pc5-scim-credential-lifecycle-image-candidate-ci-31239616246.json",
+    "saas/acceptance/pc5-scim-list-filter-ci-31242675519.json",
+    "saas/acceptance/pc5-scim-list-filter-image-candidate-ci-31242683505.json",
     "saas/acceptance/p1-context-shell-ci-30890178928.json",
     "saas/acceptance/p1-oidc-ci-30887476782.json",
     "saas/acceptance/p2-ci-30883002639.json",

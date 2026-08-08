@@ -1,0 +1,90 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31242675519,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31242675519",
+  "job_id": 93066123893,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31242675519/job/93066123893",
+  "artifact_id": 9017571045,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31242675519/artifacts/9017571045",
+  "artifact_archive_sha256": "1d4d7c62a1e75beacdcaf51f4d3f1f2c7e00b673f1a8ed69f7fca280e3316918",
+  "head_sha": "29c815e7d34f5d8674aebe06740a35131f416598",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "987 passed, 232 warnings, 194.86s",
+    "isolated_logical_restore_contract": "passed in 4.027 seconds",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+    "official_zygote_query_context_tests": "63 passed, 2 warnings, 42.41s",
+    "official_linux_security_tests": "39 passed, 22 skipped, 17.76s",
+    "wheel_required_artifacts": 218,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000001",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "list_filter_contract": {
+    "resources": [
+      "User",
+      "Group"
+    ],
+    "directory_boundary": "bearer token resolves one active Directory before any collection query",
+    "pagination": "stable UUID order, one-based startIndex, count from zero through 100, totalResults before pagination",
+    "filter_grammar": "one strict eq expression over the resource-specific allowlist",
+    "user_filter_attributes": [
+      "id",
+      "externalId",
+      "userName",
+      "displayName",
+      "active"
+    ],
+    "group_filter_attributes": [
+      "id",
+      "externalId",
+      "displayName",
+      "active"
+    ],
+    "comparison_rules": "userName is normalized; displayName is case-insensitive; id and externalId remain exact; active accepts an unquoted Boolean",
+    "negative_tests": [
+      "a token cannot list resources from another Tenant or Directory",
+      "Group filters reject User-only attributes",
+      "unsupported or compound filters return a SCIM error",
+      "counts above 100 return a SCIM error",
+      "zero-count requests return totals without resources"
+    ]
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 485,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9958,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "artifact_report_sha256": {
+    "upstream_delta": "48d860cec99d43015f7d32f015ddb01895e1b383916ef1429742a59f09e50acd",
+    "patch_replay": "04e7a2ae5efc33d10e996f0a859476d3ee7d1afea4b5856a1752c514334f0d57",
+    "postgresql_restore": "8d32349a341ff63520b92a2c735c2c79a9020a92e90bc7619430389ac68c5e15"
+  },
+  "not_proven_by_this_record": [
+    "SCIM PUT DELETE Bulk general filters sorting or complete PATCH semantics",
+    "transport-level lost-response replay or scheduled overlapping credential rotation",
+    "production IdP federation MFA privacy Legal Hold Operations or Finance behavior",
+    "production image publication signing scanning canary or N-1 rollback",
+    "completion of any of the eleven aggregate gates or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the bounded SCIM ListResponse and equality-filter implementation at 29c815e7d34f5d8674aebe06740a35131f416598. A successor that changes only this evidence record, its paired image record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the verified implementation."
+}

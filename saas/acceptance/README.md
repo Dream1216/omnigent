@@ -933,13 +933,26 @@ This closes only the second PC5 code, exact-SHA compatibility and unpublished im
 candidate subchecks. Scheduled/overlap rotation, complete SCIM, federation, privacy,
 production promotion and all eleven aggregate gates remain open; release stays `NO-GO`.
 
-The third PC5 candidate adds User and Group ListResponse contracts without widening
+The third PC5 implementation `29c815e7d34f5d8674aebe06740a35131f416598`
+adds User and Group ListResponse contracts without widening
 Directory authority. Collection reads use stable one-based pagination, allow `count`
 from zero through 100 and accept only one strict equality filter over an allowlisted
 resource attribute. User names normalize before comparison; Group filters reject User
 attributes; malformed, compound and over-limit requests return SCIM error payloads.
 Service, HTTP and real-PostgreSQL tests cover pagination, zero-count totals, exact filters,
-unsupported filters and the exact token-selected Directory boundary. This is a code
-candidate until its exact compatibility and image workflows pass, and it does not cover
-PUT/DELETE/Bulk, general filters, sort, complete PATCH, transport replay, overlapping
-rotation, federation, privacy, production promotion or any aggregate release gate.
+unsupported filters and the exact token-selected Directory boundary. Exact compatibility
+run `31242675519` passes 987 tests with 232 warnings in 194.86 seconds, a 4.027-second
+PostgreSQL 16 restore with 85/17 forced-RLS inventories and two Tenant-isolated SCIM fact
+sets, 63 official regressions, the 39/22 Linux matrix, Pyrefly, migration round trip, two
+patch replays and the 218-artifact implementation Wheel. Artifact `9017571045` has digest
+`1d4d7c62a1e75beacdcaf51f4d3f1f2c7e00b673f1a8ed69f7fca280e3316918`.
+
+Exact image run `31242683505` passes 986 tests plus one platform skip with 232 warnings
+in 200.75 seconds. Server and Host each build twice across both supported architectures;
+Manifest/Config facts match, labels bind Product `29c815e7`, Upstream `9dab48b4`, Schema
+`pc5a00000001` and Adapter `0.2.0`, and every build contains two attestation descriptors.
+Artifact `9017915363` has digest
+`94081a3587406d32c044974f6e3eb1fdae08ae5e15c7b5c37f08f1d911571d4d`.
+These records do not cover PUT/DELETE/Bulk, general filters, sort, complete PATCH,
+transport replay, overlapping rotation, federation, privacy, production promotion or
+any aggregate release gate; release remains `NO-GO`.

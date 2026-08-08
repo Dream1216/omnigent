@@ -1,0 +1,69 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31242683505,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31242683505",
+  "job_id": 93066146205,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31242683505/job/93066146205",
+  "artifact_id": 9017915363,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31242683505/artifacts/9017915363",
+  "artifact_archive_sha256": "94081a3587406d32c044974f6e3eb1fdae08ae5e15c7b5c37f08f1d911571d4d",
+  "artifact_json_sha256": "28bffef1b7bc77a998989afbf733370f744452f9cc34ddabb72b81967de90054",
+  "head_sha": "29c815e7d34f5d8674aebe06740a35131f416598",
+  "implementation_sha": "29c815e7d34f5d8674aebe06740a35131f416598",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "control_plane_schema_revision": "pc5a00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "986 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 200.75,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 485 lines, and 0.9958 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786168369,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:61a9baaeb67445f30c08d3d79a2658d6d969b8a382d5fc6ccfd0ee66d229a4dd",
+          "config_digest": "sha256:9c809aff701e9ac6e23251f92f817ed6981aca4f397b569da782e466412905f3"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:d351fe582144e180a758a21855d655d2cd400250595de14deef61826eae064ec",
+          "config_digest": "sha256:477c4552b10370a51f9e916813ca48d1d782da16b9a3adcd757935797e47b703"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:2bd9903065d581fe7e18c59a3490482c3abf7e15d554f973fa88686558b2a75b",
+          "config_digest": "sha256:a89aef4b38354025d0aa7030f917f6717e35b1735714c66740c3e84f1c33c7bf"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:537455953e5b165436f3749d41c347c0bab82a15f845a5525830bdfea42e80e2",
+          "config_digest": "sha256:1eb0cb31d84b66a697a8bb9b57187c6bc7424dbd2e851b90c14ef936d957f37f"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact bounded SCIM ListResponse and equality-filter implementation at 29c815e7. It does not prove complete SCIM or federation behavior, production image promotion, privacy, disaster recovery, commercial acceptance, or release GO.",
+  "evidence_successor_policy": "A successor that changes only this image record, its paired compatibility record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the executable image facts verified at 29c815e7d34f5d8674aebe06740a35131f416598."
+}
