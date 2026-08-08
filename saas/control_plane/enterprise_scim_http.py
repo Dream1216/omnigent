@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Coroutine, Mapping
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -17,6 +18,7 @@ from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_identity import (
     EnterpriseScimService,
     IssuedScimDirectory,
+    ScimFilterExpression,
     ScimGroupView,
     ScimUserView,
 )
@@ -31,11 +33,6 @@ _LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _ETAG = re.compile(r'^W/"([1-9][0-9]*)"$')
-_FILTER = re.compile(
-    r"^\s*(id|externalId|userName|displayName|active)\s+eq\s+"
-    r'(?:"([^"\\]{1,320})"|(true|false))\s*$',
-    re.IGNORECASE,
-)
 _FILTER_ATTRIBUTES = {
     "id": "id",
     "externalid": "externalId",
@@ -208,21 +205,166 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
     }
 
 
-def _filter_parts(value: str | None) -> tuple[str | None, str | None]:
+class _ScimFilterParser:
+    def __init__(self, value: str) -> None:
+        self._tokens = self._tokenize(value)
+        self._index = 0
+        self._depth = 0
+
+    def parse(self) -> ScimFilterExpression:
+        if not self._tokens:
+            self._invalid()
+        expression = self._parse_or()
+        if self._index != len(self._tokens):
+            self._invalid()
+        return expression
+
+    def _parse_or(self) -> ScimFilterExpression:
+        expression = self._parse_and()
+        while self._word_at("or"):
+            self._index += 1
+            expression = ScimFilterExpression(
+                operator="or",
+                operands=(expression, self._parse_and()),
+            )
+        return expression
+
+    def _parse_and(self) -> ScimFilterExpression:
+        expression = self._parse_not()
+        while self._word_at("and"):
+            self._index += 1
+            expression = ScimFilterExpression(
+                operator="and",
+                operands=(expression, self._parse_not()),
+            )
+        return expression
+
+    def _parse_not(self) -> ScimFilterExpression:
+        if self._word_at("not"):
+            self._index += 1
+            return ScimFilterExpression(operator="not", operands=(self._parse_not(),))
+        return self._parse_primary()
+
+    def _parse_primary(self) -> ScimFilterExpression:
+        if self._kind_at("left"):
+            self._index += 1
+            self._depth += 1
+            if self._depth > 4:
+                self._invalid("SCIM filter nesting is too deep")
+            expression = self._parse_or()
+            if not self._kind_at("right"):
+                self._invalid()
+            self._index += 1
+            self._depth -= 1
+            return expression
+        attribute_word = self._consume_word()
+        attribute = _FILTER_ATTRIBUTES.get(attribute_word.casefold())
+        if attribute is None:
+            self._invalid("SCIM filter attribute is unsupported")
+        operator = self._consume_word().casefold()
+        if operator == "pr":
+            return ScimFilterExpression(operator=operator, attribute=attribute)
+        if operator not in {"eq", "ne", "co", "sw", "ew"}:
+            self._invalid("SCIM filter operator is unsupported")
+        if self._index >= len(self._tokens):
+            self._invalid()
+        kind, value = self._tokens[self._index]
+        if kind not in {"string", "boolean"}:
+            self._invalid()
+        self._index += 1
+        return ScimFilterExpression(operator=operator, attribute=attribute, value=value)
+
+    def _consume_word(self) -> str:
+        if not self._kind_at("word"):
+            self._invalid()
+        value = self._tokens[self._index][1]
+        self._index += 1
+        return cast(str, value)
+
+    def _kind_at(self, kind: str) -> bool:
+        return self._index < len(self._tokens) and self._tokens[self._index][0] == kind
+
+    def _word_at(self, value: str) -> bool:
+        return self._kind_at("word") and str(self._tokens[self._index][1]).casefold() == value
+
+    @staticmethod
+    def _tokenize(value: str) -> list[tuple[str, str | bool]]:
+        tokens: list[tuple[str, str | bool]] = []
+        index = 0
+        while index < len(value):
+            if value[index].isspace():
+                index += 1
+                continue
+            if value[index] == "(":
+                tokens.append(("left", "("))
+                index += 1
+                continue
+            if value[index] == ")":
+                tokens.append(("right", ")"))
+                index += 1
+                continue
+            if value[index] == '"':
+                start = index
+                index += 1
+                escaped = False
+                while index < len(value):
+                    character = value[index]
+                    index += 1
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == '"':
+                        break
+                else:
+                    _ScimFilterParser._invalid()
+                try:
+                    decoded = json.loads(value[start:index])
+                except json.JSONDecodeError as error:
+                    raise _error(
+                        LifecycleError("invalidFilter", "SCIM filter is invalid")
+                    ) from error
+                if not isinstance(decoded, str) or len(decoded) > 320:
+                    _ScimFilterParser._invalid()
+                tokens.append(("string", decoded))
+                continue
+            start = index
+            while index < len(value) and not value[index].isspace() and value[index] not in "()":
+                index += 1
+            word = value[start:index]
+            if not word or len(word) > 320:
+                _ScimFilterParser._invalid()
+            if word.casefold() in {"true", "false"}:
+                tokens.append(("boolean", word.casefold() == "true"))
+            else:
+                tokens.append(("word", word))
+        return tokens
+
+    @staticmethod
+    def _invalid(message: str = "SCIM filter is invalid") -> NoReturn:
+        raise _error(LifecycleError("invalidFilter", message))
+
+
+def _filter_expression(value: str | None) -> ScimFilterExpression | None:
     if value is None:
-        return None, None
-    if len(value) > 384:
+        return None
+    if len(value) > 1024:
         raise _error(LifecycleError("invalidFilter", "SCIM filter is too long"))
-    match = _FILTER.fullmatch(value)
-    if match is None:
-        raise _error(
-            LifecycleError("invalidFilter", "only one exact equality filter is supported")
-        )
-    attribute = _FILTER_ATTRIBUTES[match.group(1).casefold()]
-    quoted_value, boolean_value = match.group(2), match.group(3)
-    if boolean_value is not None and attribute != "active":
-        raise _error(LifecycleError("invalidFilter", "SCIM filter value is invalid"))
-    return attribute, quoted_value if quoted_value is not None else boolean_value
+    return _ScimFilterParser(value).parse()
+
+
+def _sort_parts(sort_by: str | None, sort_order: str) -> tuple[str | None, str]:
+    resolved_order = sort_order.casefold()
+    if resolved_order not in {"ascending", "descending"}:
+        raise _error(LifecycleError("invalidValue", "SCIM sort order is invalid"))
+    if sort_by is None:
+        return None, resolved_order
+    if len(sort_by) > 64:
+        raise _error(LifecycleError("invalidValue", "SCIM sort attribute is invalid"))
+    resolved_attribute = _FILTER_ATTRIBUTES.get(sort_by.casefold())
+    if resolved_attribute is None:
+        raise _error(LifecycleError("invalidValue", "SCIM sort attribute is unsupported"))
+    return resolved_attribute, resolved_order
 
 
 def _list_payload(
@@ -562,7 +704,7 @@ def create_enterprise_scim_router(
                 "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
                 "filter": {"supported": True, "maxResults": 100},
                 "changePassword": {"supported": False},
-                "sort": {"supported": False},
+                "sort": {"supported": True},
                 "etag": {"supported": True},
                 "authenticationSchemes": [
                     {
@@ -607,15 +749,19 @@ def create_enterprise_scim_router(
         filter_value: str | None = Query(default=None, alias="filter"),
         start_index: int = Query(default=1, alias="startIndex"),
         count: int = Query(default=100),
+        sort_by: str | None = Query(default=None, alias="sortBy"),
+        sort_order: str = Query(default="ascending", alias="sortOrder"),
     ) -> JSONResponse:
-        filter_attribute, resolved_filter_value = _filter_parts(filter_value)
+        resolved_filter = _filter_expression(filter_value)
+        resolved_sort_by, resolved_sort_order = _sort_parts(sort_by, sort_order)
         try:
             page = service.list_users(
                 _token(request),
                 start_index=start_index,
                 count=count,
-                filter_attribute=filter_attribute,
-                filter_value=resolved_filter_value,
+                filter_expression=resolved_filter,
+                sort_by=resolved_sort_by,
+                sort_order=resolved_sort_order,
             )
         except LifecycleError as error:
             raise _error(error) from error
@@ -753,15 +899,19 @@ def create_enterprise_scim_router(
         filter_value: str | None = Query(default=None, alias="filter"),
         start_index: int = Query(default=1, alias="startIndex"),
         count: int = Query(default=100),
+        sort_by: str | None = Query(default=None, alias="sortBy"),
+        sort_order: str = Query(default="ascending", alias="sortOrder"),
     ) -> JSONResponse:
-        filter_attribute, resolved_filter_value = _filter_parts(filter_value)
+        resolved_filter = _filter_expression(filter_value)
+        resolved_sort_by, resolved_sort_order = _sort_parts(sort_by, sort_order)
         try:
             page = service.list_groups(
                 _token(request),
                 start_index=start_index,
                 count=count,
-                filter_attribute=filter_attribute,
-                filter_value=resolved_filter_value,
+                filter_expression=resolved_filter,
+                sort_by=resolved_sort_by,
+                sort_order=resolved_sort_order,
             )
         except LifecycleError as error:
             raise _error(error) from error

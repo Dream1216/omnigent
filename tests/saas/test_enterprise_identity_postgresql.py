@@ -15,7 +15,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import RequestContext
-from saas.control_plane.enterprise_identity import EnterpriseScimService
+from saas.control_plane.enterprise_identity import EnterpriseScimService, ScimFilterExpression
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 
@@ -151,6 +151,40 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert listed.total_results == listed.items_per_page == 1
     assert listed.resources[0].id == created.id
+    missing_display_name = service.upsert_user(
+        token,
+        event_id=f"pc5-user-no-display-{suffix}",
+        external_id=f"no-display-{suffix}",
+        user_name=f"no-display-{suffix}@example.test",
+        display_name=None,
+        active=True,
+        source_version=1,
+    )
+    sorted_missing_first = service.list_users(
+        token,
+        sort_by="displayName",
+        sort_order="descending",
+    )
+    assert sorted_missing_first.total_results == 2
+    assert sorted_missing_first.resources[0].id == missing_display_name.id
+    compound_listed = service.list_users(
+        token,
+        filter_expression=ScimFilterExpression(
+            operator="and",
+            operands=(
+                ScimFilterExpression(
+                    operator="sw",
+                    attribute="externalId",
+                    value="employee-",
+                ),
+                ScimFilterExpression(operator="eq", attribute="active", value=True),
+            ),
+        ),
+        sort_by="displayName",
+        sort_order="descending",
+    )
+    assert compound_listed.total_results == compound_listed.items_per_page == 1
+    assert compound_listed.resources[0].id == created.id
 
     def _concurrent_user_replace(index: int) -> tuple[int, object]:
         try:
@@ -209,8 +243,18 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     assert group.active_member_count == 1
     listed_groups = service.list_groups(
         token,
-        filter_attribute="externalId",
-        filter_value=f"engineering-{suffix}",
+        filter_expression=ScimFilterExpression(
+            operator="and",
+            operands=(
+                ScimFilterExpression(
+                    operator="co",
+                    attribute="externalId",
+                    value=suffix,
+                ),
+                ScimFilterExpression(operator="eq", attribute="active", value=True),
+            ),
+        ),
+        sort_by="displayName",
     )
     assert listed_groups.total_results == listed_groups.items_per_page == 1
     assert listed_groups.resources[0].id == group.id

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -103,6 +103,14 @@ class ScimGroupPage:
     total_results: int
     start_index: int
     items_per_page: int
+
+
+@dataclass(frozen=True, slots=True)
+class ScimFilterExpression:
+    operator: str
+    attribute: str | None = None
+    value: str | bool | None = None
+    operands: tuple[ScimFilterExpression, ...] = ()
 
 
 def _utcnow() -> datetime:
@@ -615,48 +623,29 @@ class EnterpriseScimService:
         count: int = 100,
         filter_attribute: str | None = None,
         filter_value: str | None = None,
+        filter_expression: ScimFilterExpression | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "ascending",
     ) -> ScimUserPage:
-        """List one Directory's Users with bounded stable pagination and exact equality."""
+        """List one Directory's Users with bounded filters and deterministic sorting."""
 
-        self._validate_list_request(
+        resolved_filter = self._validate_list_request(
             start_index=start_index,
             count=count,
             filter_attribute=filter_attribute,
             filter_value=filter_value,
+            filter_expression=filter_expression,
+            resource_type="User",
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         with self._session_factory.begin() as db:
             directory = self._authenticate(db, bearer_token)
             predicates: list[sa.ColumnElement[bool]] = [
                 EnterpriseScimUserRecord.directory_id == directory.id
             ]
-            if filter_attribute == "id":
-                try:
-                    predicates.append(EnterpriseScimUserRecord.id == UUID(str(filter_value)))
-                except ValueError as error:
-                    raise LifecycleError(
-                        "invalidFilter", "SCIM filter value is invalid"
-                    ) from error
-            elif filter_attribute == "externalId":
-                predicates.append(EnterpriseScimUserRecord.external_id == filter_value)
-            elif filter_attribute == "userName":
-                try:
-                    normalized_filter = _normalize_user_name(str(filter_value))
-                except LifecycleError as error:
-                    raise LifecycleError(
-                        "invalidFilter", "SCIM filter value is invalid"
-                    ) from error
-                predicates.append(
-                    EnterpriseScimUserRecord.user_name_normalized == normalized_filter
-                )
-            elif filter_attribute == "displayName":
-                predicates.append(
-                    sa.func.lower(EnterpriseScimUserRecord.display_name)
-                    == str(filter_value).lower()
-                )
-            elif filter_attribute == "active":
-                predicates.append(
-                    EnterpriseScimUserRecord.active == self._filter_boolean(str(filter_value))
-                )
+            if resolved_filter is not None:
+                predicates.append(self._filter_predicate(resolved_filter, resource_type="User"))
             total = int(
                 db.scalar(
                     sa.select(sa.func.count())
@@ -669,7 +658,13 @@ class EnterpriseScimService:
                 db.scalars(
                     sa.select(EnterpriseScimUserRecord)
                     .where(*predicates)
-                    .order_by(EnterpriseScimUserRecord.id)
+                    .order_by(
+                        *self._sort_expressions(
+                            resource_type="User",
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                    )
                     .offset(start_index - 1)
                     .limit(count)
                 )
@@ -900,40 +895,29 @@ class EnterpriseScimService:
         count: int = 100,
         filter_attribute: str | None = None,
         filter_value: str | None = None,
+        filter_expression: ScimFilterExpression | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "ascending",
     ) -> ScimGroupPage:
-        """List one Directory's Groups with bounded stable pagination and exact equality."""
+        """List one Directory's Groups with bounded filters and deterministic sorting."""
 
-        if filter_attribute == "userName":
-            raise LifecycleError("invalidFilter", "SCIM Group filter attribute is unsupported")
-        self._validate_list_request(
+        resolved_filter = self._validate_list_request(
             start_index=start_index,
             count=count,
             filter_attribute=filter_attribute,
             filter_value=filter_value,
+            filter_expression=filter_expression,
+            resource_type="Group",
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         with self._session_factory.begin() as db:
             directory = self._authenticate(db, bearer_token)
             predicates: list[sa.ColumnElement[bool]] = [
                 EnterpriseScimGroupRecord.directory_id == directory.id
             ]
-            if filter_attribute == "id":
-                try:
-                    predicates.append(EnterpriseScimGroupRecord.id == UUID(str(filter_value)))
-                except ValueError as error:
-                    raise LifecycleError(
-                        "invalidFilter", "SCIM filter value is invalid"
-                    ) from error
-            elif filter_attribute == "externalId":
-                predicates.append(EnterpriseScimGroupRecord.external_id == filter_value)
-            elif filter_attribute == "displayName":
-                predicates.append(
-                    sa.func.lower(EnterpriseScimGroupRecord.display_name)
-                    == str(filter_value).lower()
-                )
-            elif filter_attribute == "active":
-                predicates.append(
-                    EnterpriseScimGroupRecord.active == self._filter_boolean(str(filter_value))
-                )
+            if resolved_filter is not None:
+                predicates.append(self._filter_predicate(resolved_filter, resource_type="Group"))
             total = int(
                 db.scalar(
                     sa.select(sa.func.count())
@@ -946,7 +930,13 @@ class EnterpriseScimService:
                 db.scalars(
                     sa.select(EnterpriseScimGroupRecord)
                     .where(*predicates)
-                    .order_by(EnterpriseScimGroupRecord.id)
+                    .order_by(
+                        *self._sort_expressions(
+                            resource_type="Group",
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                    )
                     .offset(start_index - 1)
                     .limit(count)
                 )
@@ -980,28 +970,230 @@ class EnterpriseScimService:
         )
         return directory
 
-    @staticmethod
+    @classmethod
     def _validate_list_request(
+        cls,
         *,
         start_index: int,
         count: int,
         filter_attribute: str | None,
         filter_value: str | None,
-    ) -> None:
+        filter_expression: ScimFilterExpression | None,
+        resource_type: str,
+        sort_by: str | None,
+        sort_order: str,
+    ) -> ScimFilterExpression | None:
         if start_index < 1 or count < 0 or count > 100:
             raise LifecycleError("invalidValue", "SCIM pagination is invalid")
         if (filter_attribute is None) != (filter_value is None):
             raise LifecycleError("invalidFilter", "SCIM filter is invalid")
-        if filter_attribute is not None and filter_attribute not in {
-            "id",
-            "externalId",
-            "userName",
-            "displayName",
-            "active",
-        }:
+        if filter_expression is not None and filter_attribute is not None:
+            raise LifecycleError("invalidFilter", "SCIM filter is ambiguous")
+        resolved = filter_expression
+        if filter_attribute is not None:
+            raw_value = str(filter_value)
+            value: str | bool = raw_value
+            if filter_attribute == "active":
+                value = cls._filter_boolean(raw_value)
+            resolved = ScimFilterExpression(
+                operator="eq",
+                attribute=filter_attribute,
+                value=value,
+            )
+        if resolved is not None:
+            term_count = cls._validate_filter_expression(
+                resolved,
+                resource_type=resource_type,
+                depth=0,
+            )
+            if term_count > 16:
+                raise LifecycleError("invalidFilter", "SCIM filter has too many terms")
+        allowed_sort = {
+            "User": {"id", "externalId", "userName", "displayName", "active"},
+            "Group": {"id", "externalId", "displayName", "active"},
+        }[resource_type]
+        if sort_by is not None and sort_by not in allowed_sort:
+            raise LifecycleError("invalidValue", "SCIM sort attribute is unsupported")
+        if sort_order not in {"ascending", "descending"}:
+            raise LifecycleError("invalidValue", "SCIM sort order is invalid")
+        if sort_by is None and sort_order != "ascending":
+            raise LifecycleError("invalidValue", "SCIM sortBy is required for sortOrder")
+        return resolved
+
+    @classmethod
+    def _validate_filter_expression(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        resource_type: str,
+        depth: int,
+    ) -> int:
+        if depth > 16:
+            raise LifecycleError("invalidFilter", "SCIM filter nesting is too deep")
+        operator = expression.operator
+        if operator in {"and", "or"}:
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or len(expression.operands) != 2
+            ):
+                raise LifecycleError("invalidFilter", "SCIM logical filter is invalid")
+            return sum(
+                cls._validate_filter_expression(
+                    operand,
+                    resource_type=resource_type,
+                    depth=depth + 1,
+                )
+                for operand in expression.operands
+            )
+        if operator == "not":
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or len(expression.operands) != 1
+            ):
+                raise LifecycleError("invalidFilter", "SCIM not filter is invalid")
+            return cls._validate_filter_expression(
+                expression.operands[0],
+                resource_type=resource_type,
+                depth=depth + 1,
+            )
+        allowed_attributes = {
+            "User": {"id", "externalId", "userName", "displayName", "active"},
+            "Group": {"id", "externalId", "displayName", "active"},
+        }[resource_type]
+        attribute = expression.attribute
+        if expression.operands or attribute not in allowed_attributes:
             raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
-        if filter_value is not None and (not filter_value or len(filter_value) > 320):
+        if operator == "pr":
+            if expression.value is not None:
+                raise LifecycleError("invalidFilter", "SCIM presence filter is invalid")
+            return 1
+        value = expression.value
+        if attribute == "active":
+            if operator not in {"eq", "ne"} or type(value) is not bool:
+                raise LifecycleError("invalidFilter", "SCIM Boolean filter is invalid")
+            return 1
+        if not isinstance(value, str) or not value or len(value) > 320:
             raise LifecycleError("invalidFilter", "SCIM filter value is invalid")
+        if attribute == "id":
+            if operator not in {"eq", "ne"}:
+                raise LifecycleError("invalidFilter", "SCIM id filter operator is unsupported")
+            try:
+                UUID(value)
+            except ValueError as error:
+                raise LifecycleError("invalidFilter", "SCIM filter value is invalid") from error
+            return 1
+        if operator not in {"eq", "ne", "co", "sw", "ew"}:
+            raise LifecycleError("invalidFilter", "SCIM filter operator is unsupported")
+        if attribute == "userName" and operator in {"eq", "ne"}:
+            try:
+                _normalize_user_name(value)
+            except LifecycleError as error:
+                raise LifecycleError("invalidFilter", "SCIM filter value is invalid") from error
+        return 1
+
+    @classmethod
+    def _filter_predicate(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        resource_type: str,
+    ) -> sa.ColumnElement[bool]:
+        if expression.operator == "and":
+            return sa.and_(
+                *(
+                    cls._filter_predicate(operand, resource_type=resource_type)
+                    for operand in expression.operands
+                )
+            )
+        if expression.operator == "or":
+            return sa.or_(
+                *(
+                    cls._filter_predicate(operand, resource_type=resource_type)
+                    for operand in expression.operands
+                )
+            )
+        if expression.operator == "not":
+            return sa.not_(
+                cls._filter_predicate(expression.operands[0], resource_type=resource_type)
+            )
+        attribute = cast(str, expression.attribute)
+        column = cls._filter_column(resource_type=resource_type, attribute=attribute)
+        if expression.operator == "pr":
+            return column.is_not(None)
+        value = expression.value
+        if attribute == "id":
+            predicate = column == UUID(cast(str, value))
+        elif attribute == "active":
+            predicate = column == cast(bool, value)
+        else:
+            text_value = cast(str, value)
+            comparison_column = column
+            if attribute in {"userName", "displayName"}:
+                comparison_column = sa.func.lower(column)
+                text_value = text_value.casefold()
+            if attribute == "userName" and expression.operator in {"eq", "ne"}:
+                text_value = _normalize_user_name(text_value)
+            if expression.operator in {"eq", "ne"}:
+                predicate = comparison_column == text_value
+            elif expression.operator == "co":
+                predicate = comparison_column.contains(text_value, autoescape=True)
+            elif expression.operator == "sw":
+                predicate = comparison_column.startswith(text_value, autoescape=True)
+            else:
+                predicate = comparison_column.endswith(text_value, autoescape=True)
+        if expression.operator == "ne":
+            predicate = sa.not_(predicate)
+        return sa.func.coalesce(predicate, sa.false())
+
+    @staticmethod
+    def _filter_column(*, resource_type: str, attribute: str) -> sa.ColumnElement[Any]:
+        if resource_type == "User":
+            return cast(
+                sa.ColumnElement[Any],
+                {
+                    "id": EnterpriseScimUserRecord.id,
+                    "externalId": EnterpriseScimUserRecord.external_id,
+                    "userName": EnterpriseScimUserRecord.user_name_normalized,
+                    "displayName": EnterpriseScimUserRecord.display_name,
+                    "active": EnterpriseScimUserRecord.active,
+                }[attribute],
+            )
+        return cast(
+            sa.ColumnElement[Any],
+            {
+                "id": EnterpriseScimGroupRecord.id,
+                "externalId": EnterpriseScimGroupRecord.external_id,
+                "displayName": EnterpriseScimGroupRecord.display_name,
+                "active": EnterpriseScimGroupRecord.active,
+            }[attribute],
+        )
+
+    @classmethod
+    def _sort_expressions(
+        cls,
+        *,
+        resource_type: str,
+        sort_by: str | None,
+        sort_order: str,
+    ) -> tuple[sa.ColumnElement[Any], ...]:
+        id_column = cls._filter_column(resource_type=resource_type, attribute="id")
+        if sort_by is None or sort_by == "id":
+            return (id_column.desc() if sort_order == "descending" else id_column.asc(),)
+        column = cls._filter_column(resource_type=resource_type, attribute=sort_by)
+        comparison_column = (
+            sa.func.lower(column) if sort_by in {"userName", "displayName"} else column
+        )
+        primary = (
+            comparison_column.desc() if sort_order == "descending" else comparison_column.asc()
+        )
+        if sort_by == "displayName":
+            missing_value_order = (
+                column.is_(None).desc() if sort_order == "descending" else column.is_(None).asc()
+            )
+            return (missing_value_order, primary, id_column.asc())
+        return (primary, id_column.asc())
 
     @staticmethod
     def _filter_boolean(value: str) -> bool:

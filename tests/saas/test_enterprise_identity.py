@@ -22,7 +22,7 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
-from saas.control_plane.enterprise_identity import EnterpriseScimService
+from saas.control_plane.enterprise_identity import EnterpriseScimService, ScimFilterExpression
 from saas.control_plane.enterprise_identity_models import (
     EnterpriseScimDirectoryRecord,
     EnterpriseScimEventRecord,
@@ -322,6 +322,15 @@ def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixtu
         source_version=1,
     )
     service.upsert_user(
+        first_token,
+        event_id="another-first-directory-user",
+        external_id="another-user",
+        user_name="another.user@example.test",
+        display_name="Another User",
+        active=False,
+        source_version=1,
+    )
+    service.upsert_user(
         second_directory.bearer_token,
         event_id="second-directory-user",
         external_id="second-user",
@@ -332,8 +341,8 @@ def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixtu
     )
 
     first_page = service.list_users(first_token, start_index=1, count=1)
-    assert first_page.total_results == first_page.items_per_page == 1
-    assert first_page.resources[0].id == first_user.id
+    assert first_page.total_results == 2
+    assert first_page.items_per_page == 1
     filtered = service.list_users(
         first_token,
         filter_attribute="userName",
@@ -341,6 +350,40 @@ def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixtu
     )
     assert filtered.total_results == 1
     assert filtered.resources[0].external_id == "first-user"
+    compound = service.list_users(
+        first_token,
+        filter_expression=ScimFilterExpression(
+            operator="and",
+            operands=(
+                ScimFilterExpression(
+                    operator="co",
+                    attribute="displayName",
+                    value="USER",
+                ),
+                ScimFilterExpression(
+                    operator="not",
+                    operands=(
+                        ScimFilterExpression(
+                            operator="eq",
+                            attribute="active",
+                            value=True,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    assert compound.total_results == 1
+    assert compound.resources[0].external_id == "another-user"
+    sorted_users = service.list_users(
+        first_token,
+        sort_by="displayName",
+        sort_order="descending",
+    )
+    assert [value.display_name for value in sorted_users.resources] == [
+        "First User",
+        "Another User",
+    ]
     assert (
         service.list_users(
             first_token,

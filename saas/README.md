@@ -1590,14 +1590,18 @@ re-add an inactive User, so a late Group update cannot undo a newer deprovision.
 The HTTP adapter exposes ServiceProviderConfig and a bounded SCIM 2.0 subset:
 POST/GET-by-id/PUT/PATCH/DELETE plus ListResponse for Users and Groups, weak
 ETags/If-Match, bearer authentication and `application/scim+json` responses. Collection reads use stable
-one-based pagination, a maximum count of 100 and one strict equality filter over an
-allowlisted resource attribute; every query remains bound to the exact authenticated
-Directory. Tenant management routes expose fresh-authenticated, idempotent Directory
+one-based pagination, a maximum count of 100, a 1,024-character/16-term/four-level
+filter budget and deterministic allowlisted sorting with UUID tie-breaking. The bounded
+grammar supports `and`/`or`/`not`, `eq`/`ne`/`co`/`sw`/`ew`/`pr` over resource-specific
+attributes, escapes SQL wildcard input and converts nullable comparisons to SCIM
+two-valued behavior; every query remains bound to the exact authenticated Directory.
+Tenant management routes expose fresh-authenticated, idempotent Directory
 credential rotation and disable with one-time token delivery. PUT performs guarded full
 replacement without changing `externalId`; DELETE retains an inactive tombstone while
 revoking User access or archiving Group authority. Resource-specific Add/Replace/Remove
 PATCH paths and lost-response replay execute under one replay-before-CAS transaction.
-Bulk, compound/general filters, sorting, complete RFC PATCH paths, scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
+Bulk, full RFC filter attributes/operators/value paths, complete RFC PATCH paths,
+scheduled/overlap rotation policy, SAML/enterprise OIDC activation,
 Domain Claim, JIT, MFA and recovery policy remain explicit PC5 work. Directory/subject
 state and identity Event Receipts are now separate deletion
 surfaces with token-hash destruction, subject erasure and non-resurrecting receipt

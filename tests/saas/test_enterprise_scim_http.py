@@ -158,6 +158,7 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     assert config.status_code == 200
     assert config.json()["etag"]["supported"] is True
     assert config.json()["filter"] == {"supported": True, "maxResults": 100}
+    assert config.json()["sort"] == {"supported": True}
 
     invalid = client.post(
         "/saas/scim/v2/Users",
@@ -402,6 +403,123 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     assert filtered_group.json()["totalResults"] == 1
     assert filtered_group.json()["Resources"][0]["externalId"] == "group-beta"
 
+    compound_users = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={
+            "filter": '(active eq true and displayName sw "employee") '
+            'or externalId eq "employee-beta"',
+            "sortBy": "displayName",
+            "sortOrder": "descending",
+        },
+    )
+    assert compound_users.status_code == 200
+    assert [item["externalId"] for item in compound_users.json()["Resources"]] == [
+        "employee-beta",
+        "employee-alpha",
+    ]
+
+    inactive_not = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "not active eq true"},
+    )
+    assert inactive_not.status_code == 200
+    assert inactive_not.json()["totalResults"] == 1
+    assert inactive_not.json()["Resources"][0]["externalId"] == "employee-beta"
+
+    contains_and_presence = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": '(displayName co "PLOYEE") and displayName pr'},
+    )
+    assert contains_and_presence.status_code == 200
+    assert contains_and_presence.json()["totalResults"] == 2
+
+    escaped_like_wildcard = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'displayName co "%"'},
+    )
+    assert escaped_like_wildcard.status_code == 200
+    assert escaped_like_wildcard.json()["totalResults"] == 0
+
+    compound_groups = client.get(
+        "/saas/scim/v2/Groups",
+        headers=headers,
+        params={
+            "filter": '(displayName sw "group") and active eq true',
+            "sortBy": "externalId",
+            "sortOrder": "ascending",
+        },
+    )
+    assert compound_groups.status_code == 200
+    assert [item["externalId"] for item in compound_groups.json()["Resources"]] == [
+        "group-alpha",
+        "group-beta",
+    ]
+
+    missing_display_name = client.post(
+        "/saas/scim/v2/Users",
+        headers={**headers, "Idempotency-Key": "list-user-without-display-name"},
+        json={
+            "schemas": [_USER_SCHEMA],
+            "externalId": "employee-no-display",
+            "userName": "employee-no-display@example.test",
+            "active": True,
+        },
+    )
+    assert missing_display_name.status_code == 201
+    missing_presence = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "not displayName pr"},
+    )
+    assert missing_presence.status_code == 200
+    assert missing_presence.json()["totalResults"] == 1
+    assert missing_presence.json()["Resources"][0]["externalId"] == "employee-no-display"
+    two_valued_not = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'not displayName eq "Employee 1"'},
+    )
+    assert two_valued_not.status_code == 200
+    assert {item["externalId"] for item in two_valued_not.json()["Resources"]} == {
+        "employee-beta",
+        "employee-no-display",
+    }
+    absent_comparison = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'displayName ne "Employee 1"'},
+    )
+    assert absent_comparison.status_code == 200
+    assert [item["externalId"] for item in absent_comparison.json()["Resources"]] == [
+        "employee-beta"
+    ]
+    descending_missing_first = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"sortBy": "displayName", "sortOrder": "descending"},
+    )
+    assert descending_missing_first.status_code == 200
+    assert [item["externalId"] for item in descending_missing_first.json()["Resources"]] == [
+        "employee-no-display",
+        "employee-beta",
+        "employee-alpha",
+    ]
+    ascending_missing_last = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"sortBy": "displayName", "sortOrder": "ascending"},
+    )
+    assert ascending_missing_last.status_code == 200
+    assert [item["externalId"] for item in ascending_missing_last.json()["Resources"]] == [
+        "employee-alpha",
+        "employee-beta",
+        "employee-no-display",
+    ]
+
     unsupported = client.get(
         '/saas/scim/v2/Groups?filter=userName%20eq%20"nobody@example.test"',
         headers=headers,
@@ -415,6 +533,36 @@ def test_scim_collection_list_filter_and_bounded_pagination() -> None:
     )
     assert compound.status_code == 400
     assert compound.json()["scimType"] == "invalidFilter"
+
+    group_sort_unsupported = client.get(
+        "/saas/scim/v2/Groups?sortBy=userName",
+        headers=headers,
+    )
+    assert group_sort_unsupported.status_code == 400
+    assert group_sort_unsupported.json()["scimType"] == "invalidValue"
+
+    missing_sort_attribute = client.get(
+        "/saas/scim/v2/Users?sortOrder=descending",
+        headers=headers,
+    )
+    assert missing_sort_attribute.status_code == 400
+    assert missing_sort_attribute.json()["scimType"] == "invalidValue"
+
+    too_many_terms = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": " or ".join(f'externalId eq "missing-{index}"' for index in range(17))},
+    )
+    assert too_many_terms.status_code == 400
+    assert too_many_terms.json()["scimType"] == "invalidFilter"
+
+    too_deep = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": "(((((active eq true)))))"},
+    )
+    assert too_deep.status_code == 400
+    assert too_deep.json()["scimType"] == "invalidFilter"
 
     too_many = client.get("/saas/scim/v2/Users?count=101", headers=headers)
     assert too_many.status_code == 400
