@@ -26,9 +26,9 @@ def test_production_baseline_is_complete_content_but_not_falsely_ready() -> None
         "slo_count": 6,
         "data_class_count": 3,
         "threat_count": 12,
-        "readiness_blocker_count": 22,
+        "readiness_blocker_count": 10,
     }
-    assert "ADR-001 is not accepted" in report["blockers"]
+    assert "ADR-001 is not accepted" not in report["blockers"]
     assert "T0 RPO/RTO is not business-approved" in report["blockers"]
     assert (
         "no immutable tenant or regional recovery drill evidence is recorded" in report["blockers"]
