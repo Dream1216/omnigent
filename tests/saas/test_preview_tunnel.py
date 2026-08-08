@@ -161,7 +161,7 @@ async def _start_preview_process(socket_path: Path) -> multiprocessing.Process:
     # the bound explicit and independent from the request-timeout contract being
     # tested below.
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + 15.0
+    deadline = loop.time() + 30.0
     while loop.time() < deadline:
         if os.path.lexists(socket_path):
             socket_stat = os.lstat(socket_path)

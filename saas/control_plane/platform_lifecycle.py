@@ -45,6 +45,28 @@ class PlatformLifecycleResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PlatformLifecycleTargetPreview:
+    target_id: UUID
+    target_type: Literal["global_user", "tenant"]
+    status: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformLifecycleOperationView:
+    operation_id: UUID
+    action: str
+    risk_level: str
+    tenant_id: UUID | None
+    target_type: str
+    target_id: UUID
+    requested_by_principal_id: UUID
+    status: str
+    version: int
+    occurred_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class OwnerRecoveryPreview:
     tenant_id: UUID
     source_owner_id: UUID | None
@@ -117,6 +139,98 @@ class PlatformLifecycleService:
 
     def __init__(self, governance_factory: sessionmaker[Session]) -> None:
         self._governance = governance_factory
+
+    def preview_user_lifecycle(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        user_id: UUID,
+        now: datetime | None = None,
+    ) -> PlatformLifecycleTargetPreview:
+        """Return only the authoritative state needed for a user lifecycle CAS."""
+
+        checked_at = now or _now()
+        with self._governance.begin() as db:
+            self._bind(db, actor, user_id=user_id)
+            self._authorize(db, actor, "platform.user.read", checked_at)
+            row = db.execute(
+                sa.select(GlobalUser.status, GlobalUser.security_version).where(
+                    GlobalUser.id == user_id
+                )
+            ).one_or_none()
+            if row is None:
+                raise PlatformSecurityError("platform_user_not_found", "Global User was not found")
+            return PlatformLifecycleTargetPreview(
+                target_id=user_id,
+                target_type="global_user",
+                status=row.status,
+                version=row.security_version,
+            )
+
+    def preview_tenant_lifecycle(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        tenant_id: UUID,
+        now: datetime | None = None,
+    ) -> PlatformLifecycleTargetPreview:
+        """Return only the authoritative state needed for a Tenant lifecycle CAS."""
+
+        checked_at = now or _now()
+        with self._governance.begin() as db:
+            self._bind(db, actor, tenant_id=tenant_id)
+            self._authorize(db, actor, "platform.tenant.read", checked_at)
+            row = db.execute(
+                sa.select(Tenant.status, Tenant.lifecycle_version).where(Tenant.id == tenant_id)
+            ).one_or_none()
+            if row is None:
+                raise PlatformSecurityError("platform_tenant_not_found", "Tenant was not found")
+            return PlatformLifecycleTargetPreview(
+                target_id=tenant_id,
+                target_type="tenant",
+                status=row.status,
+                version=row.lifecycle_version,
+            )
+
+    def list_operations(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        cursor: UUID | None = None,
+        limit: int = 50,
+        now: datetime | None = None,
+    ) -> tuple[PlatformLifecycleOperationView, ...]:
+        """List the caller's immutable PC2 receipts for the unified operations view."""
+
+        if limit < 1 or limit > 200:
+            raise PlatformSecurityError("platform_query_invalid", "limit is invalid")
+        checked_at = now or _now()
+        with self._governance.begin() as db:
+            self._bind(db, actor)
+            self._authorize(db, actor, "platform.operations.read", checked_at)
+            query = sa.select(PlatformLifecycleOperationRecord).where(
+                PlatformLifecycleOperationRecord.actor_principal_id == actor.principal_id
+            )
+            if cursor is not None:
+                query = query.where(PlatformLifecycleOperationRecord.id > cursor)
+            records = db.execute(
+                query.order_by(PlatformLifecycleOperationRecord.id).limit(limit)
+            ).scalars()
+            return tuple(
+                PlatformLifecycleOperationView(
+                    operation_id=value.id,
+                    action=value.action,
+                    risk_level=("high" if value.action == "user_sessions_revoke" else "critical"),
+                    tenant_id=value.tenant_id,
+                    target_type=value.target_type,
+                    target_id=value.target_id,
+                    requested_by_principal_id=value.actor_principal_id,
+                    status="succeeded",
+                    version=1,
+                    occurred_at=_as_utc(value.occurred_at),
+                )
+                for value in records
+            )
 
     def list_identity_conflicts(
         self,

@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc3-governed-access"
+POLICY_VERSION: Final = "2026-08-08.pc4-console-mvp"
 
 
 class PermissionScope(StrEnum):
@@ -118,7 +118,10 @@ _DEFINITIONS = (
         "platform.tenant.read",
         PermissionScope.PLATFORM,
         PermissionRisk.LOW,
-        api_surfaces=("GET /v2/platform-admin/tenants",),
+        api_surfaces=(
+            "GET /v2/platform-admin/tenants",
+            "GET /v2/platform-admin/tenants/{id}/lifecycle-preview",
+        ),
         ui_surface="tenants",
         audit_event="platform.tenant_projection.read",
     ),
@@ -152,7 +155,10 @@ _DEFINITIONS = (
         "platform.user.read",
         PermissionScope.PLATFORM,
         PermissionRisk.MEDIUM,
-        api_surfaces=("GET /v2/platform-admin/users",),
+        api_surfaces=(
+            "GET /v2/platform-admin/users",
+            "GET /v2/platform-admin/users/{id}/lifecycle-preview",
+        ),
         ui_surface="global-users",
         audit_event="platform.user_projection.read",
     ),
@@ -502,6 +508,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.user.read",
                 "platform.identity_conflict.read",
                 "platform.support.read",
+                "platform.operations.read",
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",
@@ -535,6 +542,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.tenant.read",
                 "platform.user.read",
                 "platform.user.pii.read",
+                "platform.operations.read",
                 "platform.audit.read",
                 "platform.audit.export",
                 "platform.data_request.manage",

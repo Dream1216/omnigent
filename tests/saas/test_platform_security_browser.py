@@ -21,6 +21,7 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import (
+    POLICY_VERSION,
     PlatformAuthorizationService,
     PlatformHttpConfig,
     PlatformProjectionService,
@@ -274,7 +275,7 @@ def _realm_and_role_negative_matrix(
 
         status, payload = _navigate_json(page, f"{fixture.origin}/v2/platform-admin/permissions")
         assert status == 200
-        assert payload["policy_version"] == "2026-08-08.pc3-governed-access"
+        assert payload["policy_version"] == POLICY_VERSION
 
         context.add_cookies(
             [

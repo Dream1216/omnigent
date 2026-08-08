@@ -324,6 +324,16 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
         "reason": "verified account compromise",
     }
     client.cookies.set(config.cookie_name, operator.token)
+    preview = client.get(f"/v2/platform-admin/users/{user_id}/lifecycle-preview")
+    assert preview.status_code == 200
+    assert preview.json() == {
+        "request_id": preview.json()["request_id"],
+        "policy_version": preview.json()["policy_version"],
+        "user_id": str(user_id),
+        "status": "active",
+        "security_version": 1,
+        "content_access": "none",
+    }
     no_csrf = client.post(
         f"/v2/platform-admin/users/{user_id}/suspend",
         json=body,
@@ -345,6 +355,9 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
     )
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "platform_permission_denied"
+    denied_preview = client.get(f"/v2/platform-admin/users/{user_id}/lifecycle-preview")
+    assert denied_preview.status_code == 403
+    assert denied_preview.json()["error"]["code"] == "platform_permission_denied"
 
     client.cookies.clear()
     client.cookies.set(config.cookie_name, operator.token)
@@ -364,6 +377,31 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
     assert suspended.json()["result"]["status"] == "suspended"
     assert suspended.json()["result"]["security_version"] == 2
     assert suspended.json()["replayed"] is False
+
+    refreshed_preview = client.get(f"/v2/platform-admin/users/{user_id}/lifecycle-preview")
+    assert refreshed_preview.status_code == 200
+    assert refreshed_preview.json()["status"] == "suspended"
+    assert refreshed_preview.json()["security_version"] == 2
+
+    operations = client.get("/v2/platform-admin/operations")
+    assert operations.status_code == 200
+    assert operations.json()["items"] == [
+        {
+            "operation_id": suspended.json()["operation_id"],
+            "action": "user_suspend",
+            "risk_level": "critical",
+            "tenant_id": None,
+            "target_type": "global_user",
+            "target_id": str(user_id),
+            "requested_by_principal_id": str(operator_id),
+            "approved_by_principal_id": None,
+            "status": "succeeded",
+            "version": 1,
+            "created_at": operations.json()["items"][0]["created_at"],
+            "updated_at": operations.json()["items"][0]["updated_at"],
+            "receipt_source": "pc2_lifecycle",
+        }
+    ]
 
     replayed = client.post(
         f"/v2/platform-admin/users/{user_id}/suspend",

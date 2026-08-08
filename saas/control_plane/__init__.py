@@ -285,8 +285,10 @@ from saas.control_plane.platform_http import PlatformHttpConfig, create_platform
 from saas.control_plane.platform_lifecycle import (
     IdentityConflictCaseView,
     OwnerRecoveryPreview,
+    PlatformLifecycleOperationView,
     PlatformLifecycleResult,
     PlatformLifecycleService,
+    PlatformLifecycleTargetPreview,
 )
 from saas.control_plane.platform_models import (
     PLATFORM_ASSIGNMENT_STATUSES,
@@ -544,8 +546,10 @@ __all__ = [
     "PlatformGovernedAccessService",
     "PlatformHttpConfig",
     "PlatformLifecycleOperationRecord",
+    "PlatformLifecycleOperationView",
     "PlatformLifecycleResult",
     "PlatformLifecycleService",
+    "PlatformLifecycleTargetPreview",
     "PlatformProjectionPage",
     "PlatformProjectionService",
     "PlatformRoleAssignmentRecord",

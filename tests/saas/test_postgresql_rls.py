@@ -255,8 +255,17 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
         uuid4(),
     )
     invitation_a, rotatable_a, invitation_b = uuid4(), uuid4(), uuid4()
-    raw_invitation_token = "pg-member-invitation-token-a-000000000000"
+    raw_invitation_token = f"pg-member-invitation-token-{invitation_a.hex}"
     invitation_token_hash = sha256(raw_invitation_token.encode()).hexdigest()
+    rotatable_token_hash = sha256(f"rotate:{rotatable_a}".encode()).hexdigest()
+    other_tenant_token_hash = sha256(f"other:{invitation_b}".encode()).hexdigest()
+    emails = {
+        owner_a: f"owner-a-{owner_a.hex}@example.test",
+        member_a: f"member-a-{member_a.hex}@example.test",
+        invitee_a: f"invitee-a-{invitee_a.hex}@example.test",
+        owner_b: f"owner-b-{owner_b.hex}@example.test",
+        member_b: f"member-b-{member_b.hex}@example.test",
+    }
     governance_role = "saas_rls_member_admin_login"
     authenticator_role = "saas_rls_member_auth_login"
 
@@ -293,15 +302,15 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
                 "VALUES (:id, 'active', :display_name, :email, 1)"
             ),
             [
-                {"id": owner_a, "display_name": "Owner A", "email": "owner-a@example.test"},
-                {"id": member_a, "display_name": "Member A", "email": "member-a@example.test"},
+                {"id": owner_a, "display_name": "Owner A", "email": emails[owner_a]},
+                {"id": member_a, "display_name": "Member A", "email": emails[member_a]},
                 {
                     "id": invitee_a,
                     "display_name": "Invitee A",
-                    "email": "invitee-a@example.test",
+                    "email": emails[invitee_a],
                 },
-                {"id": owner_b, "display_name": "Owner B", "email": "owner-b@example.test"},
-                {"id": member_b, "display_name": "Member B", "email": "member-b@example.test"},
+                {"id": owner_b, "display_name": "Owner B", "email": emails[owner_b]},
+                {"id": member_b, "display_name": "Member B", "email": emails[member_b]},
             ],
         )
         connection.execute(
@@ -321,11 +330,11 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
                 }
                 for index, (user_id, email) in enumerate(
                     (
-                        (owner_a, "owner-a@example.test"),
-                        (member_a, "member-a@example.test"),
-                        (invitee_a, "invitee-a@example.test"),
-                        (owner_b, "owner-b@example.test"),
-                        (member_b, "member-b@example.test"),
+                        (owner_a, emails[owner_a]),
+                        (member_a, emails[member_a]),
+                        (invitee_a, emails[invitee_a]),
+                        (owner_b, emails[owner_b]),
+                        (member_b, emails[member_b]),
                     )
                 )
             ],
@@ -410,7 +419,7 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
                     "id": invitation_a,
                     "tenant_id": tenant_a,
                     "space_id": space_a,
-                    "email": "invitee-a@example.test",
+                    "email": emails[invitee_a],
                     "token_hash": invitation_token_hash,
                     "created_by": owner_a,
                 },
@@ -418,16 +427,16 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
                     "id": rotatable_a,
                     "tenant_id": tenant_a,
                     "space_id": space_a,
-                    "email": "rotate-a@example.test",
-                    "token_hash": "a" * 64,
+                    "email": f"rotate-a-{rotatable_a.hex}@example.test",
+                    "token_hash": rotatable_token_hash,
                     "created_by": owner_a,
                 },
                 {
                     "id": invitation_b,
                     "tenant_id": tenant_b,
                     "space_id": space_b,
-                    "email": "invite-b@example.test",
-                    "token_hash": "b" * 64,
+                    "email": f"invite-b-{invitation_b.hex}@example.test",
+                    "token_hash": other_tenant_token_hash,
                     "created_by": owner_b,
                 },
             ],

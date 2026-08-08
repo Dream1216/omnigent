@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.resources import files
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
@@ -18,7 +19,11 @@ from saas.control_plane.platform_governed_access import (
     PlatformGovernedAccessService,
     SupportGrantView,
 )
-from saas.control_plane.platform_lifecycle import PlatformLifecycleResult, PlatformLifecycleService
+from saas.control_plane.platform_lifecycle import (
+    PlatformLifecycleOperationView,
+    PlatformLifecycleResult,
+    PlatformLifecycleService,
+)
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
     PlatformProjectionService,
@@ -166,7 +171,9 @@ def create_platform_admin_app(
     async def platform_security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "private, no-store"
-        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers.setdefault(
+            "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Request-ID"] = _request_id(request)
@@ -254,6 +261,31 @@ def create_platform_admin_app(
             "replayed": value.replayed,
         }
 
+    @app.get("/platform-admin", include_in_schema=False)
+    @app.get("/platform-admin/", include_in_schema=False)
+    def platform_admin_ui(request: Request) -> HTMLResponse:
+        authenticate(request)
+        return HTMLResponse(
+            files("saas.admin_ui").joinpath("platform_admin.html").read_text(encoding="utf-8"),
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'self'; style-src 'self'; "
+                    "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+                    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                )
+            },
+        )
+
+    @app.get("/platform-admin/assets/platform-admin.css", include_in_schema=False)
+    def platform_admin_css(request: Request) -> Response:
+        authenticate(request)
+        return _platform_admin_asset("platform_admin.css", "text/css")
+
+    @app.get("/platform-admin/assets/platform-admin.js", include_in_schema=False)
+    def platform_admin_javascript(request: Request) -> Response:
+        authenticate(request)
+        return _platform_admin_asset("platform_admin.js", "text/javascript")
+
     @app.get("/v2/platform-admin/context")
     def context(request: Request) -> dict[str, object]:
         principal, _token = authenticate(request)
@@ -293,6 +325,22 @@ def create_platform_admin_app(
             "next_cursor": page.next_cursor,
         }
 
+    @app.get("/v2/platform-admin/tenants/{tenant_id}/lifecycle-preview")
+    def tenant_lifecycle_preview(tenant_id: UUID, request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        preview = lifecycle_service().preview_tenant_lifecycle(
+            principal,
+            tenant_id=tenant_id,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "tenant_id": str(preview.target_id),
+            "status": preview.status,
+            "lifecycle_version": preview.version,
+            "content_access": "none",
+        }
+
     @app.get("/v2/platform-admin/users")
     def users(
         request: Request,
@@ -306,6 +354,22 @@ def create_platform_admin_app(
             "policy_version": page.policy_version,
             "items": list(page.items),
             "next_cursor": page.next_cursor,
+        }
+
+    @app.get("/v2/platform-admin/users/{user_id}/lifecycle-preview")
+    def user_lifecycle_preview(user_id: UUID, request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        preview = lifecycle_service().preview_user_lifecycle(
+            principal,
+            user_id=user_id,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "user_id": str(preview.target_id),
+            "status": preview.status,
+            "security_version": preview.version,
+            "content_access": "none",
         }
 
     @app.get("/v2/platform-admin/identity-conflicts")
@@ -654,16 +718,37 @@ def create_platform_admin_app(
         limit: int = Query(default=50, ge=1, le=200),
     ) -> dict[str, object]:
         principal, _token = authenticate(request)
-        values = governed_access_service().list_admin_operations(
-            principal,
-            cursor=cursor,
-            limit=limit,
+        governed_values = (
+            governed_access.list_admin_operations(principal, cursor=cursor, limit=limit)
+            if governed_access is not None
+            else ()
         )
+        lifecycle_values = (
+            lifecycle.list_operations(principal, cursor=cursor, limit=limit)
+            if lifecycle is not None
+            else ()
+        )
+        if governed_access is None and lifecycle is None:
+            raise PlatformSecurityError(
+                "platform_governed_access_unavailable",
+                "Platform operation authorities are unavailable",
+            )
+        items = sorted(
+            [
+                *(_operation_payload(value) for value in governed_values),
+                *(_lifecycle_operation_payload(value) for value in lifecycle_values),
+            ],
+            key=lambda item: str(item["operation_id"]),
+        )
+        has_more = (
+            len(items) > limit or len(governed_values) == limit or len(lifecycle_values) == limit
+        )
+        visible = items[:limit]
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "items": [_operation_payload(value) for value in values],
-            "next_cursor": str(values[-1].operation_id) if len(values) == limit else None,
+            "items": visible,
+            "next_cursor": visible[-1]["operation_id"] if has_more and visible else None,
         }
 
     @app.get("/v2/platform-admin/audit-events")
@@ -799,6 +884,24 @@ def _operation_payload(value: AdminOperationView) -> dict[str, object]:
     }
 
 
+def _lifecycle_operation_payload(value: PlatformLifecycleOperationView) -> dict[str, object]:
+    return {
+        "operation_id": str(value.operation_id),
+        "action": value.action,
+        "risk_level": value.risk_level,
+        "tenant_id": str(value.tenant_id) if value.tenant_id is not None else None,
+        "target_type": value.target_type,
+        "target_id": str(value.target_id),
+        "requested_by_principal_id": str(value.requested_by_principal_id),
+        "approved_by_principal_id": None,
+        "status": value.status,
+        "version": value.version,
+        "created_at": value.occurred_at.isoformat(),
+        "updated_at": value.occurred_at.isoformat(),
+        "receipt_source": "pc2_lifecycle",
+    }
+
+
 def _audit_event_payload(value: AuditEventView) -> dict[str, object]:
     return {
         "event_id": str(value.event_id),
@@ -815,3 +918,11 @@ def _audit_event_payload(value: AuditEventView) -> dict[str, object]:
         "event_hash": value.event_hash,
         "occurred_at": value.occurred_at.isoformat(),
     }
+
+
+def _platform_admin_asset(name: str, media_type: str) -> Response:
+    return Response(
+        files("saas.admin_ui").joinpath(name).read_bytes(),
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
+    )

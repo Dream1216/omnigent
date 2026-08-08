@@ -1,7 +1,8 @@
 # Platform Security Foundation operations
 
-This runbook operates the PC1 Staff Realm, PC2 content-blind lifecycle authority, and
-PC3 governed JIT Support/Admin Operation/audit-evidence boundary. It never grants
+This runbook operates the PC1 Staff Realm, PC2 content-blind lifecycle authority,
+PC3 governed JIT Support/Admin Operation/audit-evidence boundary and PC4 standalone
+Platform Console. It never grants
 ambient customer-content access or makes the emergency database role an application
 role. Destructive User/Tenant deletion and production release remain separate gates.
 
@@ -30,6 +31,28 @@ role. Destructive User/Tenant deletion and production release remain separate ga
    configuration and must remain in the separate recovery Realm.
 5. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, IdP,
    database-role and negative-matrix checks below pass for the exact release revision.
+
+## PC4 Platform Console
+
+- Serve `/platform-admin` and its `/platform-admin/assets/*` resources only from the
+  dedicated Staff Origin. Do not proxy it through the Tenant Origin or mount it into
+  the official Agent/Harness Web application.
+- The Staff login adapter must place the CSRF value in
+  `sessionStorage["omnigent.platform.csrf"]` for the Staff Origin. Keep the Session
+  cookie HttpOnly, Secure and `__Host-` scoped. An empty CSRF binding must leave every
+  mutation control disabled.
+- Keep the same-origin-only CSP and forbid inline scripts, inline styles, third-party
+  assets and `innerHTML`/raw customer content rendering. Any new asset must be in the
+  wheel allowlist and covered by authenticated asset-route tests.
+- Treat lifecycle previews as short-lived CAS inputs, not authorization grants. Fetch
+  the exact User/Tenant preview immediately before the command and let PostgreSQL RLS
+  plus the governance transaction reauthorize the target.
+- The Operations drawer merges governed PC3 operations with only the requesting
+  principal's immutable PC2 lifecycle receipts. Do not expose another Staff actor's
+  PC2 receipt through this endpoint.
+- Permission-disabled modules and controls are a usability mirror only. Server
+  authorization, current Assignment checks, fresh authentication, separation of
+  duties, target-bound RLS and idempotency remain authoritative.
 
 ## Staff bootstrap and role governance
 
@@ -132,6 +155,7 @@ Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
 uv run pytest -q \
   tests/saas/test_platform_security.py \
   tests/saas/test_platform_http.py \
+  tests/saas/test_platform_admin_browser.py \
   tests/saas/test_platform_security_browser.py \
   tests/saas/test_platform_lifecycle.py \
   tests/saas/test_platform_lifecycle_http.py \
@@ -149,8 +173,8 @@ uv run pytest -q \
 The PostgreSQL check must prove exact Staff identity and session lookup, role-less
 denial, active-role access, transaction-local context cleanup, Tenant-role denial,
 customer-content denial and inability to `SET ROLE saas_platform`. The Chromium check
-must use HTTPS and prove Staff success plus mixed-cookie, wrong-Origin, bearer and
-role-less denial.
+must use HTTPS and prove the four-role PC4 page/action matrix plus Staff success,
+mixed-cookie, wrong-Origin, bearer and role-less denial.
 
 Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
 compatibility matrix. The restore must retain non-empty Staff, Assignment, Session and
@@ -184,8 +208,8 @@ forced-RLS inventories.
 ## Acceptance boundary
 
 Passing this runbook establishes the code contracts for the PC1 security foundation,
-PC2 lifecycle, and PC3 governed-access slice: independent Staff Realm, governed
+PC2 lifecycle, PC3 governed-access slice and PC4 Console candidate: independent Staff Realm, governed
 Assignments, content-blind projections, least-privilege target-bound database roles,
 User/Tenant suspend/restore, Session revocation and Owner Recovery. It does not
-establish User/Tenant deletion, a complete Platform Console UI, production KMS signing,
+establish User/Tenant deletion, PC4 production deployment, production KMS signing,
 deployed Staff IdP/Origins, multi-AZ/PITR evidence, or release GO.

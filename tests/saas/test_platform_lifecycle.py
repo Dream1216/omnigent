@@ -180,6 +180,28 @@ def _seed_session(db: Session, user_id: UUID, suffix: str) -> None:
     )
 
 
+def test_lifecycle_previews_return_only_authoritative_user_and_tenant_cas_state(pc2) -> None:
+    factory, service, sessions, _operator_id = pc2
+    tenant_id, _owner_id, target_id = _seed_tenant(factory)
+    actor = _actor(sessions)
+
+    user = service.preview_user_lifecycle(actor, user_id=target_id, now=NOW)
+    tenant = service.preview_tenant_lifecycle(actor, tenant_id=tenant_id, now=NOW)
+
+    assert (user.target_id, user.target_type, user.status, user.version) == (
+        target_id,
+        "global_user",
+        "active",
+        1,
+    )
+    assert (tenant.target_id, tenant.target_type, tenant.status, tenant.version) == (
+        tenant_id,
+        "tenant",
+        "active",
+        1,
+    )
+
+
 def test_user_suspend_revokes_sessions_and_stewarded_api_credentials_then_restores(
     pc2,
 ) -> None:

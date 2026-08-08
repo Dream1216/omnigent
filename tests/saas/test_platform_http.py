@@ -158,6 +158,42 @@ def test_platform_http_is_independent_origin_cookie_audience_and_content_blind()
     assert "primary_email" not in users.json()["items"][0]
 
 
+def test_platform_console_shell_and_assets_require_staff_realm_session() -> None:
+    config, _sessions, client, issued, roleless = _app()
+
+    unauthenticated = client.get("/platform-admin")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.json()["error"]["code"] == "platform_authentication_required"
+
+    client.cookies.set(config.cookie_name, issued.token)
+    page = client.get("/platform-admin")
+    assert page.status_code == 200
+    assert 'data-testid="view-overview"' in page.text
+    assert 'data-testid="view-users"' in page.text
+    assert 'data-testid="view-tenants"' in page.text
+    assert 'data-testid="view-support"' in page.text
+    assert 'data-testid="view-audit"' in page.text
+    assert 'data-testid="operations-drawer"' in page.text
+    assert "script-src 'self'" in page.headers["content-security-policy"]
+    assert "'unsafe-inline'" not in page.headers["content-security-policy"]
+
+    css = client.get("/platform-admin/assets/platform-admin.css")
+    javascript = client.get("/platform-admin/assets/platform-admin.js")
+    assert css.status_code == 200
+    assert css.headers["content-type"].startswith("text/css")
+    assert javascript.status_code == 200
+    assert javascript.headers["content-type"].startswith("text/javascript")
+    assert "innerHTML" not in javascript.text
+
+    client.cookies.clear()
+    client.cookies.set(config.cookie_name, roleless.token)
+    assert client.get("/platform-admin").status_code == 200
+    client.cookies.set("__Host-omnigent_saas_session", "tenant-session")
+    mixed_realm_asset = client.get("/platform-admin/assets/platform-admin.js")
+    assert mixed_realm_asset.status_code == 401
+    assert mixed_realm_asset.json()["error"]["code"] == "platform_realm_mismatch"
+
+
 def test_platform_http_rejects_tenant_cookie_bearer_wrong_origin_and_roleless_actions() -> None:
     config, _sessions, client, issued, roleless = _app()
     client.cookies.set(config.cookie_name, issued.token)

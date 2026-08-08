@@ -1464,7 +1464,7 @@ image promotion. The evidence-successor wheel requires 194 artifacts.
 
 This slice does not complete destructive User/Tenant deletion. It does not implement
 PC3 governed support and signed audit,
-PC4 `/platform-admin` UI, PC5 enterprise/operations completion, Provider-native
+PC4 `/platform-admin` UI acceptance, PC5 enterprise/operations completion, Provider-native
 Receipt/Kill-Window recovery, payment, invoice or tax integrations. The 11 aggregate
 production gates and release `NO-GO` remain unchanged.
 
@@ -1522,6 +1522,35 @@ candidate subchecks. The restored database contained the PC3 schema and policies
 no nonempty Support Grant, Session, Admin Operation, Audit Event or Export fact. The
 archives are not registry-published, signed, vulnerability/license-cleared, canaried
 or N-1 rollback proven. Production KMS/HSM signing and rotation evidence, live Staff
-and Tenant approval operations, a complete PC4 UI, deployed Origins/IdPs,
+and Tenant approval operations, PC4 exact-SHA acceptance, deployed Origins/IdPs,
 multi-AZ/PITR and all aggregate production gates remain open. Release therefore remains
 `NO-GO`.
+
+## PC4 Platform Console implementation candidate
+
+The standalone Staff application now serves `/platform-admin` from its dedicated
+Cookie/Origin/CSRF Realm. The static HTML, CSS and JavaScript are packaged with the
+isolated SaaS boundary and do not modify or embed the official Agent/Harness Web UI.
+The Console exposes Overview, content-blind User and Tenant projections, Identity
+Conflict review, governed Support access, Audit Evidence and a unified Operations
+drawer. Navigation, fields and action buttons are driven by the server permission
+catalog; a role-less Staff principal receives an authenticated shell with every
+privileged module disabled rather than acquiring default access.
+
+User and Tenant lifecycle forms fetch an exact target-bound authoritative preview
+immediately before mutation and submit its current CAS version. Operations merge PC3
+approval workflow records with only the caller's immutable PC2 lifecycle receipts;
+the merge does not broaden lifecycle audit visibility. Destructive deletion remains
+absent. Unsafe requests require the platform CSRF value that the login adapter places
+in `sessionStorage["omnigent.platform.csrf"]`; the HttpOnly `__Host-` session cookie is
+never exposed to JavaScript. The page has no inline script, third-party asset, dynamic
+HTML injection or inline style dependency and runs under same-origin-only CSP.
+
+Real Chromium acceptance covers `platform_operator`, `compliance_operator`,
+`support_agent` and role-less Staff against a live HTTPS server, including User CAS
+suspension, Identity Conflict blocking, break-glass approval, one-time Support token
+handling, audit-export request/two-person signed approval and the unified Operations
+view. These are implementation tests only until the exact successor compatibility and
+image-candidate runs are archived. Production Origin/IdP, external KMS signing,
+customer-approved live Support, observability, accessibility/performance review and
+aggregate production gates remain open; release remains `NO-GO`.

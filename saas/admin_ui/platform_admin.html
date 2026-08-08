@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Omnigent · Platform Operations</title>
+    <link rel="stylesheet" href="/platform-admin/assets/platform-admin.css">
+    <script src="/platform-admin/assets/platform-admin.js" defer></script>
+  </head>
+  <body>
+    <div class="signal-grid" aria-hidden="true"></div>
+    <header class="command-bar">
+      <a class="brand" href="/platform-admin" aria-label="Omnigent Platform Operations">
+        <span class="brand-sigil">O</span>
+        <span><strong>OMNIGENT</strong><small>PLATFORM OPERATIONS</small></span>
+      </a>
+      <div class="realm-lock" data-testid="realm-lock">
+        <span class="realm-pulse" aria-hidden="true"></span>
+        <span>STAFF REALM</span>
+        <code id="policy-version">POLICY / VERIFYING</code>
+      </div>
+      <div class="command-actions">
+        <button class="quiet-button" data-testid="operations-toggle" id="operations-toggle" type="button">
+          OPERATIONS <span id="operations-count">00</span>
+        </button>
+        <button class="quiet-button" data-testid="logout-button" id="logout-button" type="button">LOG OUT ↗</button>
+      </div>
+    </header>
+
+    <div class="console-shell" id="console-shell" aria-busy="true">
+      <aside class="navigation-rail">
+        <div class="identity-block">
+          <span class="kicker">AUTHENTICATED PRINCIPAL</span>
+          <strong id="principal-short">VERIFYING</strong>
+          <code id="principal-id">—</code>
+          <div class="role-list" data-testid="role-list" id="role-list"></div>
+        </div>
+
+        <nav class="console-nav" aria-label="平台管理模块">
+          <button class="active" data-testid="nav-overview" data-view="overview" type="button">
+            <span>01</span><strong>OVERVIEW</strong><small>态势总览</small>
+          </button>
+          <button data-testid="nav-users" data-permission="platform.user.read" data-view="users" type="button">
+            <span>02</span><strong>USERS</strong><small>全局用户</small>
+          </button>
+          <button data-testid="nav-tenants" data-permission="platform.tenant.read" data-view="tenants" type="button">
+            <span>03</span><strong>TENANTS</strong><small>租户治理</small>
+          </button>
+          <button data-testid="nav-access" data-permission="platform.identity_conflict.read" data-view="access" type="button">
+            <span>04</span><strong>ACCESS</strong><small>身份与授权</small>
+          </button>
+          <button data-testid="nav-support" data-permission="platform.support.read" data-view="support" type="button">
+            <span>05</span><strong>SUPPORT</strong><small>受控支持</small>
+          </button>
+          <button data-testid="nav-audit" data-permission="platform.audit.read" data-view="audit" type="button">
+            <span>06</span><strong>AUDIT</strong><small>审计与导出</small>
+          </button>
+        </nav>
+
+        <div class="boundary-note">
+          <span>CONTENT BOUNDARY</span>
+          <strong>METADATA ONLY</strong>
+          <p>没有有效 Grant 时，Prompt、代码、Artifact 与 Secret 永不进入本控制台。</p>
+        </div>
+      </aside>
+
+      <main class="view-stage">
+        <section class="console-view active" data-testid="view-overview" data-view-panel="overview">
+          <header class="view-heading hero-heading">
+            <div>
+              <p class="kicker">01 / CONTROL PLANE PULSE</p>
+              <h1>平台态势，<br><em>不是客户内容。</em></h1>
+            </div>
+            <div class="clock-card"><span>UTC / LIVE</span><strong id="utc-clock">--:--:--</strong></div>
+          </header>
+
+          <div class="metric-grid" data-testid="overview-metrics">
+            <article><span>TENANTS</span><strong id="metric-tenants">—</strong><small id="metric-tenants-note">授权后加载</small></article>
+            <article><span>GLOBAL USERS</span><strong id="metric-users">—</strong><small id="metric-users-note">内容盲投影</small></article>
+            <article><span>OPEN SUPPORT</span><strong id="metric-support">—</strong><small id="metric-support-note">受控授权</small></article>
+            <article class="signal-metric"><span>PENDING OPS</span><strong id="metric-operations">—</strong><small id="metric-operations-note">等待处理</small></article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="briefing-panel">
+              <div class="panel-heading"><span>AUTHORIZATION POSTURE</span><small id="permission-count">0 PERMISSIONS</small></div>
+              <div class="posture-bars" id="posture-bars"></div>
+            </article>
+            <article class="briefing-panel incident-panel">
+              <div class="panel-heading"><span>ATTENTION QUEUE</span><button data-view-link="support" type="button">OPEN QUEUE ↗</button></div>
+              <ol class="attention-list" data-testid="attention-list" id="attention-list"></ol>
+            </article>
+          </div>
+
+          <div class="access-denied" data-testid="no-platform-access" id="no-platform-access" hidden>
+            <strong>NO PLATFORM ROLE ASSIGNED</strong>
+            <p>会话已通过 Staff Realm 认证，但当前没有任何平台权限。联系 Platform Security 管理员分配受控角色。</p>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-users" data-view-panel="users" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">02 / GLOBAL DIRECTORY</p><h1>用户治理</h1><p>只显示脱敏身份与安全状态；生命周期动作在提交前重新读取权威版本。</p></div>
+            <span class="view-total" id="users-total">00</span>
+          </header>
+          <form class="filter-strip" id="users-filter-form">
+            <input data-testid="users-search" id="users-search" type="search" placeholder="姓名 / 脱敏邮箱 / User ID">
+            <select data-testid="users-status" id="users-status"><option value="">ALL STATUS</option><option value="active">ACTIVE</option><option value="suspended">SUSPENDED</option><option value="deleted">DELETED</option></select>
+            <button type="submit">FILTER ↗</button>
+          </form>
+          <div class="record-list" data-testid="users-list" id="users-list"></div>
+          <button class="load-more" data-testid="users-more" id="users-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+        </section>
+
+        <section class="console-view" data-testid="view-tenants" data-view-panel="tenants" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">03 / TENANT DIRECTORY</p><h1>租户治理</h1><p>跨租户只读安全投影；暂停、恢复与 Owner Recovery 均走新鲜认证、外部批准与 CAS。</p></div>
+            <span class="view-total" id="tenants-total">00</span>
+          </header>
+          <form class="filter-strip" id="tenants-filter-form">
+            <input data-testid="tenants-search" id="tenants-search" type="search" placeholder="名称 / Slug / Tenant ID">
+            <select data-testid="tenants-status" id="tenants-status"><option value="">ALL STATUS</option><option value="trial">TRIAL</option><option value="active">ACTIVE</option><option value="suspended">SUSPENDED</option></select>
+            <button type="submit">FILTER ↗</button>
+          </form>
+          <div class="record-list tenant-records" data-testid="tenants-list" id="tenants-list"></div>
+          <button class="load-more" data-testid="tenants-more" id="tenants-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+        </section>
+
+        <section class="console-view" data-testid="view-access" data-view-panel="access" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">04 / IDENTITY SECURITY</p><h1>访问治理</h1><p>身份冲突只显示内容盲 Case。平台可指派候选或阻断，但不能直接创建 Identity Connection。</p></div>
+            <span class="view-total" id="conflicts-total">00</span>
+          </header>
+          <div class="split-layout">
+            <article class="work-panel">
+              <div class="panel-heading"><span>IDENTITY CONFLICT CASES</span><button id="conflicts-refresh" type="button">REFRESH ↻</button></div>
+              <div class="record-list" data-testid="conflicts-list" id="conflicts-list"></div>
+            </article>
+            <article class="work-panel catalog-panel">
+              <div class="panel-heading"><span>MY PLATFORM CAPABILITIES</span><small id="risk-summary">—</small></div>
+              <div class="permission-matrix" data-testid="permission-matrix" id="permission-matrix"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-support" data-view-panel="support" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">05 / GOVERNED SUPPORT</p><h1>受控支持</h1><p>标准支持先经 Tenant 批准；Break-glass 必须绑定 Incident。每个 Session 都是一次披露、最小范围、短期有效。</p></div>
+            <span class="view-total" id="support-total">00</span>
+          </header>
+          <div class="split-layout support-layout">
+            <form class="work-panel support-request" data-testid="support-request-form" id="support-request-form">
+              <div class="panel-heading"><span>REQUEST JIT ACCESS</span><small>MAX 60 / 15 MIN</small></div>
+              <label><span>TENANT ID</span><input data-testid="support-tenant-id" id="support-tenant-id" required></label>
+              <label><span>MODE</span><select data-testid="support-mode" id="support-mode"><option value="standard">STANDARD / TENANT APPROVAL</option><option value="break_glass">BREAK-GLASS / INCIDENT</option></select></label>
+              <label><span>SCOPES</span><input data-testid="support-scopes" id="support-scopes" value="runtime.diagnostics.read" required></label>
+              <label><span>PROJECT IDS (OPTIONAL)</span><input data-testid="support-project-ids" id="support-project-ids" placeholder="UUID, UUID"></label>
+              <label><span>EXPIRES AT</span><input data-testid="support-expires-at" id="support-expires-at" type="datetime-local" required></label>
+              <label><span>INCIDENT REF</span><input data-testid="support-incident-ref" id="support-incident-ref" placeholder="Required for break-glass"></label>
+              <label><span>REASON</span><textarea data-testid="support-reason" id="support-reason" maxlength="1024" required></textarea></label>
+              <button class="primary-action" data-testid="support-request-submit" type="submit">SUBMIT GOVERNED REQUEST ↗</button>
+            </form>
+            <article class="work-panel">
+              <div class="panel-heading"><span>GRANT LEDGER</span><button id="support-refresh" type="button">REFRESH ↻</button></div>
+              <div class="record-list" data-testid="support-list" id="support-list"></div>
+              <button class="load-more" data-testid="support-more" id="support-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+            </article>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-audit" data-view-panel="audit" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">06 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
+            <span class="view-total" id="audit-total">00</span>
+          </header>
+          <form class="audit-filter" id="audit-filter-form">
+            <label><span>TENANT ID / OPTIONAL</span><input data-testid="audit-tenant-id" id="audit-tenant-id"></label>
+            <label><span>AFTER SEQUENCE</span><input data-testid="audit-after" id="audit-after" type="number" min="0" value="0"></label>
+            <button type="submit">QUERY CHAIN ↗</button>
+            <button data-testid="audit-export-open" id="audit-export-open" type="button">REQUEST SIGNED EXPORT</button>
+          </form>
+          <div class="audit-ledger" data-testid="audit-list" id="audit-list"></div>
+          <button class="load-more" data-testid="audit-more" id="audit-more" type="button" hidden>CONTINUE CHAIN ↓</button>
+        </section>
+      </main>
+
+      <dialog aria-labelledby="operations-title" aria-modal="true" class="operations-drawer" data-testid="operations-drawer" id="operations-drawer" role="dialog">
+        <header><div><span>LIVE LEDGER</span><h2 id="operations-title">ADMIN OPERATIONS</h2></div><button id="operations-close" type="button" aria-label="关闭 Operations Drawer">×</button></header>
+        <p>长操作与高风险动作以服务端 Receipt 为准。关闭抽屉不会取消任务。</p>
+        <div class="record-list" data-testid="operations-list" id="operations-list"></div>
+        <button class="load-more" data-testid="operations-more" id="operations-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+      </dialog>
+    </div>
+
+    <dialog class="action-dialog" data-testid="action-dialog" id="action-dialog">
+      <form method="dialog" id="action-dialog-form">
+        <div class="dialog-index">CONTROLLED ACTION / <span id="dialog-risk">HIGH</span></div>
+        <h2 id="dialog-title">确认操作</h2>
+        <p id="dialog-summary"></p>
+        <div class="dialog-fields" id="dialog-fields"></div>
+        <div class="dialog-actions"><button value="cancel" type="button" id="dialog-cancel">CANCEL</button><button class="danger-action" data-testid="dialog-confirm" id="dialog-confirm" type="submit">CONFIRM</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="token-dialog" data-testid="token-dialog" id="token-dialog">
+      <div class="dialog-index">ONE-TIME DISCLOSURE</div>
+      <h2>Support Session Token</h2>
+      <code data-testid="support-one-time-token" id="support-one-time-token"></code>
+      <p>关闭后无法再次读取。请只交付给绑定的 Staff 会话，不得写入日志或工单正文。</p>
+      <button id="token-dismiss" type="button">I HAVE STORED IT SECURELY ×</button>
+    </dialog>
+
+    <div class="toast-stack" aria-live="polite" data-testid="toast-stack" id="toast-stack"></div>
+  </body>
+</html>

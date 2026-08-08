@@ -62,7 +62,13 @@ def _set_conflict_governance_role(
 def test_real_postgresql_pc2_lifecycle_is_exact_target_operator_only_and_forced_rls() -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(_postgres_url())
-    operator_id, roleless_id, user_id, tenant_id = uuid4(), uuid4(), uuid4(), uuid4()
+    operator_id, roleless_id, user_id, other_user_id, tenant_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
     now = datetime.now(timezone.utc)
     with engine.begin() as connection:
         _migrate(connection, root)
@@ -130,9 +136,10 @@ def test_real_postgresql_pc2_lifecycle_is_exact_target_operator_only_and_forced_
             sa.text(
                 "INSERT INTO saas_global_users "
                 "(id, status, security_version, created_at, updated_at) "
-                "VALUES (:user_id, 'active', 1, :now, :now)"
+                "VALUES (:user_id, 'active', 1, :now, :now), "
+                "(:other_user_id, 'active', 1, :now, :now)"
             ),
-            {"user_id": user_id, "now": now},
+            {"user_id": user_id, "other_user_id": other_user_id, "now": now},
         )
         connection.execute(
             sa.text(
@@ -222,7 +229,21 @@ def test_real_postgresql_pc2_lifecycle_is_exact_target_operator_only_and_forced_
         class_=_PlatformGovernanceSession,
         expire_on_commit=False,
     )
-    result = PlatformLifecycleService(factory).suspend_user(
+    lifecycle = PlatformLifecycleService(factory)
+    user_preview = lifecycle.preview_user_lifecycle(actor, user_id=user_id, now=now)
+    assert (user_preview.target_id, user_preview.status, user_preview.version) == (
+        user_id,
+        "active",
+        1,
+    )
+    tenant_preview = lifecycle.preview_tenant_lifecycle(actor, tenant_id=tenant_id, now=now)
+    assert (tenant_preview.target_id, tenant_preview.status, tenant_preview.version) == (
+        tenant_id,
+        "active",
+        1,
+    )
+
+    result = lifecycle.suspend_user(
         actor,
         user_id=user_id,
         expected_security_version=1,
@@ -233,6 +254,10 @@ def test_real_postgresql_pc2_lifecycle_is_exact_target_operator_only_and_forced_
     )
     assert result.result["status"] == "suspended"
     assert result.result["revoked_session_count"] == 1
+    receipts = lifecycle.list_operations(actor, now=now + timedelta(seconds=2))
+    assert [(receipt.operation_id, receipt.target_id, receipt.status) for receipt in receipts] == [
+        (result.operation_id, user_id, "succeeded")
+    ]
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
