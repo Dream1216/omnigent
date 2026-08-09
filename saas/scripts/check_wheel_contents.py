@@ -276,6 +276,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/scripts/check_production_baseline.py",
     "saas/scripts/check_recovery_readiness.py",
     "saas/scripts/check_slo_capacity_readiness.py",
+    "saas/scripts/run_production_admission.py",
     "saas/scripts/run_postgresql_restore_contract.py",
     "saas/scripts/compare_oci_rebuilds.py",
     "saas/supply_chain/release-policy.json",

@@ -10,6 +10,7 @@ from pathlib import Path
 from saas.scripts.check_image_supply_chain import (
     canonical_release_evidence_sha256,
     load_release_evidence,
+    validate_candidate_build_contract,
     validate_release,
 )
 from saas.scripts.compare_oci_rebuilds import compare_archives
@@ -223,6 +224,74 @@ def _valid_evidence() -> dict[str, object]:
 
 def _resign(evidence: dict[str, object]) -> None:
     evidence["evidence_sha256"] = canonical_release_evidence_sha256(evidence)
+
+
+def _candidate_contract_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    for relative in (
+        ".github/workflows/saas-image-candidate.yml",
+        "saas/actions/build-oci-candidate/action.yml",
+    ):
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((_repo() / relative).read_text(encoding="utf-8"), encoding="utf-8")
+    return repo
+
+
+def test_candidate_composite_build_contract_is_valid() -> None:
+    assert validate_candidate_build_contract(_repo()) == []
+
+
+def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    action = repo / "saas/actions/build-oci-candidate/action.yml"
+    action.write_text(
+        action.read_text(encoding="utf-8").replace(
+            "CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}",
+            "CONTROL_PLANE_SCHEMA_REVISION=${{ env.SOURCE_REVISION }}",
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert (
+        "candidate composite build action must bind resolved CONTROL_PLANE_SCHEMA_REVISION"
+    ) in violations
+
+
+def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "uses: ./saas/actions/build-oci-candidate",
+            "uses: ./saas/actions/untrusted-build",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "candidate workflow must invoke four repeated composite builds" in violations
+    assert "candidate workflow build coordinates must cover server and host twice" in violations
+
+
+def test_candidate_composite_build_contract_rejects_missing_and_symlink(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    action = repo / "saas/actions/build-oci-candidate/action.yml"
+    action.unlink()
+    missing = validate_candidate_build_contract(repo)
+    assert "candidate composite build action must be a repository file" in missing
+
+    outside = tmp_path / "outside-action.yml"
+    outside.write_text("runs:\n  using: composite\n", encoding="utf-8")
+    action.symlink_to(outside)
+    symlink = validate_candidate_build_contract(repo)
+    assert "candidate composite build action path must not use symbolic links" in symlink
 
 
 def test_image_policy_is_valid_but_missing_real_release_evidence() -> None:

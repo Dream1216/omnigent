@@ -1,0 +1,59 @@
+name: Build reproducible OCI candidate
+description: Build one Server or Host OCI archive with pinned release materials.
+
+inputs:
+  artifact:
+    description: Archive basename, either server or host.
+    required: true
+  target:
+    description: Dockerfile target paired with the artifact.
+    required: true
+  attempt:
+    description: Reproducibility attempt number, either 1 or 2.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate build coordinates
+      shell: bash
+      env:
+        ARTIFACT: ${{ inputs.artifact }}
+        TARGET: ${{ inputs.target }}
+        ATTEMPT: ${{ inputs.attempt }}
+      run: |
+        set -euo pipefail
+        case "${ARTIFACT}:${TARGET}" in
+          server:runtime|host:host) ;;
+          *) echo "unsupported OCI artifact/target pair" >&2; exit 2 ;;
+        esac
+        case "${ATTEMPT}" in
+          1|2) ;;
+          *) echo "attempt must be 1 or 2" >&2; exit 2 ;;
+        esac
+        for name in PYTHON_IMAGE NODE_IMAGE SOURCE_DATE_EPOCH SOURCE_REVISION \
+          UPSTREAM_REVISION CONTROL_PLANE_SCHEMA_REVISION ADAPTER_CONTRACT_VERSION; do
+          [[ -n "${!name:-}" ]] || { echo "missing build material: ${name}" >&2; exit 2; }
+        done
+
+    - name: Build ${{ inputs.artifact }} candidate attempt ${{ inputs.attempt }}
+      uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      with:
+        context: .
+        file: deploy/docker/Dockerfile
+        target: ${{ inputs.target }}
+        push: false
+        platforms: linux/amd64,linux/arm64
+        outputs: type=oci,dest=${{ runner.temp }}/${{ inputs.artifact }}-${{ inputs.attempt }}.tar
+        provenance: mode=max
+        sbom: true
+        cache-from: type=gha,scope=saas-${{ inputs.artifact }}-candidate
+        cache-to: ${{ inputs.attempt == '1' && format('type=gha,scope=saas-{0}-candidate,mode=max', inputs.artifact) || '' }}
+        build-args: |
+          PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+          NODE_IMAGE=${{ env.NODE_IMAGE }}
+          SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+          SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+          UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
+          CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
+          ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
