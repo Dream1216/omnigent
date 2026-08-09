@@ -93,12 +93,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     with op.batch_alter_table("saas_enterprise_custom_roles") as batch_op:
-        batch_op.drop_constraint(
-            "ck_enterprise_custom_role_retire_state", type_="check"
-        )
-        batch_op.drop_constraint(
-            "fk_enterprise_custom_role_retired_by", type_="foreignkey"
-        )
+        batch_op.drop_constraint("ck_enterprise_custom_role_retire_state", type_="check")
+        batch_op.drop_constraint("fk_enterprise_custom_role_retired_by", type_="foreignkey")
         batch_op.drop_column("retire_reason")
         batch_op.drop_column("retired_by")
         batch_op.drop_column("retired_at")

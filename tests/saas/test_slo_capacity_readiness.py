@@ -104,9 +104,7 @@ def _record() -> dict[str, object]:
                             "max_saturation_percent": 70.0,
                             "minimum_headroom_percent": 30.0,
                             "tenant_fairness_ratio": 0.95,
-                            "evidence_sha256": _hash(
-                                f"scenario-{service['id']}-{scenario}"
-                            ),
+                            "evidence_sha256": _hash(f"scenario-{service['id']}-{scenario}"),
                         }
                         for scenario in policy["required_capacity_scenarios"]  # type: ignore[union-attr]
                     },
@@ -192,9 +190,7 @@ def test_exact_production_slo_and_capacity_evidence_satisfies_contract() -> None
 
 
 def test_a_record_cannot_replace_inactive_production_dashboards() -> None:
-    report = validate_slo_capacity_readiness(
-        _repo(), _policy(), [_record()], now=_NOW
-    )
+    report = validate_slo_capacity_readiness(_repo(), _policy(), [_record()], now=_NOW)
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
@@ -341,12 +337,9 @@ def test_duplicate_ids_and_incomplete_attestations_fail_closed() -> None:
     )
 
     assert report["status"] == "fail"
-    assert "duplicate SLO capacity evidence_id slo-capacity-20260805" in report[
-        "violations"
-    ]
+    assert "duplicate SLO capacity evidence_id slo-capacity-20260805" in report["violations"]
     assert any(
-        "independent attestations are incomplete" in blocker
-        for blocker in report["blockers"]
+        "independent attestations are incomplete" in blocker for blocker in report["blockers"]
     )
 
 

@@ -386,18 +386,14 @@ def _certificate_material(
     health = issue(
         "health",
         sans=[
-            x509.UniformResourceIdentifier(
-                "spiffe://omnigent/platform/preview-health/ci-probe"
-            )
+            x509.UniformResourceIdentifier("spiffe://omnigent/platform/preview-health/ci-probe")
         ],
         usage=ExtendedKeyUsageOID.CLIENT_AUTH,
     )
     gateway_client = issue(
         "gateway-client",
         sans=[
-            x509.UniformResourceIdentifier(
-                "spiffe://omnigent/preview-gateway/gateway-health-test"
-            )
+            x509.UniformResourceIdentifier("spiffe://omnigent/preview-gateway/gateway-health-test")
         ],
         usage=ExtendedKeyUsageOID.CLIENT_AUTH,
     )
@@ -409,9 +405,7 @@ def _certificate_material(
     return ca_path, server, health, gateway_client, unrelated_server
 
 
-def _runtime_leaf(
-    certificate: x509.Certificate, *, purpose: str
-) -> PreviewGatewayRuntimeLeaf:
+def _runtime_leaf(certificate: x509.Certificate, *, purpose: str) -> PreviewGatewayRuntimeLeaf:
     return PreviewGatewayRuntimeLeaf(
         purpose=purpose,
         certificate_der=certificate.public_bytes(serialization.Encoding.DER),

@@ -59,7 +59,10 @@
             "tests/saas/test_image_supply_chain.py",
             "saas/acceptance/p0-adr-image-candidate-ci-31276491134.json",
             "saas/acceptance/p4-image-candidate-ci-30901594130.json",
-            "saas/acceptance/p5-image-candidate-ci-30978680569.json"
+            "saas/acceptance/p5-image-candidate-ci-30978680569.json",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         },
         {
@@ -71,7 +74,10 @@
             "saas/production/runbooks/backup-restore.md",
             "saas/production/runbooks/control-plane-degradation.md",
             "saas/production/runbooks/incident-response.md",
-            "tests/saas/test_production_baseline.py"
+            "tests/saas/test_production_baseline.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         }
       ]
@@ -514,13 +520,30 @@
             "saas/acceptance/p4-preview-relay-ci-30951270461.json",
             "saas/runner_adapter/process_policy.py",
             "tests/saas/test_managed_runner_process_policy.py",
-            "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/runbooks/production-deployment.md",
+            "tests/saas/test_deployment_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         },
         {
           "id": "p4-two-failure-domain-and-n-minus-one-rollback",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/runbooks/production-deployment.md",
+            "tests/saas/test_deployment_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
         }
       ]
     },
@@ -601,17 +624,59 @@
         {
           "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/recovery-policy.json",
+            "saas/production/recovery.py",
+            "saas/scripts/check_recovery_readiness.py",
+            "tests/saas/test_deployment_readiness.py",
+            "tests/saas/test_recovery_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
         },
         {
           "id": "p5-slo-capacity-supply-chain-api-webhook-deletion",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/slo-capacity-policy.json",
+            "saas/scripts/check_slo_capacity_readiness.py",
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/production/deletion-policy.json",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/production/deployment-policy.json",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/control_plane/webhooks.py",
+            "tests/saas/test_webhook_delivery.py",
+            "saas/control_plane/api_credentials.py",
+            "tests/saas/test_api_credentials.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
         },
         {
           "id": "p5-production-foundation-gate",
           "status": "pending",
-          "evidence": []
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/recovery-policy.json",
+            "saas/scripts/check_recovery_readiness.py",
+            "saas/production/slo-capacity-policy.json",
+            "saas/scripts/check_slo_capacity_readiness.py",
+            "saas/production/deletion-policy.json",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
         }
       ]
     },
@@ -723,7 +788,14 @@
             "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
             "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
             "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
-            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json"
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json",
+            "saas/production/commercial-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_commercial_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         },
         {
@@ -758,7 +830,14 @@
             "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
             "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
             "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
-            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json"
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json",
+            "saas/production/enterprise-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_enterprise_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         },
         {
@@ -766,7 +845,15 @@
           "status": "pending",
           "evidence": [
             "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
-            "saas/acceptance/p6-upstream-sync-ci-31019511803.json"
+            "saas/acceptance/p6-upstream-sync-ci-31019511803.json",
+            "saas/production/upstream-sync-policy.json",
+            "saas/production/commercial-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_commercial_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
           ]
         }
       ]

@@ -252,9 +252,7 @@ def create_public_api_router(
         response.status_code = 204
         return response
 
-    @router.post(
-        "/tenants/{tenant_id}/service-accounts/{service_account_id}/steward-transfer"
-    )
+    @router.post("/tenants/{tenant_id}/service-accounts/{service_account_id}/steward-transfer")
     def transfer_steward(
         tenant_id: UUID,
         service_account_id: UUID,
@@ -319,9 +317,7 @@ def _require_human(auth_provider: SaasAuthProvider, request: Request) -> SaasPri
     return principal
 
 
-def _require_machine(
-    auth_provider: SaasAuthProvider, request: Request
-) -> SaasMachinePrincipal:
+def _require_machine(auth_provider: SaasAuthProvider, request: Request) -> SaasMachinePrincipal:
     principal = auth_provider.get_machine_principal(request)
     if principal is None:
         raise _http_error(

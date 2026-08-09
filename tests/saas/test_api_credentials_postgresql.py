@@ -137,9 +137,7 @@ def test_real_postgresql_api_key_uses_exact_rls_and_revokes_immediately() -> Non
         connection.exec_driver_sql(f"SET LOCAL ROLE {governance_role}")
 
     @sa.event.listens_for(auth_sessions, "after_begin")
-    def _use_auth_role(
-        _session: Session, _transaction: object, connection: sa.Connection
-    ) -> None:
+    def _use_auth_role(_session: Session, _transaction: object, connection: sa.Connection) -> None:
         connection.exec_driver_sql(f"SET LOCAL ROLE {auth_role}")
 
     governance = ApiCredentialService(governance_sessions, credential_pepper=pepper)
@@ -185,9 +183,7 @@ def test_real_postgresql_api_key_uses_exact_rls_and_revokes_immediately() -> Non
         ).scalar_one()
         assert exact_count == 1
 
-    principal = authenticator.authenticate(
-        issued.token, source_ip="127.0.0.1", now=checked_at
-    )
+    principal = authenticator.authenticate(issued.token, source_ip="127.0.0.1", now=checked_at)
     assert principal.service_account_id == account.id
     governance.revoke_api_credential(
         actor_id=owner_id,

@@ -80,8 +80,10 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
 
 def _host(request: Request) -> str:
     raw = request.headers.get("host", "").strip()
-    if not raw or any(character.isspace() for character in raw) or any(
-        separator in raw for separator in "/?#"
+    if (
+        not raw
+        or any(character.isspace() for character in raw)
+        or any(separator in raw for separator in "/?#")
     ):
         raise IsolationControlPlaneError("preview_host_invalid", "Preview host is invalid")
     try:

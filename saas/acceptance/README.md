@@ -1150,3 +1150,25 @@ production image, SLO, RPO/RTO, recovery, deletion, capacity, security or commer
 acceptance gates. The aggregate ledger therefore advances to 41/51 with ten pending
 gates and remains `NO-GO`. The evidence-successor wheel requires 252 artifacts so the
 append-only approval record is carried with the deployable SaaS boundary.
+
+The next production-admission contract removes the remaining manual-ledger trust gap.
+`saas.production.readiness` now derives all ten aggregate production gates from the
+baseline, image, deployment, recovery, SLO/capacity, deletion, commercial, enterprise,
+and consecutive-upstream-sync verifiers. A ledger entry marked `passed` while its
+derived gate is blocked is a structural failure; overall readiness additionally
+requires every aggregate ledger entry, every phase, and release `GO` to agree.
+
+The deployment verifier rejects logical multi-node clusters that share a physical host.
+It requires five production components to be ready and spread across at least two
+physical hosts and zones with PDB, topology, hardening, containment, mTLS, and the full
+ten-scenario failure/N-1 matrix. Separate commercial and enterprise contracts require
+real provider/payment/invoice/tax and Staff/OIDC/SAML/SCIM/MFA/privacy evidence. Test
+mode transactions, mock IdPs, CI fixtures, screenshots, mutable JSON, reused attestors,
+or untrusted workflows cannot qualify. The two historical consecutive-sync records are
+content-digest pinned before they can contribute to P6.
+
+No production evidence was manufactured by this change. The derived report remains
+zero of ten aggregate gates ready, the ledger remains 41/51 with ten pending, and the
+release remains `NO-GO`. After the matching Playwright Chromium was installed, the
+complete local SaaS shard passed 438 tests with 32 environment-conditioned skips and
+three existing dependency warnings in 247.21 seconds.

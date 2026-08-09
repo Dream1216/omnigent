@@ -640,9 +640,7 @@ class ApiCredentialService:
                 cast(UUID, account.space_id),
                 cast(UUID, account.project_id),
             )
-            self._require_active_steward(
-                db, tenant_id, cast(UUID, account.space_id), to_user_id
-            )
+            self._require_active_steward(db, tenant_id, cast(UUID, account.space_id), to_user_id)
             if account.security_version != expected_security_version:
                 raise ApiCredentialError(
                     "service_account_version_conflict", "Service Account changed concurrently"
@@ -851,9 +849,7 @@ class ApiCredentialService:
         tenant = db.get(Tenant, account.tenant_id)
         space = db.get(Space, account.space_id) if account.space_id is not None else None
         project = (
-            db.get(ProjectRecord, account.project_id)
-            if account.project_id is not None
-            else None
+            db.get(ProjectRecord, account.project_id) if account.project_id is not None else None
         )
         if tenant is None or tenant.status not in ("trial", "active"):
             raise ApiCredentialError("invalid_api_credential", "API credential is invalid")
@@ -889,9 +885,7 @@ class ApiCredentialService:
         *,
         assigned_permissions: tuple[str, ...] = (),
     ) -> None:
-        permissions = cls._actor_project_permissions(
-            db, actor_id, tenant_id, space_id, project_id
-        )
+        permissions = cls._actor_project_permissions(db, actor_id, tenant_id, space_id, project_id)
         if "grant.manage" not in permissions:
             raise ApiCredentialError(
                 "forbidden", "Project grant management permission is required"
@@ -1123,16 +1117,12 @@ class ApiCredentialService:
         }
 
     @staticmethod
-    def _account_from_payload(
-        payload: dict[str, object], *, replayed: bool
-    ) -> ServiceAccountView:
+    def _account_from_payload(payload: dict[str, object], *, replayed: bool) -> ServiceAccountView:
         return ServiceAccountView(
             id=UUID(cast(str, payload["service_account_id"])),
             tenant_id=UUID(cast(str, payload["tenant_id"])),
             space_id=UUID(cast(str, payload["space_id"])) if payload["space_id"] else None,
-            project_id=(
-                UUID(cast(str, payload["project_id"])) if payload["project_id"] else None
-            ),
+            project_id=(UUID(cast(str, payload["project_id"])) if payload["project_id"] else None),
             name=cast(str, payload["name"]),
             description=cast(str | None, payload["description"]),
             steward_user_id=UUID(cast(str, payload["steward_user_id"])),

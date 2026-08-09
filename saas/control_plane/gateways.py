@@ -910,12 +910,9 @@ class PreviewGatewayCertificateAuthority:
                 .where(PreviewGatewayCertificateRecord.fingerprint_sha256 == fingerprint)
                 .with_for_update()
             )
-            if (
-                record is None
-                or (
-                    gateway_instance_id is not None
-                    and record.gateway_instance_id != gateway_instance_id
-                )
+            if record is None or (
+                gateway_instance_id is not None
+                and record.gateway_instance_id != gateway_instance_id
             ):
                 # Missing and cross-Gateway fingerprints are deliberately
                 # indistinguishable to the workload transport.

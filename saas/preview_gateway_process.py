@@ -283,6 +283,7 @@ def load_preview_gateway_process_config(path: str | Path) -> PreviewGatewayProce
             )
     finally:
         os.close(descriptor)
+
     def reject_duplicate_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
         document: dict[str, object] = {}
         for key, value in pairs:
@@ -446,9 +447,7 @@ class PreviewGatewayHealthServer:
             server.close()
             await server.wait_closed()
 
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         status = 400
         method = "GET"
         try:
