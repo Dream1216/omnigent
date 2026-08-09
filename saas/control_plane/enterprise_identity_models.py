@@ -207,6 +207,11 @@ class EnterpriseScimEventRecord(SaasBase):
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     disposition: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     result: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    redacted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    redaction_manifest_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_privacy_deletion_manifests.id", ondelete="RESTRICT")
+    )
+    original_result_hash: Mapped[str | None] = mapped_column(sa.String(64))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -230,6 +235,13 @@ class EnterpriseScimEventRecord(SaasBase):
         sa.CheckConstraint(
             "disposition IN ('applied', 'stale', 'blocked')",
             name="ck_scim_event_disposition",
+        ),
+        sa.CheckConstraint(
+            "(redacted_at IS NULL AND redaction_manifest_id IS NULL "
+            "AND original_result_hash IS NULL) OR "
+            "(redacted_at IS NOT NULL AND redaction_manifest_id IS NOT NULL "
+            "AND length(original_result_hash) = 64)",
+            name="ck_scim_event_redaction",
         ),
         sa.UniqueConstraint("directory_id", "event_id", name="uq_scim_event_request"),
         sa.Index(

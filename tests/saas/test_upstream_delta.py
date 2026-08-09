@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from saas.scripts.check_patch_queue import check_patch_queue
 from saas.scripts.check_upstream_delta import FileDelta, evaluate_delta
@@ -76,6 +79,15 @@ def test_reverse_dependency_and_patch_overflow_fail_budget() -> None:
 
 def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     repo = Path(__file__).resolve().parents[2]
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if shallow == "true":
+        pytest.skip("patch replay needs full history and runs in the SaaS compatibility gate")
 
     report = check_patch_queue(repo)
 

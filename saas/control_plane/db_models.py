@@ -781,6 +781,9 @@ class MembershipInvitation(SaasBase):
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
     accepted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    deletion_manifest_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_privacy_deletion_manifests.id", ondelete="RESTRICT")
+    )
     created_by: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
     )

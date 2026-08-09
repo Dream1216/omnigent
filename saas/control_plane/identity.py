@@ -30,6 +30,9 @@ from saas.control_plane.db_models import (
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
+from saas.control_plane.privacy_lifecycle import oidc_identity_locator_hash
+from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
+from saas.control_plane.rls import RlsContext, apply_rls_context
 
 _MAX_PASSWORD_FAILURES = 5
 _PASSWORD_LOCK_TIME = timedelta(minutes=15)
@@ -150,6 +153,22 @@ def _invalidate_sessions(db: Session, user_id: UUID, changed_at: datetime) -> tu
     return security_version, result.rowcount
 
 
+def _reject_deleted_identity(db: Session, issuer: str, subject: str) -> None:
+    locator = oidc_identity_locator_hash(issuer, subject)
+    apply_rls_context(db, RlsContext(privacy_locator_hash=locator))
+    if (
+        db.execute(
+            sa.select(PrivacyIdentityTombstoneRecord.id).where(
+                PrivacyIdentityTombstoneRecord.locator_hash == locator
+            )
+        ).scalar_one_or_none()
+        is not None
+    ):
+        raise LifecycleError(
+            "identity_subject_deleted", "deleted identity subjects cannot be reprovisioned"
+        )
+
+
 class IdentityManagementService:
     """Provision, link, list, and revoke immutable provider subjects."""
 
@@ -162,6 +181,7 @@ class IdentityManagementService:
         assertion.validate()
         email = normalize_email(assertion.email) if assertion.email else None
         with self._session_factory.begin() as db:
+            _reject_deleted_identity(db, assertion.issuer, assertion.subject)
             existing = db.execute(
                 sa.select(IdentityConnection).where(
                     IdentityConnection.issuer == assertion.issuer,
@@ -235,6 +255,7 @@ class IdentityManagementService:
         assertion.validate()
         email = normalize_email(assertion.email) if assertion.email else None
         with self._session_factory.begin() as db:
+            _reject_deleted_identity(db, assertion.issuer, assertion.subject)
             existing = db.execute(
                 sa.select(IdentityConnection).where(
                     IdentityConnection.issuer == assertion.issuer,
@@ -470,6 +491,7 @@ class IdentityManagementService:
 
             connection_id: UUID | None = None
             if decision == "approve":
+                _reject_deleted_identity(db, conflict.issuer, conflict.subject)
                 existing = db.execute(
                     sa.select(IdentityConnection).where(
                         IdentityConnection.issuer == conflict.issuer,
@@ -559,6 +581,7 @@ class IdentityManagementService:
             }
         )
         with self._session_factory.begin() as db:
+            _reject_deleted_identity(db, assertion.issuer, assertion.subject)
             receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(

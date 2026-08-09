@@ -21,6 +21,7 @@ class RlsContext:
     scim_token_hash: str | None = None
     target_support_grant_id: UUID | None = None
     target_admin_operation_id: UUID | None = None
+    privacy_locator_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,8 @@ class PlatformRlsContext:
     target_support_grant_id: UUID | None = None
     target_admin_operation_id: UUID | None = None
     support_session_token_hash: str | None = None
+    privacy_manifest_id: UUID | None = None
+    privacy_locator_hash: str | None = None
 
 
 def _set_local(session: Session, name: str, value: str) -> None:
@@ -62,6 +65,8 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     _set_local(session, "app.platform_target_support_grant_id", "")
     _set_local(session, "app.platform_target_admin_operation_id", "")
     _set_local(session, "app.platform_support_session_token_hash", "")
+    _set_local(session, "app.platform_privacy_manifest_id", "")
+    _set_local(session, "app.privacy_locator_hash", context.privacy_locator_hash or "")
     _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
     _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
     _set_local(session, "app.space_id", str(context.space_id) if context.space_id else "")
@@ -97,6 +102,7 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         "app.api_credential_id",
         "app.invitation_token_hash",
         "app.scim_token_hash",
+        "app.privacy_locator_hash",
     ):
         _set_local(session, name, "")
     _set_local(
@@ -141,3 +147,9 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         "app.platform_support_session_token_hash",
         context.support_session_token_hash or "",
     )
+    _set_local(
+        session,
+        "app.platform_privacy_manifest_id",
+        str(context.privacy_manifest_id) if context.privacy_manifest_id else "",
+    )
+    _set_local(session, "app.privacy_locator_hash", context.privacy_locator_hash or "")

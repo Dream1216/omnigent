@@ -417,10 +417,21 @@ def validate_approval_contract(
     if len(set(required_roles)) != 4:
         violations.append("exactly four distinct signing roles are required")
 
+    if approval.get("scope") != "p0-architectural-decision-bundle":
+        violations.append("baseline approval scope must be the P0 architectural decision bundle")
+    approved_schema_revision = approval.get("approved_control_plane_schema_revision")
+    if not isinstance(approved_schema_revision, str) or not approved_schema_revision:
+        violations.append("approval approved_control_plane_schema_revision is required")
+
     revision = baseline.get("revision_contract")
     if isinstance(revision, dict):
         for field in _CANDIDATE_REVISION_FIELDS:
-            if candidate.get(field) != revision.get(field):
+            expected = (
+                approved_schema_revision
+                if field == "control_plane_schema_revision"
+                else revision.get(field)
+            )
+            if candidate.get(field) != expected:
                 violations.append(f"candidate.{field} does not match baseline revision contract")
     implementation_revision = candidate.get("implementation_revision")
     evidence_revision = candidate.get("evidence_revision")

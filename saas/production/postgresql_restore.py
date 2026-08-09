@@ -68,6 +68,9 @@ _SELECTED_HASH_TABLES = (
     "saas_enterprise_scim_users",
     "saas_enterprise_scim_groups",
     "saas_enterprise_scim_events",
+    "saas_privacy_legal_holds",
+    "saas_privacy_deletion_manifests",
+    "saas_privacy_identity_tombstones",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -244,6 +247,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "scim_group_b": "bc300000-0000-4000-8000-000000000002",
         "scim_event_a": "bc400000-0000-4000-8000-000000000001",
         "scim_event_b": "bc400000-0000-4000-8000-000000000002",
+        "privacy_subject": "bd000000-0000-4000-8000-000000000001",
+        "privacy_hold": "bd100000-0000-4000-8000-000000000001",
+        "privacy_manifest": "bd200000-0000-4000-8000-000000000001",
+        "privacy_tombstone": "bd300000-0000-4000-8000-000000000001",
+        "privacy_scim_event": "bd400000-0000-4000-8000-000000000001",
+        "privacy_locator_hash": "d" * 64,
         "scim_token_hash_a": "1" * 64,
         "scim_token_hash_b": "2" * 64,
         "scim_successor_token_hash_a": "3" * 64,
@@ -305,7 +314,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "VALUES (:actor_a, 'active', 1, 'Recovery A', 'a@example.test'), "
                     "(:actor_b, 'active', 1, 'Recovery B', 'b@example.test'), "
                     "(:approver_a, 'active', 1, 'Approver A', 'approver-a@example.test'), "
-                    "(:approver_b, 'active', 1, 'Approver B', 'approver-b@example.test')"
+                    "(:approver_b, 'active', 1, 'Approver B', 'approver-b@example.test'), "
+                    "(:privacy_subject, 'deleted', 2, NULL, NULL)"
                 ),
                 identifiers,
             )
@@ -333,6 +343,96 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "'logical restore contract')"
                 ),
                 identifiers,
+            )
+            privacy_surfaces = {
+                name: {
+                    "disposition": disposition,
+                    "status": status,
+                    "evidence_sha256": hashlib.sha256(name.encode()).hexdigest(),
+                }
+                for name, disposition, status in (
+                    ("control_plane_database", "erase", "erased"),
+                    ("runtime_database", "erase", "erased"),
+                    ("object_and_artifact_store", "erase", "erased"),
+                    ("vector_and_search_indexes", "erase", "erased"),
+                    ("caches", "erase", "erased"),
+                    ("queues_and_dlq", "erase", "erased"),
+                    ("provider_and_connector_state", "erase", "erased"),
+                    ("enterprise_identity_provisioning_state", "erase", "erased"),
+                    (
+                        "enterprise_identity_event_receipts",
+                        "anonymize_and_retain",
+                        "retained",
+                    ),
+                    ("runner_worktree_and_recovery_material", "erase", "erased"),
+                    ("webhook_state", "erase", "erased"),
+                    ("secret_and_kms_references", "cryptographic_erase", "erased"),
+                    ("logs_and_traces", "redact_and_retain", "retained"),
+                    ("immutable_audit_and_ledger", "anonymize_and_retain", "retained"),
+                    ("backups_and_snapshots", "tombstone_then_expire", "pending_retention"),
+                )
+            }
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_privacy_legal_holds "
+                    "(id, target_type, target_id, tenant_id, status, scope, authority_ref, "
+                    "reason, review_due_at, placed_by_principal_id, "
+                    "released_by_principal_id, release_reason, "
+                    "version, created_at, updated_at, released_at) VALUES "
+                    "(:privacy_hold, 'global_user', :privacy_subject, NULL, 'released', "
+                    "CAST(:hold_scope AS jsonb), 'recovery-privacy-case', "
+                    "'restore Legal Hold fixture', :privacy_review_due_at, "
+                    ":platform_operator, :platform_approver, "
+                    "'preservation authority released', 2, :privacy_started_at, "
+                    ":privacy_completed_at, :privacy_completed_at)"
+                ),
+                {
+                    **identifiers,
+                    "hold_scope": json.dumps(["identity", "audit"]),
+                    "privacy_started_at": datetime(2026, 8, 1, 0, 0, tzinfo=UTC),
+                    "privacy_review_due_at": datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+                    "privacy_completed_at": datetime(2026, 8, 2, 0, 0, tzinfo=UTC),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_privacy_deletion_manifests "
+                    "(id, target_type, target_id, tenant_id, requested_by_principal_id, "
+                    "idempotency_key, request_hash, approval_ref, "
+                    "completion_approval_ref, reason, "
+                    "expected_target_version, preview_hash, status, blockers, surface_outcomes, "
+                    "manifest_hash, version, started_at, completed_at, updated_at) VALUES "
+                    "(:privacy_manifest, 'global_user', :privacy_subject, NULL, "
+                    ":platform_operator, 'recovery-privacy-delete', :request_hash, "
+                    "'recovery-privacy-approval', 'recovery-privacy-final-approval', "
+                    "'verified erasure request', 1, :preview_hash, "
+                    "'completed', CAST(:blockers AS jsonb), CAST(:surfaces AS jsonb), "
+                    ":manifest_hash, 17, :privacy_started_at, :privacy_completed_at, "
+                    ":privacy_completed_at)"
+                ),
+                {
+                    **identifiers,
+                    "request_hash": "a" * 64,
+                    "preview_hash": "b" * 64,
+                    "blockers": json.dumps([]),
+                    "surfaces": json.dumps(privacy_surfaces, sort_keys=True),
+                    "manifest_hash": "e" * 64,
+                    "privacy_started_at": datetime(2026, 8, 1, 1, 0, tzinfo=UTC),
+                    "privacy_completed_at": datetime(2026, 8, 2, 1, 0, tzinfo=UTC),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_privacy_identity_tombstones "
+                    "(id, manifest_id, target_user_id, tenant_id, locator_kind, locator_hash, "
+                    "created_at) VALUES (:privacy_tombstone, :privacy_manifest, "
+                    ":privacy_subject, NULL, 'oidc_subject', :privacy_locator_hash, "
+                    ":privacy_completed_at)"
+                ),
+                {
+                    **identifiers,
+                    "privacy_completed_at": datetime(2026, 8, 2, 1, 0, tzinfo=UTC),
+                },
             )
             connection.execute(
                 sa.text(
@@ -456,12 +556,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5a00000003', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5b00000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5a00000003', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5b00000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -727,6 +827,31 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "request_hash_b": "8" * 64,
                     "result_a": json.dumps({"resource_type": "User", "disposition": "applied"}),
                     "result_b": json.dumps({"resource_type": "User", "disposition": "applied"}),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_enterprise_scim_events "
+                    "(id, tenant_id, directory_id, event_id, resource_type, resource_id, "
+                    "source_version, request_hash, disposition, result, redacted_at, "
+                    "redaction_manifest_id, original_result_hash) VALUES "
+                    "(:privacy_scim_event, :tenant_a, :scim_directory_a, "
+                    "'recovery-privacy-redacted', 'User', :privacy_subject, 1, "
+                    ":request_hash, 'applied', CAST(:result AS jsonb), :redacted_at, "
+                    ":privacy_manifest, :original_result_hash)"
+                ),
+                {
+                    **identifiers,
+                    "request_hash": "9" * 64,
+                    "result": json.dumps(
+                        {
+                            "redacted": True,
+                            "manifest_id": identifiers["privacy_manifest"],
+                            "resource_type": "User",
+                        }
+                    ),
+                    "redacted_at": datetime(2026, 8, 2, 1, 0, tzinfo=UTC),
+                    "original_result_hash": "f" * 64,
                 },
             )
             connection.execute(
@@ -1249,7 +1374,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc5a00000003":
+            if saas_head != "pc5b00000001":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1271,6 +1396,66 @@ def _verify_restored_database(
             if tuple(platform_counts) != (2, 1, 1, 2, 1):
                 raise PostgreSqlRestoreContractError(
                     "restored Staff Realm or content-blind platform projections drifted"
+                )
+            privacy_facts = connection.execute(
+                sa.text(
+                    "SELECT subject.status, subject.display_name IS NULL, "
+                    "subject.primary_email_normalized IS NULL, hold.status, hold.version, "
+                    "hold.review_due_at > hold.created_at, "
+                    "manifest.status, manifest.version, manifest.manifest_hash, "
+                    "manifest.completion_approval_ref, "
+                    "(SELECT count(*) FROM json_object_keys(manifest.surface_outcomes)), "
+                    "tombstone.locator_hash, "
+                    "receipt.result->>'redacted', receipt.redaction_manifest_id::text, "
+                    "receipt.original_result_hash "
+                    "FROM saas_global_users subject "
+                    "JOIN saas_privacy_legal_holds hold ON hold.target_id = subject.id "
+                    "JOIN saas_privacy_deletion_manifests manifest "
+                    "ON manifest.target_id = subject.id "
+                    "JOIN saas_privacy_identity_tombstones tombstone "
+                    "ON tombstone.manifest_id = manifest.id "
+                    "JOIN saas_enterprise_scim_events receipt "
+                    "ON receipt.redaction_manifest_id = manifest.id "
+                    "WHERE subject.id = :privacy_subject"
+                ),
+                identifiers,
+            ).one()
+            if tuple(privacy_facts) != (
+                "deleted",
+                True,
+                True,
+                "released",
+                2,
+                True,
+                "completed",
+                17,
+                "e" * 64,
+                "recovery-privacy-final-approval",
+                15,
+                identifiers["privacy_locator_hash"],
+                "true",
+                identifiers["privacy_manifest"],
+                "f" * 64,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored Legal Hold, deletion Manifest, Tombstone, "
+                    "or redacted receipt drifted"
+                )
+            privacy_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_privacy_executor', "
+                    "'saas_platform_governance', 'member'), "
+                    "has_table_privilege('saas_platform_governance', "
+                    "'saas_global_users', 'SELECT'), "
+                    "has_table_privilege('saas_privacy_executor', "
+                    "'saas_global_users', 'SELECT') "
+                    "FROM pg_roles WHERE rolname = 'saas_privacy_executor'"
+                )
+            ).one()
+            if tuple(privacy_role) != (False, False, False, True, False, True):
+                raise PostgreSqlRestoreContractError(
+                    "restored privacy executor authority is missing or Staff PII grants widened"
                 )
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "
@@ -1328,6 +1513,21 @@ def _verify_restored_database(
             ):
                 raise PostgreSqlRestoreContractError(
                     "restored enterprise SCIM RLS exposed another tenant"
+                )
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "SET LOCAL ROLE saas_authenticator; "
+                f"SET LOCAL app.privacy_locator_hash = "
+                f"'{identifiers['privacy_locator_hash']}'"
+            )
+            visible_tombstones = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_privacy_identity_tombstones")
+                ).scalars()
+            )
+            if visible_tombstones != {identifiers["privacy_tombstone"]}:
+                raise PostgreSqlRestoreContractError(
+                    "restored identity Tombstone exact-locator replay guard drifted"
                 )
         with engine.begin() as connection:
             directory_privileges = connection.execute(
@@ -1623,7 +1823,7 @@ def _verify_restored_database(
                     "WHERE successor_token_hash IS NOT NULL)"
                 )
             ).one()
-            if tuple(scim_rows) != (2, 2, 2, 2, 1):
+            if tuple(scim_rows) != (2, 2, 2, 3, 1):
                 raise PostgreSqlRestoreContractError(
                     "restored nonempty enterprise SCIM facts are incomplete"
                 )
@@ -1654,7 +1854,13 @@ def _verify_restored_database(
             "post_backup_billing_authority_replay": "passed",
             "machine_metering_receipt_restore": "passed",
             "billing_period_close_restore": "passed with one backed-up and one replayed fact",
-            "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+            "enterprise_scim_restore": (
+                "passed with two Tenant-isolated fact sets and one redacted receipt"
+            ),
+            "privacy_deletion_restore": (
+                "passed with released Legal Hold, completed 15-surface Manifest, "
+                "identity Tombstone, exact replay guard, and redacted SCIM receipt"
+            ),
             "platform_security_restore": "passed",
         }
     finally:

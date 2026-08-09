@@ -55,18 +55,34 @@ def _owner(value: object) -> bool:
     return isinstance(value, str) and _OWNER_PATTERN.fullmatch(value) is not None
 
 
-def _migration_heads(repo: Path) -> set[str]:
-    revisions: set[str] = set()
-    parents: set[str] = set()
+def _migration_graph(repo: Path) -> dict[str, str | None]:
+    graph: dict[str, str | None] = {}
     for path in (repo / "saas/control_plane/migrations/versions").glob("*.py"):
         text = path.read_text(encoding="utf-8")
         revision = _MIGRATION_REVISION.search(text)
         parent = _MIGRATION_PARENT.search(text)
         if revision:
-            revisions.add(revision.group(1))
-        if parent and parent.group(1):
-            parents.add(parent.group(1))
-    return revisions - parents
+            graph[revision.group(1)] = parent.group(1) if parent else None
+    return graph
+
+
+def _migration_heads(repo: Path) -> set[str]:
+    graph = _migration_graph(repo)
+    return set(graph) - {parent for parent in graph.values() if parent is not None}
+
+
+def _is_migration_ancestor(repo: Path, ancestor: object, descendant: object) -> bool:
+    if not isinstance(ancestor, str) or not isinstance(descendant, str):
+        return False
+    graph = _migration_graph(repo)
+    current: str | None = descendant
+    visited: set[str] = set()
+    while current is not None and current not in visited:
+        if current == ancestor:
+            return True
+        visited.add(current)
+        current = graph.get(current)
+    return False
 
 
 def validate_baseline(repo: Path, baseline: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +110,16 @@ def validate_baseline(repo: Path, baseline: dict[str, Any]) -> dict[str, Any]:
         if heads != {schema_revision}:
             violations.append(
                 f"control_plane_schema_revision must be the only migration head: {sorted(heads)}"
+            )
+        approval = baseline.get("approval")
+        approved_schema_revision = (
+            approval.get("approved_control_plane_schema_revision")
+            if isinstance(approval, dict)
+            else None
+        )
+        if not _is_migration_ancestor(repo, approved_schema_revision, schema_revision):
+            violations.append(
+                "approved control-plane schema revision must be an ancestor of the current head"
             )
         if revision.get("deployment_scope") != "single-region-multi-az":
             violations.append("P0 deployment_scope must be single-region-multi-az")

@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-08.pc5-scim-foundation"
+POLICY_VERSION: Final = "2026-08-09.pc5-privacy-deletion"
 
 
 class PermissionScope(StrEnum):
@@ -339,7 +339,15 @@ _DEFINITIONS = (
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
         approval_required=True,
-        api_surfaces=("POST /v2/platform-admin/data-requests",),
+        api_surfaces=(
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletion-preview",
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds",
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds/{hold_id}/release",
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}",
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/surfaces",
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/finalize",
+        ),
         ui_surface="data-lifecycle",
         audit_event="platform.data_request.changed",
     ),
@@ -503,6 +511,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.billing.read",
                 "platform.support.read",
                 "platform.support_grant.manage",
+                "platform.data_request.manage",
             }
         ),
         "platform_security_auditor": frozenset(
