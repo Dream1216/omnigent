@@ -242,6 +242,13 @@ def test_candidate_composite_build_contract_is_valid() -> None:
     assert validate_candidate_build_contract(_repo()) == []
 
 
+def test_generic_docker_build_has_reproducible_epoch_fallback() -> None:
+    dockerfile = (_repo() / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "ARG SOURCE_DATE_EPOCH=1580601600" in dockerfile
+    assert "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" in dockerfile
+
+
 def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     action = repo / "saas/actions/build-oci-candidate/action.yml"
