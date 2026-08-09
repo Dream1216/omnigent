@@ -297,6 +297,14 @@ def test_permission_catalog_is_versioned_complete_and_content_separated() -> Non
     assert "project.content.read" not in space_roles["admin"]
     assert resource_roles["conversation"]["manage"] == []
     assert "project.update" not in resource_roles["conversation"]["owner"]
+    privacy_read = PERMISSION_CATALOG["platform.privacy.read"]
+    privacy_manage = PERMISSION_CATALOG["platform.data_request.manage"]
+    assert privacy_read.fresh_auth_required is False
+    assert privacy_manage.fresh_auth_required is True
+    assert all(surface.startswith("GET ") for surface in privacy_read.api_surfaces)
+    assert all(surface.startswith("POST ") for surface in privacy_manage.api_surfaces)
+    assert "platform.privacy.read" in platform_roles["platform_security_auditor"]
+    assert "platform.data_request.manage" not in platform_roles["platform_security_auditor"]
 
 
 def test_project_creation_is_atomic_idempotent_and_creator_owned(project_control_plane) -> None:

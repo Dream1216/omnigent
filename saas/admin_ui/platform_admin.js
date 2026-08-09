@@ -180,6 +180,7 @@
       tenants: () => loadTenants(false),
       access: loadAccess,
       support: () => loadSupport(false),
+      privacy: () => window.OmnigentPrivacy?.load(),
       audit: () => loadAudit(false),
     };
     if (loaders[view]) await loaders[view]();

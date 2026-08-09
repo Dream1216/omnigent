@@ -6,7 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>Omnigent · Platform Operations</title>
     <link rel="stylesheet" href="/platform-admin/assets/platform-admin.css">
+    <link rel="stylesheet" href="/platform-admin/assets/platform-privacy.css">
     <script src="/platform-admin/assets/platform-admin.js" defer></script>
+    <script src="/platform-admin/assets/platform-privacy.js" defer></script>
   </head>
   <body>
     <div class="signal-grid" aria-hidden="true"></div>
@@ -53,8 +55,11 @@
           <button data-testid="nav-support" data-permission="platform.support.read" data-view="support" type="button">
             <span>05</span><strong>SUPPORT</strong><small>受控支持</small>
           </button>
+          <button data-testid="nav-privacy" data-permission="platform.privacy.read" data-view="privacy" type="button">
+            <span>06</span><strong>PRIVACY</strong><small>数据生命周期</small>
+          </button>
           <button data-testid="nav-audit" data-permission="platform.audit.read" data-view="audit" type="button">
-            <span>06</span><strong>AUDIT</strong><small>审计与导出</small>
+            <span>07</span><strong>AUDIT</strong><small>审计与导出</small>
           </button>
         </nav>
 
@@ -169,9 +174,69 @@
           </div>
         </section>
 
+        <section class="console-view" data-testid="view-privacy" data-view-panel="privacy" hidden>
+          <header class="view-heading privacy-heading">
+            <div><p class="kicker">06 / DATA LIFECYCLE EVIDENCE</p><h1>隐私作业台</h1><p>按精确 User 或 Tenant 目标读取 Legal Hold、删除 Manifest 与 15 类介质证据。浏览器保持内容盲，只显示治理状态与摘要。</p></div>
+            <div class="privacy-mode"><span>FIRST SLICE</span><strong>READ ONLY</strong><small>破坏性动作继续由服务端审批与 Executor 边界控制</small></div>
+          </header>
+
+          <form class="privacy-target-form" data-testid="privacy-target-form" id="privacy-target-form">
+            <label><span>TARGET TYPE</span><select data-testid="privacy-target-type" id="privacy-target-type"><option value="global_user">GLOBAL USER</option><option value="tenant">TENANT</option></select></label>
+            <label><span>EXACT TARGET ID</span><input data-testid="privacy-target-id" id="privacy-target-id" required placeholder="00000000-0000-0000-0000-000000000000"></label>
+            <button data-testid="privacy-inspect" id="privacy-inspect" type="submit">INSPECT EVIDENCE ↗</button>
+          </form>
+          <p class="privacy-message" data-testid="privacy-message" id="privacy-message" aria-live="polite"></p>
+
+          <div class="privacy-empty-state" data-testid="privacy-empty" id="privacy-empty">
+            <span>NO TARGET BOUND</span><strong>输入精确目标，建立内容盲查看边界。</strong>
+            <p>本页面不提供跨租户全表搜索，也不接收 Surface 签名证据。每次查询都在服务端重新校验 Staff Assignment 与目标 RLS 上下文。</p>
+          </div>
+
+          <div data-testid="privacy-workbench" id="privacy-workbench" hidden>
+            <code class="privacy-result-target" data-testid="privacy-result-target" id="privacy-result-target">TARGET / —</code>
+            <div class="privacy-fact-grid">
+              <article><span>TARGET STATE</span><strong id="privacy-target-state">—</strong><small id="privacy-target-version">VERSION —</small></article>
+              <article><span>ACTIVE BLOCKERS</span><strong id="privacy-blocker-count">—</strong><small id="privacy-target-blockers">尚未读取</small></article>
+              <article><span>LEGAL HOLDS</span><strong id="privacy-hold-count">—</strong><small>逾期只升级，不自动释放</small></article>
+              <article class="privacy-signal"><span>SURFACE RECEIPTS</span><strong id="privacy-surface-progress">—</strong><small>控制面进度，不等于生产删除证明</small></article>
+            </div>
+
+            <div class="privacy-layout">
+              <article class="work-panel privacy-impact-panel">
+                <div class="panel-heading"><span>AUTHORITATIVE PREVIEW</span><small id="privacy-preview-hash">HASH / —</small></div>
+                <div class="privacy-impact-list" data-testid="privacy-impact-counts" id="privacy-impact-counts"></div>
+              </article>
+              <article class="work-panel privacy-hold-panel">
+                <div class="panel-heading"><span>LEGAL HOLD TIMELINE</span><small id="privacy-hold-page-state">0 LOADED</small></div>
+                <div class="record-list" data-testid="privacy-holds-list" id="privacy-holds-list"></div>
+                <button class="load-more" data-testid="privacy-holds-more" id="privacy-holds-more" type="button" hidden>LOAD OLDER HOLDS ↓</button>
+              </article>
+            </div>
+
+            <article class="privacy-manifest-ledger">
+              <div class="panel-heading"><span>DELETION MANIFEST HISTORY</span><small id="privacy-manifest-count">0 LOADED</small></div>
+              <div class="privacy-manifest-list" data-testid="privacy-manifests-list" id="privacy-manifests-list"></div>
+              <button class="load-more" data-testid="privacy-manifests-more" id="privacy-manifests-more" type="button" hidden>LOAD OLDER MANIFESTS ↓</button>
+            </article>
+
+            <article class="privacy-evidence-panel" data-testid="privacy-manifest-detail" id="privacy-manifest-detail" hidden>
+              <div class="privacy-evidence-heading">
+                <div><span>SELECTED MANIFEST</span><h2 id="privacy-manifest-title">—</h2><code id="privacy-manifest-hash">MANIFEST HASH / PENDING</code></div>
+                <div class="privacy-evidence-legend"><span data-tone="success">VERIFIED</span><span data-tone="retained">RETENTION</span><span data-tone="pending">PENDING</span><span data-tone="failure">BLOCKED</span></div>
+              </div>
+              <div class="privacy-surface-grid" data-testid="privacy-surface-grid" id="privacy-surface-grid"></div>
+            </article>
+
+            <aside class="privacy-boundary" data-testid="privacy-production-boundary">
+              <strong>CONTROL-PLANE MANIFEST ≠ PRODUCTION DELETION PROOF</strong>
+              <p>失败重试、DLQ、备份到期后的追加清除证明，以及 DSSE/三方签署的生产 Evidence 尚未接入。页面会如实显示 Pending Retention，不会把它渲染成“已彻底删除”。</p>
+            </aside>
+          </div>
+        </section>
+
         <section class="console-view" data-testid="view-audit" data-view-panel="audit" hidden>
           <header class="view-heading">
-            <div><p class="kicker">06 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
+            <div><p class="kicker">07 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
             <span class="view-total" id="audit-total">00</span>
           </header>
           <form class="audit-filter" id="audit-filter-form">

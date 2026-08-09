@@ -1963,3 +1963,27 @@ valid but still reports 0/10 and `NO-GO`. This remains a development candidate u
 exact committed SHA passes the compatibility and image workflows. Local restore and
 test evidence is not a production deletion drill, backup-expiry proof, IdP rollout or
 release `GO`.
+
+The first Privacy administration product slice is implemented on
+`codex/saas-p1-privacy-admin-ui` without an official-runtime source change. The
+policy-only `pc5b00000002` migration adds exact-target, `FOR SELECT` PostgreSQL
+policies for the read-only Platform Security Auditor; it does not alter an existing
+migration or grant an Auditor write path. The slice separates `platform.privacy.read`
+from the existing destructive
+`platform.data_request.manage` permission and adds exact-target, cursor-bounded Legal
+Hold and deletion Manifest history reads. `platform_security_auditor` can inspect those
+content-blind projections but cannot create a Hold or start, update, or finalize a
+deletion. The dedicated Staff console exposes the same boundary as a read-only Privacy
+evidence desk: an operator must supply an exact Global User or Tenant UUID, after which
+the page shows authoritative blockers, Hold history, Manifest history, and all 15
+surface outcomes without exposing request reasons, approval references, signatures,
+customer content, or direct identity data. The browser never receives the executor
+surface-signing capability.
+
+This slice restores target progress after a browser refresh and closes only the first
+Privacy UI discovery gap. It does not add a global privacy queue, failure/attempt state,
+retry or DLQ controls, backup-expiry purge receipts, a first-class approval object,
+production workers, or the DSSE/attestation bridge required for production deletion
+proof. A control-plane Manifest, including one marked completed, therefore remains
+distinct from qualified production erasure evidence. P1 as a whole and production
+release remain `NO-GO`.

@@ -610,6 +610,17 @@ TO saas_app, saas_governance, saas_executor, saas_secret_broker, saas_preview_ga
 GRANT SELECT ON saas_capability_tokens
 TO saas_app, saas_governance, saas_secret_broker, saas_preview_gateway;
 
+-- Privacy previews read Runs through an exact target-scoped auditor policy.
+-- PostgreSQL still plans every permissive Run policy, so the isolated privacy
+-- executor needs SELECT privilege on the three authority tables referenced by
+-- those policies. FORCE RLS on each table continues to hide all authority rows;
+-- this grant neither adds an auditor row policy nor permits writes.
+GRANT SELECT ON
+    saas_secret_access_leases,
+    saas_preview_leases,
+    saas_capability_tokens
+TO saas_privacy_executor;
+
 GRANT SELECT ON
     saas_secret_bindings,
     saas_runs,

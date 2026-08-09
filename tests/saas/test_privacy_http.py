@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ from saas.control_plane.platform_security import (
     StaffIdentityAssertion,
 )
 from saas.control_plane.privacy_lifecycle import DeletionEvidenceKey, PrivacyLifecycleService
+from saas.control_plane.privacy_models import PrivacyDeletionManifestRecord
 
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
@@ -38,6 +39,12 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         identity_connection_ref="staff-idp:privacy-http",
         issuer="https://staff-idp.example.test",
         subject="privacy-http",
+        now=now,
+    )
+    reader_id = authorization.provision_staff_principal(
+        identity_connection_ref="staff-idp:privacy-http-reader",
+        issuer="https://staff-idp.example.test",
+        subject="privacy-http-reader",
         now=now,
     )
     roleless_id = authorization.provision_staff_principal(
@@ -70,6 +77,17 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
                     created_at=now,
                     updated_at=now,
                 ),
+                PlatformRoleAssignmentRecord(
+                    principal_id=reader_id,
+                    role="platform_security_auditor",
+                    status="active",
+                    version=1,
+                    assigned_by_principal_id=roleless_id,
+                    approval_ref="bootstrap-privacy-http-reader",
+                    reason="P1 privacy read-only HTTP acceptance",
+                    created_at=now,
+                    updated_at=now,
+                ),
             ]
         )
     operator_session = sessions.issue_session(
@@ -87,6 +105,17 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         StaffIdentityAssertion(
             issuer="https://staff-idp.example.test",
             subject="privacy-http-roleless",
+            authn_method="passkey",
+            mfa_strength="phishing_resistant",
+            authenticated_at=now,
+        ),
+        expires_at=now + timedelta(hours=1),
+        now=now,
+    )
+    reader_session = sessions.issue_session(
+        StaffIdentityAssertion(
+            issuer="https://staff-idp.example.test",
+            subject="privacy-http-reader",
             authn_method="passkey",
             mfa_strength="phishing_resistant",
             authenticated_at=now,
@@ -141,6 +170,21 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     assert hold.status_code == 201
     assert hold.json()["status"] == "active"
     assert hold.json()["review_due_at"] == (now + timedelta(days=30)).isoformat()
+    holds = client.get(f"{path}/legal-holds")
+    assert holds.status_code == 200
+    assert holds.json()["content_access"] == "none"
+    assert (holds.json()["target_type"], holds.json()["target_id"]) == (
+        "global_user",
+        str(user_id),
+    )
+    assert holds.json()["items"] == [
+        {
+            key: value
+            for key, value in hold.json().items()
+            if key not in {"request_id", "policy_version"}
+        }
+    ]
+    assert "reason" not in holds.json()["items"][0]
     blocked = client.get(f"{path}/deletion-preview")
     assert blocked.json()["blockers"] == ["active_legal_hold"]
 
@@ -169,3 +213,58 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     manifest = client.get(f"{path}/deletions/{started.json()['manifest_id']}")
     assert manifest.status_code == 200
     assert manifest.json()["manifest_id"] == started.json()["manifest_id"]
+    manifests = client.get(f"{path}/deletions?status=executing")
+    assert manifests.status_code == 200
+    assert manifests.json()["content_access"] == "none"
+    assert (manifests.json()["target_type"], manifests.json()["target_id"]) == (
+        "global_user",
+        str(user_id),
+    )
+    assert len(manifests.json()["items"]) == 1
+    assert manifests.json()["items"][0]["manifest_id"] == started.json()["manifest_id"]
+    assert "reason" not in manifests.json()["items"][0]
+    assert "approval_ref" not in manifests.json()["items"][0]
+
+    client.cookies.clear()
+    client.cookies.set(config.cookie_name, reader_session.token)
+    assert client.get(f"{path}/deletion-preview").status_code == 200
+    assert client.get(f"{path}/legal-holds").status_code == 200
+    assert client.get(f"{path}/deletions").status_code == 200
+    reader_headers = {
+        "Origin": ORIGIN,
+        "X-CSRF-Token": reader_session.csrf_token,
+    }
+    assert (
+        client.post(f"{path}/legal-holds", headers=reader_headers, json=hold_command).status_code
+        == 403
+    )
+
+    with factory.begin() as db:
+        stored = db.get(PrivacyDeletionManifestRecord, UUID(started.json()["manifest_id"]))
+        assert stored is not None
+        outcomes = dict(stored.surface_outcomes)
+        surface = next(iter(outcomes))
+        outcomes[surface] = {
+            **outcomes[surface],
+            "status": "erased",
+            "signature": "must-never-reach-the-browser",
+            "attestation": {
+                "signature": "nested-signature-must-not-leak",
+                "evidence_sha256": "e" * 64,
+            },
+        }
+        stored.surface_outcomes = outcomes
+        stored.status = "completed"
+        stored.manifest_hash = "f" * 64
+        stored.completion_approval_ref = "private-completion-approval"
+        stored.completed_at = now + timedelta(minutes=1)
+
+    protected = client.get(f"{path}/deletions/{started.json()['manifest_id']}")
+    assert protected.status_code == 200
+    assert "completion_approval_ref" not in protected.json()
+    assert all(
+        "signature" not in outcome for outcome in protected.json()["surface_outcomes"].values()
+    )
+    assert "private-completion-approval" not in protected.text
+    assert "must-never-reach-the-browser" not in protected.text
+    assert "nested-signature-must-not-leak" not in protected.text

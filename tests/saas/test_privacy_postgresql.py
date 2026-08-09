@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.permissions import PLATFORM_ROLE_PERMISSIONS
-from saas.control_plane.platform_security import ValidatedPlatformPrincipal
+from saas.control_plane.platform_security import PlatformSecurityError, ValidatedPlatformPrincipal
 from saas.control_plane.privacy_lifecycle import (
     DeletionEvidenceKey,
     PrivacyLifecycleService,
@@ -41,10 +41,18 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
     engine = sa.create_engine(_postgres_url())
     suffix = uuid4().hex[:12]
     login_role = f"pc5_privacy_executor_{suffix}"
-    operator_id, assigner_id, user_id, tenant_id, directory_id, scim_user_id, event_id = (
-        uuid4() for _ in range(7)
-    )
-    assignment_id = uuid4()
+    (
+        operator_id,
+        auditor_id,
+        assigner_id,
+        user_id,
+        other_user_id,
+        tenant_id,
+        directory_id,
+        scim_user_id,
+        event_id,
+    ) = (uuid4() for _ in range(9))
+    assignment_id, auditor_assignment_id = uuid4(), uuid4()
     now = datetime.now(timezone.utc)
     issuer = "https://privacy-idp.example.test"
     subject = f"subject-{suffix}"
@@ -65,12 +73,16 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
                 "INSERT INTO saas_platform_staff_principals "
                 "(id, identity_connection_ref, issuer, subject, status, security_version) VALUES "
                 "(:operator, :operator_ref, :staff_issuer, :operator_subject, 'active', 1), "
+                "(:auditor, :auditor_ref, :staff_issuer, :auditor_subject, 'active', 1), "
                 "(:assigner, :assigner_ref, :staff_issuer, :assigner_subject, 'active', 1)"
             ),
             {
                 "operator": operator_id,
                 "operator_ref": f"staff-idp:{operator_id}",
                 "operator_subject": f"privacy-{suffix}",
+                "auditor": auditor_id,
+                "auditor_ref": f"staff-idp:{auditor_id}",
+                "auditor_subject": f"privacy-auditor-{suffix}",
                 "assigner": assigner_id,
                 "assigner_ref": f"staff-idp:{assigner_id}",
                 "assigner_subject": f"assigner-{suffix}",
@@ -83,17 +95,32 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
                 "(id, principal_id, role, status, version, assigned_by_principal_id, "
                 "approval_ref, reason) VALUES "
                 "(:id, :principal, 'compliance_operator', 'active', 1, :assigner, "
-                "'pc5-postgresql-approval', 'PC5 privacy PostgreSQL acceptance')"
+                "'pc5-postgresql-approval', 'PC5 privacy PostgreSQL acceptance'), "
+                "(:auditor_assignment, :auditor, 'platform_security_auditor', 'active', 1, "
+                ":assigner, 'p1-privacy-auditor-read', "
+                "'P1 exact-target Privacy read acceptance')"
             ),
-            {"id": assignment_id, "principal": operator_id, "assigner": assigner_id},
+            {
+                "id": assignment_id,
+                "principal": operator_id,
+                "auditor_assignment": auditor_assignment_id,
+                "auditor": auditor_id,
+                "assigner": assigner_id,
+            },
         )
         connection.execute(
             sa.text(
                 "INSERT INTO saas_global_users "
                 "(id, status, display_name, primary_email_normalized, security_version) "
-                "VALUES (:user, 'active', 'Privacy Subject', :email, 1)"
+                "VALUES (:user, 'active', 'Privacy Subject', :email, 1), "
+                "(:other_user, 'active', 'Other Privacy Subject', :other_email, 1)"
             ),
-            {"user": user_id, "email": f"subject-{suffix}@example.test"},
+            {
+                "user": user_id,
+                "email": f"subject-{suffix}@example.test",
+                "other_user": other_user_id,
+                "other_email": f"other-subject-{suffix}@example.test",
+            },
         )
         connection.execute(
             sa.text(
@@ -201,6 +228,29 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         )
 
     with engine.begin() as connection:
+        expected_auditor_policies = {
+            "rls_privacy_holds_auditor_read",
+            "rls_privacy_manifests_auditor_read",
+            "rls_global_users_privacy_auditor_read",
+            "rls_tenants_privacy_auditor_read",
+            "rls_tenant_memberships_privacy_auditor_read",
+            "rls_service_accounts_privacy_auditor_read",
+            "rls_identity_connections_privacy_auditor_read",
+            "rls_scim_users_privacy_auditor_read",
+            "rls_scim_directories_privacy_auditor_read",
+            "rls_runs_privacy_auditor_read",
+            "rls_support_grants_privacy_auditor_read",
+        }
+        auditor_policies = list(
+            connection.execute(
+                sa.text(
+                    "SELECT policyname, cmd FROM pg_policies "
+                    "WHERE schemaname = 'public' AND policyname LIKE '%auditor_read'"
+                )
+            ).mappings()
+        )
+        assert {value["policyname"] for value in auditor_policies} == expected_auditor_policies
+        assert {value["cmd"] for value in auditor_policies} == {"SELECT"}
         assert (
             connection.execute(
                 sa.text(
@@ -249,6 +299,14 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         now=now,
     )
     assert preview.blockers == ()
+    holds = service.list_legal_holds(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        now=now,
+    )
+    assert holds.items == ()
+    assert holds.next_cursor is None
     manifest = service.start_deletion(
         actor,
         target_type="global_user",
@@ -260,6 +318,113 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         idempotency_key=f"pc5-delete-{suffix}",
         now=now,
     )
+    manifests = service.list_manifests(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        now=now,
+    )
+    assert tuple(item.manifest_id for item in manifests.items) == (manifest.manifest_id,)
+    assert manifests.next_cursor is None
+
+    auditor = ValidatedPlatformPrincipal(
+        session_id=uuid4(),
+        principal_id=auditor_id,
+        security_version=1,
+        authn_method="passkey",
+        authenticated_at=now,
+        expires_at=now.replace(year=now.year + 1),
+        roles=frozenset({"platform_security_auditor"}),
+        permissions=PLATFORM_ROLE_PERMISSIONS["platform_security_auditor"],
+    )
+    auditor_preview = service.preview_deletion(
+        auditor,
+        target_type="global_user",
+        target_id=user_id,
+        now=now,
+    )
+    assert auditor_preview.target_id == user_id
+    assert auditor_preview.target_status == "suspended"
+    assert auditor_preview.impact_counts["identity_connections"] == 1
+    auditor_tenant_preview = service.preview_deletion(
+        auditor,
+        target_type="tenant",
+        target_id=tenant_id,
+        now=now,
+    )
+    assert auditor_tenant_preview.target_id == tenant_id
+    assert auditor_tenant_preview.impact_counts["memberships"] == 1
+    assert auditor_tenant_preview.impact_counts["scim_directories"] == 1
+    auditor_holds = service.list_legal_holds(
+        auditor,
+        target_type="global_user",
+        target_id=user_id,
+        now=now,
+    )
+    assert auditor_holds.items == ()
+    assert auditor_holds.next_cursor is None
+    auditor_manifests = service.list_manifests(
+        auditor,
+        target_type="global_user",
+        target_id=user_id,
+        now=now,
+    )
+    assert tuple(item.manifest_id for item in auditor_manifests.items) == (manifest.manifest_id,)
+    assert auditor_manifests.next_cursor is None
+    with pytest.raises(PlatformSecurityError) as cross_target:
+        service.get_manifest(
+            auditor,
+            target_type="global_user",
+            target_id=other_user_id,
+            manifest_id=manifest.manifest_id,
+            now=now,
+        )
+    assert cross_target.value.code == "platform_privacy_manifest_not_found"
+    with pytest.raises(PlatformSecurityError) as auditor_write:
+        service.place_legal_hold(
+            auditor,
+            target_type="global_user",
+            target_id=user_id,
+            scope=("identity",),
+            authority_ref=f"auditor-must-not-write-{suffix}",
+            reason="read-only auditor write denial",
+            review_due_at=now + timedelta(days=30),
+            now=now,
+        )
+    assert auditor_write.value.code == "platform_permission_denied"
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
+        connection.execute(
+            sa.text("SELECT set_config('app.platform_principal_id', :value, true)"),
+            {"value": str(auditor_id)},
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.platform_target_user_id', :value, true)"),
+            {"value": str(user_id)},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_global_users WHERE id = :id"),
+                {"id": user_id},
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_global_users WHERE id = :id"),
+                {"id": other_user_id},
+            ).scalar_one()
+            == 0
+        )
+        denied_update = connection.execute(
+            sa.text(
+                "UPDATE saas_privacy_deletion_manifests SET version = version + 1 "
+                "WHERE id = :manifest"
+            ),
+            {"manifest": manifest.manifest_id},
+        )
+        assert denied_update.rowcount == 0
 
     with engine.begin() as connection:
         user = connection.execute(

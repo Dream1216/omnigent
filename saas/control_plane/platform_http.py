@@ -34,6 +34,7 @@ from saas.control_plane.platform_security import (
 from saas.control_plane.privacy_lifecycle import (
     DeletionSurfaceEvidence,
     PrivacyDeletionManifestView,
+    PrivacyLegalHoldView,
     PrivacyLifecycleService,
 )
 
@@ -340,6 +341,16 @@ def create_platform_admin_app(
         authenticate(request)
         return _platform_admin_asset("platform_admin.js", "text/javascript")
 
+    @app.get("/platform-admin/assets/platform-privacy.css", include_in_schema=False)
+    def platform_privacy_css(request: Request) -> Response:
+        authenticate(request)
+        return _platform_admin_asset("platform_privacy.css", "text/css")
+
+    @app.get("/platform-admin/assets/platform-privacy.js", include_in_schema=False)
+    def platform_privacy_javascript(request: Request) -> Response:
+        authenticate(request)
+        return _platform_admin_asset("platform_privacy.js", "text/javascript")
+
     @app.get("/v2/platform-admin/context")
     def context(request: Request) -> dict[str, object]:
         principal, _token = authenticate(request)
@@ -522,16 +533,35 @@ def create_platform_admin_app(
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "hold_id": str(value.hold_id),
-            "target_type": value.target_type,
-            "target_id": str(value.target_id),
-            "status": value.status,
-            "scope": list(value.scope),
-            "authority_ref": value.authority_ref,
-            "version": value.version,
-            "created_at": value.created_at.isoformat(),
-            "review_due_at": value.review_due_at.isoformat(),
-            "released_at": value.released_at.isoformat() if value.released_at else None,
+            **_privacy_hold_item(value),
+        }
+
+    @app.get("/v2/platform-admin/privacy/{target_type}/{target_id}/legal-holds")
+    def list_privacy_legal_holds(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        request: Request,
+        status: Literal["active", "released"] | None = None,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_service().list_legal_holds(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            status=status,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "target_type": target_type,
+            "target_id": str(target_id),
+            "items": [_privacy_hold_item(value) for value in page.items],
+            "next_cursor": str(page.next_cursor) if page.next_cursor is not None else None,
+            "content_access": "none",
         }
 
     @app.post("/v2/platform-admin/privacy/{target_type}/{target_id}/legal-holds/{hold_id}/release")
@@ -582,6 +612,34 @@ def create_platform_admin_app(
             idempotency_key=request.headers.get("idempotency-key", ""),
         )
         return _privacy_manifest_payload(request, value)
+
+    @app.get("/v2/platform-admin/privacy/{target_type}/{target_id}/deletions")
+    def list_privacy_deletions(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        request: Request,
+        status: Literal["executing", "ready_to_finalize", "completed"] | None = None,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_service().list_manifests(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            status=status,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "target_type": target_type,
+            "target_id": str(target_id),
+            "items": [_privacy_manifest_item(value) for value in page.items],
+            "next_cursor": str(page.next_cursor) if page.next_cursor is not None else None,
+            "content_access": "none",
+        }
 
     @app.get("/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}")
     def get_privacy_deletion(
@@ -1105,15 +1163,48 @@ def _privacy_manifest_payload(
     return {
         "request_id": _request_id(request),
         "policy_version": POLICY_VERSION,
+        **_privacy_manifest_item(value),
+    }
+
+
+def _privacy_hold_item(value: PrivacyLegalHoldView) -> dict[str, object]:
+    return {
+        "hold_id": str(value.hold_id),
+        "target_type": value.target_type,
+        "target_id": str(value.target_id),
+        "status": value.status,
+        "scope": list(value.scope),
+        "authority_ref": value.authority_ref,
+        "version": value.version,
+        "created_at": value.created_at.isoformat(),
+        "review_due_at": value.review_due_at.isoformat(),
+        "released_at": value.released_at.isoformat() if value.released_at else None,
+    }
+
+
+def _privacy_public_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _privacy_public_value(item)
+            for key, item in value.items()
+            if key not in {"signature", "approval_ref", "completion_approval_ref", "reason"}
+        }
+    if isinstance(value, list):
+        return [_privacy_public_value(item) for item in value]
+    return value
+
+
+def _privacy_manifest_item(value: PrivacyDeletionManifestView) -> dict[str, object]:
+    surface_outcomes = _privacy_public_value(value.surface_outcomes)
+    return {
         "manifest_id": str(value.manifest_id),
         "target_type": value.target_type,
         "target_id": str(value.target_id),
         "status": value.status,
         "version": value.version,
         "blockers": list(value.blockers),
-        "surface_outcomes": value.surface_outcomes,
+        "surface_outcomes": surface_outcomes,
         "manifest_hash": value.manifest_hash,
-        "completion_approval_ref": value.completion_approval_ref,
         "started_at": value.started_at.isoformat(),
         "completed_at": value.completed_at.isoformat() if value.completed_at else None,
         "replayed": value.replayed,

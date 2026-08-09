@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-09.pc5-privacy-deletion"
+POLICY_VERSION: Final = "2026-08-10.p1-privacy-console"
 
 
 class PermissionScope(StrEnum):
@@ -334,17 +334,28 @@ _DEFINITIONS = (
         audit_event="platform.audit_export.requested",
     ),
     _permission(
+        "platform.privacy.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=(
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletion-preview",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/legal-holds",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}",
+        ),
+        ui_surface="data-lifecycle",
+        audit_event="platform.privacy.read",
+    ),
+    _permission(
         "platform.data_request.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
         approval_required=True,
         api_surfaces=(
-            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletion-preview",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds/{hold_id}/release",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions",
-            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/surfaces",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/finalize",
         ),
@@ -511,6 +522,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.billing.read",
                 "platform.support.read",
                 "platform.support_grant.manage",
+                "platform.privacy.read",
                 "platform.data_request.manage",
             }
         ),
@@ -528,6 +540,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",
+                "platform.privacy.read",
             }
         ),
         "support_agent": frozenset(
@@ -561,6 +574,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.operations.read",
                 "platform.audit.read",
                 "platform.audit.export",
+                "platform.privacy.read",
                 "platform.data_request.manage",
             }
         ),
