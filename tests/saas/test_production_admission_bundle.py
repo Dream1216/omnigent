@@ -121,7 +121,7 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
 
     assert set(workflow["on"]) == {"workflow_dispatch"}
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert set(inputs) == {"product_revision", "evidence_revision"}
+    assert set(inputs) == {"product_revision", "evidence_revision", "receipt_request_json"}
     job = workflow["jobs"]["production-admission"]
     assert job["environment"] == "production-evidence"
     assert workflow["permissions"] == {"contents": "read"}
@@ -133,7 +133,7 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     assert "refs/heads/main" in preflight
     assert '"$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION"' in preflight
     checkout = next(step for step in job["steps"] if "actions/checkout@" in step.get("uses", ""))
-    assert checkout["with"]["ref"] == "${{ inputs.evidence_revision }}"
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert checkout["with"]["fetch-depth"] == "0"
     assert checkout["with"]["persist-credentials"] == "false"
     command = next(

@@ -7,13 +7,17 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from saas.production.admission import (
     admission_signature_payload,
+    finalize_evidence_admission_receipt,
+    prepare_evidence_admission_receipt,
     validate_evidence_admission,
 )
+from saas.scripts.issue_evidence_receipt import issue_evidence_receipt
 
 _KINDS = (
     "baseline",
@@ -166,6 +170,152 @@ def test_valid_ed25519_receipts_admit_exact_evidence_bytes(tmp_path: Path) -> No
         "active_trusted_key_count": 1,
         "receipt_count": 8,
     }
+
+
+def test_two_phase_external_signing_round_trip_admits_exact_bytes(tmp_path: Path) -> None:
+    policy, private_key = _fixture(tmp_path)
+    preparation = prepare_evidence_admission_receipt(
+        tmp_path,
+        policy,
+        evidence_kind="baseline",
+        evidence_path="evidence/baseline.json",
+        product_revision=_REVISION,
+        signer_key_id="production-admission-2026-01",
+        receipt_id="receipt-baseline",
+        issued_at=datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+        expires_at=datetime(2026, 8, 10, 11, 0, tzinfo=UTC),
+        now=_NOW,
+    )
+
+    payload = base64.b64decode(preparation["signature_payload_base64"], validate=True)
+    assert hashlib.sha256(payload).hexdigest() == preparation["signature_payload_sha256"]
+    assert payload == admission_signature_payload(preparation["receipt"])
+    signature = base64.b64encode(private_key.sign(payload)).decode("ascii")
+    receipt = finalize_evidence_admission_receipt(
+        tmp_path,
+        policy,
+        preparation,
+        signature_base64=signature,
+        now=_NOW,
+    )
+    _write_json(tmp_path / "admission/receipts/baseline.json", receipt)
+
+    report = validate_evidence_admission(
+        tmp_path,
+        policy,
+        expected_product_revision=_REVISION,
+        now=_NOW,
+    )
+
+    assert report["status"] == "pass"
+    assert report["production_readiness"] == "ready"
+    assert report["metrics"]["admitted_document_count"] == 8
+
+
+def test_finalization_rejects_tampered_preparation_and_signature(tmp_path: Path) -> None:
+    policy, private_key = _fixture(tmp_path)
+    preparation = prepare_evidence_admission_receipt(
+        tmp_path,
+        policy,
+        evidence_kind="baseline",
+        evidence_path="evidence/baseline.json",
+        product_revision=_REVISION,
+        signer_key_id="production-admission-2026-01",
+        receipt_id="receipt-baseline-new",
+        issued_at=datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+        expires_at=datetime(2026, 8, 10, 11, 0, tzinfo=UTC),
+        now=_NOW,
+    )
+    payload = base64.b64decode(preparation["signature_payload_base64"], validate=True)
+    signature = base64.b64encode(private_key.sign(payload)).decode("ascii")
+
+    tampered = copy.deepcopy(preparation)
+    tampered["receipt"]["evidence_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="payload does not match"):
+        finalize_evidence_admission_receipt(
+            tmp_path,
+            policy,
+            tampered,
+            signature_base64=signature,
+            now=_NOW,
+        )
+
+    with pytest.raises(ValueError, match="signature is invalid"):
+        finalize_evidence_admission_receipt(
+            tmp_path,
+            policy,
+            preparation,
+            signature_base64=base64.b64encode(b"wrong-signature").decode("ascii"),
+            now=_NOW,
+        )
+    with pytest.raises(ValueError, match="canonical base64"):
+        finalize_evidence_admission_receipt(
+            tmp_path,
+            policy,
+            preparation,
+            signature_base64=signature.rstrip("="),
+            now=_NOW,
+        )
+
+
+def test_preparation_rejects_inactive_or_untrusted_signer(tmp_path: Path) -> None:
+    policy, _ = _fixture(tmp_path)
+    key_path = tmp_path / "admission/keys.json"
+    registry = json.loads(key_path.read_text(encoding="utf-8"))
+    registry["keys"][0]["revoked_at"] = "2026-08-09T11:30:00Z"
+    _write_json(key_path, registry)
+
+    with pytest.raises(ValueError, match="signer key is not active and trusted"):
+        prepare_evidence_admission_receipt(
+            tmp_path,
+            policy,
+            evidence_kind="baseline",
+            evidence_path="evidence/baseline.json",
+            product_revision=_REVISION,
+            signer_key_id="production-admission-2026-01",
+            receipt_id="receipt-baseline-new",
+            issued_at=datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+            expires_at=datetime(2026, 8, 10, 11, 0, tzinfo=UTC),
+            now=_NOW,
+        )
+
+
+def test_canonical_workflow_request_regenerates_and_finalizes_payload(tmp_path: Path) -> None:
+    policy, private_key = _fixture(tmp_path)
+    workflow_identity = "spiffe://omnigent/production-evidence-admission"
+    request: dict[str, object] = {
+        "action": "prepare",
+        "evidence_kind": "baseline",
+        "evidence_path": "evidence/baseline.json",
+        "signer_key_id": "production-admission-2026-01",
+        "receipt_id": "receipt-baseline-new",
+        "issued_at": "2026-08-09T11:00:00Z",
+        "expires_at": "2026-08-10T11:00:00Z",
+        "signature_base64": None,
+    }
+    prepared = issue_evidence_receipt(
+        tmp_path,
+        policy,
+        request,
+        product_revision=_REVISION,
+        workflow_identity=workflow_identity,
+        now=_NOW,
+    )
+    payload = base64.b64decode(prepared["preparation"]["signature_payload_base64"], validate=True)
+    request["action"] = "finalize"
+    request["signature_base64"] = base64.b64encode(private_key.sign(payload)).decode("ascii")
+
+    finalized = issue_evidence_receipt(
+        tmp_path,
+        policy,
+        request,
+        product_revision=_REVISION,
+        workflow_identity=workflow_identity,
+        now=_NOW,
+    )
+
+    assert finalized["preparation"] == prepared["preparation"]
+    assert finalized["receipt"]["signature"] == request["signature_base64"]
 
 
 def test_evidence_byte_tampering_invalidates_admission(tmp_path: Path) -> None:
@@ -337,3 +487,22 @@ def test_symlinked_receipt_directory_is_rejected(tmp_path: Path) -> None:
     assert any(
         "receipt_directory must be a regular directory" in item for item in report["violations"]
     )
+
+
+def test_receipt_workflow_preserves_protected_external_signing_boundary() -> None:
+    workflow_path = _repo() / ".github/workflows/saas-production-admission.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+    image_workflow = (_repo() / ".github/workflows/saas-image-candidate.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "environment: production-evidence" in workflow
+    assert '[[ "$TRUSTED_REF" == "refs/heads/main" ]]' in workflow
+    assert '[[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]' in workflow
+    assert "persist-credentials: false" in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "${{ github.workflow_ref }}" in workflow
+    assert "private_key" not in workflow.lower()
+    assert "permissions: {contents: read}" in workflow
+    assert "saas.scripts.issue_evidence_receipt" in workflow
+    assert ".github/workflows/saas-production-admission.yml" in image_workflow

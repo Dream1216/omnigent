@@ -11,9 +11,10 @@ on:
         description: Exact 40-character evidence-only revision SHA
         required: true
         type: string
+      receipt_request_json:
+        description: Optional canonical receipt request JSON; empty runs final admission
 
-permissions:
-  contents: read
+permissions: {contents: read}
 
 concurrency:
   group: saas-production-admission-${{ inputs.product_revision }}
@@ -24,49 +25,48 @@ jobs:
     environment: production-evidence
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EVIDENCE_REVISION: ${{ inputs.evidence_revision }}
+      PRODUCT_REVISION: ${{ inputs.product_revision }}
+      RECEIPT_REQUEST_JSON: ${{ inputs.receipt_request_json }}
+      TRUSTED_REF: ${{ github.ref }}
+      TRUSTED_REF_REVISION: ${{ github.sha }}
+      WORKFLOW_IDENTITY: ${{ github.workflow_ref }}
     steps:
       - name: Validate immutable revision inputs
-        shell: bash
-        env:
-          PRODUCT_REVISION: ${{ inputs.product_revision }}
-          EVIDENCE_REVISION: ${{ inputs.evidence_revision }}
-          TRUSTED_REF: ${{ github.ref }}
-          TRUSTED_REF_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$TRUSTED_REF" == "refs/heads/main" ]]
-          [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
-      - name: Checkout exact evidence revision
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+          [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] && [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TRUSTED_REF" == "refs/heads/main" ]] && [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ inputs.evidence_revision }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-      - name: Install locked production verifier dependencies
-        run: uv sync --frozen --extra saas
-      - name: Enforce final production admission
-        env:
-          PRODUCT_REVISION: ${{ inputs.product_revision }}
-          EVIDENCE_REVISION: ${{ inputs.evidence_revision }}
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - if: inputs.receipt_request_json == ''
         run: >-
           uv run python -m saas.scripts.run_production_admission
           --product-revision "$PRODUCT_REVISION"
           --evidence-revision "$EVIDENCE_REVISION"
           --output-directory artifacts/production-admission
           --require-ready
+      - if: inputs.receipt_request_json != ''
+        run: >-
+          uv run python -m saas.scripts.issue_evidence_receipt
+          --request-json "$RECEIPT_REQUEST_JSON"
+          --product-revision "$PRODUCT_REVISION"
+          --workflow-identity "$WORKFLOW_IDENTITY"
+          --output-directory artifacts/evidence-receipt
       - name: Upload immutable admission reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-admission-${{ inputs.evidence_revision }}
-          path: artifacts/production-admission
+          path: artifacts
           if-no-files-found: error
           retention-days: 90
