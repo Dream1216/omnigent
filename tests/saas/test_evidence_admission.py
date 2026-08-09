@@ -17,7 +17,10 @@ from saas.production.admission import (
     prepare_evidence_admission_receipt,
     validate_evidence_admission,
 )
-from saas.scripts.issue_evidence_receipt import issue_evidence_receipt
+from saas.scripts.issue_evidence_receipt import (
+    issue_evidence_receipt,
+    process_evidence_receipt_request,
+)
 
 _KINDS = (
     "baseline",
@@ -318,6 +321,58 @@ def test_canonical_workflow_request_regenerates_and_finalizes_payload(tmp_path: 
     assert finalized["receipt"]["signature"] == request["signature_base64"]
 
 
+def test_failed_issuance_returns_redacted_machine_diagnostic(tmp_path: Path) -> None:
+    policy, _ = _fixture(tmp_path)
+    public_signature = "this-public-signature-must-not-be-copied-into-the-report"
+    request = {
+        "action": "finalize",
+        "evidence_kind": "baseline",
+        "evidence_path": "evidence/baseline.json",
+        "signer_key_id": "untrusted-production-key",
+        "receipt_id": "receipt-baseline-failure",
+        "issued_at": "2026-08-09T11:00:00Z",
+        "expires_at": "2026-08-10T11:00:00Z",
+        "signature_base64": public_signature,
+    }
+    request_json = json.dumps(request, separators=(",", ":"), sort_keys=True)
+
+    report, result = process_evidence_receipt_request(
+        tmp_path,
+        request_json,
+        product_revision=_REVISION,
+        workflow_identity="spiffe://omnigent/production-evidence-admission",
+        policy=policy,
+        enforce_lineage=False,
+        now=_NOW,
+    )
+
+    assert result is None
+    assert report["status"] == "fail"
+    assert report["action"] == "finalize"
+    assert report["signature_present"] is True
+    assert report["receipt_emitted"] is False
+    assert report["request_sha256"] == hashlib.sha256(request_json.encode()).hexdigest()
+    assert report["violations"] == ["signer key is not active and trusted"]
+    assert public_signature not in json.dumps(report)
+
+
+def test_malformed_request_still_returns_hash_bound_diagnostic(tmp_path: Path) -> None:
+    report, result = process_evidence_receipt_request(
+        tmp_path,
+        "{not-json",
+        product_revision=_REVISION,
+        workflow_identity="spiffe://omnigent/production-evidence-admission",
+        enforce_lineage=False,
+        now=_NOW,
+    )
+
+    assert result is None
+    assert report["status"] == "fail"
+    assert report["action"] is None
+    assert report["request_sha256"] == hashlib.sha256(b"{not-json").hexdigest()
+    assert report["violations"]
+
+
 def test_evidence_byte_tampering_invalidates_admission(tmp_path: Path) -> None:
     policy, _ = _fixture(tmp_path)
     path = tmp_path / "evidence/baseline.json"
@@ -505,4 +560,10 @@ def test_receipt_workflow_preserves_protected_external_signing_boundary() -> Non
     assert "private_key" not in workflow.lower()
     assert "permissions: {contents: read}" in workflow
     assert "saas.scripts.issue_evidence_receipt" in workflow
+    assert "if: always()" in workflow
+    assert "if-no-files-found: error" in workflow
     assert ".github/workflows/saas-production-admission.yml" in image_workflow
+    assert '"saas/scripts/*evidence_receipt.py"' in image_workflow
+
+    issuer = (_repo() / "saas/scripts/issue_evidence_receipt.py").read_text(encoding="utf-8")
+    assert "receipt-issuance-report.json" in issuer
