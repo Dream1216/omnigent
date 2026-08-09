@@ -1,0 +1,529 @@
+{
+  "schema_version": 1,
+  "baseline_id": "omnigent-saas-single-region-v1",
+  "reviewed_at": "2026-08-09",
+  "revision_contract": {
+    "upstream_manifest": "saas/upstream-baseline.json",
+    "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "pc5b00000001",
+    "deployment_scope": "single-region-multi-az"
+  },
+  "approval": {
+    "state": "approved",
+    "mode": "sole-owner-risk-waiver",
+    "governance_classification": "degraded",
+    "scope": "p0-architectural-decision-bundle",
+    "approved_control_plane_schema_revision": "pc5a00000003",
+    "policy": "saas/production/adr-approval-policy.json",
+    "authorities": "saas/production/adr-approval-authorities.json",
+    "candidate": "saas/production/adr-approval-candidate.json",
+    "record": "saas/production/adr-approvals/omnigent-saas-p0-sole-owner-waiver-2026-08-09-59c80f30abe891bb.json",
+    "required_roles": [
+      "product-owner",
+      "platform-architecture",
+      "security",
+      "site-reliability"
+    ],
+    "rule": "The standard four-party contract remains defined, but this candidate uses an explicit sole-owner risk waiver. Dream1216 assumes all eleven technical-owner decisions without impersonating independent reviewers; exact-head CI, merged PR facts, repository-admin identity, candidate lineage, risk acknowledgements, expiry, and an append-only waiver record remain mandatory."
+  },
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "title": "PostgreSQL topology and transaction boundary",
+      "owner": "platform-architecture",
+      "status": "accepted",
+      "decision": "Use one multi-AZ PostgreSQL cluster per data region, separate official and SaaS ownership roles, official migrations before SaaS migrations, local transactions within one Placement, and Saga plus Outbox across Placements.",
+      "verification_gate": "Dual forced-RLS tests, migration drift checks, local transaction fault injection, and cross-Placement Saga compensation must pass."
+    },
+    {
+      "id": "ADR-002",
+      "title": "Runtime Placement and migration protocol",
+      "owner": "runtime-compatibility",
+      "status": "accepted",
+      "decision": "The server selects Placement from residency, plan, capacity, runtime lineage, and Project affinity; active bindings never reroute from client input; migration uses snapshot, catch-up, generation fencing, atomic cutover, and retained rollback material.",
+      "verification_gate": "Same physical workspace number in two Placements, stale generation, partial cutover, and N-1 rollback tests must fail closed or recover."
+    },
+    {
+      "id": "ADR-003",
+      "title": "Authorization snapshot and degradation",
+      "owner": "control-plane",
+      "status": "accepted",
+      "decision": "Use an opaque session-bound Context Snapshot with a maximum 60-second lifetime, shared rotatable keys, live healthy-path revalidation, Outbox invalidation, and an exact low-risk GET or HEAD degradation allowlist.",
+      "verification_gate": "Two-replica PostgreSQL tests must prove immediate healthy-path revocation and fail-closed sensitive operations during dependency failure."
+    },
+    {
+      "id": "ADR-004",
+      "title": "Runner isolation and responsibility modes",
+      "owner": "execution-platform",
+      "status": "accepted",
+      "decision": "Support Managed Shared, Managed Dedicated, and Customer-managed Runner modes behind one capability and lease contract; dedicated and customer-managed modes change placement and responsibility, not authorization semantics. Managed modes disable the upstream copy-on-write Runner zygote and reject ambient provider credentials until a fork-safety review proves post-fork credential, descriptor, native-state, telemetry, and tenant-context reset.",
+      "verification_gate": "Two failure domains, certificate rotation, quarantine, lease expiry, stale fencing, tenant-pool isolation, canonical managed process policy, and negative ambient-credential inheritance must pass."
+    },
+    {
+      "id": "ADR-005",
+      "title": "Sandbox, tool, network, secret, and supply-chain policy",
+      "owner": "security",
+      "status": "accepted",
+      "decision": "Treat repositories and prompts as hostile; use non-privileged per-Run isolation, no host socket, default-deny internal and metadata networks, server-side tool policy, short-lived secret brokering, immutable digests, SBOM, signed provenance, and release vulnerability gates.",
+      "verification_gate": "Host escape, SSRF, DNS rebinding, secret exfiltration, cache poisoning, unsigned image, and critical vulnerability probes must be blocking."
+    },
+    {
+      "id": "ADR-006",
+      "title": "SLO, data class, RPO, RTO, and recovery",
+      "owner": "site-reliability",
+      "status": "accepted",
+      "decision": "Adopt the SLOs and T0-T2 recovery objectives in this baseline; encrypted protected backups are cross-failure-domain and restore into isolation before traffic; conduct quarterly tenant and regional drills.",
+      "verification_gate": "Business approval plus measured tenant and regional recovery evidence at the exact schema, source, adapter, and key revisions is required."
+    },
+    {
+      "id": "ADR-007",
+      "title": "Metering, pricing, ledgers, reconciliation, and quota",
+      "owner": "billing-platform",
+      "status": "accepted",
+      "decision": "Keep immutable Usage, versioned Pricing Snapshot, append-only Customer and Provider ledgers, and daily reconciliation separate; use fixed-point amounts and correction entries; reserve quota before provider work.",
+      "verification_gate": "Duplicate, late, unknown-result, refund, plan-change, and provider-invoice reconciliation cases must preserve ledger invariants."
+    },
+    {
+      "id": "ADR-008",
+      "title": "API, webhook, connector, and SSRF baseline",
+      "owner": "control-plane",
+      "status": "accepted",
+      "decision": "Expose versioned public contracts with idempotency and deprecation windows; keep Service Accounts non-interactive; store only peppered API Key digests; bind machine permissions, network policy, expiry, and project scope explicitly; sign and deduplicate webhooks; bind connector identities to authorized resources; resolve and filter every outbound target against metadata, loopback, link-local, private, and control-plane networks.",
+      "verification_gate": "One-time Key disclosure, rotate/revoke, no privilege inheritance or escalation, network and scope denial, signature rotation, replay, reordering, redirect, DNS rebinding, repository transfer, and app-uninstall tests must pass."
+    },
+    {
+      "id": "ADR-009",
+      "title": "Single-region production boundary",
+      "owner": "product-owner",
+      "status": "accepted",
+      "decision": "The first production offer is single-region multi-AZ; it makes no active-active multi-region, sovereign-region, or cross-border failover promise. Dedicated Placement is separately contracted and multi-region requires a new ADR and gate.",
+      "verification_gate": "Product terms, deployment manifests, routing, backup location, and tenant-facing region disclosures must agree."
+    },
+    {
+      "id": "ADR-010",
+      "title": "Identity and management-web security",
+      "owner": "security",
+      "status": "accepted",
+      "decision": "Use strict OIDC Code plus S256 PKCE, explicit identity linking, server-side revocable cookies, CSRF and Origin enforcement, distinct human and machine token namespaces, rejection of Cookie plus Bearer ambiguity, independent Platform Console origin and identity source, MFA for privileged production roles, and fail-closed recovery.",
+      "verification_gate": "Session fixation, CSRF, CORS, redirect, cache, history, logout replay, machine-token interactive-login denial, account recovery, and privileged MFA browser tests must pass."
+    },
+    {
+      "id": "ADR-011",
+      "title": "Feature flag and configuration governance",
+      "owner": "platform-architecture",
+      "status": "accepted",
+      "decision": "Every flag has an owner, scope, safe default, expiry, audit event, and revision snapshot; tenant settings cannot weaken platform security; expired or unknown security flags fail closed.",
+      "verification_gate": "Configuration schema, expiry lint, audit, rollback, stale replica, and tenant override negative tests must pass."
+    }
+  ],
+  "service_catalog": [
+    {
+      "id": "control-plane",
+      "code_owner": "control-plane",
+      "data_owner": "identity-and-access",
+      "oncall": "saas-control-oncall",
+      "dependencies": ["postgresql", "kms", "outbox-transport"],
+      "slo_ids": ["SLO-AUTH", "SLO-RESOLVE", "SLO-REVOCATION"],
+      "capacity": "Size API replicas and PostgreSQL pools for normal, hot-tenant, and dependency-degraded loads; admission rejects before pool exhaustion.",
+      "runbook": "saas/production/runbooks/control-plane-degradation.md",
+      "schema_migration_owner": "control-plane-data",
+      "secret_kms": "Region KMS encrypts identity verifier and OIDC transaction material and injects an independent API-credential HMAC pepper; services receive least-privilege decrypt grants.",
+      "backup_data_class": "T0",
+      "exit_plan": "Drain writes, export versioned identity and authorization facts, preserve revocation and audit ledgers, then revoke service and database credentials."
+    },
+    {
+      "id": "compatibility-adapter",
+      "code_owner": "runtime-compatibility",
+      "data_owner": "runtime-mapping",
+      "oncall": "runtime-platform-oncall",
+      "dependencies": ["control-plane", "postgresql", "official-runtime"],
+      "slo_ids": ["SLO-RESOLVE", "SLO-REVOCATION"],
+      "capacity": "Keep resolution local to the request transaction and benchmark RLS and Store overhead at production cardinality.",
+      "runbook": "saas/production/runbooks/control-plane-degradation.md",
+      "schema_migration_owner": "runtime-compatibility",
+      "secret_kms": "No tenant secrets; Placement connection references are resolved through the platform secret broker.",
+      "backup_data_class": "T0",
+      "exit_plan": "Retain Runtime Partition, Identity Alias, Resource Binding, generation, and N-1 adapters until all resources are proven migrated."
+    },
+    {
+      "id": "queue-worker",
+      "code_owner": "execution-platform",
+      "data_owner": "run-authority",
+      "oncall": "execution-oncall",
+      "dependencies": ["postgresql", "outbox-transport", "runner-sandbox"],
+      "slo_ids": ["SLO-ADMISSION", "SLO-OUTBOX", "SLO-RUN-EVENT"],
+      "capacity": "Bound every queue, apply tenant-weighted fairness, reserve failure capacity, and expose wait age, depth, retry budget, and DLQ pressure.",
+      "runbook": "saas/production/runbooks/incident-response.md",
+      "schema_migration_owner": "run-platform-data",
+      "secret_kms": "Workers receive short-lived scoped capability material and cannot read control-plane master keys.",
+      "backup_data_class": "T1",
+      "exit_plan": "Stop admission, drain or checkpoint Runs, persist terminal events, release quota, and retain replay cursors and artifacts."
+    },
+    {
+      "id": "runner-sandbox",
+      "code_owner": "execution-platform",
+      "data_owner": "workspace-runtime",
+      "oncall": "execution-oncall",
+      "dependencies": ["queue-worker", "artifact-store", "secret-broker", "egress-proxy"],
+      "slo_ids": ["SLO-RUN-EVENT"],
+      "capacity": "Track pool slots, CPU, memory, disk, inode, image-cache, network, and per-tenant burst limits; quarantine before unsafe overcommit.",
+      "runbook": "saas/production/runbooks/incident-response.md",
+      "schema_migration_owner": "execution-platform",
+      "secret_kms": "Secret Broker issues Run and Tool scoped credentials; sandbox snapshots, logs, diffs, caches, and artifacts must not retain plaintext.",
+      "backup_data_class": "T2",
+      "exit_plan": "Drain leases, reject stale fencing tokens, persist ChangeSet recovery material, revoke capabilities, and securely destroy writable layers."
+    },
+    {
+      "id": "billing-metering",
+      "code_owner": "billing-platform",
+      "data_owner": "finance-operations",
+      "oncall": "billing-oncall",
+      "dependencies": ["postgresql", "outbox-transport", "provider-ledger"],
+      "slo_ids": ["SLO-OUTBOX"],
+      "capacity": "Size immutable usage ingestion and daily reconciliation for peak provider events with a bounded exception queue.",
+      "runbook": "saas/production/runbooks/incident-response.md",
+      "schema_migration_owner": "billing-data",
+      "secret_kms": "Payment and provider webhook secrets are independently scoped, rotated, and never available to Runner services.",
+      "backup_data_class": "T0",
+      "exit_plan": "Freeze new charges, finish reconciliation, export signed ledgers and invoices, retain regulated minimums, and revoke provider credentials."
+    },
+    {
+      "id": "audit",
+      "code_owner": "security",
+      "data_owner": "security-governance",
+      "oncall": "security-oncall",
+      "dependencies": ["postgresql", "object-lock", "outbox-transport"],
+      "slo_ids": ["SLO-OUTBOX"],
+      "capacity": "Provision append-only storage and export bandwidth with retention tiers, immutable hashes, and backpressure alerts.",
+      "runbook": "saas/production/runbooks/incident-response.md",
+      "schema_migration_owner": "security-data",
+      "secret_kms": "Audit encryption and signing keys are isolated from application and support identities and rotate with verifiable continuity.",
+      "backup_data_class": "T0",
+      "exit_plan": "Export signed audit segments, preserve legal retention, remove direct identifiers where allowed, and record destruction certificates."
+    },
+    {
+      "id": "admin",
+      "code_owner": "admin-experience",
+      "data_owner": "control-plane",
+      "oncall": "saas-control-oncall",
+      "dependencies": ["control-plane", "audit", "queue-worker", "billing-metering"],
+      "slo_ids": ["SLO-AUTH", "SLO-RESOLVE"],
+      "capacity": "Use cursor pagination and asynchronous Operations for bulk work; enforce export and high-risk action concurrency limits.",
+      "runbook": "saas/production/runbooks/control-plane-degradation.md",
+      "schema_migration_owner": "admin-experience",
+      "secret_kms": "The UI never receives database, KMS, or support master credentials; privileged actions use short-lived scoped grants.",
+      "backup_data_class": "T1",
+      "exit_plan": "Disable mutations, preserve Operation and audit histories, export tenant configuration, and expire all privileged browser sessions."
+    }
+  ],
+  "slos": [
+    {
+      "id": "SLO-AUTH",
+      "service_ids": ["control-plane", "admin"],
+      "sli": "Successful valid user-session, API-Key, Context, and ordinary management requests divided by eligible requests",
+      "objective": ">=99.9%",
+      "window_days": 30,
+      "measurement": "Exclude authorization denials and valid client errors; split login, established-session, and API-Key validation dependencies and latency.",
+      "error_budget_action": "Stop feature and upstream promotions when the rolling budget is exhausted.",
+      "dashboard_state": "planned"
+    },
+    {
+      "id": "SLO-RESOLVE",
+      "service_ids": ["control-plane", "compatibility-adapter", "admin"],
+      "sli": "Authorizer plus Placement resolution latency",
+      "objective": "p99<=100ms",
+      "window_days": 30,
+      "measurement": "Report cache hit and database source separately and exclude first external identity login.",
+      "error_budget_action": "Disable expansion and investigate pool, RLS, cache, and hot-tenant saturation.",
+      "dashboard_state": "planned"
+    },
+    {
+      "id": "SLO-ADMISSION",
+      "service_ids": ["queue-worker"],
+      "sli": "Accepted Run request to committed Run, quota reservation, and Outbox",
+      "objective": "p99<=2s",
+      "window_days": 30,
+      "measurement": "Exclude queue wait after durable admission and report rejection causes separately.",
+      "error_budget_action": "Reduce admission and preserve control and recovery capacity.",
+      "dashboard_state": "planned"
+    },
+    {
+      "id": "SLO-REVOCATION",
+      "service_ids": ["control-plane", "compatibility-adapter"],
+      "sli": "Sensitive authorization revocation propagation",
+      "objective": "healthy=immediate,degraded<=60s",
+      "window_days": 30,
+      "measurement": "Probe healthy user-session and API-Key live revalidation, Outbox invalidation, and maximum snapshot age independently.",
+      "error_budget_action": "Fail closed sensitive operations and declare a security incident on any excess.",
+      "dashboard_state": "planned"
+    },
+    {
+      "id": "SLO-OUTBOX",
+      "service_ids": ["queue-worker", "billing-metering", "audit"],
+      "sli": "Committed Audit and Usage Outbox event to consumer-visible fact",
+      "objective": "p99<=60s",
+      "window_days": 30,
+      "measurement": "Measure oldest eligible event age, lease recovery, attempts, and DLQ separately.",
+      "error_budget_action": "Throttle producers, scale consumers, and block releases before irrecoverable backlog growth.",
+      "dashboard_state": "planned"
+    },
+    {
+      "id": "SLO-RUN-EVENT",
+      "service_ids": ["queue-worker", "runner-sandbox"],
+      "sli": "Loss of acknowledged durable Run Events",
+      "objective": "0",
+      "window_days": 30,
+      "measurement": "Compare persisted cursor sequence with replay, stream, and terminal-state projections.",
+      "error_budget_action": "Stop admission and preserve evidence on any confirmed loss.",
+      "dashboard_state": "planned"
+    }
+  ],
+  "data_classes": [
+    {
+      "id": "T0",
+      "examples": ["Identity", "Membership", "Policy", "Partition", "Binding", "Audit", "Usage Ledger"],
+      "rpo_minutes": 5,
+      "rto_minutes": 60,
+      "recovery_basis": "Multi-AZ PostgreSQL, PITR, isolated protected backup, and Outbox replay",
+      "drill_frequency_days": 90,
+      "approval_state": "review_required"
+    },
+    {
+      "id": "T1",
+      "examples": ["Project", "Session", "Run", "Run Event", "ChangeSet", "critical Artifact"],
+      "rpo_minutes": 15,
+      "rto_minutes": 240,
+      "recovery_basis": "Database restore, object versioning, immutable revision, and event replay",
+      "drill_frequency_days": 90,
+      "approval_state": "review_required"
+    },
+    {
+      "id": "T2",
+      "examples": ["Worktree Instance", "temporary Environment layer", "routing cache"],
+      "rpo_minutes": null,
+      "rpo_definition": "latest durable recovery point",
+      "rto_minutes": 480,
+      "recovery_basis": "Rebuild from Base Revision, Diff or Commit Artifact, and Environment Snapshot",
+      "drill_frequency_days": 90,
+      "approval_state": "review_required"
+    }
+  ],
+  "recovery_evidence": [],
+  "threat_model": {
+    "assets": [
+      "identity-and-session",
+      "tenant-authorization",
+      "source-and-prompt",
+      "secret-material",
+      "run-and-artifact",
+      "usage-and-ledger",
+      "audit-and-recovery",
+      "runtime-mapping"
+    ],
+    "trust_boundaries": [
+      "browser-and-api-client-to-control-plane",
+      "control-plane-to-placement",
+      "queue-to-runner",
+      "runner-to-sandbox",
+      "sandbox-to-egress-proxy",
+      "service-to-kms",
+      "provider-webhook-to-control-plane",
+      "operator-to-platform-console"
+    ],
+    "threats": [
+      {
+        "id": "TM-001",
+        "stride": "S",
+        "asset": "identity-and-session",
+        "boundary": "browser-and-api-client-to-control-plane",
+        "scenario": "Stolen, fixed, forged, cross-origin, or ambiguously supplied browser or API credentials impersonate a user or Service Account.",
+        "controls": ["opaque revocable sessions", "secure host cookie", "CSRF and Origin checks", "OIDC state nonce and PKCE", "session rotation", "peppered one-time API Keys with exact scope and immediate revocation"],
+        "verification": "Browser fixation, CSRF, Origin, logout replay, OIDC, API Key, network, ambiguity, and interactive-login negative E2E",
+        "owner": "security",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-002",
+        "stride": "T",
+        "asset": "tenant-authorization",
+        "boundary": "browser-and-api-client-to-control-plane",
+        "scenario": "A client tampers with Tenant, Space, Project, Placement, physical workspace, or snapshot values.",
+        "controls": ["server scope enumeration", "opaque signed snapshot", "live membership validation", "dual forced RLS", "binding generation"],
+        "verification": "Cross-tenant HTTP, PostgreSQL RLS, selector conflict, and stale generation tests",
+        "owner": "control-plane",
+        "residual_risk": "low"
+      },
+      {
+        "id": "TM-003",
+        "stride": "R",
+        "asset": "audit-and-recovery",
+        "boundary": "operator-to-platform-console",
+        "scenario": "A privileged actor denies a destructive or tenant-data operation.",
+        "controls": ["fresh authentication", "impact preview", "reason", "separation of duties", "immutable audit and Outbox"],
+        "verification": "Owner transfer, member removal, break-glass, and L2 or L3 operation audit tests",
+        "owner": "security",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-004",
+        "stride": "I",
+        "asset": "source-and-prompt",
+        "boundary": "operator-to-platform-console",
+        "scenario": "Platform, tenant, or support administrators read content without an explicit resource grant.",
+        "controls": ["content-blind administrative roles", "JIT support grant", "RLS", "project authorization", "audit"],
+        "verification": "Role by scope browser and API negative matrix",
+        "owner": "security",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-005",
+        "stride": "D",
+        "asset": "tenant-authorization",
+        "boundary": "control-plane-to-placement",
+        "scenario": "Control-plane or cache failure causes fail-open access or global outage.",
+        "controls": ["exact degraded-read allowlist", "60-second cap", "sensitive fail closed", "dependency circuit breaker", "capacity reservation"],
+        "verification": "Dependency fault injection across two API instances",
+        "owner": "control-plane",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-006",
+        "stride": "E",
+        "asset": "run-and-artifact",
+        "boundary": "queue-to-runner",
+        "scenario": "A stale or compromised Worker continues writing after lease loss or gains a broader Tenant capability.",
+        "controls": ["short capability", "lease generation", "fence token", "placement and tenant binding", "quarantine"],
+        "verification": "Network partition, reconnect, stale write, and cross-pool negative tests",
+        "owner": "execution-platform",
+        "residual_risk": "high"
+      },
+      {
+        "id": "TM-007",
+        "stride": "E",
+        "asset": "source-and-prompt",
+        "boundary": "runner-to-sandbox",
+        "scenario": "Hostile repository code escapes a sandbox or reaches host sockets, sibling tenants, or privileged devices.",
+        "controls": ["per-Run non-root sandbox", "no host socket", "filesystem and process boundary", "syscall and device restriction", "resource limit"],
+        "verification": "Host socket, namespace, symlink, device, fork-bomb, and cross-tenant cache probes",
+        "owner": "execution-platform",
+        "residual_risk": "high"
+      },
+      {
+        "id": "TM-008",
+        "stride": "I",
+        "asset": "secret-material",
+        "boundary": "sandbox-to-egress-proxy",
+        "scenario": "Prompt injection or dependency code exfiltrates secrets or reaches metadata and internal control networks.",
+        "controls": ["tool-scoped secret broker", "default-deny egress", "DNS and IP revalidation", "metadata block", "output secret scanning"],
+        "verification": "Metadata, private range, redirect, DNS rebinding, encoded secret, log, diff, and artifact exfiltration tests",
+        "owner": "security",
+        "residual_risk": "high"
+      },
+      {
+        "id": "TM-009",
+        "stride": "T",
+        "asset": "runtime-mapping",
+        "boundary": "control-plane-to-placement",
+        "scenario": "A partial cross-Placement migration exposes duplicate active bindings or accepts old generation writes.",
+        "controls": ["durable saga", "idempotent step", "single active binding", "generation fence", "compensation and orphan scan"],
+        "verification": "Crash at each Saga step, duplicate delivery, compensation failure, and old-generation probes",
+        "owner": "runtime-compatibility",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-010",
+        "stride": "T",
+        "asset": "usage-and-ledger",
+        "boundary": "provider-webhook-to-control-plane",
+        "scenario": "Forged, duplicate, reordered, or delayed provider events corrupt subscription or ledger state.",
+        "controls": ["signature and timestamp", "delivery deduplication", "versioned state transition", "append-only correction", "reconciliation"],
+        "verification": "Signature rotation, replay, reorder, unknown result, and provider invoice reconciliation tests",
+        "owner": "billing-platform",
+        "residual_risk": "medium"
+      },
+      {
+        "id": "TM-011",
+        "stride": "T",
+        "asset": "run-and-artifact",
+        "boundary": "runner-to-sandbox",
+        "scenario": "A poisoned dependency, build image, cache, or artifact enters a shared execution path.",
+        "controls": ["digest pin", "SBOM", "provenance", "signature", "vulnerability and malware gate", "content-addressed credential-free cache"],
+        "verification": "Unsigned image, altered provenance, critical vulnerability, secret, license, and cache poisoning tests",
+        "owner": "security",
+        "residual_risk": "high"
+      },
+      {
+        "id": "TM-012",
+        "stride": "D",
+        "asset": "run-and-artifact",
+        "boundary": "queue-to-runner",
+        "scenario": "A hot tenant, poison message, provider retry storm, or abusive workload starves other tenants.",
+        "controls": ["weighted fair queue", "per-tenant concurrency", "bounded queue", "retry budget", "circuit breaker", "DLQ"],
+        "verification": "Hot-tenant, poison, provider throttle, pool failure, and queue saturation load tests",
+        "owner": "execution-platform",
+        "residual_risk": "high"
+      }
+    ]
+  },
+  "risk_register": {
+    "last_reviewed_at": "2026-08-05",
+    "review_interval_days": 14,
+    "risks": [
+      {
+        "id": "RISK-001",
+        "probability": "medium",
+        "impact": "critical",
+        "trigger": "An upstream change breaks a Store, migration, runner, or patch contract.",
+        "mitigation": "Pin revision, replay patches, run N and N-1 contracts, and stop deployment on schema drift.",
+        "owner": "runtime-compatibility",
+        "due": "continuous"
+      },
+      {
+        "id": "RISK-002",
+        "probability": "medium",
+        "impact": "critical",
+        "trigger": "Control-plane RLS, runtime RLS, or connection context permits cross-tenant access.",
+        "mitigation": "Use forced RLS, NOBYPASS roles, connection reuse probes, and release-blocking negative E2E.",
+        "owner": "security",
+        "due": "before-production"
+      },
+      {
+        "id": "RISK-003",
+        "probability": "high",
+        "impact": "critical",
+        "trigger": "Runner or sandbox isolation has no independent failure-domain and hostile-workload proof.",
+        "mitigation": "Keep P4 and production GO blocked until two domains and the complete malicious workload matrix pass.",
+        "owner": "execution-platform",
+        "due": "P4-exit"
+      },
+      {
+        "id": "RISK-004",
+        "probability": "medium",
+        "impact": "critical",
+        "trigger": "A backup exists but cannot meet approved RPO or RTO or revives deleted or revoked state.",
+        "mitigation": "Run quarterly isolated tenant and regional restores and replay tombstones, revocations, and binding generations.",
+        "owner": "site-reliability",
+        "due": "P5-exit"
+      },
+      {
+        "id": "RISK-005",
+        "probability": "medium",
+        "impact": "high",
+        "trigger": "A published image lacks immutable source, SBOM, provenance, signature, or current OSS regression proof.",
+        "mitigation": "Fail the production image verifier and deployment admission before any digest is promoted.",
+        "owner": "security",
+        "due": "P0-exit"
+      },
+      {
+        "id": "RISK-006",
+        "probability": "medium",
+        "impact": "high",
+        "trigger": "Usage, pricing, customer charges, and provider costs cannot reconcile under retries or late events.",
+        "mitigation": "Keep ledgers append-only, reconcile daily, and block commercial GO until a real provider batch balances.",
+        "owner": "billing-platform",
+        "due": "P6-exit"
+      }
+    ]
+  }
+}

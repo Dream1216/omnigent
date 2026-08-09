@@ -1,0 +1,92 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30948364396,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30948364396",
+  "job_id": 92123913719,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30948364396/job/92123913719",
+  "head_sha": "d8adb772f021135bf639ada20497b0e75325a62a",
+  "placement_router_predecessor_sha": "1b2d2929d6836f4170d5c9a40b0dc2380dde55be",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12.13",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap",
+    "placement_authority": "PostgreSQL forced-RLS lease bound to exact Runner connection generation"
+  },
+  "verification": {
+    "combined_ci_tests": "724 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 116.94,
+    "official_zygote_and_query_context_regressions": "56 passed",
+    "official_zygote_and_query_context_seconds": 37.68,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.1,
+    "wheel_required_artifacts": 97,
+    "patches_replayed": 2,
+    "migration_head": "p4e000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates_before_this_record": 12,
+    "pending_acceptance_gates_after_this_record": 11,
+    "release_decision": "NO-GO"
+  },
+  "durable_placement_authority": {
+    "one_live_owner_lease_per_runner": true,
+    "runner_connection_generation_is_exact_and_fenced": true,
+    "routing_generation_is_monotonic": true,
+    "gateway_instance_and_relay_subject_are_server_selected": true,
+    "ownership_token_is_only_persisted_as_sha256": true,
+    "heartbeat_lease_is_bounded_and_cannot_move_backwards": true,
+    "concurrent_replica_claim_has_one_winner": true,
+    "runner_reconnect_immediately_releases_the_older_generation": true,
+    "stale_owner_cannot_release_a_replacement": true,
+    "skip_locked_reconciler_expires_abandoned_owners": true,
+    "authority_fields_are_immutable_and_records_append_only": true,
+    "lifecycle_changes_emit_non_secret_outbox_events": true
+  },
+  "postgresql_forced_rls": {
+    "placement_table_enable_and_force_rls": true,
+    "preview_gateway_requires_exact_active_preview_token_hash": true,
+    "preview_grant_and_placement_must_match_current_runner_generation": true,
+    "expired_revoked_or_stale_routes_are_hidden": true,
+    "secret_broker_cannot_enumerate_placement_topology": true,
+    "executor_outbox_insert_is_limited_to_four_placement_event_types": true,
+    "executor_cannot_insert_unrelated_global_outbox_events": true,
+    "real_postgresql_concurrency_rls_trigger_and_outbox_tests": true
+  },
+  "preview_routing_contract": {
+    "every_gateway_request_re_resolves_durable_placement": true,
+    "local_owner_uses_the_exact_official_runner_session": true,
+    "remote_owner_is_selected_by_opaque_server_generated_relay_subject": true,
+    "receiving_replica_re_resolves_ownership_before_local_session_access": true,
+    "stale_relay_after_runner_reconnect_fails_closed": true,
+    "official_tunnel_registry_and_runner_session_are_unmodified": true,
+    "relay_transport_is_an_interface_not_a_deployed_cross_host_claim": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 432,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9913,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a deployed authenticated cross-host relay or production message bus",
+    "cross-host Preview Gateway to Runner mutual TLS and service discovery",
+    "multi-host network partition retry ordering and backpressure behavior",
+    "request-body frame streaming or Preview WebSocket forwarding",
+    "custom-domain certificate lifecycle and abuse controls",
+    "external Preview process reaping after the Runner itself crashes",
+    "a dedicated Preview process UID mount namespace and production cgroup",
+    "two independent infrastructure failure domains and N-1 rollback",
+    "signed vulnerability-cleared digest-pinned production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the durable cross-replica Runner tunnel Placement ownership and Preview route-selection contract at the exact implementation revision on PostgreSQL 16 and Linux CI. It removes the process-local ownership decision but does not prove a deployed authenticated cross-host relay, production failure-domain behavior, or release promotion. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, README, or plan documentation does not alter the verified implementation."
+}

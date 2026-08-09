@@ -1,0 +1,535 @@
+from __future__ import annotations
+
+import socket
+import threading
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+import uvicorn
+from playwright.sync_api import Locator, Page, expect, sync_playwright
+
+from saas.control_plane.permissions import POLICY_VERSION
+from tests.saas.test_http_cookie_auth import _build_fastapi_app
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserFixture:
+    origin: str
+    scope: dict[str, str]
+
+
+@pytest.fixture
+def project_admin_server(tmp_path: Path) -> Iterator[BrowserFixture]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    origin = f"http://127.0.0.1:{port}"
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'project-admin.sqlite3'}"
+    app, scope = _build_fastapi_app(origin, database_url)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(
+        target=server.run,
+        kwargs={"sockets": [sock]},
+        daemon=True,
+    )
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+        raise RuntimeError("Project Admin browser fixture did not start")
+    try:
+        yield BrowserFixture(origin, scope)
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        sock.close()
+        app.state.saas_test_engine.dispose()
+
+
+def _run_in_fresh_browser_thread(
+    fixture: BrowserFixture,
+    case: Callable[[Page, BrowserFixture], None],
+) -> None:
+    """Run sync Playwright outside pytest-asyncio's main thread."""
+
+    captured: dict[str, BaseException] = {}
+
+    def worker() -> None:
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    case(browser.new_page(), fixture)
+                finally:
+                    browser.close()
+        except BaseException as error:
+            captured["error"] = error
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=90)
+    if thread.is_alive():
+        raise RuntimeError("Project Admin Chromium acceptance did not terminate")
+    if error := captured.get("error"):
+        raise error
+
+
+def _project_permission_deny_grant_allow_revoke_deny(
+    page: Page,
+    fixture: BrowserFixture,
+) -> None:
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(
+        f"{fixture.origin}/saas/admin/projects"
+        f"?tenant={fixture.scope['tenant_id']}&space={fixture.scope['space_id']}"
+    )
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const response = await nativeFetch(input, init);
+            if (url.endsWith("/context/scopes")) {
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+            }
+            return response;
+          };
+        }
+        """
+    )
+
+    page.get_by_test_id("login-email").fill("http@example.com")
+    page.get_by_test_id("login-password").fill("initial-http-password")
+    page.get_by_test_id("login-submit").click()
+    expect(page.get_by_test_id("scope-connect")).to_be_enabled()
+    expect(page.locator("#permission-count")).to_contain_text(POLICY_VERSION)
+
+    page.get_by_test_id("scope-connect").click()
+    expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")
+
+    page.get_by_test_id("project-name").fill("Browser Permission Matrix")
+    page.get_by_test_id("project-create").click()
+    expect(page.get_by_test_id("selected-project-name")).to_have_text("Browser Permission Matrix")
+    expect(page.locator("#project-version")).to_have_text("V1")
+
+    page.get_by_test_id("decision-subject").fill(fixture.scope["member_id"])
+    page.get_by_test_id("decision-run").click()
+    expect(page.get_by_test_id("decision-result")).to_contain_text("DENIED")
+    expect(page.get_by_test_id("decision-result")).to_contain_text("permission_not_granted · V1")
+
+    page.get_by_test_id("member-subject").fill(fixture.scope["member_id"])
+    page.get_by_test_id("member-grant").click()
+    expect(page.locator("#project-version")).to_have_text("V2")
+    page.get_by_test_id("decision-run").click()
+    expect(page.get_by_test_id("decision-result")).to_contain_text("ALLOWED")
+    expect(page.get_by_test_id("decision-result")).to_contain_text("allowed · V2")
+    expect(page.locator("#decision-sources")).to_contain_text("project_membership / read")
+
+    page.get_by_test_id("member-revoke").click()
+    expect(page.locator("#project-version")).to_have_text("V3")
+    page.get_by_test_id("decision-run").click()
+    expect(page.get_by_test_id("decision-result")).to_contain_text("DENIED")
+    expect(page.get_by_test_id("decision-result")).to_contain_text("permission_not_granted · V3")
+    expect(page.get_by_test_id("event-log")).to_contain_text("Membership revoked at V3")
+    assert browser_errors == [], failed_responses
+
+
+def _login_and_connect(page: Page, email: str, password: str) -> None:
+    page.get_by_test_id("login-email").fill(email)
+    page.get_by_test_id("login-password").fill(password)
+    page.get_by_test_id("login-submit").click()
+    expect(page.get_by_test_id("scope-connect")).to_be_enabled()
+    page.get_by_test_id("scope-connect").click()
+    expect(page.get_by_test_id("context-state")).to_contain_text("SPACE /")
+
+
+def _confirm_dialog(page: Page, reason: str) -> None:
+    expect(page.get_by_test_id("action-dialog")).to_be_visible()
+    page.get_by_test_id("action-reason").fill(reason)
+    page.get_by_test_id("action-confirm").click()
+    expect(page.get_by_test_id("action-dialog")).not_to_be_visible()
+
+
+def _approval_card(page: Page, list_testid: str, target_name: str) -> Locator:
+    return page.get_by_test_id(list_testid).locator(".approval-card").filter(has_text=target_name)
+
+
+def _enterprise_approval_desk_separates_request_decision_and_execution(
+    page: Page,
+    fixture: BrowserFixture,
+) -> None:
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(f"{fixture.origin}/saas/admin/projects")
+
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+    page.get_by_test_id("project-name").fill("Approval Browser Project")
+    page.get_by_test_id("project-create").click()
+    expect(page.get_by_test_id("selected-project-name")).to_have_text("Approval Browser Project")
+    page.get_by_test_id("member-subject").fill(fixture.scope["member_id"])
+    page.get_by_test_id("member-role").select_option("manage")
+    page.get_by_test_id("member-grant").click()
+    expect(page.locator("#project-version")).to_have_text("V2")
+
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          let delayFirstGroupRead = true;
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const method = (init.method || "GET").toUpperCase();
+            if (delayFirstGroupRead && method === "GET" && url.includes("/groups?limit=100")) {
+              delayFirstGroupRead = false;
+              const staleResponse = await nativeFetch(input, init);
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+              return staleResponse;
+            }
+            return nativeFetch(input, init);
+          };
+        }
+        """
+    )
+    page.get_by_test_id("view-approvals").click()
+    expect(page.get_by_test_id("approval-board")).to_be_visible()
+    for name in ("Archive Candidate", "Rejected Candidate"):
+        page.get_by_test_id("group-name").fill(name)
+        page.get_by_test_id("group-create").click()
+        expect(page.get_by_test_id("group-list")).to_contain_text(name)
+    page.wait_for_timeout(900)
+    expect(page.get_by_test_id("group-list")).to_contain_text("Archive Candidate")
+    expect(page.get_by_test_id("group-list")).to_contain_text("Rejected Candidate")
+    page.get_by_test_id("role-name").fill("Retire Candidate")
+    page.get_by_test_id("role-create").click()
+    expect(page.get_by_test_id("role-list")).to_contain_text("Retire Candidate")
+
+    group_list = page.get_by_test_id("group-list")
+    group_list.locator(".governance-row").filter(has_text="Archive Candidate").get_by_role(
+        "button", name="PREPARE ARCHIVE"
+    ).click()
+    _confirm_dialog(page, "replace archive candidate with directory group")
+    expect(page.get_by_test_id("my-preflights")).to_contain_text("Archive Candidate")
+
+    group_list.locator(".governance-row").filter(has_text="Rejected Candidate").get_by_role(
+        "button", name="PREPARE ARCHIVE"
+    ).click()
+    _confirm_dialog(page, "evaluate rejected candidate dependencies")
+    expect(page.get_by_test_id("my-preflights")).to_contain_text("Rejected Candidate")
+
+    page.get_by_test_id("role-list").locator(".governance-row").filter(
+        has_text="Retire Candidate"
+    ).get_by_role("button", name="PREPARE RETIRE").click()
+    _confirm_dialog(page, "replace custom role with managed policy")
+    expect(page.get_by_test_id("my-preflights")).to_contain_text("Retire Candidate")
+
+    page.locator("#logout-button").click()
+    expect(page.get_by_test_id("login-submit")).to_be_visible()
+    _login_and_connect(page, "member@example.com", "initial-member-password")
+    page.get_by_test_id("project-list").locator(".project-row").filter(
+        has_text="Approval Browser Project"
+    ).click()
+    page.get_by_test_id("view-approvals").click()
+    expect(page.locator("#approval-count")).to_have_text("03")
+
+    archive_card = _approval_card(page, "approval-inbox", "Archive Candidate")
+    archive_card.get_by_role("button", name="APPROVE").click()
+    _confirm_dialog(page, "directory group has been verified")
+
+    rejected_card = _approval_card(page, "approval-inbox", "Rejected Candidate")
+    rejected_card.get_by_role("button", name="REJECT").click()
+    _confirm_dialog(page, "active integration still depends on this group")
+
+    role_card = _approval_card(page, "approval-inbox", "Retire Candidate")
+    role_card.get_by_role("button", name="APPROVE").click()
+    _confirm_dialog(page, "managed policy replacement is active")
+    expect(page.locator("#approval-count")).to_have_text("00")
+
+    page.locator("#logout-button").click()
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+    page.get_by_test_id("project-list").locator(".project-row").filter(
+        has_text="Approval Browser Project"
+    ).click()
+    page.get_by_test_id("view-approvals").click()
+
+    owner_archive = _approval_card(page, "my-preflights", "Archive Candidate")
+    expect(owner_archive).to_contain_text("APPROVED")
+    owner_archive.get_by_role("button", name="EXECUTE APPROVED CHANGE").click()
+    expect(page.get_by_test_id("action-reason")).to_have_value(
+        "replace archive candidate with directory group"
+    )
+    page.get_by_test_id("action-confirm").click()
+    expect(page.get_by_test_id("action-dialog")).not_to_be_visible()
+
+    owner_role = _approval_card(page, "my-preflights", "Retire Candidate")
+    expect(owner_role).to_contain_text("APPROVED")
+    owner_role.get_by_role("button", name="EXECUTE APPROVED CHANGE").click()
+    expect(page.get_by_test_id("action-reason")).to_have_value(
+        "replace custom role with managed policy"
+    )
+    page.get_by_test_id("action-confirm").click()
+    expect(page.get_by_test_id("action-dialog")).not_to_be_visible()
+
+    rejected_owner = _approval_card(page, "my-preflights", "Rejected Candidate")
+    expect(rejected_owner).to_contain_text("REJECTED")
+    expect(rejected_owner.get_by_role("button", name="EXECUTE APPROVED CHANGE")).to_have_count(0)
+    expect(
+        page.get_by_test_id("group-list")
+        .locator(".governance-row")
+        .filter(has_text="Archive Candidate")
+    ).to_contain_text("ARCHIVED")
+    expect(
+        page.get_by_test_id("role-list")
+        .locator(".governance-row")
+        .filter(has_text="Retire Candidate")
+    ).to_contain_text("RETIRED")
+    expect(page.get_by_test_id("event-log")).to_contain_text("executed")
+    assert browser_errors == [], failed_responses
+
+
+def _tenant_members_directory_invitation_roles_and_governance(
+    page: Page,
+    fixture: BrowserFixture,
+) -> None:
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(f"{fixture.origin}/saas/admin/projects")
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+
+    page.evaluate(
+        """
+        () => {
+          const nativeFetch = window.fetch.bind(window);
+          let delayFirstMemberRead = true;
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            const method = (init.method || "GET").toUpperCase();
+            if (delayFirstMemberRead && method === "GET" && url.includes("/members?limit=100")) {
+              delayFirstMemberRead = false;
+              const staleResponse = await nativeFetch(input, init);
+              await new Promise((resolve) => window.setTimeout(resolve, 750));
+              return staleResponse;
+            }
+            return nativeFetch(input, init);
+          };
+        }
+        """
+    )
+    page.get_by_test_id("view-members").click()
+    expect(page.get_by_test_id("member-board")).to_be_visible()
+    page.get_by_test_id("tenant-member-search").fill("viewer@example.com")
+    page.get_by_test_id("tenant-member-search").press("Enter")
+    expect(page.get_by_test_id("tenant-member-list")).to_contain_text("viewer@example.com")
+    page.wait_for_timeout(900)
+    expect(page.get_by_test_id("tenant-member-list")).not_to_contain_text("http@example.com")
+
+    page.get_by_test_id("tenant-member-search").fill("")
+    page.get_by_test_id("tenant-member-search").press("Enter")
+    expect(page.locator("#member-count")).to_have_text("03")
+    viewer_row = page.get_by_test_id(f"tenant-member-{fixture.scope['viewer_id']}")
+    viewer_row.click()
+    expect(page.get_by_test_id("member-detail")).to_contain_text("viewer@example.com")
+
+    page.get_by_test_id("tenant-member-role").select_option("operator")
+    page.get_by_test_id("tenant-member-role-save").click()
+    _confirm_dialog(page, "grant Tenant operations for release coverage")
+    expect(page.locator("#member-detail-status")).to_contain_text("V2")
+    expect(page.get_by_test_id("tenant-member-role")).to_have_value("operator")
+
+    space_role = page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")
+    space_role.select_option("operator")
+    space_role.locator("xpath=..").get_by_role("button", name="SET ROLE").click()
+    _confirm_dialog(page, "grant current Space deployment operations")
+    expect(page.get_by_test_id(f"member-space-{fixture.scope['space_id']}")).to_contain_text("V2")
+    expect(page.get_by_test_id(f"member-space-role-{fixture.scope['space_id']}")).to_have_value(
+        "operator"
+    )
+
+    page.get_by_test_id("tenant-member-status-toggle").click()
+    _confirm_dialog(page, "pause access during credential review")
+    expect(page.locator("#member-detail-status")).to_contain_text("SUSPENDED · V3")
+    page.get_by_test_id("tenant-member-status-toggle").click()
+    _confirm_dialog(page, "credential review completed")
+    expect(page.locator("#member-detail-status")).to_contain_text("ACTIVE · V4")
+
+    page.get_by_test_id("invite-email").fill("revocable@example.com")
+    page.get_by_test_id("invite-submit").click()
+    _confirm_dialog(page, "invite release observer into current Space")
+    expect(page.get_by_test_id("invite-token-card")).to_be_visible()
+    first_token = page.get_by_test_id("invite-one-time-token").text_content()
+    invitation = (
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    )
+    expect(invitation).to_contain_text("PENDING")
+
+    invitation.get_by_role("button", name="ROTATE + REISSUE").click()
+    _confirm_dialog(page, "rotate token after changing the delivery channel")
+    expect(page.get_by_test_id("invite-one-time-token")).not_to_have_text(first_token or "")
+    invitation = (
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    )
+    expect(invitation).to_contain_text("V2")
+    invitation.get_by_role("button", name="REVOKE").click()
+    _confirm_dialog(page, "requester no longer needs access")
+    expect(
+        page.get_by_test_id("invitation-list")
+        .locator(".invitation-card")
+        .filter(has_text="revocable@example.com")
+    ).to_contain_text("REVOKED")
+
+    page.get_by_test_id("tenant-member-remove").click()
+    _confirm_dialog(page, "remove temporary release operator")
+    expect(page.get_by_test_id(f"tenant-member-{fixture.scope['viewer_id']}")).to_contain_text(
+        "REMOVED"
+    )
+
+    page.get_by_test_id(f"tenant-member-{fixture.scope['member_id']}").click()
+    page.get_by_test_id("tenant-owner-transfer").click()
+    _confirm_dialog(page, "rotate Tenant ownership to the primary administrator")
+    expect(page.get_by_test_id("login-submit")).to_be_visible()
+    assert browser_errors == [], failed_responses
+
+
+def _tenant_billing_configures_authority_and_keeps_admin_read_only(
+    page: Page,
+    fixture: BrowserFixture,
+) -> None:
+    browser_errors: list[str] = []
+    failed_responses: list[str] = []
+    page.on(
+        "console",
+        lambda message: browser_errors.append(message.text) if message.type == "error" else None,
+    )
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
+    page.on(
+        "response",
+        lambda response: (
+            failed_responses.append(f"{response.status} {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.goto(f"{fixture.origin}/saas/admin/projects")
+    _login_and_connect(page, "http@example.com", "initial-http-password")
+
+    page.get_by_test_id("view-billing").click()
+    expect(page.get_by_test_id("billing-board")).to_be_visible()
+    expect(page.get_by_test_id("billing-state")).to_contain_text("UNCONFIGURED")
+    page.get_by_test_id("billing-plan-key").fill("browser-team-v1")
+    page.get_by_test_id("billing-subscription-status").select_option("active")
+    page.get_by_test_id("billing-subscription-save").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Billing subscription committed")
+    expect(page.get_by_test_id("billing-state")).to_contain_text("ACTIVE")
+    expect(page.get_by_test_id("billing-pricing-plan")).to_have_value("browser-team-v1")
+
+    page.get_by_test_id("billing-pricing-create").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Pricing snapshot V1 sealed")
+    page.get_by_test_id("billing-entitlement-save").click()
+    expect(page.get_by_test_id("billing-entitlement-list")).to_contain_text("llm.input_tokens")
+    expect(page.get_by_test_id("billing-entitlement-list")).to_contain_text("100000")
+
+    page.get_by_test_id("billing-reconcile").click()
+    expect(page.get_by_test_id("event-log")).to_contain_text("Billing reconciliation")
+    expect(page.get_by_test_id("billing-reconciliation-list")).to_contain_text("completed")
+    expect(page.get_by_test_id("billing-reconciliation-state")).to_have_text("COMPLETED")
+    expect(page.get_by_test_id("billing-usage-list")).to_contain_text("NO USAGE FACTS")
+    expect(page.get_by_test_id("billing-ledger-list")).to_contain_text("NO CUSTOMER LEDGER")
+
+    page.locator("#logout-button").click()
+    _login_and_connect(page, "member@example.com", "initial-member-password")
+    page.get_by_test_id("view-billing").click()
+    expect(page.get_by_test_id("billing-state")).to_contain_text("ACTIVE")
+    expect(page.get_by_test_id("billing-subscription-save")).to_be_disabled()
+    expect(page.get_by_test_id("billing-pricing-create")).to_be_disabled()
+    expect(page.get_by_test_id("billing-entitlement-save")).to_be_disabled()
+    expect(page.get_by_test_id("billing-reconcile")).to_be_disabled()
+    assert browser_errors == [], failed_responses
+
+
+def test_real_browser_project_permission_deny_grant_allow_revoke_deny(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _project_permission_deny_grant_allow_revoke_deny,
+    )
+
+
+def test_real_browser_enterprise_approval_desk_separates_request_decision_and_execution(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _enterprise_approval_desk_separates_request_decision_and_execution,
+    )
+
+
+def test_real_browser_tenant_members_directory_invitation_roles_and_governance(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _tenant_members_directory_invitation_roles_and_governance,
+    )
+
+
+def test_real_browser_tenant_billing_configures_authority_and_keeps_admin_read_only(
+    project_admin_server: BrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        project_admin_server,
+        _tenant_billing_configures_authority_and_keeps_admin_read_only,
+    )

@@ -1,0 +1,69 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31236978641,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31236978641",
+  "job_id": 93051210342,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31236978641/job/93051210342",
+  "artifact_id": 9016148996,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31236978641/artifacts/9016148996",
+  "artifact_archive_sha256": "f491b37fa9230f894bcb9ec2c8819f0316461d130cfa9079dac7c05daada1e3d",
+  "artifact_json_sha256": "235b6d67dcd7adbdf3d8ea5b7493d6e0b22687b34e9707fcf7db2dad30dd8699",
+  "head_sha": "59562d32e807caa0d38fb71d4a4975ef13d7f8fc",
+  "implementation_sha": "59562d32e807caa0d38fb71d4a4975ef13d7f8fc",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "control_plane_schema_revision": "pc5a00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "982 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 185.87,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 485 lines, and 0.9958 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786159186,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:7303a8f3a78238ce3b6e5fc433a16aa10968d1d6276498c928453c6b74ea0253",
+          "config_digest": "sha256:3a6b72b72ac8d77ed42275b6d7285324c28341adaae745fca6f8101be7274493"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:d03f330e99f025b363cebf3f3d671f53fa465a208bcaaef4ba076522897aa937",
+          "config_digest": "sha256:bd5b3d231c9f84aac530cc9fdd56bc70763b70ee5858b6760d00e95f4e89524b"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:e84757ea63213dabc0abe14783e5209fad7f002f329b89a99b08394944fee456",
+          "config_digest": "sha256:8ba203fdf3480a9491e19b652955dacc048dcdf9f9ba8d6540c767c67d0a590c"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:310690c4d71dc8a7b13481469b9468c33dcb7806ff29d1988a467ad31f570ba5",
+          "config_digest": "sha256:c220641ecb52cd6dbe3b39e20c60ebbc0b6d5e7ee2d7f2eda70f833bdae613b4"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact downstream product revision that accepts official upstream 9dab48b4 and preserves the managed Runtime Partition adapter. It does not prove production image promotion, complete PC5 enterprise behavior, deployment, disaster recovery, commercial acceptance, or release GO.",
+  "evidence_successor_policy": "A successor that changes only this evidence record, the paired compatibility record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at 59562d32e807caa0d38fb71d4a4975ef13d7f8fc."
+}

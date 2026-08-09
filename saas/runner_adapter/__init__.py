@@ -1,0 +1,87 @@
+"""Runner-owned physical adapters behind the SaaS control-plane boundary."""
+
+from saas.runner_adapter.containment import LinuxCgroupV2ContainmentVerifier
+from saas.runner_adapter.isolation import (
+    ContainmentVerifier,
+    IsolationAuthority,
+    LaunchGrantAuthority,
+    PreparedRunnerIsolation,
+    RunnerIsolationAdapter,
+    RunnerIsolationAdapterError,
+    SecretRedemptionAuthority,
+    reap_orphaned_secret_directories,
+)
+from saas.runner_adapter.metering import (
+    MANAGED_METERING_ENVELOPE_ENV_VAR,
+    ManagedMeteringError,
+    ManagedMeteringGrant,
+    ManagedRunnerLaunchAuthority,
+    ProviderUsageMeter,
+    StagedManagedRunnerLaunchAuthority,
+    consume_metering_envelope,
+)
+from saas.runner_adapter.preview_supervisor import (
+    PreviewProcessExit,
+    PreviewProcessSnapshot,
+    PreviewProcessSpec,
+    PreviewProcessSupervisorError,
+    RunnerPreviewProcessSupervisor,
+)
+from saas.runner_adapter.process_policy import (
+    ManagedHostProcess,
+    ManagedRunnerProcessPolicyError,
+    activate_managed_host_environment,
+    build_managed_host_environment,
+    require_managed_host_environment,
+    run_managed_host_process,
+)
+from saas.runner_adapter.worktrees import (
+    CheckpointArtifact,
+    FilesystemRecoveryArtifactStore,
+    PhysicalCheckpoint,
+    PhysicalWorktree,
+    RepositoryMirrorResolver,
+    RunnerWorktreeAdapter,
+    RunnerWorktreeAdapterError,
+    StaticRepositoryMirrorResolver,
+    WorktreeLifecycleAuthority,
+)
+
+__all__ = [
+    "MANAGED_METERING_ENVELOPE_ENV_VAR",
+    "CheckpointArtifact",
+    "ContainmentVerifier",
+    "FilesystemRecoveryArtifactStore",
+    "IsolationAuthority",
+    "LaunchGrantAuthority",
+    "LinuxCgroupV2ContainmentVerifier",
+    "ManagedHostProcess",
+    "ManagedMeteringError",
+    "ManagedMeteringGrant",
+    "ManagedRunnerLaunchAuthority",
+    "ManagedRunnerProcessPolicyError",
+    "PhysicalCheckpoint",
+    "PhysicalWorktree",
+    "PreparedRunnerIsolation",
+    "PreviewProcessExit",
+    "PreviewProcessSnapshot",
+    "PreviewProcessSpec",
+    "PreviewProcessSupervisorError",
+    "ProviderUsageMeter",
+    "RepositoryMirrorResolver",
+    "RunnerIsolationAdapter",
+    "RunnerIsolationAdapterError",
+    "RunnerPreviewProcessSupervisor",
+    "RunnerWorktreeAdapter",
+    "RunnerWorktreeAdapterError",
+    "SecretRedemptionAuthority",
+    "StagedManagedRunnerLaunchAuthority",
+    "StaticRepositoryMirrorResolver",
+    "WorktreeLifecycleAuthority",
+    "activate_managed_host_environment",
+    "build_managed_host_environment",
+    "consume_metering_envelope",
+    "reap_orphaned_secret_directories",
+    "require_managed_host_environment",
+    "run_managed_host_process",
+]

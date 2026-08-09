@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,12 +21,35 @@ if TYPE_CHECKING:
     from alembic.config import Config
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.db.query_context import query_name_scope
 from omnigent.entities import NewConversationItem
 
 _logger = logging.getLogger(__name__)
 
 # A callable that returns a context manager yielding a Session.
 ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]
+ManagedSessionInitializer = Callable[[Session], None]
+
+_managed_session_initializer: ContextVar[ManagedSessionInitializer | None] = ContextVar(
+    "omnigent_managed_session_initializer", default=None
+)
+
+
+@contextmanager
+def bind_managed_session_initializer(
+    initializer: ManagedSessionInitializer,
+) -> Iterator[None]:
+    """Bind a downstream-neutral transaction initializer for managed Store sessions."""
+
+    token = _managed_session_initializer.set(initializer)
+    try:
+        yield
+    finally:
+        _managed_session_initializer.reset(token)
+
+
+# A callable that requires a semantic query-name suffix for each transaction.
+NamedManagedSessionMaker = Callable[[str], AbstractContextManager[Session]]
 
 # A zero-argument callable returning a fresh database password (e.g. a
 # short-lived Lakebase OAuth token). Invoked once per *new* DBAPI connection.
@@ -218,7 +242,7 @@ def _create_engine(db_uri: str) -> Engine:
 
     :param db_uri: SQLAlchemy database connection string, e.g.
         ``"sqlite:///mydb.db"`` or
-        ``"postgresql://user:pass@host/dbname"``.
+        ``"postgresql://<user>:<password>@host/dbname"``.
     :returns: A configured :class:`~sqlalchemy.engine.Engine`.
     """
     is_sqlite = db_uri.startswith("sqlite")
@@ -299,7 +323,7 @@ def get_or_create_engine(db_uri: str) -> Engine:
 
     :param db_uri: SQLAlchemy database connection string, e.g.
         ``"sqlite:///mydb.db"`` or
-        ``"postgresql://user:pass@host/dbname"``.
+        ``"postgresql://<user>:<password>@host/dbname"``.
     :returns: A :class:`~sqlalchemy.engine.Engine` for the given URI.
     :raises RuntimeError: If automatic schema migration fails.
     """
@@ -344,8 +368,9 @@ def _ensure_conversation_tables(engine: Engine) -> None:
     """Create AP tables (conversations, conversation_items, conversation_labels) if absent."""
     from omnigent.db.db_models import ConversationBase
 
-    ConversationBase.metadata.create_all(bind=engine, checkfirst=True)
-    ensure_fts_table(engine)
+    with query_name_scope("omnigent.database.ensure_conversation_schema"):
+        ConversationBase.metadata.create_all(bind=engine, checkfirst=True)
+        ensure_fts_table(engine)
 
 
 def _build_alembic_config(db_uri: str) -> Config:
@@ -402,18 +427,19 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
     # Pass a shared connection so Alembic operates within the same
     # engine (required for SQLite in-memory databases, and avoids
     # creating a second connection pool).
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        command.upgrade(config, "head")
-    # Belt-and-suspenders: if a future migration is added but a
-    # caller forgets to wire it into the chain, ``create_all`` will
-    # at least create any missing tables from ORM metadata so the
-    # server still boots. Cannot rescue missing COLUMNS on existing
-    # tables — those need a real migration, which is why the
-    # short-circuit above was removed. Both bases are created because
-    # in single-DB mode this engine hosts the AP tables too.
-    for base in (OmnigentBase, ConversationBase):
-        base.metadata.create_all(bind=engine, checkfirst=True)
+    with query_name_scope("omnigent.database.run_migrations"):
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+        # Belt-and-suspenders: if a future migration is added but a
+        # caller forgets to wire it into the chain, ``create_all`` will
+        # at least create any missing tables from ORM metadata so the
+        # server still boots. Cannot rescue missing COLUMNS on existing
+        # tables — those need a real migration, which is why the
+        # short-circuit above was removed. Both bases are created because
+        # in single-DB mode this engine hosts the AP tables too.
+        for base in (OmnigentBase, ConversationBase):
+            base.metadata.create_all(bind=engine, checkfirst=True)
 
 
 def _get_current_db_revision(engine: Engine) -> str | None:
@@ -431,12 +457,13 @@ def _get_current_db_revision(engine: Engine) -> str | None:
     """
     from alembic.runtime.migration import MigrationContext
 
-    inspector = inspect(engine)
-    if "alembic_version" not in inspector.get_table_names():
-        return None
-    with engine.connect() as connection:
-        ctx = MigrationContext.configure(connection)
-        return ctx.get_current_revision()
+    with query_name_scope("omnigent.database.select_current_revision"):
+        inspector = inspect(engine)
+        if "alembic_version" not in inspector.get_table_names():
+            return None
+        with engine.connect() as connection:
+            ctx = MigrationContext.configure(connection)
+            return ctx.get_current_revision()
 
 
 def _get_head_db_revision(db_uri: str) -> str:
@@ -595,6 +622,9 @@ def make_managed_session_maker(
                         # Acquire write lock before any read to prevent
                         # concurrent check-then-insert races on SQLite.
                         session.execute(text("BEGIN IMMEDIATE"))
+                initializer = _managed_session_initializer.get()
+                if initializer is not None:
+                    initializer(session)
                 yield session
                 session.commit()
             except Exception:
@@ -602,6 +632,40 @@ def make_managed_session_maker(
                 raise
 
     return managed_session
+
+
+def make_named_managed_session_maker(
+    engine: Engine,
+    *,
+    query_name_prefix: str,
+    immediate: bool = False,
+) -> NamedManagedSessionMaker:
+    """Create managed sessions whose database work always has a semantic name.
+
+    The supplied suffix is joined to ``query_name_prefix`` and remains active
+    through the session's implicit flush and commit. A nested
+    :func:`query_name_scope` can provide a more specific name for one statement.
+
+    :param engine: The SQLAlchemy engine to bind sessions to.
+    :param query_name_prefix: Stable namespace shared by the store's queries,
+        e.g. ``"omnigent.file_store"``.
+    :param immediate: Forwarded to :func:`make_managed_session_maker`.
+    :returns: A callable accepting one semantic query-name suffix per session.
+    """
+    prefix = query_name_prefix.rstrip(".")
+    if not prefix.strip():
+        raise ValueError("query_name_prefix must not be empty")
+
+    managed_session = make_managed_session_maker(engine, immediate=immediate)
+
+    @contextmanager
+    def named_managed_session(query_name: str) -> Iterator[Session]:
+        if not query_name.strip():
+            raise ValueError("query_name must not be empty")
+        with query_name_scope(f"{prefix}.{query_name}"), managed_session() as session:
+            yield session
+
+    return named_managed_session
 
 
 # ── ID generation ──────────────────────────────────────
@@ -739,7 +803,7 @@ def ensure_fts_table(engine: Engine) -> None:
         ``conversation_items_fts`` virtual table is created if absent.
     """
     if _supports_fts5(engine.dialect.name):
-        with engine.connect() as conn:
+        with query_name_scope("omnigent.database.ensure_fts_table"), engine.connect() as conn:
             conn.execute(_CREATE_FTS)
             conn.commit()
 

@@ -1,0 +1,123 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31030826038,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31030826038",
+  "job_id": 92390791825,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31030826038/job/92390791825",
+  "head_sha": "67d53a11c54f1fa0715f000f3f18a13b12366d12",
+  "upstream_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "861 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 115.06,
+    "isolated_logical_restore_contract": "passed in 2.916 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed",
+    "official_zygote_and_query_context_seconds": 29.65,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 12.13,
+    "wheel_required_artifacts": 159,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000005",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "approval_inbox_contract": {
+    "admin_surface": "/saas/admin/projects",
+    "separate_admin_application_or_auth_plane_created": false,
+    "requester_queue": "GET /saas/tenants/{tenant}/enterprise-access-preflights/mine",
+    "tenant_group_decision_queue": "GET /saas/tenants/{tenant}/enterprise-access-preflights/group-archive-inbox",
+    "project_role_decision_queue": "GET /saas/tenants/{tenant}/spaces/{space}/projects/{project}/enterprise-access-preflights/custom-role-retire-inbox",
+    "opaque_uuid_keyset_pagination": true,
+    "bounded_limit": "1 through 100",
+    "requester_excluded_from_decision_queues": true,
+    "expired_pending_requests_excluded": true,
+    "tenant_and_project_permissions_rechecked": true,
+    "server_derived_target_labels_and_impact_counts": true,
+    "full_impact_snapshot_returned_to_browser": false
+  },
+  "admin_ui_contract": {
+    "modules": [
+      "Projects",
+      "Approval Desk"
+    ],
+    "reason_required_for_prepare_approve_reject_and_execute": true,
+    "different_principal_decision_required": true,
+    "approved_execution_is_requester_only": true,
+    "group_archive_and_custom_role_retire_terminal_state_rendered": true,
+    "fresh_auth_or_authorization_failure_is_fail_closed": true,
+    "project_membership_grant_and_revoke_remains_available": true,
+    "tenant_members_management_module_complete": false
+  },
+  "browser_acceptance": {
+    "real_chromium": true,
+    "two_distinct_cookie_authenticated_administrators": true,
+    "group_approval_and_requester_execution": "passed",
+    "custom_role_approval_and_requester_execution": "passed",
+    "group_rejection": "passed",
+    "project_permission_deny_grant_allow_revoke_deny": "passed",
+    "browser_console_errors": 0
+  },
+  "postgresql_and_recovery_contract": {
+    "migration_head": "p6a000000005",
+    "requester_and_scope_inbox_indexes_present": true,
+    "tenant_rls_returns_both_same_tenant_group_and_role_preflights": true,
+    "cross_tenant_preflight_visibility": "denied",
+    "control_plane_forced_rls_tables": 57,
+    "runtime_forced_rls_tables": 17,
+    "restored_enterprise_access_preflight_rows": 2,
+    "post_backup_enterprise_approval_replay": "passed",
+    "cross_tenant_negative_probe": "passed",
+    "cross_workspace_negative_probe": "passed",
+    "temporary_restore_databases_dropped": true
+  },
+  "predecessor_fail_closed": {
+    "run_id": 31030351743,
+    "conclusion": "failure",
+    "reason": "the real PostgreSQL RLS assertion still expected only the Group preflight after the same Tenant gained a custom-role preflight",
+    "resolution": "the assertion now requires both same-Tenant records while retaining the cross-Tenant denial",
+    "product_code_weakened": false
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+    "patch_replay_content_mismatches": [],
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9945,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "production_baseline_blockers": 22,
+    "production_recovery_blockers": 2,
+    "production_tenant_deletion_blockers": 1,
+    "production_slo_capacity_blockers": 7,
+    "production_image_supply_chain_blockers": 1,
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "a complete Tenant Members console for list invite Tenant or Space role changes suspension removal identity connections Owner transfer and impact preflight",
+    "step-up reauthentication modal notification escalation or delegated approval policy in the browser",
+    "directory synchronization SCIM enterprise federation or identity-provider lifecycle",
+    "production high-cardinality approval-inbox performance or operating procedure",
+    "complete audit export platform console privacy deletion public API SDK or billing capability",
+    "production PITR multi-AZ recovery deletion SLO capacity signed image or commercial acceptance",
+    "completion of the aggregate P6 enterprise console gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the single-plane Approval Desk, scope-safe requester and decision inboxes, server-only impact snapshots, different-principal browser decisions, requester-only execution, real PostgreSQL tenant isolation, p6a000000005 migration, logical restore, upstream replay, packaging, and compatibility implementation at 67d53a11c54f1fa0715f000f3f18a13b12366d12. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, tests that assert the ledger, or plan documentation does not alter the verified implementation. It deliberately does not prove complete Tenant user management, the aggregate enterprise console gate, production operation, or release GO."
+}

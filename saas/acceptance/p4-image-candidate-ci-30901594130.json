@@ -1,0 +1,54 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 30901594130,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30901594130",
+  "job_id": 91966931162,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30901594130/job/91966931162",
+  "head_sha": "e0a806f66bd53ab60466d7294653fadf2d1b093d",
+  "upstream_revision": "b8fd1952ac77b8c78ef971de801f2d35379c3b3b",
+  "control_plane_schema_revision": "p4a000000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1785839995,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:943d4b06e1dc486019d886d34d68821c0e88993ef00dffdb5322028cf0ce795e",
+          "config_digest": "sha256:271e57ea1bb921eb092b227eff3da774e265f92e607fe9d5e2048c86934c6da0"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:eae7338c9bc30c401346830b5740ea3aa397e5aab88fb3d248ec68dc7b379a73",
+          "config_digest": "sha256:3affabe2b96f420f41e8459e0bcdb9fa957ba910ead14e17a81637f931c5e120"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:a52005a05182949e3b85ebfc40aa8edb70e3a6e51618eb1e11bcf5454c7ef1e7",
+          "config_digest": "sha256:d7c805126570907018e6ea292277c49aa32726c180992e89435de9696257e413"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:96a096b17acdb99b79cc7c77af1c5fb429af3c60c54131d1afeb492ca0eb1ee9",
+          "config_digest": "sha256:2bdde16e8092e125a661decb6ef06e78fd8972affb5e82d82cc5ad1373a19d84"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact P4 scheduling revision. It does not satisfy production image promotion or the P0 image gate."
+}

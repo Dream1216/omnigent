@@ -1,0 +1,46 @@
+[Unit]
+Description=Omnigent SaaS Preview Gateway (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+Environment=PYTHONUNBUFFERED=1
+Environment=OMNIGENT_PREVIEW_GATEWAY_FACTORY=replace.with.deployment.factory:factory
+ExecStart=/usr/bin/omnigent-saas-preview-gateway --config /etc/omnigent/preview-gateway/%i.json --factory ${OMNIGENT_PREVIEW_GATEWAY_FACTORY}
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=45s
+TimeoutStopSec=45s
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+StateDirectory=omnigent-preview-gateway/%i
+RuntimeDirectory=omnigent-preview-gateway/%i
+
+[Install]
+WantedBy=multi-user.target

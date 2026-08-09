@@ -1,0 +1,73 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31223584072,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31223584072",
+  "job_id": 93013176334,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31223584072/job/93013176334",
+  "artifact_id": 9011905212,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31223584072/artifacts/9011905212",
+  "artifact_sha256": "83a379d2112818912e3d635cd927507de0e61687110a95d0187243f074c6f725",
+  "head_sha": "df7ce571910bd0c4c727784cd4a27f8fbfb97ce3",
+  "implementation_sha": "c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "control_plane_schema_revision": "pc3a00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "950 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 176.07,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 479 lines, and 0.9956 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786141300,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:3f378466ee466fb4e95783526784cb25aa2af704ee61b9aaa36bcaf9b39970bb",
+          "config_digest": "sha256:c11dd904bb5fc899aff9560fb641c64a58bfcb4da25e96c3c33e3c560a2b681d"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:25d5c81666bd9bfe55f3e59be908bd76dd8f7e5cb56cebeb5441d1f850887b55",
+          "config_digest": "sha256:fff30c8742604cfea9b689f54275dc764eedc74f83767a1e605055a539316a38"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:3d238a0788df62753c612589975bbe72380f140f9075b68eac481677ba3ea7b5",
+          "config_digest": "sha256:9a33158e0ec5be714774d43881bf077adadd5cc8026d6237f7f8fa1a084509ba"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:8ac9d3165b78f9299c650f92a29e34de4716a3392715ad0a23f85e74d4543e22",
+          "config_digest": "sha256:abb6ff10131c464a2bd66a11af51ab7d0ff6b557bbd147810014e7e1573b4cda"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact PC3 governed-access and evidence candidate. It does not prove production KMS signing or support operations, complete PC3, satisfy production image promotion, close PC4 or PC5, or establish release GO.",
+  "preceding_fail_closed_run": {
+    "run_id": 31220917310,
+    "head_sha": "c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b",
+    "reason": "the shared PostgreSQL PC3 acceptance fixture blocked later downgrade tests before any image build began"
+  },
+  "evidence_successor_policy": "A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at df7ce571910bd0c4c727784cd4a27f8fbfb97ce3."
+}

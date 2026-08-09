@@ -1,0 +1,89 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31233595734,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595734",
+  "job_id": 93042013599,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595734/job/93042013599",
+  "artifact_id": 9014716414,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31233595734/artifacts/9014716414",
+  "head_sha": "e71a46652a153e9e23f5b3959de59f375cf9a89e",
+  "implementation_sha": "e71a46652a153e9e23f5b3959de59f375cf9a89e",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "960 passed",
+    "combined_ci_warnings": 232,
+    "combined_ci_seconds": 188.36,
+    "isolated_logical_restore_contract": "passed in 4.144 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 38.91 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 17.19 seconds",
+    "wheel_required_artifacts": 212,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "pc5_enterprise_scim_slice": {
+    "tenant_permission_policy_version": "2026-08-08.pc5-scim-foundation",
+    "tenant_permissions": [
+      "enterprise_identity.read",
+      "enterprise_identity.manage"
+    ],
+    "directory_credentials_are_hash_only": true,
+    "directory_issuance_requires_fresh_auth_within_seconds": 300,
+    "bearer_is_returned_once_with_no_store_headers": true,
+    "email_equality_does_not_merge_external_subjects": true,
+    "user_deprovision_revokes_all_current_access_surfaces": true,
+    "managed_owner_deprovision_requires_owner_recovery": true,
+    "late_group_updates_cannot_resurrect_deprovisioned_users": true,
+    "immutable_event_receipts_and_redacted_outbox_are_transactional": true,
+    "bounded_http_surface": [
+      "ServiceProviderConfig",
+      "POST/GET/PATCH Users",
+      "POST/GET/PATCH Groups",
+      "bearer authentication",
+      "weak ETag/If-Match",
+      "SCIM JSON success and explicit error responses"
+    ]
+  },
+  "database_isolation": {
+    "real_postgresql": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated Directory/User/Group/Event fact sets",
+    "application_cannot_read_directory_token_hash_or_immutable_events": true,
+    "token_only_lookup_is_exact_and_cannot_read_users_before_tenant_binding": true,
+    "immutable_event_trigger": "passed",
+    "cross_tenant_and_cross_workspace_negative_probes": true,
+    "selected_table_content_sha256": "8d09731193065dd549a122059296e56b8ef58bd4009e5f1b214cc1245027d8ac"
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 479,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9958,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "complete RFC 7643 and RFC 7644 behavior including PUT, DELETE, List, Filter, Bulk and full PATCH path semantics",
+    "transport-level lost-response replay or directory credential rotation and disable lifecycle",
+    "SAML or enterprise OIDC, Domain Claim, JIT, enterprise MFA or recovery policy",
+    "privacy receipt anonymization, Legal Hold or a deletion execution that cannot resurrect identity state",
+    "real IdP disorder, retry, rate-limit or high-cardinality production acceptance",
+    "production PostgreSQL roles, PITR, multi-AZ, external object-lock backup or production RPO and RTO",
+    "registry publication, signature, vulnerability and license admission, Canary, N-1 rollback, production deployment or release GO"
+  ],
+  "evidence_successor_policy": "A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified PC5 implementation and must not be treated as production proof."
+}

@@ -1,0 +1,90 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30923776172,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30923776172",
+  "job_id": 92040749304,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30923776172/job/92040749304",
+  "head_sha": "3b7505e32201898cd693b2c4548fe31517f04580",
+  "isolation_evidence_predecessor_sha": "0501b7ff64bbb8fe747d16cb0406605d0b2b007d",
+  "upstream_revision": "a47a9ee3bf7287f7e70fc0f599f241e43275ecfc",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap",
+    "preview_tunnel": "official Runner WebSocket frame protocol with in-process ASGI target"
+  },
+  "verification": {
+    "combined_ci_tests": "683 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 85.03,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 10.44,
+    "wheel_required_artifacts": 82,
+    "patches_replayed": 2,
+    "migration_head": "p4c000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates_before_this_record": 11,
+    "pending_acceptance_gates_after_this_record": 11,
+    "release_decision": "NO-GO"
+  },
+  "route_authority": {
+    "preview_id_bound": true,
+    "tenant_space_project_bound": true,
+    "runner_id_and_connection_generation_bound": true,
+    "run_id_and_fence_bound": true,
+    "worktree_id_and_lease_generation_bound": true,
+    "opaque_preview_key_bound": true,
+    "expiry_rechecked_before_forward": true,
+    "ambient_cookie_authorization_and_forwarding_headers_absent": true,
+    "content_type_forwarded_after_authority_filter": true
+  },
+  "official_tunnel_adapter": {
+    "implementation": "saas/preview_tunnel.py",
+    "uses_official_request_response_and_cancel_frames": true,
+    "exact_official_runner_session_object_bound": true,
+    "same_runner_id_session_replacement_fails_closed": true,
+    "saas_connection_generation_must_advance_on_rebind": true,
+    "response_head_timeout_is_bounded": true,
+    "client_disconnect_sends_request_cancel": true,
+    "inflight_request_state_is_generation_guarded_and_released": true,
+    "response_body_streams_without_gateway_buffering": true,
+    "request_body_protocol": "bounded gateway buffering then one official v1 request frame",
+    "request_body_streaming": false
+  },
+  "runner_target_adapter": {
+    "official_runner_app_is_wrapped_without_upstream_source_changes": true,
+    "internal_route_accepts_only_asgi_tunnel_client": true,
+    "complete_route_metadata_rechecked_against_registered_target": true,
+    "cross_scope_metadata_returns_non_enumerating_404": true,
+    "internal_routing_headers_are_stripped_before_target_dispatch": true,
+    "target_path_and_query_are_preserved": true,
+    "in_process_asgi_target_e2e": true,
+    "real_local_process_or_unix_socket_target": false
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 413,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9903,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "deployed mutually authenticated transport between separate Preview Gateway and Runner processes or hosts",
+    "multi-replica placement routing for the process-local Runner tunnel binding resolver",
+    "a real Runner-local process or Unix-domain-socket Preview target adapter",
+    "streaming request-body frames in official tunnel protocol v1",
+    "Preview WebSocket forwarding custom domains and abuse controls",
+    "a production Runner Pod container or microVM whose real cgroup facts pass the verifier",
+    "two independent infrastructure failure domains network partition and N-1 rollback",
+    "signed vulnerability-cleared digest-pinned production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the generation-bound downstream Preview HTTP adapter over the official Runner WebSocket frame protocol at the exact implementation revision. It does not prove deployed mutual authentication, multi-process placement, a real local Preview process, WebSocket forwarding, or production containment. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, README, or plan documentation does not alter the verified implementation."
+}

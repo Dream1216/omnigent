@@ -1,0 +1,533 @@
+from __future__ import annotations
+
+import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
+from threading import Event
+from uuid import UUID, uuid4
+
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session, sessionmaker
+
+from saas.compatibility import RequestContext
+from saas.control_plane.enterprise_identity import EnterpriseScimService, ScimFilterExpression
+from saas.control_plane.lifecycle import LifecycleError
+from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
+
+
+def _postgres_url() -> str:
+    url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required for PC5 SCIM RLS acceptance")
+    return url
+
+
+def _context(*, actor: UUID, tenant: UUID, space: UUID) -> RequestContext:
+    return RequestContext(
+        actor_id=actor,
+        tenant_id=tenant,
+        space_id=space,
+        project_id=None,
+        user_security_version=1,
+        tenant_membership_version=1,
+        space_membership_version=1,
+        trace_id="pc5-scim-postgresql",
+    )
+
+
+def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order() -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(_postgres_url())
+    suffix = uuid4().hex[:12]
+    login_role = f"pc5_scim_governance_{suffix}"
+    owner_id, tenant_id, other_tenant_id, space_id = (uuid4() for _ in range(4))
+
+    with engine.begin() as connection:
+        config = Config(root / "saas/control_plane/alembic.ini")
+        config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql(
+            f"CREATE ROLE {login_role} NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT"
+        )
+        connection.exec_driver_sql(f"GRANT saas_governance TO {login_role}")
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_global_users (id, status, security_version) "
+                "VALUES (:owner, 'active', 1)"
+            ),
+            {"owner": owner_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_tenants "
+                "(id, slug, name, status, plan, home_region) VALUES "
+                "(:tenant, :slug, 'PC5 SCIM', 'active', 'enterprise', 'cn-east-1'), "
+                "(:other, :other_slug, 'Other PC5', 'active', 'enterprise', 'cn-east-1')"
+            ),
+            {
+                "tenant": tenant_id,
+                "slug": f"pc5-scim-{suffix}",
+                "other": other_tenant_id,
+                "other_slug": f"pc5-other-{suffix}",
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_tenant_memberships "
+                "(tenant_id, user_id, role, status, version) "
+                "VALUES (:tenant, :owner, 'owner', 'active', 1)"
+            ),
+            {"tenant": tenant_id, "owner": owner_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_spaces (id, tenant_id, slug, name, status) "
+                "VALUES (:space, :tenant, 'main', 'Main', 'active')"
+            ),
+            {"space": space_id, "tenant": tenant_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_space_memberships "
+                "(tenant_id, space_id, user_id, role, status, version) "
+                "VALUES (:tenant, :space, :owner, 'owner', 'active', 1)"
+            ),
+            {"tenant": tenant_id, "space": space_id, "owner": owner_id},
+        )
+
+    governance_sessions = sessionmaker(engine, expire_on_commit=False)
+
+    @sa.event.listens_for(governance_sessions, "after_begin")
+    def _use_governance_role(
+        _session: Session, _transaction: object, connection: sa.Connection
+    ) -> None:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
+
+    service = EnterpriseScimService(governance_sessions)
+    issued = service.issue_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        display_name=f"Corporate IdP {suffix}",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-directory-{suffix}",
+    )
+    assert issued.bearer_token is not None
+    old_token = issued.bearer_token
+    rotated = service.rotate_directory_credential(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=1,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-directory-rotate-{suffix}",
+    )
+    assert rotated.bearer_token is not None
+    token = rotated.bearer_token
+    with pytest.raises(LifecycleError) as old_token_denied:
+        service.get_user(old_token, scim_user_id=uuid4())
+    assert old_token_denied.value.code == "scim_authentication_failed"
+    created = service.upsert_user(
+        token,
+        event_id=f"pc5-user-create-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name="PC5 Employee",
+        active=True,
+        source_version=1,
+    )
+    assert created.user_id is not None
+    listed = service.list_users(
+        token,
+        filter_attribute="externalId",
+        filter_value=f"employee-{suffix}",
+    )
+    assert listed.total_results == listed.items_per_page == 1
+    assert listed.resources[0].id == created.id
+    no_op_user = service.upsert_user(
+        token,
+        event_id=f"pc5-user-noop-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name="PC5 Employee",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert no_op_user.version == no_op_user.source_version == 1
+    replayed_no_op_user = service.upsert_user(
+        token,
+        event_id=f"pc5-user-noop-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name="PC5 Employee",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert replayed_no_op_user.replayed is True
+    assert replayed_no_op_user.version == 1
+    missing_display_name = service.upsert_user(
+        token,
+        event_id=f"pc5-user-no-display-{suffix}",
+        external_id=f"no-display-{suffix}",
+        user_name=f"no-display-{suffix}@example.test",
+        display_name=None,
+        active=True,
+        source_version=1,
+    )
+    sorted_missing_first = service.list_users(
+        token,
+        sort_by="displayName",
+        sort_order="descending",
+    )
+    assert sorted_missing_first.total_results == 2
+    assert sorted_missing_first.resources[0].id == missing_display_name.id
+    compound_listed = service.list_users(
+        token,
+        filter_expression=ScimFilterExpression(
+            operator="and",
+            operands=(
+                ScimFilterExpression(
+                    operator="sw",
+                    attribute="externalId",
+                    value="employee-",
+                ),
+                ScimFilterExpression(operator="eq", attribute="active", value=True),
+            ),
+        ),
+        sort_by="displayName",
+        sort_order="descending",
+    )
+    assert compound_listed.total_results == compound_listed.items_per_page == 1
+    assert compound_listed.resources[0].id == created.id
+
+    def _concurrent_user_replace(index: int) -> tuple[int, object]:
+        try:
+            result: object = service.upsert_user(
+                token,
+                event_id=f"pc5-user-concurrent-{index}-{suffix}",
+                external_id=f"employee-{suffix}",
+                user_name=f"employee-{suffix}@example.test",
+                display_name=f"PC5 Concurrent {index}",
+                active=True,
+                source_version=None,
+                scim_user_id=created.id,
+                expected_version=1,
+                operation="replace",
+            )
+        except LifecycleError as error:
+            result = error
+        return index, result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        concurrent_results = list(executor.map(_concurrent_user_replace, (1, 2)))
+    applied = [
+        (index, value) for index, value in concurrent_results if not isinstance(value, Exception)
+    ]
+    rejected = [
+        (index, value) for index, value in concurrent_results if isinstance(value, LifecycleError)
+    ]
+    assert len(applied) == len(rejected) == 1
+    rejected_error = rejected[0][1]
+    assert isinstance(rejected_error, LifecycleError)
+    assert rejected_error.code == "scim_etag_mismatch"
+    winner_index = applied[0][0]
+    replayed_winner = service.upsert_user(
+        token,
+        event_id=f"pc5-user-concurrent-{winner_index}-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name=f"PC5 Concurrent {winner_index}",
+        active=True,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=1,
+        operation="replace",
+    )
+    assert replayed_winner.replayed is True
+    assert replayed_winner.version == replayed_winner.source_version == 2
+    group = service.sync_group(
+        token,
+        event_id=f"pc5-group-1-{suffix}",
+        external_id=f"engineering-{suffix}",
+        display_name=f"Engineering {suffix}",
+        member_external_ids=[f"employee-{suffix}"],
+        active=True,
+        source_version=1,
+    )
+    assert group.active_member_count == 1
+    no_op_group = service.sync_group(
+        token,
+        event_id=f"pc5-group-noop-{suffix}",
+        external_id=f"engineering-{suffix}",
+        display_name=f"Engineering {suffix}",
+        member_external_ids=[f"employee-{suffix}"],
+        active=True,
+        source_version=None,
+        scim_group_id=group.id,
+        expected_version=1,
+        operation="patch",
+    )
+    assert no_op_group.version == no_op_group.source_version == 1
+    assert no_op_group.active_member_count == 1
+    listed_groups = service.list_groups(
+        token,
+        filter_expression=ScimFilterExpression(
+            operator="and",
+            operands=(
+                ScimFilterExpression(
+                    operator="co",
+                    attribute="externalId",
+                    value=suffix,
+                ),
+                ScimFilterExpression(operator="eq", attribute="active", value=True),
+            ),
+        ),
+        sort_by="displayName",
+    )
+    assert listed_groups.total_results == listed_groups.items_per_page == 1
+    assert listed_groups.resources[0].id == group.id
+
+    bulk_payload: dict[str, object] = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+        "Operations": [{"method": "POST", "path": "/Users"}],
+    }
+    bulk_response: dict[str, object] = {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkResponse"],
+        "Operations": [{"method": "POST", "status": "201"}],
+    }
+    first_entered = Event()
+    release_first = Event()
+    second_attempted = Event()
+
+    def _first_bulk() -> dict[str, object]:
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload=bulk_payload,
+            operation_count=1,
+        ) as execution:
+            first_entered.set()
+            assert release_first.wait(timeout=10)
+            execution.complete(bulk_response)
+            return bulk_response
+
+    def _replayed_bulk() -> dict[str, object] | None:
+        assert first_entered.wait(timeout=10)
+        second_attempted.set()
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload=bulk_payload,
+            operation_count=1,
+        ) as execution:
+            return execution.replay_result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(_first_bulk)
+        assert first_entered.wait(timeout=10)
+        replay_future = executor.submit(_replayed_bulk)
+        assert second_attempted.wait(timeout=10)
+        assert replay_future.done() is False
+        release_first.set()
+        assert first_future.result(timeout=10) == bulk_response
+        assert replay_future.result(timeout=10) == bulk_response
+    with pytest.raises(LifecycleError) as bulk_conflict:
+        with service.bulk_request(
+            token,
+            event_id=f"pc5-bulk-{suffix}",
+            request_payload={**bulk_payload, "failOnErrors": 1},
+            operation_count=1,
+        ):
+            pass
+    assert bulk_conflict.value.code == "scim_event_conflict"
+
+    deprovisioned = service.upsert_user(
+        token,
+        event_id=f"pc5-user-delete-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name=f"PC5 Concurrent {winner_index}",
+        active=False,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=2,
+        operation="delete",
+    )
+    assert deprovisioned.membership_status == "removed"
+    deprovision_replay = service.upsert_user(
+        token,
+        event_id=f"pc5-user-delete-{suffix}",
+        external_id=f"employee-{suffix}",
+        user_name=f"employee-{suffix}@example.test",
+        display_name=f"PC5 Concurrent {winner_index}",
+        active=False,
+        source_version=None,
+        scim_user_id=created.id,
+        expected_version=2,
+        operation="delete",
+    )
+    assert deprovision_replay.replayed is True
+    assert deprovision_replay.version == 3
+    late_group = service.sync_group(
+        token,
+        event_id=f"pc5-group-2-{suffix}",
+        external_id=f"engineering-{suffix}",
+        display_name=f"Engineering {suffix}",
+        member_external_ids=[f"employee-{suffix}"],
+        active=True,
+        source_version=2,
+    )
+    assert late_group.disposition == "blocked"
+    assert late_group.active_member_count == 0
+
+    with pytest.raises(LifecycleError) as wrong_token:
+        service.upsert_user(
+            "omniscim_invalid",
+            event_id=f"invalid-{suffix}",
+            external_id="invalid",
+            user_name="invalid@example.test",
+            display_name=None,
+            active=True,
+            source_version=1,
+        )
+    assert wrong_token.value.code == "scim_authentication_failed"
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 0
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.scim_token_hash', :token_hash, true)"),
+            {"token_hash": sha256(token.encode()).hexdigest()},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_users")
+            ).scalar_one()
+            == 0
+        )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_enterprise_scim_events SET disposition = 'stale' "
+                    "WHERE directory_id = :directory"
+                ),
+                {"directory": issued.id},
+            )
+
+    overlap_now = datetime.now(timezone.utc)
+    overlap = service.schedule_directory_credential_rotation(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=2,
+        activates_at=overlap_now,
+        grace_period_seconds=60,
+        reauthenticated_at=overlap_now,
+        idempotency_key=f"pc5-directory-overlap-{suffix}",
+        now=overlap_now,
+    )
+    assert overlap.version == 3
+    assert overlap.bearer_token is not None
+    overlap_token = overlap.bearer_token
+    assert service.list_groups(token).total_results == 1
+    assert service.list_groups(overlap_token).total_results == 1
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 0
+        )
+        connection.execute(
+            sa.text("SELECT set_config('app.scim_token_hash', :token_hash, true)"),
+            {"token_hash": sha256(overlap_token.encode()).hexdigest()},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_directories")
+            ).scalar_one()
+            == 1
+        )
+    with pytest.raises(LifecycleError) as overlap_in_progress:
+        service.rotate_directory_credential(
+            _context(actor=owner_id, tenant=tenant_id, space=space_id),
+            directory_id=issued.id,
+            expected_version=3,
+            reauthenticated_at=overlap_now,
+            idempotency_key=f"pc5-directory-overlap-conflict-{suffix}",
+            now=overlap_now,
+        )
+    assert overlap_in_progress.value.code == "scim_directory_rotation_in_progress"
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            config = Config(root / "saas/control_plane/alembic.ini")
+            config.set_main_option(
+                "script_location",
+                str(root / "saas/control_plane/migrations"),
+            )
+            config.attributes["connection"] = connection
+            command.downgrade(config, "pc5a00000002")
+
+    disabled = service.disable_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=issued.id,
+        expected_version=3,
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-directory-disable-{suffix}",
+    )
+    assert disabled.status == "disabled"
+    assert disabled.version == 4
+    with pytest.raises(LifecycleError) as disabled_token:
+        service.get_group(token, scim_group_id=group.id)
+    assert disabled_token.value.code == "scim_authentication_failed"
+    with pytest.raises(LifecycleError) as disabled_overlap_token:
+        service.get_group(overlap_token, scim_group_id=group.id)
+    assert disabled_overlap_token.value.code == "scim_authentication_failed"
+
+    assert len(CONTROL_PLANE_RLS_TABLES) == 88
+    assert {
+        "saas_enterprise_scim_directories",
+        "saas_enterprise_scim_users",
+        "saas_enterprise_scim_groups",
+        "saas_enterprise_scim_events",
+    } <= CONTROL_PLANE_RLS_TABLES
+
+    # The shared CI database must remain reusable. Immutable facts are removed
+    # only by the fixture superuser before returning to the PC3 predecessor.
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "TRUNCATE TABLE saas_enterprise_scim_events, saas_enterprise_scim_groups, "
+            "saas_enterprise_scim_users, saas_enterprise_scim_directories CASCADE"
+        )
+        config = Config(root / "saas/control_plane/alembic.ini")
+        config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
+        config.attributes["connection"] = connection
+        command.downgrade(config, "pc3a00000001")
+    engine.dispose()

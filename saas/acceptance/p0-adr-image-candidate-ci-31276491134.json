@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "evidence_id": "p0-adr-image-candidate-ci-31276491134",
+  "evidence_kind": "reproducible-candidate-not-production-promotion",
+  "recorded_at": "2026-08-09",
+  "repository": "Dream1216/omnigent",
+  "branch": "codex/p0-adr-approval-contract",
+  "source_revision": "562859ee55ce274b526e591bac0caa4fcbfdc174",
+  "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+  "adapter_contract_version": "0.2.0",
+  "control_plane_schema_revision": "pc5a00000003",
+  "github_actions": {
+    "run_id": 31276491134,
+    "job_id": 93150754777,
+    "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31276491134",
+    "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31276491134/job/93150754777",
+    "conclusion": "success",
+    "artifact": {
+      "id": 9027526029,
+      "name": "saas-image-candidate-562859ee55ce274b526e591bac0caa4fcbfdc174",
+      "size_bytes": 1177,
+      "archive_sha256": "238f86245f78d9ae82db6a8efb6f320be6af400d910b0e0eab3a43fc66b9adf2",
+      "candidate_json_sha256": "7de2236c53db260786ca40b106365fa4c7a8ac85d9bc17eba57412c82d0327ed"
+    }
+  },
+  "regression": {
+    "passed": 1000,
+    "platform_skipped": 1,
+    "warnings": 232,
+    "duration_seconds": 199.93,
+    "migration_upgrade_check_and_downgrade": "passed",
+    "patch_replay": {
+      "status": "passed",
+      "active_patch_count": 2
+    },
+    "source_intrusion": {
+      "status": "passed",
+      "direct_upstream_file_count": 9,
+      "upstream_net_added_loc": 493,
+      "isolated_custom_code_ratio": 0.996
+    }
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "images": [
+      "omnigent-saas-server",
+      "omnigent-saas-host"
+    ],
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "repeat_builds_per_image": 2,
+    "matching_platform_manifest_and_config": true,
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This immutable machine record proves a reproducible candidate for the exact ADR-contract implementation revision. It does not prove production image promotion and does not close the P0 image gate."
+}

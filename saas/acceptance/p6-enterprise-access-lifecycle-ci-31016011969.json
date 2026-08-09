@@ -1,0 +1,122 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31016011969,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31016011969",
+  "job_id": 92340114710,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31016011969/job/92340114710",
+  "head_sha": "7578d2d1bcbfae260142bad166a1851ce4168dfa",
+  "upstream_revision": "d794ef4f9f641f5b1f07dd586fae9ecac505a733",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "856 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 130.87,
+    "new_enterprise_lifecycle_test_items": 4,
+    "isolated_logical_restore_contract": "passed in 3.086 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed",
+    "official_zygote_and_query_context_seconds": 38.52,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.09,
+    "wheel_required_artifacts": 153,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000003",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "group_archive_contract": {
+    "http_action": "POST /saas/tenants/{tenant}/groups/{group}/archive",
+    "expected_version_reason_and_idempotency_required": true,
+    "all_active_memberships_are_removed_atomically": true,
+    "all_active_project_assignments_are_revoked_atomically": true,
+    "affected_user_security_versions_are_incremented": true,
+    "affected_user_sessions_are_revoked": true,
+    "suspended_users_do_not_block_revocation": true,
+    "affected_project_authorization_versions_are_incremented_once": true,
+    "terminal_state_records_actor_timestamp_and_reason": true,
+    "idempotent_replay_repeats_side_effects": false
+  },
+  "custom_role_retirement_contract": {
+    "http_action": "POST /saas/tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/retire",
+    "expected_version_reason_and_idempotency_required": true,
+    "all_active_assignments_are_revoked_atomically": true,
+    "project_authorization_version_is_incremented": true,
+    "terminal_state_records_actor_timestamp_and_reason": true,
+    "idempotent_replay_repeats_side_effects": false
+  },
+  "membership_batch_contract": {
+    "http_action": "POST /saas/tenants/{tenant}/groups/{group}/membership-batches",
+    "minimum_items": 1,
+    "maximum_items": 100,
+    "duplicate_users_are_rejected": true,
+    "all_targets_and_versions_are_validated_before_mutation": true,
+    "invalid_item_rolls_back_entire_batch": true,
+    "removed_users_are_immediately_invalidated": true,
+    "affected_project_authorization_versions_are_incremented_once_per_batch": true
+  },
+  "concurrency_and_outbox_contract": {
+    "postgresql_tenant_scoped_transaction_advisory_lock": true,
+    "same_operation_concurrent_archive_has_one_winner": true,
+    "same_operation_concurrent_retire_has_one_winner": true,
+    "cross_archive_and_retire_complete_without_deadlock": true,
+    "mutations_are_tenant_scoped_idempotent": true,
+    "outbox_events_are_persisted_in_the_same_transaction": true,
+    "outbox_payload_contains_secret_material": false
+  },
+  "migration_and_recovery_contract": {
+    "migration_head": "p6a000000003",
+    "legacy_archived_and_retired_rows_receive_explicit_backfill_marker": true,
+    "legacy_backfill_is_not_presented_as_original_operator_proof": true,
+    "postgresql_migration_restores_force_rls_before_commit": true,
+    "control_plane_forced_rls_tables": 56,
+    "runtime_forced_rls_tables": 17,
+    "restored_enterprise_group_rows": 2,
+    "restored_enterprise_group_membership_rows": 2,
+    "restored_enterprise_custom_role_rows": 2,
+    "restored_enterprise_group_role_assignment_rows": 2,
+    "cross_tenant_negative_probe": "passed",
+    "cross_workspace_negative_probe": "passed",
+    "post_backup_enterprise_lifecycle_replay": "passed",
+    "temporary_restore_databases_dropped": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "d794ef4f9f641f5b1f07dd586fae9ecac505a733",
+    "patch_replay_content_mismatches": [],
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9942,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "production_baseline_blockers": 22,
+    "production_recovery_blockers": 2,
+    "production_tenant_deletion_blockers": 1,
+    "production_slo_capacity_blockers": 7,
+    "production_image_supply_chain_blockers": 1,
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "production group archive role retirement or bulk membership operation",
+    "dedicated pre-execution archive or retirement impact snapshot and approval UI",
+    "directory synchronization SCIM enterprise federation or identity-provider lifecycle",
+    "complete audit export platform console privacy deletion or public API and SDK capability",
+    "production PITR multi-AZ recovery deletion SLO capacity signed image or commercial acceptance",
+    "completion of the aggregate P6 enterprise gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact enterprise group archive, custom-role retirement, bounded membership batch, tenant-scoped write serialization, Cookie and CSRF Admin API, immediate revocation, auditable migration, forced-RLS, logical restore, packaging, patch replay, source-intrusion, and official compatibility implementation at 7578d2d1bcbfae260142bad166a1851ce4168dfa. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, tests that assert the ledger, or plan documentation does not alter the verified implementation. It deliberately does not prove production operation or the aggregate P6 gates."
+}

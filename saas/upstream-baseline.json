@@ -1,0 +1,50 @@
+{
+  "adapter_contract_version": "0.2.0",
+  "audit_verified_at": "2026-08-09",
+  "downstream_owned_prefixes": [
+    "saas/",
+    "tests/saas/"
+  ],
+  "forbidden_upstream_prefixes": [
+    "omnigent/claude_native",
+    "omnigent/codex_native",
+    "omnigent/cursor_native",
+    "omnigent/opencode_native",
+    "omnigent/pi_native",
+    "omnigent/runner/native/",
+    "omnigent/runtime/workflow.py"
+  ],
+  "official_schema_heads": [
+    "f7a8b9c0d1e2"
+  ],
+  "patch_queue_directory": "saas/upstream-patches",
+  "runner_session_protocol_version": 2,
+  "runtime_rls_tables": {
+    "account_tokens": ["workspace_id", "id"],
+    "agents": ["workspace_id", "id"],
+    "comments": ["workspace_id", "conversation_id", "id"],
+    "conversation_items": ["workspace_id", "conversation_id", "id", "created_at"],
+    "conversation_labels": ["workspace_id", "conversation_id", "key"],
+    "conversations": ["workspace_id", "id"],
+    "device_grants": ["workspace_id", "id"],
+    "files": ["workspace_id", "id"],
+    "hosts": ["workspace_id", "host_id"],
+    "omnigent_conversation_metadata": ["workspace_id", "id"],
+    "policies": ["workspace_id", "id"],
+    "projects": ["workspace_id", "id"],
+    "scheduled_task_runs": ["workspace_id", "id"],
+    "scheduled_tasks": ["workspace_id", "id"],
+    "session_permissions": ["workspace_id", "user_id", "conversation_id"],
+    "user_daily_cost": ["workspace_id", "user_id", "day_utc"],
+    "users": ["workspace_id", "id"]
+  },
+  "source_intrusion_budget": {
+    "max_active_patches": 8,
+    "max_direct_upstream_files": 10,
+    "max_upstream_net_added_loc": 500,
+    "min_isolated_custom_code_ratio": 0.85
+  },
+  "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
+  "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+  "upstream_version": "0.9.0.dev0"
+}

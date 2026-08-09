@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-saas-tenant-deletion-v1",
+  "reviewed_at": "2026-08-09",
+  "revision_contract": {
+    "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "pc5b00000001"
+  },
+  "evidence_directory": "saas/production/deletion-evidence",
+  "max_evidence_age_days": 90,
+  "required_preconditions": [
+    "tenant_pending_deletion",
+    "new_admission_disabled",
+    "active_runs_terminal_or_quarantined",
+    "sessions_api_credentials_and_grants_revoked",
+    "memberships_removed",
+    "deletion_request_persisted_in_outbox"
+  ],
+  "required_surfaces": {
+    "control_plane_database": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "runtime_database": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "object_and_artifact_store": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "vector_and_search_indexes": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "caches": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "queues_and_dlq": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "provider_and_connector_state": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "enterprise_identity_provisioning_state": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "enterprise_identity_event_receipts": {
+      "disposition": "anonymize_and_retain",
+      "max_retention_days": 2555
+    },
+    "runner_worktree_and_recovery_material": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "webhook_state": {
+      "disposition": "erase",
+      "max_retention_days": 0
+    },
+    "secret_and_kms_references": {
+      "disposition": "cryptographic_erase",
+      "max_retention_days": 0
+    },
+    "logs_and_traces": {
+      "disposition": "redact_and_retain",
+      "max_retention_days": 30
+    },
+    "immutable_audit_and_ledger": {
+      "disposition": "anonymize_and_retain",
+      "max_retention_days": 2555
+    },
+    "backups_and_snapshots": {
+      "disposition": "tombstone_then_expire",
+      "max_retention_days": 35
+    }
+  },
+  "required_checks": [
+    "control_plane_rls_zero_visible_rows",
+    "runtime_rls_zero_visible_rows",
+    "cross_tenant_canary_unchanged",
+    "objects_and_artifacts_enumerated_zero",
+    "search_and_vector_enumerated_zero",
+    "cache_namespaces_invalidated",
+    "queue_and_dlq_payloads_cleared",
+    "webhook_endpoints_disabled_and_secrets_destroyed",
+    "service_accounts_suspended_or_deleted_and_keys_revoked",
+    "provider_and_connector_access_revoked",
+    "scim_directory_tokens_revoked_and_hashes_destroyed",
+    "scim_subject_mappings_erased",
+    "scim_receipts_anonymized_without_replay_resurrection",
+    "runner_worktree_and_recovery_material_destroyed",
+    "kms_grants_and_data_keys_revoked",
+    "backup_tombstone_replay_verified",
+    "restore_does_not_resurrect_deleted_tenant",
+    "audit_and_ledger_direct_identifiers_removed",
+    "retention_and_legal_hold_decisions_recorded",
+    "customer_export_completed_or_waived"
+  ],
+  "required_attestation_roles": [
+    "privacy",
+    "security",
+    "data-owner"
+  ],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ]
+}

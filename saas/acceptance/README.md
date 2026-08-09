@@ -1,0 +1,1209 @@
+# P0-P6 acceptance evidence
+
+`p0-p6-evidence.json` is the authoritative machine-readable progress ledger.
+It deliberately separates implementation evidence from a passed acceptance
+gate. A gate may list code and tests while remaining `pending` until the exact
+revision has produced the required real infrastructure, browser, recovery, or
+external approval evidence.
+
+Run `python -m saas.scripts.check_acceptance_manifest` in CI. A phase cannot be
+marked `complete` while any gate is pending, and the release cannot be marked
+`GO` until every P0-P6 phase is complete.
+
+Immutable CI records name the verified GitHub Actions run and exact source
+revision. `p2-ci-30883002639.json` records the first complete P2 implementation;
+`p2-upstream-sync-ci-30883850613.json` records the next official-baseline sync,
+including patch shrinkage, expanded official regression tests, and renewed
+source-intrusion evidence. `p2-upstream-sync-ci-30884588165.json` records the
+following sync to `15dd7bec` and expands the gate to cover the changed CLI and
+managed-host tests. Two sync records prove repeatability but do not, by
+themselves, close the combined P6 commercial gate.
+
+`p3-upstream-sync-ci-30897083447.json` records a third conflict-free sync to
+`b8fd1952`, after P3 completion. It revalidates the permanent adapter and two
+patches against ten new upstream commits, including host/runner recovery,
+worktree-isolating repro tooling, and stricter Web TypeScript checks.
+
+`p4-upstream-sync-ci-30932712224.json` records the next conflict-free sync to
+`8e17c9ec` after the P4 Secret Broker transport slice. It adds explicit Linux CI
+coverage for the upstream Runner/harness zygote, semantic database query names,
+allocator and threadpool bounds, and process cancellation. The downstream
+managed process policy selects the official direct-`Popen` path and rejects
+ambient credential forwarding; local single-user Hosts retain upstream
+behavior. This preserves compatibility but does not close deployed P4
+containment or failure-domain gates.
+
+`p1-oidc-ci-30887476782.json` records the complete OIDC Authorization Code +
+S256 PKCE, replica-independent browser transaction, strict ID Token, JWKS
+rotation, explicit same-email conflict, and PostgreSQL RLS acceptance on the
+exact implementation revision.
+
+`p1-context-shell-ci-30890178928.json` records server-enumerated logical scope
+selection, opaque session-bound 60-second Context Snapshots, two independent
+API instances sharing PostgreSQL authority, immediate healthy-control-plane
+revocation, Outbox invalidation, strict low-risk read degradation, and
+fail-closed login/scope/Mutation/WebSocket/new-Run/sensitive-read behavior.
+Together with the OIDC record, it closes P1. P3's durable execution authority
+is recorded by `p3-ci-30895599094.json`; the overall release remains `NO-GO`
+because P0 and P4-P6 still contain pending gates.
+
+P0's three pending gates now list concrete policy, validator, Runbook, build,
+and test evidence. `check_production_baseline` distinguishes complete baseline
+content from approvals, measured dashboards, and recovery-drill proof;
+`check_image_supply_chain` distinguishes a repeatable unsigned candidate from a
+signed immutable production image. Its strict v2 contract binds the exact
+protected workflow/OIDC subject, digest subjects, transparency proof, fresh
+vulnerability and license admission, immutable registry receipt, one-hour
+canary, bounded N-1 rollback, and three distinct approvals; repository escape or
+symlink evidence is rejected. Both commands have `--require-ready` modes that
+fail until their external evidence is complete. The evidence paths on a pending
+gate therefore show implemented controls, not a passed gate.
+
+The ADR gate additionally uses `check_adr_approvals` from the existing upstream
+compatibility workflow. Its structural report may pass while approval readiness is blocked.
+The gate stays pending until a merged decision PR has exact-head Reviews from
+all technical owners and four distinct authorized humans, a successor PR adds
+the append-only record, live Review verification passes, and that exact CI
+evidence is added to the ledger. A proposed ADR document, empty authority map,
+single collaborator, or green structural check is not approval evidence.
+
+The P4 records separately close the credential-free Repository/ChangeSet/
+Worktree control plane, the physical Git/filesystem Runner adapter, the
+isolation/Secret/Preview control-plane contract, and the crash-safe Secret
+staging, malicious-egress regression, and Linux cgroup-v2 verifier contract.
+The verifier reads exact kernel facts and fails closed, but does not create a
+cgroup or prove that a production Runner Pod, container, or microVM is actually
+hardened. Deployed mutually authenticated Secret Broker and streaming Preview
+tunnels, WebSocket/custom-domain/abuse controls, two independent failure
+domains, and N-1 rollback therefore remain pending and the release remains
+`NO-GO`.
+
+The generation-bound Preview HTTP adapter is also a separate passed contract
+gate. It binds the complete control-plane route and exact official
+`RunnerSession`, rejects stale reconnect generations and cross-scope metadata,
+streams response chunks, and cancels abandoned requests. The follow-up
+Runner-local UDS target gate derives a server-chosen socket below a private
+Runner root, pins its filesystem identity, forbids TCP fallback, and passes a
+real spawned-process/UDS end-to-end test. Official protocol v1 still buffers
+each bounded request body in one frame. At that gate the Runner tunnel resolver was still process-local;
+the later Placement slice below replaces the ownership decision but not the
+cross-host relay transport. The next passed Supervisor contract starts that
+real target from an immutable server-owned specification, publishes it only
+after a direct UDS health check, excludes ambient credentials, and revokes then
+terminates the entire owned process group on stop, crash, or route expiry. Exact-revision run
+`30937413470` verifies all 711 PostgreSQL/Chromium compatibility tests, 56
+official zygote/query-context regressions, and the 36/22 Linux security matrix.
+This remains a local lifecycle seam: it does not establish external reaping
+after the Runner itself crashes, dedicated UID/mount/cgroup isolation,
+cross-host mutual authentication and relay deployment, Preview WebSocket
+forwarding, custom domains, or abuse controls.
+
+The mTLS Secret Broker adapter is another separate passed contract gate. A real
+TLS 1.3 socket handshake binds the Runner to one SPIFFE URI SAN, the request has
+no caller-selected Runner identity, the Broker injects the only Vault provider,
+and the Runner rechecks the complete credential metadata from its launch grant.
+Bounded same-request replay allows one transport retry without a second
+authority call. The same exact-revision CI independently passes the real
+PostgreSQL forced-RLS and dedicated `saas_secret_broker` role matrix. It does
+not yet prove deployed certificate lifecycle, cross-host mTLS-to-PostgreSQL,
+multi-replica encrypted replay, production Vault/KMS, memory zeroization, or
+failure-domain behavior.
+
+The following certificate-lifecycle slice is intentionally narrower than a
+production PKI. External CA tooling retains private keys and signing authority;
+the SaaS control plane persists only public leaf fingerprints and lifecycle
+metadata. PostgreSQL serializes concurrent activation, enforces one active leaf
+per Runner/purpose, makes records append-only, exposes only the exact presented
+certificate through forced RLS, and invalidates a leaf on expiry, revocation,
+purpose mismatch, or Runner connection-generation change. The Secret Broker
+checks this authority before reading or redeeming a request. Exact-revision run
+`30942353100` passes 721 PostgreSQL/Chromium compatibility tests, 56 official
+zygote/query-context regressions, the 36/22 Linux security matrix, Pyrefly,
+P4d migration round trips, the 93-artifact wheel check, patch replay, and the
+source-intrusion budget; the contract gate is therefore `passed`. External
+issuance, Trust Bundle rollout, deployed cross-host mTLS, expiry/compromise
+drills, and multi-replica reconciliation remain production blockers.
+
+The next Placement Router slice removes the process-local ownership decision
+without modifying the official `TunnelRegistry` or `RunnerSession`. PostgreSQL
+stores one live ownership lease per Runner, bound to the exact Connection
+Generation, a monotonic Routing Generation, a hashed owner token, a
+server-generated opaque relay subject, and a bounded heartbeat deadline.
+Concurrent replicas serialize on the Runner row; reconnect immediately fences
+the older generation, stale owner tokens cannot release replacements, and a
+bounded `SKIP LOCKED` reconciler expires abandoned ownership. Preview RLS
+reveals the current route only for the exact still-active Preview token and
+Runner generation. The receiving replica re-resolves ownership before touching
+its local official session. Exact-revision run `30948364396` passes 724
+PostgreSQL/Chromium compatibility tests, 56 official zygote/query-context
+regressions, the 36/22 Linux security matrix, Pyrefly, P4e migration round
+trips, the 97-artifact wheel check, patch replay, and the source-intrusion
+budget; the contract gate is therefore `passed`. The relay remains an
+authenticated transport interface rather than deployed cross-host mTLS or a
+production message bus, so this slice cannot close the P4 production aggregate.
+
+The follow-up Preview Relay slice implements that interface as a bounded,
+one-request TLS 1.3 transport. Both peers must present a certificate with
+exactly one `spiffe://omnigent/preview-gateway/{gateway_instance_id}` URI SAN;
+the sender binds the server certificate identity to the durable Placement
+owner before writing request bytes, and both sides call an injected certificate
+lifecycle authorizer. The wire request contains the opaque Placement identity
+and complete Preview route fences but no caller-selected network endpoint. The
+receiver re-resolves Placement before touching the local official Runner
+session. Response bodies remain streamed with byte, frame, idle-timeout, and
+disconnect cancellation bounds. There is deliberately no automatic retry, so
+an unknown-result POST/PUT/PATCH/DELETE is never replayed. The gate is now
+verified by an immutable exact-revision CI record; even with that contract
+record, production service discovery, external CA and Trust Bundle
+operations, cross-host deployment, network-partition behavior, and two failure
+domains remain separate `NO-GO` requirements. Exact-revision run `30951270461`
+passes 734 PostgreSQL/Chromium compatibility tests, 56 official zygote/query
+context regressions, the 36/22 Linux security matrix, Pyrefly, P4e migration
+round trips, the 99-artifact wheel check, patch replay, and the source-intrusion
+budget; the transport contract gate is therefore `passed`. Eleven aggregate
+acceptance gates remain pending and the release remains `NO-GO`.
+
+The next p4f candidate persists the previously injected Preview Gateway
+directory and Relay certificate authorizer. Gateway IDs are process-lifetime
+and never reusable; immutable internal endpoints and provenance are bound to a
+hashed registration token, bounded heartbeat lease, monotonic drain/release/
+expiry lifecycle, and non-secret Outbox events. Legacy p4e Gateway references
+become released tombstones before a foreign key is installed. Placement claim,
+heartbeat, Preview route resolution, and Relay certificate authorization all
+fail when the Gateway lease is stale.
+
+Relay client and server leaves use separate exact-EKU purposes, one Gateway
+SPIFFE URI, exact server-name coverage, accepted Trust Bundle metadata, bounded
+rotation overlap, and immediate revocation. Raw tokens, certificate DER, and
+private keys never enter PostgreSQL or Outbox. Column grants plus forced RLS
+hide token hashes and reveal only live endpoint fields or the exact presented
+fingerprint/purpose. Exact-revision run `30955223169` at
+`ece5e58120e8a6147174736b89126abfee48e953` passes 745
+PostgreSQL/Chromium compatibility tests, 56 official regressions, the 36/22
+Linux security matrix, Pyrefly, p4f migration round trips, the 103-artifact
+wheel check, both patch replays, and the source-intrusion budget. The subgate
+is therefore `passed`; the evidence-successor wheel requires 104 artifacts.
+External CA/Trust Bundle operations, deployed cross-host registration and
+service discovery, network partitions, and two failure domains remain
+independent `NO-GO` requirements. Eleven aggregate gates remain pending.
+
+The p4g implementation adds a downstream-owned Preview Gateway process coordinator
+and an explicit non-routable `starting` state. It prepares and installs a
+purpose-separated client/server leaf pair without exposing private-key bytes,
+binds the Relay listener before durable registration, verifies the exact
+advertised mTLS endpoint while the directory still rejects routing, and only
+then atomically activates the Gateway. Heartbeats extend a bounded lease;
+renewal activates both replacement leaves before installing them; partial
+pair activation is revoked; and startup, maintenance, signal, or planned-drain
+failure removes readiness, closes the listener, releases or expires the
+registration, revokes current leaves, and asks the key provider to destroy the
+private material. PostgreSQL rejects activation without both valid purposes,
+one common accepted Trust Bundle, direct Gateway-role activation,
+activation-time rewrite, lifecycle reversal,
+and stale endpoint reuse. Migration `p4g000000001` passed a real PostgreSQL
+`p4f -> p4g -> p4f -> p4g` local round trip. Exact implementation run
+`30959947571` at `e698027952e171bf3a22e4360373965626f56fd7` passes
+753 PostgreSQL/Chromium compatibility tests, 56 official regressions, the
+36/22 Linux security matrix, Pyrefly, p4g migration upgrade/check/downgrade,
+the 106-artifact wheel check, both patch replays, and the source-intrusion
+budget. The runtime subgate is therefore `passed`; the evidence-successor
+wheel requires 107 artifacts and eleven aggregate gates remain pending.
+The pre-activation readiness interface requires an independently authorized
+platform health probe identity rather than the still-disabled Gateway client leaf.
+This does not provide an external CA, production Trust Bundle distribution,
+deployed DNS/load-balancer registration, cross-host topology, network-partition
+evidence, or two failure domains; production remains `NO-GO`.
+
+The p4h slice packages that lifecycle as an executable, unprivileged process
+contract. Its strict non-secret JSON configuration rejects symlinks, unsafe file
+ownership/modes, unknown or duplicate fields, static Gateway IDs/tokens, non-loopback
+health sockets, and invalid timing relationships. Every process start creates a new
+opaque Gateway identity and registration token in memory. A trusted deployment-only
+factory supplies narrow mTLS control-plane clients, external CA/HSM key handling, the
+Relay listener, a separately provisioned platform-health identity, and the persistent
+drain observer; the Gateway must never receive a `saas_platform` database credential.
+
+The executable exposes detail-free `/livez` and `/readyz` only on loopback, probes the
+advertised listener with TLS 1.3, hostname validation, and an exact server-leaf pin,
+and handles SIGTERM/SIGINT during blocked startup without leaving a routable identity.
+The wheel includes hardened systemd and Kubernetes templates with non-root/read-only/
+no-capability defaults and default-deny networking. The example intentionally remains
+single-replica until a deployment renderer assigns each Pod a unique directly routable
+endpoint. Exact implementation run `30964370004` at
+`742eafd22e82244df89efe7ffc965eb3d5e0bcc0` passes 775 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, the 36/22 Linux security matrix,
+Pyrefly, p4g migration round trips, the 113-artifact wheel check, both patch replays,
+and the source-intrusion budget. The process/deployment contract subgate is therefore
+`passed`; the evidence-successor wheel requires 114 artifacts. External CA/HSM,
+signed deployed image, DNS/LB, NetworkPolicy allowlists, cross-host partitions, two
+failure domains, and N-1 rollback remain separate production blockers. Eleven
+aggregate gates remain pending and the release remains `NO-GO`.
+
+The p4i candidate removes the remaining direct-database temptation from the Gateway
+factory boundary. `MutualTlsPreviewGatewayControlClient/Server` expose only register,
+activate, heartbeat, drain, release, certificate-metadata activation, and
+same-Gateway revocation. The server derives one exact process-generated Gateway ID
+from a dedicated non-CA ClientAuth URI SAN, invokes an injected per-method workload
+authorizer before dispatch, rejects Relay and platform-health identities, prohibits
+client-selected authority time, bounds HTTP/JSON framing, disables redirects and
+environment proxies, and returns only non-secret receipts. Local real TLS plus real
+PostgreSQL 16 tests exercise split `saas_platform`/`saas_preview_gateway` roles and
+cross-Gateway revocation denial. Exact implementation run `30967154951` at
+`0516d80ca3dc5a1b1a6e8108bf92fc673074be82` passes 781 PostgreSQL/Chromium
+compatibility tests, 56 official regressions, the 36/22 Linux security matrix,
+Pyrefly, p4g migration round trips, the 115-artifact wheel check, both patch replays,
+and the source-intrusion budget. The control transport subgate is therefore `passed`;
+the evidence-successor wheel requires 116 artifacts and eleven aggregate gates remain
+pending. Production remains `NO-GO`: external workload issuance, CA/HSM, signed
+deployment, NetworkPolicy allowlists, cross-host partitions, two failure domains, and
+N-1 rollback remain independent requirements.
+
+The first P5 candidate implements a durable outbound Webhook delivery contract without
+claiming the P5 production aggregate. Tenant-scoped endpoint metadata stores only Secret
+references and rotation versions. Every delivery attempt resolves all A/AAAA answers,
+rejects the complete target if any answer is non-public, pins one validated IP for the
+TLS connection, verifies the original hostname through SNI, never follows redirects,
+and persists only bounded response metadata. Versioned HMAC signatures retain stable
+Delivery/Event identities across retries and authorized manual DLQ replay. PostgreSQL
+forced RLS separates tenant registration/enqueue from the least-privilege global
+`saas_webhook_dispatcher`; `SKIP LOCKED` leases, immutable event facts, a replay guard,
+and an Outbox audit record cover replica races and operator actions.
+
+The implementation first ran at `569c1d0352beebee5f069dea8bac1890b4f3304a`.
+Compatibility run `30978680709` is deliberately not acceptance evidence: Linux
+scheduling exposed an older Preview Gateway runtime mixing its injected authority clock
+with wall time during a 300 ms test lease. Commit
+`d8f47804b767c6d24bc71694fa9c5e1882abc114` passes that same logical clock to every
+directory and certificate lifecycle operation and adds a regression that delays real
+time beyond the lease without advancing authority time. Exact run `30980110086` then
+passes 795 PostgreSQL/Chromium compatibility tests, 56 official zygote/query-context
+regressions, the 36/22 Linux security matrix, Pyrefly with zero errors, p5a migration
+upgrade/check/downgrade, the 119-artifact wheel inventory, both patch replays, and the
+source-intrusion budget at 8 files/434 lines with a 0.9931 isolated-code ratio. The
+signed Webhook/SSRF contract subgate is therefore `passed`; the evidence-successor
+wheel requires 121 artifacts and eleven aggregate gates remain pending.
+
+Image candidate run `30978680569` separately repeats Server and Host builds for
+`linux/amd64` and `linux/arm64` at exact implementation revision `569c1d03` and schema
+`p5a000000001`; both platform manifest/config facts match across attempts. Those OCI
+archives are neither registry-published nor signed, vulnerability/license admission
+and protected workflow identity are absent, and no canary or N-1 rollback ran. The P0
+image gate therefore remains pending. Production DNS policy, egress proxy/firewall
+enforcement, external Secret/KMS operation, receiver conformance, capacity/SLO
+evidence, deletion workflows, and multi-AZ recovery remain independent P5 `NO-GO`
+requirements.
+
+Recovery readiness now has a separately executable contract in
+`saas/production/recovery-policy.json` and
+`python -m saas.scripts.check_recovery_readiness`. It rejects policy drift,
+canonical-record tampering, stale or different-release evidence, shared restore
+boundaries, same-failure-domain backup storage, missing signatures/attestations,
+incomplete safety checks, and RPO/RTO overruns. An empty evidence directory is a
+valid repository state but reports production `blocked`; it cannot be converted to
+`ready` without one current, exact-revision production Tenant drill and one cluster
+drill. This closes no multi-AZ, PITR, or recovery aggregate gate by itself.
+
+Exact Linux/PostgreSQL 16 run `30983318630` at
+`689d364ca809d762cfe1d21232c5f50739cc9be2` passes 801 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 124-artifact wheel check, both patch replays, and intrusion enforcement. It closes
+only the verifier-contract subgate; its own report records zero production evidence,
+zero qualified scopes, and two readiness blockers.
+
+The compatibility workflow also executes
+`python -m saas.scripts.run_postgresql_restore_contract` against PostgreSQL 16. It
+uses two disposable database names, a custom-format `pg_dump`/`pg_restore`, the exact
+official/SaaS migrations, canonical 50/17 forced-RLS inventories, post-backup
+revocation/deletion-marker replay, cross-scope negative probes, and selected-table
+content hashes. The databases and archive are destroyed after the report. Its
+evidence kind is permanently `ci_contract_not_production_drill`; passing it does not
+claim PITR, WAL continuity, multi-AZ, a second failure domain, or production recovery.
+
+Exact run `30986200469` at
+`470105a68a9992ba12258c3be96b600ca4e0ae28` passes 809 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 128-artifact wheel, both patch replays, and the 8-file/443-line intrusion result.
+Its PostgreSQL 16 restore report completes in 2.961 seconds with matching hashes,
+50/17 forced-RLS inventories, both cross-scope probes, and post-backup revocation and
+deletion-marker replay. It closes only the CI logical-restore contract subgate;
+eleven production gates and the release-level `NO-GO` are unchanged.
+
+Tenant deletion has an independent machine-readable contract in
+`saas/production/deletion-policy.json` and
+`python -m saas.scripts.check_deletion_readiness`. It enforces a complete thirteen-
+surface manifest, exact revisions, trusted preconditions, zero/cryptographic erasure,
+bounded redacted/anonymized retention, backup tombstones and purge dates, the full
+cross-store reconciliation matrix, immutable signed evidence, and independent privacy,
+security, and data-owner attestations. The empty production evidence directory is
+deliberate: structural validation reports `pass`, production reports `blocked`, and no
+aggregate deletion or production-foundation gate is closed by the validator alone.
+
+Exact run `30988807799` at
+`cd681559684377a5d5b0a25c23c23749eeb85d48` passes 817 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, Pyrefly, migration round trip,
+the 133-artifact wheel, both patch replays, and the 8-file/446-line intrusion result.
+The deletion validator itself reports thirteen required surfaces, zero production
+records, zero qualified records, and one readiness blocker. It closes only the
+fail-closed verifier-contract subgate; eleven production gates and the release-level
+`NO-GO` remain unchanged.
+
+SLO and capacity readiness has an independent machine-readable contract in
+`saas/production/slo-capacity-policy.json` and
+`python -m saas.scripts.check_slo_capacity_readiness`. It requires active production
+dashboards for all six baseline SLOs, a complete 30-day observation in two failure
+domains, bounded error-budget burn, all seven services under five load and failure
+scenarios, ten resource-dimension checks, six on-call alert drills, immutable signed
+artifacts, and three independent attestations at the exact release revision. Strict
+schemas reject raw Tenant fields, CI evidence kinds, incomplete catalogs, tampered
+records, stale observations, and policy drift. The repository deliberately contains
+no production record and retains six `planned` dashboards, so the structural check
+passes while production readiness reports seven blockers. Passing the verifier's CI
+contract does not close the actual SLO, capacity, multi-AZ, or aggregate P5 gate.
+
+Exact run `30991532016` at
+`05fbe7d80d32e5337f515a389520c1813d2a469f` passes 827 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, the 2.82-second logical
+restore contract, Pyrefly, migration round trip, the 138-artifact wheel, both patch
+replays, and the 8-file/449-line intrusion result. Its SLO/capacity report remains
+deliberately blocked with six inactive dashboards and no qualifying production
+record. It closes only `p5-production-slo-capacity-evidence-verifier-contract`;
+eleven aggregate gates and the release-level `NO-GO` remain unchanged.
+
+Image supply-chain readiness now uses the strict v2 policy and
+`python -m saas.scripts.check_image_supply_chain`. It pins the approved repository
+paths, Server/Host targets, dual-architecture smoke matrix, labels, locks, regression
+suites, exact main-workflow/OIDC/builder/environment identity, SBOM and provenance
+subjects, signature subject and transparency metadata, fresh zero-Critical/High
+vulnerability result, and zero-denied/unknown license policy. Admission must precede
+the one-hour SLO/security canary; a different verified N-1 digest must then roll back
+within 900 seconds before three distinct roles attest. Strict schemas and the safe
+loader reject weakening, unknown fields, type substitution, stale or reordered facts,
+canonical-record tampering, absolute/escaping paths, symlinks, and non-object JSON.
+
+Exact run `30994862629` at
+`0200b00a116bffbf3c722d82fe05c3735f69014a` passes 836 compatibility tests,
+56 official regressions, the 36/22 Linux safety matrix, a 2.784-second logical restore,
+Pyrefly, migration round trip, the 139-artifact wheel, both patch replays, and the
+8-file/449-line/0.9935 intrusion result. The report records two policy images, zero
+production evidence images, zero promotions, and one blocker. It closes only
+`p5-image-supply-chain-evidence-verifier-contract`; external registry, signature,
+scan/SBOM/provenance artifacts, protected workflow execution, canary, rollback, and
+approvals remain unproven. The evidence-successor wheel requires 140 artifacts;
+eleven aggregate gates and the release-level `NO-GO` remain unchanged.
+
+P6 is now `in_progress` at the implementation level through a first
+machine-identity/API contract slice. Downstream-owned Service Accounts have an
+explicit active human Steward, project scope, a monotonic security version, and
+no implicit creator membership or permission inheritance. API Keys are shown
+once, stored only as HMAC-SHA256 digests with an independently injected pepper,
+and bind exact delegated permissions, canonical network CIDRs, expiry, and
+account security version. Creation, rotation, revocation, Steward transfer, and
+suspension are idempotent, transactional, and publish secret-free Outbox facts;
+member removal is blocked until explicit Steward transfer.
+
+The optional `/api/v1` router separates machine Bearer authentication from the
+existing `/saas` Cookie surface, rejects Cookie/Bearer ambiguity, and never
+authorizes Service Accounts on upstream Runtime routes. The `p6a000000001`
+migration expands the control-plane forced-RLS inventory to 52 tables and limits
+the authenticator to an exact server-derived `app.api_credential_id` plus
+coalesced last-use fields. Backup/restore and deletion contracts now include
+machine-credential revocation.
+
+Exact run `31002035206` at
+`f5b6d06d16903943028ce0b8f6adf9534e05d3c2` passes 843 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, p6 migration round trip, the 145-artifact wheel, both
+patch replays, and the 8-file/449-line/0.9938 intrusion result. Its PostgreSQL 16
+restore takes 2.924 seconds with 52/17 forced-RLS inventories, two Service Account
+rows, two API Key rows, cross-scope denials, and post-backup machine-credential
+revocation replay. It closes only
+`p6-service-account-api-credential-contract`; the evidence-successor wheel requires
+146 artifacts. Billing, enterprise federation, complete audit/API/console/privacy
+capability, commercial evidence, all eleven aggregate gates, and the release-level
+`NO-GO` remain pending.
+
+The second P6 contract slice adds Tenant groups and Project custom roles without
+granting permissions from group membership alone. Custom roles are compiled only
+from canonical Project permissions; Critical, cross-scope, `grant.manage`, and
+`custom_role.manage` delegation are rejected, and the delegator must hold every
+permission being delegated. Group membership and role-assignment expiry fail closed,
+and the authorization explanation records the exact group, role ID, and role version.
+
+Cookie Admin routes retain Origin/CSRF enforcement and action-level permission
+registration. Their opaque UUID cursors use bounded keyset queries rather than
+loading a Tenant's full collection. Mutations are Tenant-idempotent and emit
+secret-free Outbox facts. Direct group member removal revokes live sessions and
+increments both user security and affected Project authorization versions; Tenant
+member-removal preflight includes group and assignment facts, rejects snapshot drift,
+and revokes group access atomically. Space-only removal leaves Tenant-wide group
+membership intact.
+
+Exact run `31008792059` at
+`85e4399de928bc7cffb76dbe763f9a2e3b1641a6` passes 852 compatibility tests,
+57 official Zygote/query-context regressions, the 36/22 Linux safety matrix,
+Pyrefly with zero errors, `p6a000000002` migration round trip, the 150-artifact
+wheel, both patch replays, and the 8-file/449-line/0.9941 intrusion result. Its
+PostgreSQL 16 restore takes 2.954 seconds with 56/17 forced-RLS inventories and
+two rows in each of the four enterprise tables. It closes only
+`p6-enterprise-group-project-custom-role-contract`; the evidence-successor wheel
+requires 151 artifacts. Group archival/role retirement/bulk directory lifecycle,
+federation/SCIM, complete audit/API/console/privacy capability, billing, commercial
+evidence, all eleven aggregate gates, and release `NO-GO` remain pending.
+
+The third P6 contract slice adds terminal Group Archive, Project custom-role
+retirement, and 1--100 item atomic membership batches. Cookie Admin routes retain
+Origin/CSRF and action-level authorization; every transition requires an expected
+version, reason, and Tenant-scoped idempotency key. Archive and retirement revoke
+their dependent grants in the same transaction, invalidate affected user sessions
+and authorization caches, and emit secret-free Outbox facts. A Tenant-scoped
+PostgreSQL transaction advisory lock prevents cross-resource enterprise-write
+deadlocks without serializing different Tenants.
+
+Migration `p6a000000003` preserves truthful legacy provenance with an explicit
+backfill marker and restores FORCE RLS before its PostgreSQL transaction commits.
+Backup/restore now replays post-backup Archive and Retire transitions. Exact run
+`31016011969` at `7578d2d1bcbfae260142bad166a1851ce4168dfa` passes 856
+compatibility tests, 57 official regressions, the 36/22 Linux security matrix,
+Pyrefly with zero errors, the migration round trip, both patch replays, and the
+153-artifact implementation wheel. Its PostgreSQL 16 logical restore takes 3.086
+seconds with 56/17 forced-RLS inventories and enterprise-lifecycle replay. The
+8-file/449-line/two-patch/0.9942 intrusion result remains within budget. This closes
+only `p6-enterprise-access-lifecycle-contract`; the evidence-successor wheel requires
+155 artifacts. Dedicated pre-execution impact approval UI, directory sync/SCIM,
+federation, billing, complete audit/API/console/privacy capability, production proof,
+all eleven aggregate gates, and release `NO-GO` remain pending.
+
+The fourth P6 contract slice advances the downstream head to `p6a000000004`
+and makes Cookie Admin Group Archive/custom-role Retire require a persisted,
+15-minute impact snapshot plus a different-principal approval. The snapshot binds
+the requester, target/version/reason and exact affected membership, assignment,
+session/security and Project-authorization facts. Approval and execution re-evaluate
+permissions and the hash; fresh-auth expiry, self approval, stale impact, approver
+permission loss, cross-scope reuse and concurrent decision losers fail closed.
+
+Exact run `31025362985` at
+`7f3350ffad677e7249ef5eda6ad4fb738e617503` passes 859 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly with zero errors,
+the `p6a000000004` migration round trip, both patch replays, and the 157-artifact
+implementation wheel. Its PostgreSQL 16 restore takes 2.948 seconds with 57/17
+FORCE-RLS inventories, preserves two preflight rows, and replays one approved record
+to `executed`. The 8-file/449-line/two-patch/0.9944 intrusion result stays within
+budget. This closes only `p6-enterprise-access-impact-approval-contract`; the
+evidence-successor wheel requires 158 artifacts. The production approval inbox and
+confirmation UI, directory federation, commercial proof, all eleven aggregate gates
+and release `NO-GO` remain open.
+
+The fifth P6 slice productizes the approval boundary inside the existing
+`/saas/admin/projects` control plane. Bounded requester, Tenant Group decision, and
+selected-Project custom-role decision queues use opaque UUID keyset pagination,
+exclude the requester and expired pending records, and expose only server-derived
+target labels and impact counts. Full impact snapshots remain server-only. The
+Approval Desk requires reasons for prepare, approve, reject, and execute; only a
+different authorized principal may decide, and only the original requester may
+execute an approval.
+
+Exact run `31030826038` at
+`67d53a11c54f1fa0715f000f3f18a13b12366d12` passes 861 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly with zero errors,
+the `p6a000000005` migration round trip, both patch replays, and the 159-artifact
+implementation wheel. Its PostgreSQL 16 restore takes 2.916 seconds with 57/17
+forced-RLS inventories and approval replay. A two-principal Chromium chain proves
+approve, reject, requester-only execute, Archive/Retire terminal state, and zero
+browser console errors. Run `31030351743` first failed closed because the real
+PostgreSQL assertion had not yet admitted both same-Tenant Group and role preflights;
+the successful revision corrected that assertion without weakening the cross-Tenant
+denial. The intrusion result remains 8 files, 449 lines, two patches, and 0.9945
+isolated custom code.
+
+That exact-revision evidence is attached to the still-pending
+`p6-enterprise-identity-audit-api-platform-console-privacy` aggregate gate. It does
+not turn official server-level `/settings/members` into Tenant administration, nor
+does it complete a Tenant Members module for invitation, Tenant/Space roles,
+suspension/removal, identity connections, Owner transfer, and impact preflight. The
+evidence-successor wheel requires 160 artifacts; eleven aggregate gates and release
+`NO-GO` remain unchanged.
+
+The first evidence-successor run `31031605442` correctly failed on a browser ordering
+race: its initial empty Group GET could resolve after the post-create refresh and
+overwrite the newer render. The corrective implementation does not mask the race with
+a longer timeout or a rerun. It gives Group, custom-role, and approval reads monotonic
+revisions, invalidates them on logout, and binds the approval result to the captured
+actor, Tenant, Space, and selected Project. A deterministic Chromium probe delays a
+completed empty response until after create and verifies that it cannot replace the
+new state.
+
+Exact run `31032344986` at
+`1382f2032c9f804e3ce702af03b0c3953e13fe9d` passes 861 compatibility tests in
+124.91 seconds, a 7.982-second PostgreSQL 16 logical restore, 57 official tests in
+29.62 seconds, the 36/22 Linux matrix in 12.73 seconds, Pyrefly, the
+`p6a000000005` round trip, both patch replays, and the 160-artifact wheel. The
+8-file/449-line/two-patch/0.9945 intrusion result is unchanged. Its evidence-successor
+wheel requires 161 artifacts. This remains evidence under the pending enterprise
+console aggregate; at that revision Tenant user management was still incomplete and
+`NO-GO` was unchanged.
+
+The next P6 slice productizes Tenant user administration as `Tenant Members` inside
+the same `/saas/admin/projects` control plane. It adds privacy-bounded member search,
+status filtering, login-method summaries, Tenant and all-Space memberships, CAS role
+and suspend/resume actions, invitation create/list/reissue/revoke/accept, Owner
+transfer, and server-snapshot-bound member removal. One-time invitation tokens are
+returned only in `no-store` responses and never enter Outbox payloads. Every Cookie
+mutation rebinds actor/Tenant/Space, checks Origin and CSRF, reauthorizes the action,
+and requires reason, expected version, and idempotency. Admin elevation requires the
+current Owner plus fresh authentication. `saas_authenticator` and `saas_governance`
+remain separate least-privilege lifecycles, and `p6a000000007` lets the authenticator
+see only an exact invitation token hash under forced RLS.
+
+Runs `31041546256` and `31041546082` correctly failed closed when Chromium exposed a
+real governance race: the Space Role action could outrun the preceding Tenant Role
+refresh. The correction locks the entire selected-member surface until the server
+mutation and member reload finish, and browser assertions wait for server-confirmed
+Tenant/Space version advances. It was validated locally in five consecutive delayed-
+read Chromium runs and remotely without rerun or timeout inflation.
+
+Exact run `31042515162` at
+`17e3f6b4d3156ee22049fb6aaaac306be25d3cf4` passes 865 compatibility tests in
+154.34 seconds, a 3.498-second PostgreSQL 16 logical restore with 57/17 forced-RLS
+inventories, 57 official tests in 39.48 seconds, the 36/22 Linux matrix in 17.19
+seconds, Pyrefly with zero errors, the `p6a000000007` migration round trip, both
+patch replays, and the 166-artifact implementation wheel. The intrusion result is
+8 files, 449 lines, two patches, and 0.9947 isolated custom code. Its evidence-
+successor wheel requires 167 artifacts. This closes the Tenant Members product
+slice, not SCIM/directory sync, enterprise federation, bulk/delegated lifecycle,
+billing, full audit/API/privacy, production recovery, the pending P6 aggregate, any
+of the eleven aggregate gates, or release `NO-GO`.
+
+The evidence successor `04bb33a1` passes exact run `31043445834` with the same
+865/57/36+22 matrix, a 3.049-second restore, Pyrefly, `p6a000000007`, two patches,
+the 167-artifact wheel, and the unchanged intrusion result. Manually dispatched
+image run `31043457794` then tests 864 cases with one platform skip and builds the
+Server and Host targets twice for both `linux/amd64` and `linux/arm64`. All four
+platform Manifest/Config pairs match across repeated builds, and every image labels
+the exact product revision `04bb33a1`, upstream `8c191ac0`, schema
+`p6a000000007`, and adapter `0.2.0`. The image-evidence successor wheel requires
+168 artifacts. These are unpublished candidate archives, not signed, scanned,
+registry-pinned, canaried, or N-1-rollback production images; P0 and P6 remain
+pending and release remains `NO-GO`.
+
+The official baseline was first advanced from `559504d9` to `d794ef4f` through
+eleven commits and 27 changed files with zero merge conflicts. Exact sync run
+`31011047850` verifies that first current P6-era sync. A second strictly later
+official advance to `8c191ac0` then merged two commits and five files without a
+conflict. Run `31018890417` correctly failed because several current Runtime and
+production-policy Revision Contracts still named the prior baseline; they were
+advanced together rather than weakening the checks.
+
+Exact corrected run `31019511803` at
+`6121663028d8d5501b1a41f284146ec8ce3b4e40` passes 856 compatibility tests,
+57 official regressions, the 36/22 Linux security matrix, Pyrefly, the
+`p6a000000003` round trip, both patch replays, the 155-artifact wheel, and a
+2.923-second PostgreSQL restore. Both exact runs stay within the 8-file/449-line/
+two-patch intrusion budget, satisfying the two-consecutive-sync condition. The
+combined `p6-two-consecutive-upstream-syncs-and-commercial-gate` remains pending
+because pricing, billing reconciliation, customer acceptance, and other commercial
+evidence are absent. The evidence-successor wheel requires 156 artifacts, and the
+release remains `NO-GO`.
+
+The next accepted official sync advances the baseline from `63035f92` to `9dab48b4`
+through 23 commits and 64 changed files with zero merge conflicts. The first exact
+candidate correctly fails closed after 982 passing tests because whitespace cleanup
+made the regenerated managed-runtime patch corrupt on a clean checkout. Corrected run
+`31236956326` at `59562d32e807caa0d38fb71d4a4975ef13d7f8fc` passes 983 compatibility
+tests, a 4.294-second PostgreSQL restore with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions, the 39/22 Linux security
+matrix, Pyrefly, migration round trip, two clean patch replays and the 214-artifact
+implementation wheel. Intrusion remains within budget at nine files, 485 lines, two
+patches and a 0.9958 isolated-code ratio. Managed mode adopts the upstream per-session
+workspace contract but rejects both `SSH_AUTH_SOCK` and `KUBECONFIG` authority paths;
+local mode retains the official SSH Agent behavior.
+
+Manually dispatched image run `31236978641` verifies the same exact revision because
+the patch-only correction is outside the image workflow's automatic path filter. It
+passes 982 tests plus one platform skip, then builds Server and Host twice for both
+`linux/amd64` and `linux/arm64`; all repeated Manifest/Config facts match and every
+label binds Product `59562d32`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter
+`0.2.0`. These are still unpublished candidate archives without registry promotion,
+signature, vulnerability/license admission, canary or N-1 rollback proof. The paired
+evidence-successor wheel requires 216 artifacts; all eleven aggregate gates and release
+`NO-GO` remain unchanged.
+
+The seventh P6 contract slice introduces ten Tenant billing tables at migration
+`p6a000000008`: Subscription, immutable versioned Pricing, scoped Entitlement,
+immutable Usage, a rebuildable Balance projection, Reservation, append-only Customer
+and Provider ledgers, and immutable Reconciliation batches with one-way mismatch
+resolution. Money uses integer minor units and quantities use bounded Decimal values;
+database checks enforce conservation and PostgreSQL triggers reject fact mutation.
+Pricing-window creation is serialized per Tenant, and the Balance projection is
+auditable and version-rebuildable only from immutable ledger deltas.
+
+The dedicated `saas_billing` role has no content, Secret, credential, Run, or Project
+access. The existing `/saas/admin/projects` page gains a content-blind Billing module;
+its Cookie routes expose configuration and inspection but deliberately provide no
+Credit, Reserve, Usage, Settlement, Refund, or Provider-cost ingestion endpoint.
+Exact run `31055362434` at
+`7f985c1c1aebdff5370500a7175ce151f9a5d5bb` passes 877 compatibility tests in
+167.78 seconds, a 3.814-second PostgreSQL 16 logical restore with nonempty rows in all
+ten billing tables and 67/17 forced-RLS inventories, 57 official tests in 41.58
+seconds, the 36/22 Linux matrix in 17.83 seconds, Pyrefly, migration round trip, both
+patch replays, and the 173-artifact implementation wheel. The intrusion result remains
+8 files, 449 lines, two patches, and 0.9951 isolated custom code. The evidence-successor
+wheel requires 174 artifacts.
+
+This evidence is attached to the still-pending
+`p6-billing-ledger-entitlement-quota-subscription` aggregate gate. Non-human metering
+identity, authenticated internal ingestion, real Run/Provider integration, period
+rollover, signed and ordered Provider webhooks, real invoices, payment/tax boundaries,
+production operations, commercial acceptance, all eleven aggregate gates, and release
+`NO-GO` remain open.
+
+The successor `p6a000000009` machine-metering slice adds a dedicated `saas_metering`
+role, execution-bound metering authority, immutable receipt, and TLS 1.3 mutual-auth
+transport. The server derives Tenant/Space/Project/actor/session/Pricing from a current
+Runner certificate, exact capability, Dispatch generation, Run lease and fence; caller
+scope and price are invalid request fields. The transport requires one canonical Runner
+SPIFFE URI SAN, checks the durable `billing_metering` certificate lifecycle, derives the
+certificate fingerprint from DER, bounds and strictly parses one HTTP/1.1 endpoint, and
+does not hide retries.
+
+The PostgreSQL restore fixture now contains two nonempty machine receipts and every
+linked Usage/Run/Capability/certificate/Runner authority row. It proves receipt
+cross-Tenant denial for `saas_billing`, link integrity, the restored immutable trigger,
+and 68/17 forced-RLS inventories. Local evidence passes 23 focused metering, billing,
+migration, and restore tests, the complete 889-test compatibility matrix on a clean
+PostgreSQL 16 database in 339.37 seconds, a 28.408-second isolated logical restore, the
+177-artifact implementation wheel, and full Pyrefly with zero errors. The full matrix
+also exposed and closed a Project Admin readiness race: scope submission remains disabled
+until discovery finishes, and a deterministic Chromium test delays the scope response by
+750 milliseconds before proving no early submission is possible.
+
+Exact compatibility run `31063360786` at
+`b2285a70b0c78131b043200c4b1cc1ca8536877f` passes 889 tests in 144.76 seconds,
+a 3.134-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 34.33 seconds, the 36/22 Linux security
+matrix in 15.14 seconds, Pyrefly, migration round trip, both patch replays, and the
+177-artifact implementation wheel. The intrusion result remains 8 files, 449 lines,
+two patches, and 0.9953 isolated custom code. The evidence-successor wheel requires
+178 artifacts.
+
+Image candidate run `31063360725` is deliberately excluded from machine-metering
+acceptance because all four repeated builds still supplied the stale
+`p6a000000007` schema label. The evidence successor instead derives the only migration
+head from `saas/production/baseline.json`, passes it to every Server/Host build, and
+adds a fail-closed workflow-source check. Corrected image run `31064837882` at
+`f75be5a62813b00740334ba701be9633b1dab9e3` passes 888 tests with one platform skip,
+migration round trip, both patches, and the 8-file/451-line/0.9953 intrusion result.
+Server and Host each build twice for both supported architectures with matching
+Manifest/Config pairs, the exact `p6a000000009` label, and two attestation descriptors
+per build. This is accepted candidate evidence, not a published, signed,
+vulnerability-cleared, canaried, or rollback-proven production image. The
+evidence-successor wheel requires 179 artifacts.
+
+The downstream Runtime Partition now wires official usage completion to the machine
+client through three generic upstream seams: Host construction, Runner entry-module
+selection, and a required fail-closed usage sink. Managed launch uses a scheduler-staged
+one-time grant and a mode-0600 envelope that is unlinked before official Runner startup;
+input/output usage is atomically spooled without Prompt/output/capability content and
+retried over TLS 1.3 mTLS with stable idempotency. Local tests cover official Client and
+Host launch paths, failure and restart replay, strict spool rejection, and one complete
+official Provider observer -> mTLS -> durable certificate -> real PostgreSQL
+`saas_metering` RLS -> immutable receipt path. The implementation wheel requires 181
+artifacts. Exact compatibility run `31068082417` at
+`0e886d503b4fbd12813de3a6034f451e6e3e4e8a` passes 901 tests in 149.00 seconds,
+a 6.672-second PostgreSQL 16 logical restore with two linked machine receipts and 68/17
+forced-RLS inventories, 57 official tests in 29.88 seconds, the 36/22 Linux security
+matrix in 12.76 seconds, Pyrefly, migration round trip, two patch replays, and the
+181-artifact implementation wheel. Source intrusion remains within budget at 9 files,
+479 lines, two patches, and a 0.995 isolated ratio. The evidence-successor wheel
+requires 182 artifacts.
+
+This does not yet establish production billing. The durable scheduler-to-Host raw-grant
+handoff is not deployed, the official observer exposes no Provider-native request ID,
+and a kill between Provider completion and notification remains a reconciliation window.
+Period rollover, signed/ordered/replay-safe Provider webhooks, real Provider invoice
+comparison, payment/tax boundaries, production operations, commercial acceptance, all
+aggregate gates, and release `NO-GO` remain open.
+
+PC1 establishes the separate Platform Staff security realm without turning the customer
+Tenant Admin or PostgreSQL emergency role into a super-admin product. Migration
+`pc1a00000001` adds Staff principals, role assignments, phishing-resistant sessions, and
+content-blind Tenant/User projections. The standalone API uses an independent HTTPS
+Origin, `__Host-` Cookie, Audience and CSRF contract; 22 Platform permissions, five
+built-in least-privilege roles, field-level metadata and explicit no-content defaults have
+no `allow_all` path. Independent application, authenticator, governance and projector
+roles cannot inherit or `SET ROLE` the emergency `saas_platform` authority.
+
+Initial run `31184944950` correctly failed closed because sync Playwright on pytest's main
+thread left an active event loop and rejected 38 later asynchronous Preview tests. The
+fix runs both Platform and Tenant Admin Chromium scenarios in dedicated Playwright
+threads and removes an absolute one-hour test-session expiry. Exact successor run
+`31187073403` at `07b368033d91aa4fe4d3e649b4c3dccd358f3e0e` passes 934 tests in
+145.80 seconds, a 3.173-second PostgreSQL 16 logical restore with 73/17 forced-RLS
+inventories and nonempty PC1 facts, 57 official tests in 30.68 seconds, the 36/22 Linux
+security matrix in 14.10 seconds, Pyrefly with zero errors, the migration round trip,
+both patch replays, and the 187-artifact implementation wheel. Source intrusion remains
+within budget at 9 files, 479 lines, two patches, and a 0.9952 isolated-code ratio.
+
+This closes the PC1 code and CI slice only. It does not prove a deployed enterprise Staff
+IdP or Platform Origin, PC2 global User/Tenant lifecycle, PC3 governed support and
+immutable evidence, PC4 Platform Console UI, PC5 enterprise operations, any of the eleven
+aggregate production gates, or release `GO`.
+
+Manually dispatched image run `31187141816` verifies the same exact implementation SHA
+with 933 tests and one platform skip, then builds Server and Host twice for both
+`linux/amd64` and `linux/arm64`. Every repeated platform Manifest and Config digest
+matches, has two attestation descriptors, and labels exact product `07b36803`, upstream
+`63035f92`, schema `pc1a00000001`, and adapter `0.2.0`. These are unpublished candidate
+archives, not registry-pinned, signed, vulnerability/license-cleared, canaried, or
+N-1-rollback production images; P0 remains pending and release remains `NO-GO`. The two
+PC1 machine records bring the evidence-successor wheel requirement to 189 artifacts.
+
+PC2/P6 implementation commit `2d92d02fa02b1e418967c91d67e3eccc59659540`
+adds target-bound Global User/Tenant lifecycle governance and immutable billing
+period-close/Entitlement-rollover facts on migration head `p6b000000001`. Initial
+compatibility run `31199941325` correctly failed closed on four PostgreSQL defects:
+ordinary roles could not evaluate the Platform assignment predicate, target Auth rows
+were not selectable before update, the policy version exceeded its database width, and
+immutable Reconciliation facts were locked with an UPDATE-requiring clause. The
+successor grants only predicate columns while the Assignment table's own FORCE RLS
+returns zero ordinary rows, adds exact-target SELECT policies, shortens the version,
+and relies on the per-period transaction advisory lock plus unique close invariant.
+
+Exact compatibility run `31201598950` passes 943 tests in 161.25 seconds, a
+3.641-second PostgreSQL 16 isolated logical restore with 75/17 forced-RLS inventories,
+57 official tests in 33.80 seconds, the 36/22 Linux security matrix in 15.40 seconds,
+Pyrefly with zero errors, migration round trip with no drift, both patch replays, and
+the 192-artifact implementation wheel. Source intrusion remains within budget at nine
+files, 479 lines, two patches, and a 0.9953 isolated-code ratio. The restore report has
+zero `saas_billing_period_closes` rows: schema, RLS and adjacent Billing replay pass, but
+nonempty close-fact backup/restore remains an explicit P6 evidence gap.
+
+Image candidate run `31202057865` verifies the same exact SHA with 942 tests and one
+platform skip. Server and Host each build twice for both `linux/amd64` and
+`linux/arm64`; all repeated platform Manifest/Config pairs match, bind product
+`2d92d02f`, upstream `63035f92`, schema `p6b000000001` and adapter `0.2.0`, and contain
+two attestation descriptors per build. These archives are not registry-published,
+signed, vulnerability/license-cleared, canaried, or rollback-proven production images.
+The two PC2/P6 machine records bring the evidence-successor wheel requirement to 194
+artifacts.
+
+This accepts only the first PC2 and P6 code/CI/image-candidate slices. Identity Conflict
+Case governance, destructive User/Tenant deletion manifests, Provider-native Receipt
+and kill-window recovery, signed Provider webhooks, payment/invoice/tax, PC3, PC4 and
+PC5 remain open. All eleven aggregate production gates and release `NO-GO` are
+unchanged.
+
+PC2 Identity Conflict and P6 nonempty-restore implementation commit
+`cc9536094ff71eff1e7513198de878e3cd038491` adds content-blind, two-stage Platform
+review without granting Staff authority to create an Identity Connection. An active
+`platform_operator` can assign one active Global User candidate or block a case only
+with fresh authentication, approval, reason, expected version and idempotency; the
+assigned customer must reauthenticate and complete the existing self-service decision.
+PostgreSQL binds the write to the exact conflict and candidate User, while the lifecycle
+receipt and redacted Outbox fact commit atomically. The `pc2b00000001` downgrade refuses
+to discard accepted review or audit facts.
+
+Exact compatibility run `31211571929` passes 946 tests in 173.45 seconds, a
+3.713-second PostgreSQL 16 logical restore, 57 official regressions, the 36-pass and
+22-platform-skip Linux security matrix, Pyrefly, migration round trip, both patch
+replays and the 195-artifact implementation wheel. The restore contains two immutable
+billing-period closes: one from the backup and one from deterministic post-backup
+replay. It verifies exact Tenant/Reconciliation/status links, Tenant RLS, the restored
+immutability trigger and selected-table hash
+`f6727575856fc5fe0e6e24a91e0faa4eace75280794c6d6dc97e57eab7c5750c`. The 75/17 RLS
+inventories and 9-file/479-line/two-patch/0.9954 intrusion result remain within policy.
+
+This record does not prove Provider-native receipts, kill-window recovery, signed
+Provider webhooks, payment/invoice/tax reconciliation, destructive User/Tenant deletion,
+WAL/PITR/multi-AZ recovery, PC3-PC5, production deployment or release `GO`. The eleven
+aggregate gates remain pending.
+
+Exact-SHA image candidate run `31211571817` verifies the same implementation with 945
+tests and one platform skip, a drift-free migration round trip, both patch replays and
+the 9-file/479-line/0.9954 intrusion result. Server and Host each build twice for both
+`linux/amd64` and `linux/arm64`; every repeated Manifest/Config pair matches, every
+image carries exact Product `cc953609`, Upstream `63035f92`, Schema `pc2b00000001` and
+Adapter `0.2.0` labels, and each build has two attestation descriptors. Artifact
+`9007725182` records the four platform Manifest/Config pairs without violations.
+
+The candidates remain unpublished archives without registry-pinned immutable Digests,
+verified signatures, protected production workflow identity, vulnerability/license
+admission, Canary or N-1 rollback. They close only this executable-image candidate
+subcheck; P0 and all eleven aggregate production gates remain blocked. The compatibility
+and image records bring the evidence-successor Wheel requirement to 197 artifacts.
+
+PC3 implementation commit `c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b` advances the
+schema to `pc3a00000001` and the forced-RLS inventory to 81 control-plane plus 17 Runtime
+tables. It adds Tenant-visible JIT Support Grants, independent Staff approval, exact
+short-lived Support Sessions, customer immediate revoke, Admin Operations, a serialized
+immutable audit hash chain, and two-person signed exports. Staff, Tenant and Support
+database roles remain separate from emergency `saas_platform`.
+
+Initial compatibility and image runs `31220917286 / 31220917310` correctly failed closed:
+the real-PostgreSQL PC3 test left immutable audit facts in the workflow's intentionally
+shared database, so later PC2 and Invitation migration round trips refused to discard
+them. Test-isolation successor `df7ce571910bd0c4c727784cd4a27f8fbfb97ce3`
+uses the fixture superuser to remove only its own PC3 facts and return the schema to the
+PC2 predecessor; application roles still cannot mutate audit facts and the production
+downgrade guard remains unchanged.
+
+Exact compatibility run `31223549606` passes 951 tests in 176.78 seconds, a 3.642-second
+PostgreSQL 16 logical restore with 81/17 forced-RLS inventories, 57 official regressions
+in 38.33 seconds, the 36-pass/22-platform-skip Linux security matrix in 17.42 seconds,
+Pyrefly with zero errors, migration round trip with no drift, both patch replays, and the
+201-artifact implementation wheel. Source intrusion remains within budget at nine files,
+479 lines, two patches, and a 0.9956 isolated-code ratio. The restore verifies the new
+schema and policies but contains no nonempty PC3 Support, Operation, Audit or Export fact.
+
+Exact-SHA image candidate run `31223584072` verifies the same successor with 950 tests
+and one platform skip. Server and Host each build twice for `linux/amd64` and
+`linux/arm64`; every repeated Manifest/Config pair matches, every image carries exact
+Product `df7ce571`, Upstream `63035f92`, Schema `pc3a00000001` and Adapter `0.2.0`
+labels, and each build has two attestation descriptors. The candidates remain unpublished
+archives without registry-pinned Digests, verified signatures, vulnerability/license
+admission, Canary or N-1 rollback.
+
+These records close the PC3 code, exact-SHA compatibility, and reproducible-image
+candidate subchecks only. Nonempty PC3 backup/replay, production KMS/HSM signer and key
+rotation, protected deployment, real Staff/Tenant approval operations, authenticated
+production E2E, and PC4/PC5 remain open. All eleven aggregate gates and release status
+remain `NO-GO`. The two PC3 records bring the evidence-successor Wheel requirement to
+203 artifacts.
+
+PC4 implementation commit `90c0334eb9ff01a930d7e94589ec458a98107d6f` provides the
+standalone `/platform-admin` Staff Console and its real-HTTPS Chromium role/action
+matrix. Exact compatibility run `31230374740` passes 954 tests in 181.93 seconds, a
+3.823-second PostgreSQL 16 logical restore with 81/17 forced-RLS inventories, 57
+official regressions in 38.92 seconds, the 36-pass/22-platform-skip Linux security
+matrix in 17.49 seconds, Pyrefly with zero errors, a drift-free migration round trip,
+both patch replays and the 206-artifact implementation Wheel. Source intrusion remains
+nine files, 479 lines, two patches and a 0.9957 isolated-code ratio. Artifact
+`9013655717` contains the exact machine reports.
+
+Exact image run `31230374738` verifies the same SHA with 953 tests and one platform skip
+in 217.04 seconds. Server and Host each build twice for both supported architectures;
+the repeated platform Manifest/Config facts are identical, every label binds Product
+`90c0334e`, Upstream `63035f92`, Schema `pc3a00000001` and Adapter `0.2.0`, and each
+build includes two attestation descriptors. Artifact `9014099594` has digest
+`729661862748fb6ab16b87d38d0597f655ddef5a5719d66cf518214ad9a40c6e`.
+
+These records close only PC4 code, exact-SHA compatibility and unpublished reproducible
+image-candidate subchecks. They do not prove a deployed Staff Origin/IdP, production
+KMS/HSM, live customer-approved Support, registry promotion, signature, scan, Canary,
+N-1 rollback, PC5 or release `GO`. PC5 has no exact-SHA machine record until its own
+implementation commit and workflows pass.
+
+PC5 SCIM foundation implementation `e71a46652a153e9e23f5b3959de59f375cf9a89e`
+now has exact compatibility record `31233595734`. Its directed checks cover
+fresh-authenticated one-time Directory credential issuance, User/Group convergence,
+deprovision-before-late-group ordering, owner recovery blocking, SCIM JSON errors and
+ETags, 85/17 forced RLS, immutable Events and a nonempty two-Tenant logical restore.
+The second isolated implementation adds fresh-authenticated, version-CAS Directory
+credential rotation and disable: rotation reveals a replacement once and invalidates
+the predecessor atomically; disable destroys the active digest and bearer authority.
+Both actions use secret-free idempotency receipts, and PostgreSQL token-RLS plus HTTP
+negative tests prove that superseded and disabled tokens cannot regain access.
+Directory/subject state and Event Receipts are explicit deletion surfaces, but receipt
+anonymization and Legal Hold are not implemented and external identity/display fields
+may remain in immutable receipts. The exact run passes 960 tests in 188.36 seconds, a
+4.144-second PostgreSQL 16 restore with two Tenant-isolated SCIM fact sets, 57 official
+regressions in 38.91 seconds, the 36-pass/22-platform-skip Linux security matrix in
+17.19 seconds, Pyrefly with zero errors, drift-free migration, both patch replays and
+the 212-artifact implementation Wheel. Artifact `9014716414` contains the machine
+reports.
+
+Exact image run `31233595699` verifies the same SHA with 959 tests and one platform
+skip in 188.65 seconds. Server and Host each build twice for both supported
+architectures; repeated platform Manifest/Config facts are identical, every label binds
+Product `e71a4665`, Upstream `63035f92`, Schema `pc5a00000001` and Adapter `0.2.0`, and
+each build includes two attestation descriptors. Artifact `9015030365` has digest
+`7f12d12fcda35386b8a61a5855746fd21bf8723d1d21527e154bc0b715b2024c`.
+
+These records close only the first PC5 code, exact-SHA compatibility and unpublished
+reproducible image-candidate subchecks. The privacy gap, bounded protocol surface,
+federation/operations omissions and all production gates keep PC5 and release `NO-GO`.
+
+PC5 Directory credential lifecycle implementation
+`226dc6d8b3b90faf35d12d1aa499506654be3797` now has exact compatibility record
+`31239595356`: 985 tests pass with 232 warnings in 172.49 seconds, the PostgreSQL 16
+logical restore completes in 6.015 seconds with 85/17 forced-RLS inventories and two
+Tenant-isolated SCIM fact sets, 63 official regressions and the 39/22 Linux matrix pass,
+Pyrefly reports zero errors, migrations round trip without drift, both patches replay,
+and the implementation Wheel contains 216 required artifacts. Artifact `9016637067`
+has digest `df9629a91dd231ba4261232f7d1426bfe1a941c7aef33b32b787afcb42147d62`.
+
+Exact image run `31239616246` passes 984 tests plus one platform skip in 189.55 seconds.
+Server and Host each build twice for `linux/amd64` and `linux/arm64`; every repeated
+Manifest/Config pair matches, labels bind Product `226dc6d8`, Upstream `9dab48b4`,
+Schema `pc5a00000001` and Adapter `0.2.0`, and every build contains two attestation
+descriptors. Artifact `9016902247` has digest
+`471db65a5d4c3972f2d576d4273e4a9ca14db2921f8fc04e91a49457405e2ed7`.
+This closes only the second PC5 code, exact-SHA compatibility and unpublished image
+candidate subchecks. Scheduled/overlap rotation, complete SCIM, federation, privacy,
+production promotion and all eleven aggregate gates remain open; release stays `NO-GO`.
+
+The third PC5 implementation `29c815e7d34f5d8674aebe06740a35131f416598`
+adds User and Group ListResponse contracts without widening
+Directory authority. Collection reads use stable one-based pagination, allow `count`
+from zero through 100 and accept only one strict equality filter over an allowlisted
+resource attribute. User names normalize before comparison; Group filters reject User
+attributes; malformed, compound and over-limit requests return SCIM error payloads.
+Service, HTTP and real-PostgreSQL tests cover pagination, zero-count totals, exact filters,
+unsupported filters and the exact token-selected Directory boundary. Exact compatibility
+run `31242675519` passes 987 tests with 232 warnings in 194.86 seconds, a 4.027-second
+PostgreSQL 16 restore with 85/17 forced-RLS inventories and two Tenant-isolated SCIM fact
+sets, 63 official regressions, the 39/22 Linux matrix, Pyrefly, migration round trip, two
+patch replays and the 218-artifact implementation Wheel. Artifact `9017571045` has digest
+`1d4d7c62a1e75beacdcaf51f4d3f1f2c7e00b673f1a8ed69f7fca280e3316918`.
+
+Exact image run `31242683505` passes 986 tests plus one platform skip with 232 warnings
+in 200.75 seconds. Server and Host each build twice across both supported architectures;
+Manifest/Config facts match, labels bind Product `29c815e7`, Upstream `9dab48b4`, Schema
+`pc5a00000001` and Adapter `0.2.0`, and every build contains two attestation descriptors.
+Artifact `9017915363` has digest
+`94081a3587406d32c044974f6e3eb1fdae08ae5e15c7b5c37f08f1d911571d4d`.
+These records do not cover PUT/DELETE/Bulk, general filters, sort, complete PATCH,
+transport replay, overlapping rotation, federation, privacy, production promotion or
+any aggregate release gate; release remains `NO-GO`.
+
+The fourth PC5 implementation `626841b1bb8544fe8d3784b828c27193f7df7396`
+adds guarded User/Group PUT, retained-tombstone DELETE and resource-specific
+Add/Replace/Remove PATCH paths. Replay lookup by immutable Event receipt runs before the
+resource row lock and ETag CAS, so a lost response can be retried with the same key,
+payload and old ETag without a second state change. The same key with changed content
+conflicts; a different key with an old ETag returns 412. `externalId` cannot be replaced,
+User deletion preserves deprovision/Owner Recovery behavior, and Group deletion archives
+the mapped authority and removes active members. A real PostgreSQL 16 two-transaction
+test proves one winner and one CAS loser for the same User version.
+
+Exact compatibility run `31246087422` passes 989 tests with 232 warnings in 186.11
+seconds, a 3.798-second PostgreSQL logical restore with 85/17 forced-RLS inventories and
+two Tenant-isolated SCIM fact sets, 63 official regressions in 40.31 seconds, the
+39-pass/22-platform-skip Linux matrix in 17.49 seconds, Pyrefly, migration round trip,
+two patch replays and the 220-artifact implementation Wheel. Artifact `9018593020` has
+archive digest `14b2fb49f0f87b13dc19f8b561c56d5db547686ada64a9925caba67c5945a384`.
+
+Exact image run `31246057815` passes 988 tests plus one platform skip with 232 warnings
+in 183.93 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`626841b1`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9018836641` has archive digest
+`5474cec818f0c6f946defdba7c91629cc7e4ff98b53040f514eb91cfc68fd5e5`.
+These records close only the bounded resource lifecycle, replay-before-CAS code,
+exact-SHA compatibility and unpublished image-candidate subchecks. Bulk,
+general/compound filters, sorting, complete RFC PATCH path/value grammar, scheduled or
+overlapping credential rotation, federation, privacy, production promotion and every
+aggregate release gate remain open; release remains `NO-GO`.
+
+The fifth PC5 implementation `3d1f56778f61090fa3b0e0f26a100e14f8279bab`
+replaces the single-equality collection filter with a bounded expression tree and adds
+deterministic allowlisted sorting without widening Directory authority. The parser
+enforces a 1,024-character, 16-comparison and four-parenthesis-level budget, follows
+`not`/`and`/`or` precedence, and accepts `eq`, `ne`, `co`, `sw`, `ew` and `pr` only on
+resource-specific scalar attributes. SQL wildcard input is escaped; nullable predicates
+are converted to two-valued filter results before logical composition. Sorting accepts
+only resource attributes, uses UUID as a stable tie-breaker and places missing values
+last ascending or first descending.
+
+Exact compatibility run `31249990283` passes 989 tests with 232 warnings in 186.16
+seconds, a 3.895-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 39.75 seconds, the
+39-pass/22-platform-skip Linux matrix in 18.27 seconds, Pyrefly with zero errors, a
+drift-free migration round trip, both patch replays and the 222-artifact implementation
+Wheel. Artifact `9019748005` has archive digest
+`62fd99742e5d563ef16c774e9e511fde4dcac4b5855da612122babb99de39d24`.
+
+Exact image run `31250015114` passes 988 tests plus one platform skip with 232 warnings
+in 190.17 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`3d1f5677`, Upstream `9dab48b4`, Schema `pc5a00000001` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9020044923` has archive digest
+`9a4befd83bb5bb422a4cf1a4dd3ee7c09bd472e16ae7a413710463e5dd5e258b`.
+These records close only the bounded compound-filter and deterministic-sort code,
+exact-SHA compatibility and unpublished image-candidate subchecks. Bulk, comparison
+operators and complex value paths outside this allowlist, complete PATCH grammar,
+overlapping credential rotation, federation, privacy, production promotion and all
+eleven aggregate gates remain open; release remains `NO-GO`.
+
+The sixth PC5 implementation slice advances the migration head to `pc5a00000002` and
+adds a bounded RFC 7644 Bulk profile: 32 operations, 1 MiB payloads, User/Group
+POST/PUT/PATCH/DELETE, dependency-aware forward/backward `bulkId` resolution,
+`failOnErrors`, per-operation SCIM results, and explicit circular/unresolved-reference
+failures. A required top-level idempotency key is bound to the complete normalized
+request. Two immutable Bulk Event receipts retain the request claim and final response;
+deterministic child Event IDs recover already committed operations after interruption.
+PostgreSQL serializes the Directory/key pair with a session advisory lock held on a
+dedicated connection across request claim, child commits and final receipt, while the
+existing Directory token and Tenant forced-RLS boundary remains authoritative. Service,
+HTTP, migration and real-PostgreSQL tests cover exact replay, changed-payload conflict,
+dependency ordering, interruption recovery, bounds and multi-session lock behavior.
+
+Exact compatibility run `31254116952` passes 991 tests with 232 warnings in 171.74
+seconds, a 3.842-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 63 official regressions in 33.90 seconds, the
+39-pass/22-platform-skip Linux matrix in 14.74 seconds, Pyrefly with zero errors, a
+drift-free migration round trip, both patch replays and the 225-artifact implementation
+Wheel. Artifact `9020926068` has archive digest
+`55cb74ad63d1418a85d274875fb6facf9698d99f682b7161e00cac21b709a933`.
+
+Exact image run `31254116960` passes 990 tests plus one platform skip with 232 warnings
+in 193.98 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`a484bcfe`, Upstream `9dab48b4`, Schema `pc5a00000002` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9021152363` has archive digest
+`8ac5791ff94c330a9def460486dd740fa9b36221dae35dea0e6ea8cadcf079db`.
+These records close only the bounded Bulk code, exact-SHA compatibility and unpublished
+image-candidate subchecks. Comparison/value-path filter gaps, complete PATCH grammar,
+overlapping credential rotation, federation, privacy, production promotion and all
+eleven aggregate gates remain open; release remains `NO-GO`.
+
+The seventh PC5 implementation slice advances the migration head to `pc5a00000003` and
+adds a bounded scheduled/overlap Directory credential lifecycle. Fresh authentication,
+`enterprise_identity.manage`, expected-version CAS and a hash-bound idempotency key gate
+the new `rotate-overlap` route. Activation is limited to current through 30 days and the
+dual-token grace window to 60–86400 seconds. The successor bearer is shown once under
+`no-store`; only its digest, prefix and UTC boundaries persist. Authentication rejects it
+before activation, accepts both tokens only during grace and rejects the predecessor at
+expiry. The next mutation atomically compacts an expired generation; an active overlap
+blocks another rotation, while Disable destroys both digests. PostgreSQL RLS recognizes
+either digest only for the same Directory before Tenant binding, `saas_app` cannot read
+either hash, and downgrade refuses a live overlap. Service, HTTP, real-PostgreSQL and
+nonempty logical-restore tests cover timing, replay/conflict, compaction, RLS, disable and
+rollback behavior.
+
+Exact compatibility run `31257782799` verifies implementation `43569c8c`: 994 tests pass
+with 232 warnings in 189.68 seconds, the PostgreSQL 16 logical restore completes in
+3.908 seconds with schema `pc5a00000003`, 85/17 forced-RLS inventories, two
+Tenant-isolated SCIM fact sets and one active successor fixture, 63 official regressions
+pass in 41.28 seconds, and the Linux matrix records 39 passes plus 22 platform skips in
+17.31 seconds. Pyrefly reports zero errors, migrations round trip without drift, both
+patches replay, and the Wheel contains 228 required artifacts. Artifact `9021950175` has
+archive digest `5f5dae29b7ed64aa76614b0b84e3c0b142c4d21c033df847526314ab3d67803c`.
+
+Exact image run `31257782706` passes 993 tests plus one platform skip with 232 warnings
+in 192.61 seconds. Server and Host each build twice across `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`43569c8c`, Upstream `9dab48b4`, Schema `pc5a00000003` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9022168960` has archive digest
+`62e6cd3d72c6adb3946f23a7c2b770de1c9dc2e4ec4105799d9272b54b09c412`.
+These records close only bounded credential-overlap code, exact-SHA compatibility and
+unpublished image-candidate subchecks. Production IdP rollout/clock evidence, full
+Filter/PATCH, federation, privacy, production promotion and all eleven aggregate gates
+remain open; release remains `NO-GO`.
+
+The eighth PC5 implementation `53f81e1dfd9907e8b4cd592dbe51a70f86148d23`
+also incorporates official `de8aee826c48d632ce335a702f2cca2f6240a6b9` through the
+zero-conflict merge `0453d9cf` and revision-contract rebind `af8a46fd`. A shared bounded
+RFC 7644 parser now covers schema-qualified `attrPath`, JSON scalar literals, comparison
+operators and Group `members[...]` Value Paths for both Filter and PATCH. Collection
+queries add typed `gt/ge/lt/le`, `members[...]` and `members.value` without moving the
+active Directory outside the outer authorization predicate.
+
+For the persisted User scalar and Group member resource model, PATCH accepts pathless
+Add/Replace, `attrPath`, `valuePath` and an optional selected `subAttr`. Operations are
+applied to an in-memory candidate and only one replay-before-CAS service mutation is
+allowed, so a late error is atomic. Duplicate Add and no-match Remove preserve the ETag
+but commit a secret-free immutable no-op receipt; exact replay and Bulk use the same
+path. Group member identity subattributes remain immutable. Negative tests distinguish
+typed `invalidFilter`, `noTarget`, `mutability`, `invalidPath`, `invalidSyntax` and
+`invalidValue`, including schema mismatch and full-request rollback.
+
+Exact compatibility run `31271156219` passes 997 tests with 232 warnings in 177.72
+seconds, a 4.067-second PostgreSQL 16 logical restore with 85/17 forced-RLS inventories
+and two Tenant-isolated SCIM fact sets, 325 changed-official regressions with two warnings
+in 60.05 seconds, and the 39-pass/22-platform-skip Linux matrix in 15.60 seconds.
+Pyrefly reports zero errors, migrations round trip without drift, both patches replay,
+and the Wheel contains 230 required artifacts. Source intrusion remains inside budget at
+nine official files, 490 net lines, two patches and a 0.996 isolated-code ratio.
+Artifact `9025705851` has archive digest
+`89ebc0693e043c8ea997a3eca2210cadb692c21400b39a8a51c567c4c6684230`.
+
+This record closes only the bounded comparison and Filter/PATCH Value Path code for the
+currently persisted local schema. Optional RFC 7643 complex/multi-valued User attributes
+and extension schemas, federation, privacy, production promotion and every aggregate
+release gate remain open; release remains `NO-GO`.
+
+Exact image run `31271156205` passes 996 tests plus one platform skip with 232 warnings
+in 190.38 seconds. Server and Host each build twice for `linux/amd64` and
+`linux/arm64`; repeated Manifest/Config facts match, every label binds Product
+`53f81e1d`, Upstream `de8aee82`, Schema `pc5a00000003` and Adapter `0.2.0`, and every
+build contains two attestation descriptors. Artifact `9025955208` has archive digest
+`5bc8344ed6a144661568cde72afcbe680a2adc704c71acffa88b1fdbf32c8a78` and JSON
+digest `0942f179dc9abe46527252df55578460b20a56d9507e95e43cbe273b5feed7b4`.
+The images are still unpublished candidates and do not satisfy registry, signature,
+scan, Canary, N-1 rollback or any aggregate production gate.
+
+The P0 ADR decision contract is now closed under an explicitly degraded
+`sole-owner-risk-waiver`, not under independent four-party review. Repository Owner
+`Dream1216` assumes all eight approval roles and accepts all eleven ADRs, while the
+standard four-party policy remains available for a future governance upgrade. Decision
+PR [#1](https://github.com/Dream1216/omnigent/pull/1) binds exact Head
+`c029904e38e8b93eea8cba70ced2778a758c387b` to successful required compatibility run
+`31281867274` / check run `93164403415`, and merged as
+`804acd93b2147619668e4b1e97930925e87ca9ec` at `2026-08-08T22:41:38Z`. The immutable
+approval record captures the authenticated Owner/Admin identity, author/merger equality,
+11 technical-owner acceptances, four accepted governance risks and the
+`2027-02-04T22:07:14Z` mandatory review date. Four-review branch protection was restored
+immediately after the controlled merge.
+
+This closes only `p0-approved-production-adrs-and-owners`. It does not waive the
+production image, SLO, RPO/RTO, recovery, deletion, capacity, security or commercial
+acceptance gates. The aggregate ledger therefore advances to 41/51 with ten pending
+gates and remains `NO-GO`. The evidence-successor wheel requires 252 artifacts so the
+append-only approval record is carried with the deployable SaaS boundary.
+
+The next production-admission contract removes the remaining manual-ledger trust gap.
+`saas.production.readiness` now derives all ten aggregate production gates from the
+baseline, image, deployment, recovery, SLO/capacity, deletion, commercial, enterprise,
+and consecutive-upstream-sync verifiers. A ledger entry marked `passed` while its
+derived gate is blocked is a structural failure; overall readiness additionally
+requires every aggregate ledger entry, every phase, and release `GO` to agree.
+
+The deployment verifier rejects logical multi-node clusters that share a physical host.
+It requires five production components to be ready and spread across at least two
+physical hosts and zones with PDB, topology, hardening, containment, mTLS, and the full
+ten-scenario failure/N-1 matrix. Separate commercial and enterprise contracts require
+real provider/payment/invoice/tax and Staff/OIDC/SAML/SCIM/MFA/privacy evidence. Test
+mode transactions, mock IdPs, CI fixtures, screenshots, mutable JSON, reused attestors,
+or untrusted workflows cannot qualify. The two historical consecutive-sync records are
+content-digest pinned before they can contribute to P6.
+
+No production evidence was manufactured by this change. The derived report remains
+zero of ten aggregate gates ready, the ledger remains 41/51 with ten pending, and the
+release remains `NO-GO`. After the matching Playwright Chromium was installed, the
+complete local SaaS shard passed 438 tests with 32 environment-conditioned skips and
+three existing dependency warnings in 247.21 seconds.
+
+The next PC5 privacy/deletion candidate advances the schema to `pc5b00000001` and the
+control-plane forced-RLS inventory to 88 tables. It introduces released/active Legal
+Hold facts, a CAS/idempotency-bound User or Tenant deletion Manifest, 15 signed surface
+outcomes, opaque OIDC/SCIM Tombstones, and a single governed SCIM receipt-redaction
+transition. The ordinary Staff governance role remains unable to select the Global User
+table; a dedicated non-login privacy executor performs target-bound erasure without
+joining the emergency role. OIDC and SCIM provisioning perform exact locator-hash
+Tombstone checks, invitation addresses are irreversibly replaced and pending invitations
+revoked, and each transformed invitation is bound to its exact deletion Manifest so a
+different Target/Manifest sees zero rows. A redacted receipt cannot be replayed or
+modified again. Legal Holds require a bounded review deadline but never auto-release,
+while completion persists the exact approval reference and rejects a mismatched replay.
+
+Targeted service/HTTP tests and a real PostgreSQL test prove Staff Cookie/Origin/CSRF,
+permission, Legal Hold priority/deadline, user and invitation PII anonymization, password
+deletion, Session and grant revocation, exact RLS, identity non-resurrection, one-time receipt redaction and
+subsequent tamper rejection. The isolated PostgreSQL logical restore also restores one
+released Hold with its review deadline, one completed 15-surface Manifest with its
+completion approval, one identity Tombstone and one
+redacted receipt while retaining 88/17 forced RLS. A clean disposable PostgreSQL run
+passes all 503 SaaS tests; the current local compatibility workflow selection passes
+1,056 tests, the
+host-appropriate hard-sandbox group passes 40 with 21 Linux-only skips, Pyrefly and
+pre-commit pass, migrations round trip without drift, the Wheel contains 274 required
+artifacts, 2/2 patches replay, and the intrusion report passes at 10 official files, 498
+net lines, two patches and a 0.9962 isolated-code ratio.
+
+The approved P0 architectural schema snapshot remains `pc5a00000003` in its immutable
+waiver record; the live implementation contract is separately `pc5b00000001` and must
+remain a linear descendant. This prevents both approval-record rewriting and unrelated
+schema substitution. Restore evidence is explicitly `ci_contract_not_production_drill`;
+the exact committed-SHA compatibility and image workflows still must pass, and real
+all-media deletion, retention expiry, PITR, IdP, SLO/capacity, commercial and enterprise
+evidence remain blocked. The production result stays 0/10 and `NO-GO`.

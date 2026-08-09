@@ -1,0 +1,862 @@
+{
+  "manifest_version": 1,
+  "plan": "docs/omnigent-multitenant-multiorg-saas-iteration-plan-2026-08-01.md",
+  "reviewed_at": "2026-08-09",
+  "release_decision": "NO-GO",
+  "phases": [
+    {
+      "id": "P0",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p0-upstream-boundary",
+          "status": "passed",
+          "evidence": [
+            "saas/upstream-baseline.json",
+            "saas/scripts/check_upstream_delta.py",
+            "saas/scripts/check_patch_queue.py",
+            "saas/upstream-patches/README.md",
+            ".github/workflows/saas-upstream-compat.yml",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
+            "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
+            "saas/acceptance/p3-upstream-sync-ci-30897083447.json",
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
+          ]
+        },
+        {
+          "id": "p0-approved-production-adrs-and-owners",
+          "status": "passed",
+          "evidence": [
+            "saas/production/baseline.json",
+            "saas/production/adr-approval-policy.json",
+            "saas/production/adr-approval-authorities.json",
+            "saas/production/adr-approval-candidate.json",
+            "saas/production/adrs/README.md",
+            "saas/production/adr-approvals/README.md",
+            "saas/production/adr-approvals/omnigent-saas-p0-sole-owner-waiver-2026-08-09-59c80f30abe891bb.json",
+            "saas/acceptance/p0-adr-approval-contract-ci-31276530223.json",
+            "saas/scripts/check_adr_approvals.py",
+            "saas/scripts/finalize_adr_approval.py",
+            "saas/scripts/check_production_baseline.py",
+            ".github/workflows/saas-upstream-compat.yml",
+            "saas/production/runbooks/control-plane-degradation.md",
+            "saas/production/runbooks/incident-response.md",
+            "tests/saas/test_adr_approvals.py",
+            "tests/saas/test_production_baseline.py"
+          ]
+        },
+        {
+          "id": "p0-reproducible-official-image-and-oss-regression",
+          "status": "pending",
+          "evidence": [
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/scripts/compare_oci_rebuilds.py",
+            "saas/production/runbooks/image-release.md",
+            ".github/workflows/saas-image-candidate.yml",
+            "deploy/docker/Dockerfile",
+            "setup.py",
+            "tests/saas/test_image_supply_chain.py",
+            "saas/acceptance/p0-adr-image-candidate-ci-31276491134.json",
+            "saas/acceptance/p4-image-candidate-ci-30901594130.json",
+            "saas/acceptance/p5-image-candidate-ci-30978680569.json",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p0-slo-rpo-rto-threat-model-and-service-catalog",
+          "status": "pending",
+          "evidence": [
+            "saas/production/baseline.json",
+            "saas/scripts/check_production_baseline.py",
+            "saas/production/runbooks/backup-restore.md",
+            "saas/production/runbooks/control-plane-degradation.md",
+            "saas/production/runbooks/incident-response.md",
+            "tests/saas/test_production_baseline.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "status": "complete",
+      "gates": [
+        {
+          "id": "p1-identity-membership-and-placement-domain",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/identity.py",
+            "saas/control_plane/lifecycle.py",
+            "saas/control_plane/resolver.py",
+            "tests/saas/test_control_plane_lifecycle.py",
+            "tests/saas/test_control_plane_resolver.py"
+          ]
+        },
+        {
+          "id": "p1-http-cookie-password-owner-transfer-removal",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/http_auth.py",
+            "saas/application.py",
+            "saas/control_plane/idempotency.py",
+            "saas/control_plane/governance.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/outbox_worker.py",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_identity_outbox_governance.py",
+            "tests/saas/test_official_http_integration.py",
+            "tests/saas/test_outbox_worker.py",
+            "tests/saas/test_project_authorization.py",
+            "tests/saas/test_postgresql_rls.py",
+            "saas/acceptance/p4-scheduling-ci-30901594129.json"
+          ]
+        },
+        {
+          "id": "p1-real-oauth-oidc-callback-verification",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/oidc.py",
+            "saas/control_plane/identity.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/migrations/versions/p2a000000005_oidc_identity_conflicts.py",
+            "tests/saas/test_oidc_http_auth.py",
+            "tests/saas/test_postgresql_rls.py",
+            "saas/acceptance/p1-oidc-ci-30887476782.json"
+          ]
+        },
+        {
+          "id": "p1-context-shell-multi-replica-revocation-and-failure-degradation-e2e",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/context_snapshot.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/resolver.py",
+            "saas/control_plane/migrations/versions/p2a000000006_context_shell_actor_rls.py",
+            "saas/control_plane/migrations/versions/p2a000000007_runtime_placement_platform_write.py",
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.js",
+            "tests/saas/test_context_snapshot.py",
+            "tests/saas/test_context_snapshot_postgresql.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p1-context-shell-ci-30890178928.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "status": "complete",
+      "gates": [
+        {
+          "id": "p2-project-grant-binding-authorizer",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/permissions.py",
+            "saas/control_plane/authorization.py",
+            "saas/control_plane/projects.py",
+            "saas/control_plane/bindings.py",
+            "tests/saas/test_project_authorization.py"
+          ]
+        },
+        {
+          "id": "p2-cross-database-saga-fault-injection",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/binding_saga.py",
+            "tests/saas/test_project_authorization.py"
+          ]
+        },
+        {
+          "id": "p2-store-adapter-and-patch-replay",
+          "status": "passed",
+          "evidence": [
+            "saas/compatibility/store_adapter.py",
+            "saas/upstream-patches/0002-managed-session-initializer.patch",
+            "tests/saas/test_store_adapter_contract.py",
+            "tests/saas/test_upstream_delta.py"
+          ]
+        },
+        {
+          "id": "p2-dual-real-postgresql-rls-current-revision",
+          "status": "passed",
+          "evidence": [
+            "saas/runtime_rls/installer.py",
+            "saas/control_plane/migrations/versions/p2a000000004_force_control_plane_rls.py",
+            "saas/control_plane/migrations/versions/p2a000000005_oidc_identity_conflicts.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_runtime_postgresql_rls.py",
+            "saas/acceptance/p2-ci-30883002639.json",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
+            "saas/acceptance/p2-upstream-sync-ci-30884588165.json"
+          ]
+        },
+        {
+          "id": "p2-browser-project-admin-permission-matrix",
+          "status": "passed",
+          "evidence": [
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.css",
+            "saas/admin_ui/project_admin.js",
+            "saas/control_plane/project_http.py",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_project_admin_browser.py"
+          ]
+        },
+        {
+          "id": "p2-mvp-gate",
+          "status": "passed",
+          "evidence": [
+            "tests/saas/test_project_authorization.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_runtime_postgresql_rls.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p2-ci-30883002639.json",
+            "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
+            "saas/acceptance/p2-upstream-sync-ci-30884588165.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "status": "complete",
+      "gates": [
+        {
+          "id": "p3-durable-task-session-run-event-authority",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/execution_models.py",
+            "saas/control_plane/execution.py",
+            "saas/control_plane/migrations/versions/p3a000000001_execution_authority.py",
+            "tests/saas/test_execution_control_plane.py",
+            "tests/saas/test_execution_postgresql.py",
+            "saas/acceptance/p3-ci-30895599094.json"
+          ]
+        },
+        {
+          "id": "p3-admission-quota-idempotent-tool-artifact",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/execution_models.py",
+            "saas/control_plane/execution.py",
+            "saas/control_plane/migrations/versions/p3a000000001_execution_authority.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_execution_control_plane.py",
+            "tests/saas/test_execution_postgresql.py",
+            "saas/acceptance/p3-ci-30895599094.json"
+          ]
+        },
+        {
+          "id": "p3-queue-cancel-recover-replay-and-persist-before-push",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/execution.py",
+            "saas/control_plane/outbox.py",
+            "saas/outbox_worker.py",
+            "tests/saas/test_execution_control_plane.py",
+            "tests/saas/test_execution_postgresql.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_outbox_worker.py",
+            "saas/acceptance/p3-ci-30895599094.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p4-fair-queue-runner-registry-lease-fencing",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/scheduling_models.py",
+            "saas/control_plane/scheduling.py",
+            "saas/control_plane/migrations/versions/p4a000000001_runner_scheduling.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_scheduling_control_plane.py",
+            "tests/saas/test_scheduling_postgresql.py",
+            "saas/acceptance/p4-scheduling-ci-30901594129.json"
+          ]
+        },
+        {
+          "id": "p4-worktree-changeset-control-plane",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/worktree_models.py",
+            "saas/control_plane/worktrees.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p4b000000001_changeset_worktrees.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_worktree_control_plane.py",
+            "tests/saas/test_worktree_postgresql.py",
+            "saas/acceptance/p4-worktree-ci-30906291765.json"
+          ]
+        },
+        {
+          "id": "p4-physical-worktree-runner-adapter",
+          "status": "passed",
+          "evidence": [
+            "saas/runner_adapter/worktrees.py",
+            "saas/control_plane/worktrees.py",
+            "tests/saas/test_worktree_control_plane.py",
+            "saas/acceptance/p4-physical-worktree-ci-30910478415.json"
+          ]
+        },
+        {
+          "id": "p4-isolation-secret-preview-control-plane-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/isolation_models.py",
+            "saas/control_plane/isolation.py",
+            "saas/control_plane/migrations/versions/p4c000000001_isolation_secret_preview.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/runner_adapter/isolation.py",
+            "saas/preview_gateway.py",
+            "tests/saas/test_isolation_control_plane.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "tests/saas/test_preview_gateway.py",
+            "saas/acceptance/p4-isolation-preview-ci-30918608868.json"
+          ]
+        },
+        {
+          "id": "p4-crash-secret-cleanup-egress-and-containment-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/runner_adapter/isolation.py",
+            "saas/runner_adapter/containment.py",
+            ".github/workflows/saas-upstream-compat.yml",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "tests/saas/test_runner_containment.py",
+            "saas/acceptance/p4-containment-egress-ci-30921247156.json"
+          ]
+        },
+        {
+          "id": "p4-generation-bound-preview-http-tunnel-adapter-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/isolation.py",
+            "saas/preview_gateway.py",
+            "saas/preview_tunnel.py",
+            "tests/saas/test_preview_gateway.py",
+            "tests/saas/test_preview_tunnel.py",
+            "saas/acceptance/p4-preview-tunnel-ci-30923776172.json"
+          ]
+        },
+        {
+          "id": "p4-runner-local-preview-uds-target-adapter-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_tunnel.py",
+            "tests/saas/test_preview_tunnel.py",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json"
+          ]
+        },
+        {
+          "id": "p4-mtls-secret-broker-transport-adapter-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/isolation.py",
+            "saas/runner_adapter/isolation.py",
+            "saas/secret_broker_transport.py",
+            "tests/saas/test_secret_broker_transport.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "tests/saas/test_runner_isolation_e2e.py",
+            "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json"
+          ]
+        },
+        {
+          "id": "p4-runner-local-preview-process-supervisor-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_tunnel.py",
+            "saas/runner_adapter/preview_supervisor.py",
+            "tests/saas/test_preview_supervisor.py",
+            "saas/acceptance/p4-preview-supervisor-ci-30937413470.json"
+          ]
+        },
+        {
+          "id": "p4-runner-certificate-lifecycle-authority-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/certificate_models.py",
+            "saas/control_plane/certificates.py",
+            "saas/control_plane/migrations/versions/p4d000000001_runner_certificate_lifecycle.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/secret_broker_transport.py",
+            "tests/saas/test_certificate_lifecycle.py",
+            "tests/saas/test_secret_broker_transport.py",
+            "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json"
+          ]
+        },
+        {
+          "id": "p4-persistent-runner-tunnel-placement-router-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/placement_models.py",
+            "saas/control_plane/placements.py",
+            "saas/control_plane/migrations/versions/p4e000000001_runner_tunnel_placement.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/preview_tunnel.py",
+            "tests/saas/test_runner_tunnel_placement.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "saas/acceptance/p4-runner-tunnel-placement-ci-30948364396.json"
+          ]
+        },
+        {
+          "id": "p4-mtls-cross-replica-preview-relay-transport-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_relay_transport.py",
+            "tests/saas/test_preview_relay_transport.py",
+            "saas/acceptance/p4-preview-relay-ci-30951270461.json"
+          ]
+        },
+        {
+          "id": "p4-persistent-preview-gateway-discovery-and-certificate-authority-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/gateway_models.py",
+            "saas/control_plane/gateways.py",
+            "saas/control_plane/migrations/versions/p4f000000001_preview_gateway_authority.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/control_plane/placement_models.py",
+            "saas/control_plane/placements.py",
+            "saas/preview_relay_transport.py",
+            "tests/saas/test_preview_gateway_authority.py",
+            "tests/saas/test_runner_tunnel_placement.py",
+            "tests/saas/test_preview_relay_transport.py",
+            "saas/acceptance/p4-preview-gateway-authority-ci-30955223169.json"
+          ]
+        },
+        {
+          "id": "p4-preview-gateway-runtime-lifecycle-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_gateway_runtime.py",
+            "saas/control_plane/gateway_models.py",
+            "saas/control_plane/gateways.py",
+            "saas/control_plane/migrations/versions/p4g000000001_preview_gateway_runtime_lifecycle.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_preview_gateway_runtime.py",
+            "tests/saas/test_preview_gateway_authority.py",
+            "tests/saas/test_runner_tunnel_placement.py",
+            "tests/saas/test_isolation_postgresql.py",
+            "saas/acceptance/p4-preview-gateway-runtime-ci-30959947571.json"
+          ]
+        },
+        {
+          "id": "p4-preview-gateway-process-and-deployment-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/preview_gateway_process.py",
+            "saas/preview_gateway_runtime.py",
+            "saas/deployment/preview_gateway/README.md",
+            "saas/deployment/preview_gateway/config.example.json",
+            "saas/deployment/preview_gateway/kubernetes.yaml",
+            "saas/deployment/preview_gateway/omnigent-saas-preview-gateway@.service",
+            "tests/saas/test_preview_gateway_process.py",
+            "tests/saas/test_preview_gateway_runtime.py",
+            "saas/acceptance/p4-preview-gateway-process-ci-30964370004.json"
+          ]
+        },
+        {
+          "id": "p4-mtls-preview-gateway-control-plane-transport-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/gateways.py",
+            "saas/preview_gateway_control_transport.py",
+            "tests/saas/test_preview_gateway_control_transport.py",
+            "saas/acceptance/p4-preview-gateway-control-ci-30967154951.json"
+          ]
+        },
+        {
+          "id": "p4-production-containment-egress-preview-tunnel",
+          "status": "pending",
+          "evidence": [
+            "saas/preview_tunnel.py",
+            "saas/runner_adapter/preview_supervisor.py",
+            "saas/control_plane/certificate_models.py",
+            "saas/control_plane/certificates.py",
+            "saas/control_plane/migrations/versions/p4d000000001_runner_certificate_lifecycle.py",
+            "saas/control_plane/placement_models.py",
+            "saas/control_plane/placements.py",
+            "saas/control_plane/migrations/versions/p4e000000001_runner_tunnel_placement.py",
+            "saas/secret_broker_transport.py",
+            "saas/preview_relay_transport.py",
+            "saas/control_plane/gateway_models.py",
+            "saas/control_plane/gateways.py",
+            "saas/control_plane/migrations/versions/p4f000000001_preview_gateway_authority.py",
+            "saas/preview_gateway_runtime.py",
+            "saas/control_plane/migrations/versions/p4g000000001_preview_gateway_runtime_lifecycle.py",
+            "saas/preview_gateway_process.py",
+            "saas/preview_gateway_control_transport.py",
+            "saas/deployment/preview_gateway/kubernetes.yaml",
+            "saas/deployment/preview_gateway/omnigent-saas-preview-gateway@.service",
+            "tests/saas/test_preview_tunnel.py",
+            "tests/saas/test_preview_relay_transport.py",
+            "tests/saas/test_preview_gateway_authority.py",
+            "tests/saas/test_preview_gateway_runtime.py",
+            "tests/saas/test_preview_gateway_process.py",
+            "tests/saas/test_preview_gateway_control_transport.py",
+            "tests/saas/test_preview_supervisor.py",
+            "tests/saas/test_certificate_lifecycle.py",
+            "tests/saas/test_runner_tunnel_placement.py",
+            "tests/saas/test_secret_broker_transport.py",
+            "saas/acceptance/p4-isolation-preview-ci-30918608868.json",
+            "saas/acceptance/p4-containment-egress-ci-30921247156.json",
+            "saas/acceptance/p4-preview-tunnel-ci-30923776172.json",
+            "saas/acceptance/p4-preview-uds-ci-30926375395.json",
+            "saas/acceptance/p4-secret-broker-mtls-ci-30929785430.json",
+            "saas/acceptance/p4-preview-supervisor-ci-30937413470.json",
+            "saas/acceptance/p4-runner-certificate-lifecycle-ci-30942353100.json",
+            "saas/acceptance/p4-runner-tunnel-placement-ci-30948364396.json",
+            "saas/acceptance/p4-preview-relay-ci-30951270461.json",
+            "saas/runner_adapter/process_policy.py",
+            "tests/saas/test_managed_runner_process_policy.py",
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/runbooks/production-deployment.md",
+            "tests/saas/test_deployment_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p4-two-failure-domain-and-n-minus-one-rollback",
+          "status": "pending",
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/runbooks/production-deployment.md",
+            "tests/saas/test_deployment_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p5-signed-webhook-delivery-and-ssrf-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/webhook_models.py",
+            "saas/control_plane/webhooks.py",
+            "saas/control_plane/migrations/versions/p5a000000001_webhook_delivery.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_webhook_delivery.py",
+            "saas/acceptance/p5-webhook-delivery-ci-30980110086.json"
+          ]
+        },
+        {
+          "id": "p5-recovery-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/production/recovery-policy.json",
+            "saas/production/recovery.py",
+            "saas/scripts/check_recovery_readiness.py",
+            "tests/saas/test_recovery_readiness.py",
+            "saas/acceptance/p5-recovery-evidence-contract-ci-30983318630.json"
+          ]
+        },
+        {
+          "id": "p5-isolated-postgresql-logical-restore-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/rls_inventory.py",
+            "saas/production/postgresql_restore.py",
+            "saas/scripts/run_postgresql_restore_contract.py",
+            "tests/saas/test_postgresql_restore_contract.py",
+            "saas/acceptance/p5-logical-restore-contract-ci-30986200469.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json"
+          ]
+        },
+        {
+          "id": "p5-tenant-deletion-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/production/deletion-policy.json",
+            "saas/production/deletion.py",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/production/runbooks/tenant-deletion.md",
+            "tests/saas/test_deletion_readiness.py",
+            "saas/acceptance/p5-tenant-deletion-contract-ci-30988807799.json"
+          ]
+        },
+        {
+          "id": "p5-production-slo-capacity-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/production/slo-capacity-policy.json",
+            "saas/production/slo_capacity.py",
+            "saas/scripts/check_slo_capacity_readiness.py",
+            "saas/production/runbooks/slo-capacity.md",
+            "tests/saas/test_slo_capacity_readiness.py",
+            "saas/acceptance/p5-slo-capacity-contract-ci-30991532016.json"
+          ]
+        },
+        {
+          "id": "p5-image-supply-chain-evidence-verifier-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/production/runbooks/image-release.md",
+            "tests/saas/test_image_supply_chain.py",
+            "saas/acceptance/p5-image-supply-chain-contract-ci-30994862629.json"
+          ]
+        },
+        {
+          "id": "p5-multi-az-pitr-isolated-backup-and-recovery",
+          "status": "pending",
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/production/deployment.py",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/recovery-policy.json",
+            "saas/production/recovery.py",
+            "saas/scripts/check_recovery_readiness.py",
+            "tests/saas/test_deployment_readiness.py",
+            "tests/saas/test_recovery_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p5-slo-capacity-supply-chain-api-webhook-deletion",
+          "status": "pending",
+          "evidence": [
+            "saas/production/slo-capacity-policy.json",
+            "saas/scripts/check_slo_capacity_readiness.py",
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/production/deletion-policy.json",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/production/deployment-policy.json",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/control_plane/webhooks.py",
+            "tests/saas/test_webhook_delivery.py",
+            "saas/control_plane/api_credentials.py",
+            "tests/saas/test_api_credentials.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p5-production-foundation-gate",
+          "status": "pending",
+          "evidence": [
+            "saas/production/deployment-policy.json",
+            "saas/scripts/check_deployment_readiness.py",
+            "saas/production/recovery-policy.json",
+            "saas/scripts/check_recovery_readiness.py",
+            "saas/production/slo-capacity-policy.json",
+            "saas/scripts/check_slo_capacity_readiness.py",
+            "saas/production/deletion-policy.json",
+            "saas/scripts/check_deletion_readiness.py",
+            "saas/supply_chain/release-policy.json",
+            "saas/scripts/check_image_supply_chain.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "status": "in_progress",
+      "gates": [
+        {
+          "id": "p6-service-account-api-credential-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/api_credential_models.py",
+            "saas/control_plane/api_credentials.py",
+            "saas/control_plane/api_http.py",
+            "saas/control_plane/http_auth.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p6a000000001_api_service_accounts.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/production/runbooks/api-credentials.md",
+            "tests/saas/test_api_credentials.py",
+            "tests/saas/test_api_credentials_postgresql.py",
+            "saas/acceptance/p6-api-service-account-ci-31002035206.json"
+          ]
+        },
+        {
+          "id": "p6-enterprise-group-project-custom-role-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/enterprise_models.py",
+            "saas/control_plane/enterprise_access.py",
+            "saas/control_plane/enterprise_http.py",
+            "saas/control_plane/authorization.py",
+            "saas/control_plane/removal_impact.py",
+            "saas/control_plane/migrations/versions/p6a000000002_enterprise_groups_roles.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_access_postgresql.py",
+            "tests/saas/test_enterprise_http.py",
+            "saas/acceptance/p6-enterprise-group-custom-role-ci-31008792059.json"
+          ]
+        },
+        {
+          "id": "p6-enterprise-access-lifecycle-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/enterprise_models.py",
+            "saas/control_plane/enterprise_access.py",
+            "saas/control_plane/enterprise_http.py",
+            "saas/control_plane/migrations/versions/p6a000000003_enterprise_access_lifecycle.py",
+            "saas/production/postgresql_restore.py",
+            "saas/production/runbooks/enterprise-access-lifecycle.md",
+            "tests/saas/test_control_plane_migration.py",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_access_postgresql.py",
+            "tests/saas/test_enterprise_http.py",
+            "saas/acceptance/p6-enterprise-access-lifecycle-ci-31016011969.json"
+          ]
+        },
+        {
+          "id": "p6-enterprise-access-impact-approval-contract",
+          "status": "passed",
+          "evidence": [
+            "saas/control_plane/enterprise_models.py",
+            "saas/control_plane/enterprise_access.py",
+            "saas/control_plane/enterprise_http.py",
+            "saas/control_plane/migrations/versions/p6a000000004_enterprise_access_preflights.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/production/postgresql_restore.py",
+            "saas/production/runbooks/enterprise-access-lifecycle.md",
+            "tests/saas/test_control_plane_migration.py",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_access_postgresql.py",
+            "tests/saas/test_enterprise_http.py",
+            "saas/acceptance/p6-enterprise-access-preflight-ci-31025362985.json"
+          ]
+        },
+        {
+          "id": "p6-billing-ledger-entitlement-quota-subscription",
+          "status": "pending",
+          "evidence": [
+            "saas/control_plane/billing_models.py",
+            "saas/control_plane/billing.py",
+            "saas/control_plane/billing_http.py",
+            "saas/control_plane/billing_metering.py",
+            "saas/control_plane/migrations/versions/p6a000000008_billing_authority.py",
+            "saas/control_plane/migrations/versions/p6a000000009_machine_metering.py",
+            "saas/control_plane/postgresql_roles.sql",
+            "saas/production/postgresql_restore.py",
+            "saas/production/runbooks/billing-ledger.md",
+            "saas/billing_metering_transport.py",
+            "saas/runner_adapter/managed_entry.py",
+            "saas/runner_adapter/metering.py",
+            "saas/runner_adapter/process_policy.py",
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.js",
+            "tests/saas/test_billing_control_plane.py",
+            "tests/saas/test_billing_http.py",
+            "tests/saas/test_billing_metering.py",
+            "tests/saas/test_billing_metering_postgresql.py",
+            "tests/saas/test_billing_metering_transport.py",
+            "tests/saas/test_billing_postgresql.py",
+            "tests/saas/test_provider_usage_metering.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p6-billing-ledger-ci-31055362434.json",
+            "saas/acceptance/p6-machine-metering-ci-31063360786.json",
+            "saas/acceptance/p6-machine-metering-image-candidate-ci-31064837882.json",
+            "saas/acceptance/p6-provider-runtime-metering-ci-31068082417.json",
+            "saas/control_plane/migrations/versions/p6b000000001_billing_period_close.py",
+            "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
+            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json",
+            "saas/production/commercial-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_commercial_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p6-enterprise-identity-audit-api-platform-console-privacy",
+          "status": "pending",
+          "evidence": [
+            "saas/admin_ui/project_admin.html",
+            "saas/admin_ui/project_admin.css",
+            "saas/admin_ui/project_admin.js",
+            "saas/control_plane/member_admin.py",
+            "saas/control_plane/member_http.py",
+            "saas/control_plane/migrations/versions/p6a000000005_enterprise_approval_inbox.py",
+            "saas/control_plane/migrations/versions/p6a000000006_tenant_member_directory.py",
+            "saas/control_plane/migrations/versions/p6a000000007_invitation_acceptance_rls.py",
+            "saas/control_plane/platform_lifecycle.py",
+            "saas/control_plane/platform_http.py",
+            "saas/control_plane/platform_models.py",
+            "saas/control_plane/db_models.py",
+            "saas/control_plane/migrations/versions/pc2a00000001_platform_user_tenant_lifecycle.py",
+            "saas/control_plane/migrations/versions/pc2b00000001_identity_conflict_platform_review.py",
+            "saas/production/runbooks/tenant-members.md",
+            "tests/saas/test_http_cookie_auth.py",
+            "tests/saas/test_identity_outbox_governance.py",
+            "tests/saas/test_postgresql_rls.py",
+            "tests/saas/test_enterprise_access.py",
+            "tests/saas/test_enterprise_http.py",
+            "tests/saas/test_project_admin_browser.py",
+            "saas/acceptance/p6-enterprise-approval-admin-console-ci-31030826038.json",
+            "saas/acceptance/p6-enterprise-approval-stale-read-ci-31032344986.json",
+            "saas/acceptance/p6-tenant-members-admin-console-ci-31042515162.json",
+            "saas/acceptance/p6-tenant-members-image-candidate-ci-31043457794.json",
+            "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
+            "saas/acceptance/pc2-p6-lifecycle-period-close-image-candidate-ci-31202057865.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-ci-31211571929.json",
+            "saas/acceptance/pc2-identity-conflict-p6-restore-image-candidate-ci-31211571817.json",
+            "saas/production/enterprise-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_enterprise_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        },
+        {
+          "id": "p6-two-consecutive-upstream-syncs-and-commercial-gate",
+          "status": "pending",
+          "evidence": [
+            "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
+            "saas/acceptance/p6-upstream-sync-ci-31019511803.json",
+            "saas/production/upstream-sync-policy.json",
+            "saas/production/commercial-policy.json",
+            "saas/production/business.py",
+            "saas/scripts/check_commercial_readiness.py",
+            "tests/saas/test_business_readiness.py",
+            "saas/production/readiness.py",
+            "saas/scripts/check_production_readiness.py",
+            "tests/saas/test_production_readiness.py"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,175 @@
+name: SaaS upstream compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "codex/**"
+  workflow_dispatch:
+
+permissions:
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: saas-upstream-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
+        postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev --extra saas
+      - name: Install P2 browser runtime
+        run: uv run playwright install --with-deps chromium
+      - name: Install hard sandbox runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          # ubuntu-latest enables AppArmor's unprivileged-userns restriction;
+          # the official Omnigent Linux sandbox workflows disable it only on
+          # the ephemeral runner so bwrap can create its user/network namespaces.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run SaaS compatibility tests
+        run: >-
+          uv run pytest
+          tests/db/test_workspace_scope.py
+          tests/cli/test_cli.py
+          tests/runner/transports/ws_tunnel/test_serve.py
+          tests/server/test_managed_hosts.py
+          tests/server/integration/test_sessions_archive.py
+          tests/saas
+      - name: Run isolated PostgreSQL logical restore contract
+        run: >-
+          uv run python -m saas.scripts.run_postgresql_restore_contract
+          --allow-disposable-databases
+          --output artifacts/postgresql-restore-contract.json
+      - name: Run official zygote and query-context compatibility tests
+        run: >-
+          uv run pytest
+          tests/host/test_runner_zygote.py
+          tests/runtime/harnesses/test_harness_zygote_client.py
+          tests/stores/test_query_context.py
+          tests/host/test_connect.py::test_handle_stop_terminates_process
+          tests/host/test_connect.py::test_handle_runner_status_alive_for_running_process
+          tests/host/test_connect.py::test_handle_runner_status_dead_for_exited_process
+          tests/host/test_connect.py::test_launch_cancelled_midspawn_does_not_leak_untracked_runner
+          tests/host/test_connect.py::test_host_spawned_runner_has_parent_pid_env
+          tests/host/test_connect.py::test_build_runner_env_allowlists_host_env_and_strips_secrets
+          tests/runner/test_session_resources.py::test_failed_snapshot_does_not_latch_session_workspace
+          tests/server/routes/test_sessions_snapshot.py::test_snapshot_metadata_resolvers_ignore_malformed_agent_ids
+          tests/inner/test_acp_executor.py
+          tests/onboarding/test_acp_auth.py
+          tests/runner/test_orchestrator_skill_injection.py
+          tests/runtime/test_acp_spawn_env.py
+          tests/test_agent_spawn_env_canary.py
+          tests/test_claude_native_forwarder.py
+          tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
+          tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_rejects_invalid_config
+          tests/runner/test_runner_entry.py::test_runner_threadpool_rejects_invalid_env
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_empty_off_linux
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_defaults_on_linux
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_arena_max_zero_disables_cap
+          tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_honors_overrides
+      - name: Run official hard-sandbox and credential-proxy acceptance
+        run: >-
+          uv run pytest
+          tests/inner/test_bwrap_symlink_mask_3265.py
+          tests/inner/sandbox/test_sandbox_behavior.py
+          tests/inner/sandbox/test_egress_e2e.py::test_egress_direct_tcp_bypass_is_blocked
+          tests/inner/sandbox/test_egress_e2e.py::test_s2_egress_blocks_private_destination_by_default
+          tests/inner/sandbox/test_egress_e2e.py::test_s4_same_uid_external_process_cannot_use_helper_relay
+          tests/inner/sandbox/test_egress_e2e.py::test_s4_two_sandboxes_cannot_borrow_each_others_proxy
+          tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_swap_on_access_injects_basic_without_sandbox_secret
+          tests/inner/sandbox/test_egress_e2e.py::test_credential_proxy_https_bearer_swaps_injected_env_token
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_private_and_link_local_ranges
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_cgnat_alibaba_imds
+          tests/inner/egress/test_proxy.py::test_s2_assert_destination_blocks_azure_wireserver
+          tests/inner/egress/test_proxy.py::test_s2_dns_rebinding_fail_then_loopback_is_blocked_e2e
+          tests/inner/egress/test_proxy.py::test_s5_connect_rejects_unsafe_host_before_dns
+          tests/inner/egress/test_proxy.py::test_s5_http_rejects_unsafe_host_before_dns
+      - name: Type-check SaaS compatibility code
+        run: uv run pyrefly check saas
+      - name: Verify SaaS migration CLI
+        env:
+          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
+        run: |
+          uv run alembic -c saas/control_plane/alembic.ini upgrade head
+          uv run alembic -c saas/control_plane/alembic.ini check
+          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+      - name: Verify SaaS wheel contents
+        run: |
+          uv build --wheel --out-dir artifacts/saas-wheel
+          uv run python -m saas.scripts.check_wheel_contents artifacts/saas-wheel
+      - name: Replay downstream patch queue
+        run: >-
+          uv run python saas/scripts/check_patch_queue.py
+          --output artifacts/patch-replay-report.json
+      - name: Validate P0-P6 acceptance ledger
+        run: uv run python -m saas.scripts.check_acceptance_manifest
+      - name: Validate P0 production baselines
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -m saas.scripts.check_adr_approvals \
+            --verify-github --require-approved-if-declared
+          uv run python -m saas.scripts.check_production_baseline \
+            --output artifacts/production-baseline-report.json
+          uv run python -m saas.scripts.check_recovery_readiness \
+            --output artifacts/recovery-readiness-report.json
+          uv run python -m saas.scripts.check_deletion_readiness \
+            --output artifacts/deletion-readiness-report.json
+          uv run python -m saas.scripts.check_slo_capacity_readiness \
+            --output artifacts/slo-capacity-readiness-report.json
+          uv run python -m saas.scripts.check_image_supply_chain \
+            --output artifacts/image-supply-chain-report.json
+          uv run python -m saas.scripts.check_production_readiness \
+            --output artifacts/production-readiness-report.json
+      - name: Enforce source-intrusion budget
+        run: >-
+          uv run python saas/scripts/check_upstream_delta.py
+          --output artifacts/upstream-delta-report.json
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-delta-report
+          path: |
+            artifacts/upstream-delta-report.json
+            artifacts/patch-replay-report.json
+            artifacts/production-baseline-report.json
+            artifacts/recovery-readiness-report.json
+            artifacts/postgresql-restore-contract.json
+            artifacts/deletion-readiness-report.json
+            artifacts/slo-capacity-readiness-report.json
+            artifacts/image-supply-chain-report.json
+            artifacts/production-readiness-report.json
+          if-no-files-found: error

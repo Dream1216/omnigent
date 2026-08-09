@@ -1,0 +1,92 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30926375395,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30926375395",
+  "job_id": 92049656048,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30926375395/job/92049656048",
+  "head_sha": "0e689dd7ea89eb33b0341d5601d4f997bd57f227",
+  "preview_tunnel_predecessor_sha": "89a947b587f1edd5dbb669bce646675fec0f7baa",
+  "upstream_revision": "a47a9ee3bf7287f7e70fc0f599f241e43275ecfc",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap",
+    "preview_target": "spawned Uvicorn child process over a real Unix-domain socket"
+  },
+  "verification": {
+    "combined_ci_tests": "688 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 115.53,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.66,
+    "wheel_required_artifacts": 83,
+    "patches_replayed": 2,
+    "migration_head": "p4c000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates_before_this_record": 11,
+    "pending_acceptance_gates_after_this_record": 11,
+    "release_decision": "NO-GO"
+  },
+  "server_chosen_uds_authority": {
+    "complete_route_binding_derives_socket_name": true,
+    "client_cannot_select_tcp_host_or_port": true,
+    "client_cannot_select_socket_or_host_path": true,
+    "absolute_private_runner_owned_root_required": true,
+    "root_directory_descriptor_pins_original_inode": true,
+    "socket_symlinks_and_public_modes_rejected": true,
+    "socket_device_inode_owner_and_ctime_pinned": true,
+    "socket_replacement_without_new_lifecycle_rejected": true,
+    "expired_route_rejected": true
+  },
+  "uds_http_adapter": {
+    "implementation": "saas/preview_tunnel.py:UnixSocketPreviewTarget",
+    "transport": "httpx.AsyncHTTPTransport with only the derived uds path",
+    "environment_proxy_discovery_disabled": true,
+    "redirect_following_disabled": true,
+    "fixed_virtual_host": "preview.invalid",
+    "hop_by_hop_internal_host_and_content_length_headers_removed": true,
+    "request_body_streams_from_runner_asgi_to_uds": true,
+    "response_body_streams_from_uds_to_official_runner_frames": true,
+    "bounded_response_head_and_io_timeout": true,
+    "non_enumerating_unavailable_and_timeout_errors": true,
+    "tcp_fallback": false
+  },
+  "real_process_contract_tests": {
+    "spawned_child_process": true,
+    "actual_unix_socket": true,
+    "supervisor_hardens_socket_to_0600_before_activation": true,
+    "request_method_path_query_and_body_round_trip": true,
+    "internal_route_metadata_absent_from_child": true,
+    "socket_replacement_fails_closed": true,
+    "symlink_and_public_socket_rejected": true,
+    "public_or_relative_root_rejected": true,
+    "response_head_timeout_returns_504": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 413,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9905,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a deployed Supervisor lifecycle that pre-binds hardens starts health-checks stops and crash-cleans the UDS target",
+    "a dedicated Preview process UID or mount namespace that closes same-UID pathname replacement races",
+    "deployed mutually authenticated transport between separate Preview Gateway and Runner processes or hosts",
+    "multi-replica placement routing for the process-local Runner tunnel binding resolver",
+    "streaming request-body frames in official tunnel protocol v1",
+    "Preview WebSocket forwarding custom domains and abuse controls",
+    "a production Runner Pod container or microVM whose real cgroup facts pass the verifier",
+    "two independent infrastructure failure domains network partition and N-1 rollback",
+    "signed vulnerability-cleared digest-pinned production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the private Runner-local UDS Preview target adapter at the exact implementation revision, including a real spawned child process and socket on Linux CI. It does not prove deployed Supervisor lifecycle, dedicated UID or mount isolation, gateway-to-runner mutual authentication, multi-replica routing, or production containment. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, README, or plan documentation does not alter the verified implementation."
+}

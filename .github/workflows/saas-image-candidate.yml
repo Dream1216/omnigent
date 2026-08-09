@@ -1,0 +1,149 @@
+name: SaaS image candidate
+
+on:
+  push:
+    branches:
+      - "codex/**"
+    paths:
+      - ".github/workflows/saas-image-candidate.yml"
+      - ".github/workflows/saas-production-admission.yml"
+      - "deploy/docker/Dockerfile"
+      - "setup.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "web/**"
+      - "saas/actions/build-oci-candidate/**"
+      - "saas/production/**"
+      - "saas/supply_chain/**"
+      - "saas/scripts/check_image_supply_chain.py"
+      - "saas/scripts/compare_oci_rebuilds.py"
+      - "tests/saas/test_image_supply_chain.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-image-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
+        postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout immutable candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked test dependencies
+        run: uv sync --frozen --extra dev --extra saas
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Run current-revision OSS and SaaS regressions
+        run: >-
+          uv run pytest
+          tests/db/test_workspace_scope.py
+          tests/cli/test_cli.py
+          tests/runner/transports/ws_tunnel/test_serve.py
+          tests/server/test_managed_hosts.py
+          tests/server/integration/test_sessions_archive.py
+          tests/saas
+      - name: Verify migrations and downstream compatibility
+        env:
+          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
+        run: |
+          uv run alembic -c saas/control_plane/alembic.ini upgrade head
+          uv run alembic -c saas/control_plane/alembic.ini check
+          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_patch_queue
+          uv run python -m saas.scripts.check_upstream_delta
+          uv run python -m saas.scripts.check_production_baseline
+          uv run python -m saas.scripts.check_image_supply_chain
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Resolve immutable build materials
+        run: |
+          set -euo pipefail
+          python_digest=$(crane digest python:3.12-slim)
+          node_digest=$(crane digest node:22-slim)
+          source_epoch=$(git show -s --format=%ct HEAD)
+          source_revision=$(git rev-parse HEAD)
+          upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
+          adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
+          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
+          echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
+          echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
+          echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"
+          echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
+          echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
+          echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Build server candidate attempt 1
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "1"
+      - name: Build server candidate attempt 2
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "2"
+      - name: Build host candidate attempt 1
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "1"
+      - name: Build host candidate attempt 2
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "2"
+      - name: Compare repeated executable image facts
+        run: >-
+          uv run python -m saas.scripts.compare_oci_rebuilds
+          --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
+          --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
+          --output artifacts/saas-image-candidate.json
+      - name: Upload candidate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-image-candidate-${{ github.sha }}
+          path: artifacts/saas-image-candidate.json
+          if-no-files-found: error
+          retention-days: 30

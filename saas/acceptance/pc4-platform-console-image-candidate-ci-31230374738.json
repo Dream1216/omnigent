@@ -1,0 +1,68 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31230374738,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31230374738",
+  "job_id": 93032905275,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31230374738/job/93032905275",
+  "artifact_id": 9014099594,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31230374738/artifacts/9014099594",
+  "artifact_sha256": "729661862748fb6ab16b87d38d0597f655ddef5a5719d66cf518214ad9a40c6e",
+  "head_sha": "90c0334eb9ff01a930d7e94589ec458a98107d6f",
+  "implementation_sha": "90c0334eb9ff01a930d7e94589ec458a98107d6f",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "control_plane_schema_revision": "pc3a00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "953 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 217.04,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 479 lines, and 0.9957 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786149121,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:5959d811e42f935897fe2c3e97d7802a6d14901c76af8fca0a89f4fcd5f90a55",
+          "config_digest": "sha256:7ebbb263f75b642e194687918e5b99409b4edd7e9dfa71031d1c735cbaa28c1c"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:96669e698bc41d9485edfb2ee0e8c049751ead5df68127400721cbec9123646b",
+          "config_digest": "sha256:b49c75bd6294c201021e3cd32fbba3e06423f50cb37b2405d0156e5cabf7dac8"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:d44b8dee256d32dbd5f5d0894846b952c549d9fe54b81d77fa5d63d43257db24",
+          "config_digest": "sha256:f233b21e87c4af9570b091de471ae32fb75c97d2852a0f71aa208e467d55abbe"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:6e6e72fd9121b69678724ff786394bea1cc34f170aa9c012bd3c7612ee351b17",
+          "config_digest": "sha256:e2010c6270cb54478fb3b9a7f40388a3508d8492c046ecfffa71e9ba266459b2"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact PC4 Platform Console implementation. It does not prove a deployed Staff Origin or IdP, production KMS signing, live customer-approved support, PC5, production image promotion, deployment, or release GO.",
+  "evidence_successor_policy": "A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at 90c0334eb9ff01a930d7e94589ec458a98107d6f."
+}

@@ -19,6 +19,12 @@ cryptography = "2026-06-26T00:00:00Z"
 nimble-python = "2026-07-29T00:00:00Z"
 pydantic-settings = "2026-06-26T00:00:00Z"
 
+[manifest]
+members = [
+    "omnigent",
+    "omnigent-issue-prioritization",
+]
+
 [[package]]
 name = "absl-py"
 version = "2.4.0"
@@ -3334,6 +3340,9 @@ s3 = [
     { name = "boto3" },
     { name = "botocore" },
 ]
+saas = [
+    { name = "psycopg", extra = ["binary"] },
+]
 slack = [
     { name = "omnigent-slack" },
 ]
@@ -3410,6 +3419,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=6,<7" },
     { name = "psutil", specifier = ">=5.9,<8" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'databricks'", specifier = ">=3.1,<4" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'saas'", specifier = ">=3.1,<4" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8,<3" },
     { name = "pymysql", marker = "extra == 'databricks'", specifier = ">=1.1,<2" },
@@ -3441,7 +3451,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=10.4,<15" },
     { name = "zstandard", specifier = ">=0.22,<1" },
 ]
-provides-extras = ["claude-sdk", "openai-agents", "all", "bedrock", "s3", "vertex", "modal", "daytona", "boxlite", "cwsandbox", "e2b", "islo", "openshell", "kubernetes", "tracing", "agents-sdk", "antigravity", "copilot", "dictation", "cursor", "hindsight", "memory", "nimble", "slack", "databricks", "loadtest", "dev"]
+provides-extras = ["claude-sdk", "openai-agents", "all", "bedrock", "s3", "vertex", "modal", "daytona", "boxlite", "cwsandbox", "e2b", "islo", "openshell", "kubernetes", "tracing", "agents-sdk", "antigravity", "copilot", "dictation", "cursor", "hindsight", "memory", "nimble", "slack", "databricks", "saas", "loadtest", "dev"]
 
 [[package]]
 name = "omnigent-client"
@@ -3458,6 +3468,33 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "omnigent", editable = "." },
     { name = "pydantic", specifier = ">=2.0,<3" },
+]
+
+[[package]]
+name = "omnigent-issue-prioritization"
+version = "0.2.0"
+source = { editable = ".github/triage_v2" }
+dependencies = [
+    { name = "databricks-sdk" },
+    { name = "pyjwt", extra = ["crypto"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "databricks-sdk", specifier = ">=0.56.0,<1" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.12" },
 ]
 
 [[package]]

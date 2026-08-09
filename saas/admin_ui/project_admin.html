@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Omnigent · SaaS Control Plane</title>
+    <link rel="stylesheet" href="/saas/admin/assets/project-admin.css">
+    <script src="/saas/admin/assets/project-admin.js" defer></script>
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="masthead">
+      <a class="wordmark" href="/saas/admin/projects" aria-label="Omnigent Control Plane">
+        <span class="wordmark-mark">O</span>
+        <span><strong>OMNIGENT</strong><small>SAAS CONTROL PLANE</small></span>
+      </a>
+      <div class="system-state">
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="context-state" data-testid="context-state">NO CONTEXT</span>
+        <span class="revision">POLICY / 2026-08-06.P6</span>
+      </div>
+      <button class="quiet-button" id="logout-button" type="button" hidden>退出会话</button>
+    </header>
+
+    <main class="shell">
+      <section class="login-deck" id="login-deck" aria-labelledby="login-title">
+        <div class="login-copy">
+          <p class="eyebrow">AUTHENTICATION BOUNDARY</p>
+          <h1 id="login-title">先证明身份，<br>再进入作用域。</h1>
+          <p>控制台不会从 URL、表单或本地缓存信任任何角色。Tenant、Space 与授权版本均由服务端重新解析。</p>
+        </div>
+        <form class="login-form" id="login-form">
+          <label>
+            <span>已验证邮箱</span>
+            <input data-testid="login-email" id="login-email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password Credential</span>
+            <input data-testid="login-password" id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-button" data-testid="login-submit" type="submit">
+            建立 HttpOnly 会话 <span>↗</span>
+          </button>
+          <p class="form-message" id="login-message" role="status"></p>
+        </form>
+      </section>
+
+      <div class="workspace" id="workspace" hidden>
+        <aside class="scope-rail">
+          <div class="rail-index">01 / SCOPE</div>
+          <h2>作用域握手</h2>
+          <p>服务端将当前用户、Tenant Membership 与 Space Membership 重新绑定为版本化上下文。</p>
+          <form id="scope-form" class="stack-form">
+            <label>
+              <span>可用 Tenant / Space</span>
+              <select data-testid="scope-select" id="scope-select" name="scope" required>
+                <option value="">等待服务端解析作用域…</option>
+              </select>
+            </label>
+            <button class="scope-button" data-testid="scope-connect" id="scope-connect" type="submit" disabled>
+              ISSUE SIGNED CONTEXT
+            </button>
+          </form>
+          <dl class="scope-facts">
+            <div><dt>ACTOR</dt><dd id="actor-id">—</dd></div>
+            <div><dt>CATALOG</dt><dd id="permission-count">—</dd></div>
+            <div><dt>CSRF</dt><dd id="csrf-state">UNBOUND</dd></div>
+            <div><dt>SNAPSHOT</dt><dd id="snapshot-state">UNBOUND</dd></div>
+          </dl>
+          <nav class="view-switcher" aria-label="管理后台模块">
+            <button class="active" data-testid="view-projects" id="view-projects" type="button">
+              <span>02</span> PROJECTS
+            </button>
+            <button data-testid="view-members" id="view-members" type="button">
+              <span>03</span> TENANT MEMBERS <strong id="member-nav-count">00</strong>
+            </button>
+            <button data-testid="view-approvals" id="view-approvals" type="button">
+              <span>04</span> APPROVAL DESK <strong id="approval-nav-count">00</strong>
+            </button>
+            <button data-testid="view-billing" id="view-billing" type="button">
+              <span>05</span> TENANT BILLING <strong id="billing-nav-status">—</strong>
+            </button>
+          </nav>
+        </aside>
+
+        <section class="project-board" id="project-board">
+          <div class="board-heading">
+            <div>
+              <p class="eyebrow">02 / PROJECT INDEX</p>
+              <h1>隔离单元</h1>
+            </div>
+            <span class="project-count" id="project-count">00</span>
+          </div>
+
+          <form class="create-strip" id="project-create-form">
+            <input data-testid="project-name" id="project-name" name="name" maxlength="256" placeholder="新 Project 名称" required>
+            <select data-testid="project-visibility" id="project-visibility" name="visibility">
+              <option value="restricted">RESTRICTED</option>
+              <option value="private">PRIVATE</option>
+              <option value="space">SPACE</option>
+            </select>
+            <button data-testid="project-create" type="submit">CREATE +</button>
+          </form>
+
+          <div class="empty-state" id="project-empty">
+            <span>Ø</span>
+            <p>连接作用域后读取可见 Project。不可见对象不会以占位符泄漏。</p>
+          </div>
+          <div class="project-list" data-testid="project-list" id="project-list" aria-live="polite"></div>
+        </section>
+
+        <section class="member-board" data-testid="member-board" id="member-board" hidden>
+          <div class="member-heading">
+            <div>
+              <p class="eyebrow">03 / TENANT DIRECTORY</p>
+              <h1>成员控制台</h1>
+              <p>租户成员、登录方式姿态与 Space 访问统一从服务端投影。身份 Subject、Issuer、凭据摘要和跨租户账号不会下发浏览器。</p>
+            </div>
+            <div class="member-total"><span>可见成员</span><strong id="member-count">00</strong></div>
+          </div>
+
+          <div class="member-workbench">
+            <section class="directory-module">
+              <div class="module-heading">
+                <div><span>01</span><h2>MEMBER DIRECTORY</h2></div>
+                <small>membership.read</small>
+              </div>
+              <form class="member-filter" id="member-filter-form">
+                <input data-testid="tenant-member-search" id="tenant-member-search" maxlength="128" placeholder="姓名 / 邮箱 / User ID">
+                <select data-testid="tenant-member-status" id="tenant-member-status">
+                  <option value="">ALL STATUS</option>
+                  <option value="active">ACTIVE</option>
+                  <option value="suspended">SUSPENDED</option>
+                  <option value="removed">REMOVED</option>
+                </select>
+                <button type="submit">FILTER ↗</button>
+              </form>
+              <div class="member-list" data-testid="tenant-member-list" id="tenant-member-list"></div>
+            </section>
+
+            <aside class="member-detail" data-testid="member-detail" id="member-detail">
+              <div class="member-detail-empty" id="member-detail-empty">
+                <strong>SELECT MEMBER</strong>
+                <p>选择成员后管理 Tenant Role、当前 Space Access、Owner 转移和移除影响预检。</p>
+              </div>
+              <div id="member-detail-content" hidden>
+                <div class="member-identity">
+                  <span class="status-chip" id="member-detail-status">—</span>
+                  <h2 id="member-detail-name">—</h2>
+                  <p id="member-detail-email">—</p>
+                  <code id="member-detail-id">—</code>
+                </div>
+                <div class="login-methods" id="member-login-methods"></div>
+
+                <form class="member-action-form" id="tenant-role-form">
+                  <label>
+                    <span>Tenant Role</span>
+                    <select data-testid="tenant-member-role" id="tenant-member-role">
+                      <option value="admin">ADMIN</option>
+                      <option value="billing_admin">BILLING ADMIN</option>
+                      <option value="security_auditor">SECURITY AUDITOR</option>
+                      <option value="operator">OPERATOR</option>
+                      <option value="member">MEMBER</option>
+                    </select>
+                  </label>
+                  <button data-testid="tenant-member-role-save" type="submit">UPDATE TENANT ROLE</button>
+                </form>
+                <div class="member-action-stack">
+                  <button data-testid="tenant-member-status-toggle" id="tenant-member-status-toggle" type="button">SUSPEND TENANT ACCESS</button>
+                  <button data-testid="tenant-owner-transfer" id="tenant-owner-transfer" type="button">TRANSFER TENANT OWNER</button>
+                  <button class="danger-button" data-testid="tenant-member-remove" id="tenant-member-remove" type="button">PREFLIGHT MEMBER REMOVAL</button>
+                </div>
+
+                <div class="space-access-heading">
+                  <span>CURRENT SPACE ACCESS</span><small id="member-space-label">—</small>
+                </div>
+                <div class="space-access-list" data-testid="member-space-access" id="member-space-access"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="invitation-workbench">
+            <section class="invitation-create-module">
+              <div class="module-heading">
+                <div><span>02</span><h2>ISSUE INVITATION</h2></div>
+                <small>ONE-TIME BEARER TOKEN</small>
+              </div>
+              <form class="invitation-form" id="invitation-form">
+                <label><span>Verified Email</span><input data-testid="invite-email" id="invite-email" type="email" maxlength="320" required></label>
+                <label><span>Tenant Role</span><select data-testid="invite-tenant-role" id="invite-tenant-role"><option value="member">MEMBER</option><option value="operator">OPERATOR</option><option value="billing_admin">BILLING ADMIN</option><option value="security_auditor">SECURITY AUDITOR</option><option value="admin">ADMIN</option></select></label>
+                <label><span>TTL</span><select id="invite-ttl"><option value="24">24 HOURS</option><option value="168" selected>7 DAYS</option><option value="720">30 DAYS</option></select></label>
+                <label class="space-invite-toggle"><input data-testid="invite-space-enabled" id="invite-space-enabled" type="checkbox" checked><span>同时加入当前 Space</span></label>
+                <label><span>Space Role</span><select data-testid="invite-space-role" id="invite-space-role"><option value="viewer">VIEWER</option><option value="member">MEMBER</option><option value="operator">OPERATOR</option><option value="admin">ADMIN</option></select></label>
+                <button data-testid="invite-submit" type="submit">ISSUE INVITATION +</button>
+              </form>
+              <div class="one-time-token" data-testid="invite-token-card" id="invite-token-card" hidden>
+                <div><strong>仅显示一次</strong><button id="invite-token-dismiss" type="button">DISMISS ×</button></div>
+                <code data-testid="invite-one-time-token" id="invite-one-time-token"></code>
+                <p>刷新、切换视图或关闭卡片后无法再次读取；需要时请旋转生成新 Token。</p>
+              </div>
+            </section>
+
+            <section class="invitation-list-module">
+              <div class="module-heading">
+                <div><span>03</span><h2>INVITATION LEDGER</h2></div>
+                <button class="refresh-button" data-testid="invitation-refresh" id="invitation-refresh" type="button">REFRESH ↻</button>
+              </div>
+              <div class="invitation-list" data-testid="invitation-list" id="invitation-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="approval-board" data-testid="approval-board" id="approval-board" hidden>
+          <div class="approval-heading">
+            <div>
+              <p class="eyebrow">04 / ENTERPRISE ACCESS</p>
+              <h1>双人审批台</h1>
+              <p>发起人与批准人必须是不同且当前仍获授权的主体。这里只展示服务端生成的影响摘要，完整快照不会下发浏览器。</p>
+            </div>
+            <div class="approval-total"><span>待我处理</span><strong id="approval-count">00</strong></div>
+          </div>
+
+          <div class="governance-grid">
+            <article class="governance-module">
+              <div class="module-heading">
+                <div><span>01</span><h2>TENANT GROUPS</h2></div>
+                <small>group.manage</small>
+              </div>
+              <form class="governance-create" id="group-create-form">
+                <input data-testid="group-name" id="group-name" maxlength="128" placeholder="新 Group 名称" required>
+                <button data-testid="group-create" type="submit">CREATE GROUP +</button>
+              </form>
+              <div class="governance-list" data-testid="group-list" id="group-list"></div>
+            </article>
+
+            <article class="governance-module">
+              <div class="module-heading">
+                <div><span>02</span><h2>PROJECT ROLES</h2></div>
+                <small id="role-project-label">SELECT PROJECT</small>
+              </div>
+              <form class="governance-create role-create" id="role-create-form">
+                <input data-testid="role-name" id="role-name" maxlength="128" placeholder="新 Custom Role 名称" required>
+                <input data-testid="role-permissions" id="role-permissions" value="project.read_metadata,run.read_metadata" aria-label="Custom Role permissions" required>
+                <button data-testid="role-create" type="submit">CREATE ROLE +</button>
+              </form>
+              <div class="governance-list" data-testid="role-list" id="role-list"></div>
+            </article>
+          </div>
+
+          <div class="approval-columns">
+            <section class="approval-module">
+              <div class="queue-heading">
+                <div><span class="hazard-mark">!</span><h2>NEEDS MY DECISION</h2></div>
+                <button class="refresh-button" data-testid="approval-refresh" id="approval-refresh" type="button">REFRESH ↻</button>
+              </div>
+              <p class="queue-copy">仅包含我有权处理、未过期且由其他主体发起的请求。</p>
+              <div class="approval-list" data-testid="approval-inbox" id="approval-inbox"></div>
+            </section>
+
+            <section class="approval-module request-module">
+              <div class="queue-heading"><div><span class="request-mark">→</span><h2>MY REQUESTS</h2></div></div>
+              <p class="queue-copy">批准后仅原始发起人可以按同一原因、版本与快照执行。</p>
+              <div class="approval-list" data-testid="my-preflights" id="my-preflights"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="billing-board" data-testid="billing-board" id="billing-board" hidden>
+          <div class="billing-heading">
+            <div>
+              <p class="eyebrow">05 / COMMERCIAL AUTHORITY</p>
+              <h1>计费账本</h1>
+              <p>价格快照、权益额度、客户账本与供应商成本相互独立。后台只读取计量元数据，不提供 Usage、Credit、Reserve、Settlement 或 Refund 的人工写入口。</p>
+            </div>
+            <div class="billing-state" data-testid="billing-state" id="billing-state" data-status="unconfigured">
+              <span>SUBSCRIPTION</span><strong>UNCONFIGURED</strong><small>billing.read</small>
+            </div>
+          </div>
+
+          <div class="billing-metrics" aria-label="计费账户摘要">
+            <article><span>AVAILABLE</span><strong data-testid="billing-available" id="billing-available">—</strong><small id="billing-currency">MINOR UNITS</small></article>
+            <article><span>RESERVED</span><strong data-testid="billing-reserved" id="billing-reserved">—</strong><small>ACTIVE HOLDS</small></article>
+            <article><span>CONSUMED</span><strong data-testid="billing-consumed" id="billing-consumed">—</strong><small>CUSTOMER LEDGER</small></article>
+            <article><span>RECONCILIATION</span><strong data-testid="billing-reconciliation-state" id="billing-reconciliation-state">NONE</strong><small id="billing-reconciliation-count">0 EXCEPTIONS</small></article>
+          </div>
+
+          <div class="billing-control-grid">
+            <section class="billing-module">
+              <div class="module-heading"><div><span>01</span><h2>SUBSCRIPTION</h2></div><small>billing.manage</small></div>
+              <form class="billing-form" id="billing-subscription-form">
+                <label><span>Plan Key</span><input data-testid="billing-plan-key" id="billing-plan-key" maxlength="128" required></label>
+                <label><span>Status</span><select data-testid="billing-subscription-status" id="billing-subscription-status"><option value="trialing">TRIALING</option><option value="active">ACTIVE</option><option value="past_due">PAST DUE</option><option value="suspended">SUSPENDED</option><option value="canceled">CANCELED</option></select></label>
+                <label><span>Period Start</span><input data-testid="billing-period-start" id="billing-period-start" type="datetime-local" required></label>
+                <label><span>Period End</span><input data-testid="billing-period-end" id="billing-period-end" type="datetime-local" required></label>
+                <label><span>Provider / Optional</span><input id="billing-provider" maxlength="64" placeholder="stripe"></label>
+                <label><span>Customer Ref / Optional</span><input id="billing-customer-ref" maxlength="256"></label>
+                <label><span>Subscription Ref / Optional</span><input id="billing-subscription-ref" maxlength="256"></label>
+                <button data-testid="billing-subscription-save" type="submit">COMMIT SUBSCRIPTION ↗</button>
+              </form>
+            </section>
+
+            <section class="billing-module pricing-module">
+              <div class="module-heading"><div><span>02</span><h2>PRICING SNAPSHOT</h2></div><small>APPEND ONLY</small></div>
+              <form class="billing-form" id="billing-pricing-form">
+                <label><span>Plan Key</span><input data-testid="billing-pricing-plan" id="billing-pricing-plan" maxlength="128" required></label>
+                <label><span>Currency</span><input data-testid="billing-pricing-currency" id="billing-pricing-currency" value="USD" minlength="3" maxlength="3" required></label>
+                <label><span>Meter</span><input data-testid="billing-pricing-meter" id="billing-pricing-meter" value="llm.input_tokens" maxlength="128" required></label>
+                <label><span>Unit</span><input data-testid="billing-pricing-unit" id="billing-pricing-unit" value="tokens" maxlength="64" required></label>
+                <label><span>Unit Size</span><input data-testid="billing-pricing-unit-size" id="billing-pricing-unit-size" value="1000" inputmode="decimal" required></label>
+                <label><span>Minor / Unit</span><input data-testid="billing-pricing-minor" id="billing-pricing-minor" type="number" min="1" step="1" value="25" required></label>
+                <label><span>Effective From</span><input data-testid="billing-pricing-effective" id="billing-pricing-effective" type="datetime-local" required></label>
+                <label><span>Effective Until</span><input data-testid="billing-pricing-until" id="billing-pricing-until" type="datetime-local" required></label>
+                <button data-testid="billing-pricing-create" type="submit">SEAL PRICE VERSION +</button>
+              </form>
+            </section>
+
+            <section class="billing-module entitlement-module">
+              <div class="module-heading"><div><span>03</span><h2>ENTITLEMENT</h2></div><small>FIXED-POINT QUOTA</small></div>
+              <form class="billing-form" id="billing-entitlement-form">
+                <label><span>Scope</span><select data-testid="billing-entitlement-scope" id="billing-entitlement-scope"><option value="tenant">TENANT</option><option value="space">CURRENT SPACE</option><option value="project">SELECTED PROJECT</option><option value="user">USER</option><option value="model">MODEL</option></select></label>
+                <label><span>Scope Target</span><input data-testid="billing-entitlement-target" id="billing-entitlement-target" maxlength="256" placeholder="自动绑定当前作用域" disabled></label>
+                <label><span>Meter</span><input data-testid="billing-entitlement-meter" id="billing-entitlement-meter" value="llm.input_tokens" maxlength="128" required></label>
+                <label><span>Unit</span><input data-testid="billing-entitlement-unit" id="billing-entitlement-unit" value="tokens" maxlength="64" required></label>
+                <label><span>Limit Quantity</span><input data-testid="billing-entitlement-limit" id="billing-entitlement-limit" inputmode="decimal" value="100000" required></label>
+                <label><span>Concurrency</span><input data-testid="billing-entitlement-concurrency" id="billing-entitlement-concurrency" type="number" min="1" step="1" value="2"></label>
+                <label><span>Period Start</span><input data-testid="billing-entitlement-start" id="billing-entitlement-start" type="datetime-local" required></label>
+                <label><span>Period End</span><input data-testid="billing-entitlement-end" id="billing-entitlement-end" type="datetime-local" required></label>
+                <button data-testid="billing-entitlement-save" type="submit">SET ENTITLEMENT ↗</button>
+              </form>
+              <div class="billing-record-list" data-testid="billing-entitlement-list" id="billing-entitlement-list"></div>
+            </section>
+
+            <section class="billing-module reconciliation-module">
+              <div class="module-heading"><div><span>04</span><h2>RECONCILIATION</h2></div><button class="refresh-button" data-testid="billing-refresh" id="billing-refresh" type="button">REFRESH ↻</button></div>
+              <form class="billing-reconcile-form" id="billing-reconcile-form">
+                <label><span>From</span><input data-testid="billing-query-start" id="billing-query-start" type="datetime-local" required></label>
+                <label><span>Until</span><input data-testid="billing-query-end" id="billing-query-end" type="datetime-local" required></label>
+                <button data-testid="billing-reconcile" type="submit">RECONCILE PERIOD</button>
+              </form>
+              <div class="billing-record-list" data-testid="billing-reconciliation-list" id="billing-reconciliation-list"></div>
+            </section>
+          </div>
+
+          <div class="billing-evidence-grid">
+            <section class="billing-module">
+              <div class="module-heading"><div><span>05</span><h2>USAGE FACTS</h2></div><small>CONTENT BLIND</small></div>
+              <div class="billing-record-list" data-testid="billing-usage-list" id="billing-usage-list"></div>
+            </section>
+            <section class="billing-module ledger-module">
+              <div class="module-heading"><div><span>06</span><h2>CUSTOMER LEDGER</h2></div><small>APPEND ONLY</small></div>
+              <div class="billing-record-list" data-testid="billing-ledger-list" id="billing-ledger-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="inspector" id="inspector">
+          <div class="inspector-heading">
+            <p class="eyebrow">03 / AUTHORIZATION LAB</p>
+            <span class="version-chip" id="project-version">V—</span>
+          </div>
+          <h2 data-testid="selected-project-name" id="selected-project-name">未选择 Project</h2>
+          <p class="project-key" id="selected-project-id">选择左侧隔离单元以执行授权模拟。</p>
+
+          <section class="lab-module">
+            <div class="module-label">ACCESS DECISION / SHADOW</div>
+            <form id="decision-form" class="stack-form compact">
+              <label>
+                <span>Subject User ID</span>
+                <input data-testid="decision-subject" id="decision-subject" spellcheck="false" required>
+              </label>
+              <label>
+                <span>Action</span>
+                <select data-testid="decision-action" id="decision-action">
+                  <option value="project.content.read">project.content.read</option>
+                  <option value="project.content.edit">project.content.edit</option>
+                  <option value="project.read_metadata">project.read_metadata</option>
+                  <option value="runtime.binding.manage">runtime.binding.manage</option>
+                </select>
+              </label>
+              <div class="resource-pair">
+                <input id="decision-resource-type" placeholder="resource type / optional">
+                <input id="decision-resource-id" placeholder="resource UUID / optional">
+              </div>
+              <button class="lab-button" data-testid="decision-run" type="submit">SIMULATE DECISION</button>
+            </form>
+            <div class="decision-result" data-testid="decision-result" id="decision-result" aria-live="polite">
+              <strong>WAITING</strong><span>尚未执行授权决策</span>
+            </div>
+            <ul class="source-list" id="decision-sources"></ul>
+          </section>
+
+          <section class="lab-module">
+            <div class="module-label">PROJECT MEMBERSHIP</div>
+            <form id="membership-form" class="stack-form compact">
+              <label>
+                <span>Subject User ID</span>
+                <input data-testid="member-subject" id="member-subject" spellcheck="false" required>
+              </label>
+              <label>
+                <span>Role</span>
+                <select data-testid="member-role" id="member-role">
+                  <option value="read">READ</option>
+                  <option value="edit">EDIT</option>
+                  <option value="operate">OPERATE</option>
+                  <option value="manage">MANAGE / CONTENT-BLIND</option>
+                  <option value="owner">OWNER</option>
+                </select>
+              </label>
+              <div class="split-actions">
+                <button data-testid="member-grant" type="submit">SET ROLE</button>
+                <button class="danger-button" data-testid="member-revoke" id="member-revoke" type="button">REVOKE</button>
+              </div>
+            </form>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <dialog class="action-dialog" data-testid="action-dialog" id="action-dialog">
+      <form id="action-dialog-form">
+        <div class="dialog-stripe" aria-hidden="true"></div>
+        <p class="eyebrow" id="action-dialog-kicker">IMPACT CONFIRMATION</p>
+        <h2 id="action-dialog-title">确认管理操作</h2>
+        <div class="dialog-impact" data-testid="action-impact" id="action-impact"></div>
+        <label>
+          <span>审计原因 / 必填</span>
+          <textarea data-testid="action-reason" id="action-reason" maxlength="512" required></textarea>
+        </label>
+        <p class="dialog-warning" id="action-dialog-warning"></p>
+        <div class="dialog-actions">
+          <button class="quiet-action" data-testid="action-cancel" id="action-cancel" type="button">CANCEL</button>
+          <button class="confirm-action" data-testid="action-confirm" id="action-confirm" type="submit">CONFIRM</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="event-tape">
+      <span>EVENT TAPE</span>
+      <ol data-testid="event-log" id="event-log" aria-live="polite">
+        <li><time>BOOT</time><span>SaaS Control Plane assets verified</span></li>
+      </ol>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31211571817,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31211571817",
+  "job_id": 92975385607,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31211571817/job/92975385607",
+  "artifact_id": 9007725182,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31211571817/artifacts/9007725182",
+  "artifact_sha256": "1fb56df10937678d176129ec408fc4800c6a253552159d61f2e2314ee5836c83",
+  "head_sha": "cc9536094ff71eff1e7513198de878e3cd038491",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "control_plane_schema_revision": "pc2b00000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "945 passed, 1 platform skip",
+    "combined_warnings": 232,
+    "combined_seconds": 173.20,
+    "migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 9 files, 479 lines, and 0.9954 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1786130823,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:6a651f0c5bf5e59f5558f70d6c2638d93366847ca3a4437e4dbcaf0df84e880a",
+          "config_digest": "sha256:b6f62189bf069f9ec6ed69ae7de92f3e61229d864262c28c1f3106824cc07501"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:0d4973d23be3f3082be671a8b1005a8bff4fe9003ce4a22e9f2e381880462f51",
+          "config_digest": "sha256:643b649c7c9f9131f84d27057b1a3c69802f8a19833f2f0a6f1427d55ffeb028"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:bb46aa9fbebf0b63d1cf969ea149cbbbcfde10bf4398231cc65b40915ed54cc0",
+          "config_digest": "sha256:ac57fe49d699bba47cf3fb4383c49748e7fe44490f5b0b09809b1ac47872a964"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:9c2697af00f9d0c5720b8e74831afbb67ace8128f447f80e9addc6d133ef2f64",
+          "config_digest": "sha256:821c81b521ae3f34170fd146f3925b4f9bc47da3a2d76a1dc32b2677f8f7f0ae"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2,
+    "violations": []
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact PC2 Identity Conflict and P6 nonempty logical-restore implementation. It does not complete PC2 or P6, satisfy production image promotion, close PC3-PC5, or establish release GO.",
+  "evidence_successor_policy": "A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at cc9536094ff71eff1e7513198de878e3cd038491."
+}
