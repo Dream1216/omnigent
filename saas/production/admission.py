@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _KEY_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,127}$")
+_RECEIPT_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,127}$")
 _REQUIRED_KINDS = {
     "baseline",
     "image",
@@ -74,6 +75,12 @@ _RECEIPT_FIELDS = {
     "payload_type",
     "signature",
 }
+_PREPARATION_FIELDS = {
+    "schema_version",
+    "receipt",
+    "signature_payload_base64",
+    "signature_payload_sha256",
+}
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
@@ -105,6 +112,16 @@ def admission_signature_payload(receipt: Mapping[str, Any]) -> bytes:
             payload,
         )
     )
+
+
+def _utc_time(value: datetime, *, label: str) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError(f"{label} must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _format_time(value: datetime) -> str:
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _mapping(value: object) -> Mapping[str, Any] | None:
@@ -368,7 +385,11 @@ def _verify_receipt(
     label = receipt_id if _nonempty(receipt_id) else "unknown receipt"
     if set(receipt) != _RECEIPT_FIELDS:
         violations.append(f"{label}: receipt fields do not match the schema")
-    if receipt.get("schema_version") != 1 or not _nonempty(receipt_id):
+    if (
+        receipt.get("schema_version") != 1
+        or not isinstance(receipt_id, str)
+        or _RECEIPT_ID.fullmatch(receipt_id) is None
+    ):
         violations.append(f"{label}: receipt identity is invalid")
     kind = receipt.get("evidence_kind")
     relative = _safe_relative(receipt.get("evidence_path"))
@@ -430,12 +451,161 @@ def _verify_receipt(
         except (ValueError, binascii.Error):
             violations.append(f"{label}: signature is not canonical base64")
         else:
-            try:
-                public_key.verify(signature, admission_signature_payload(receipt))
-            except (InvalidSignature, ValueError):
-                violations.append(f"{label}: admission signature is invalid")
+            if base64.b64encode(signature).decode("ascii") != signature_value:
+                violations.append(f"{label}: signature is not canonical base64")
+            else:
+                try:
+                    public_key.verify(signature, admission_signature_payload(receipt))
+                except (InvalidSignature, ValueError):
+                    violations.append(f"{label}: admission signature is invalid")
     admitted = (kind, relative) if kind is not None and relative is not None else None
     return violations, blockers, admitted
+
+
+def prepare_evidence_admission_receipt(
+    repo: Path,
+    policy: Mapping[str, Any],
+    *,
+    evidence_kind: str,
+    evidence_path: str,
+    product_revision: str,
+    signer_key_id: str,
+    receipt_id: str,
+    issued_at: datetime,
+    expires_at: datetime,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Create an exact, unsigned receipt and the DSSE bytes an HSM must sign."""
+
+    current = _utc_time(now or datetime.now(UTC), label="now")
+    issued = _utc_time(issued_at, label="issued_at")
+    expires = _utc_time(expires_at, label="expires_at")
+    violations = _validate_policy(repo, policy)
+    declared_files, source_violations = _load_policy_files(repo, policy)
+    keys, key_violations, _ = _load_keys(repo, policy, now=current)
+    violations.extend(source_violations)
+    violations.extend(key_violations)
+    if violations:
+        raise ValueError("admission trust root is invalid: " + "; ".join(violations))
+    if evidence_kind not in _REQUIRED_KINDS:
+        raise ValueError("evidence_kind is invalid")
+    relative = _safe_relative(evidence_path)
+    if relative is None:
+        raise ValueError("evidence_path is unsafe")
+    if relative not in declared_files[evidence_kind]:
+        raise ValueError(f"evidence_path is not declared for {evidence_kind}")
+    candidate = _regular_repo_file(repo, relative)
+    if candidate is None:
+        raise ValueError("evidence file is missing or unsafe")
+    if _GIT_SHA.fullmatch(product_revision) is None:
+        raise ValueError("product_revision must be a full Git SHA")
+    if _KEY_ID.fullmatch(signer_key_id) is None:
+        raise ValueError("signer_key_id is invalid")
+    if _RECEIPT_ID.fullmatch(receipt_id) is None:
+        raise ValueError("receipt_id is invalid")
+    key_entry = keys.get(signer_key_id)
+    if key_entry is None:
+        raise ValueError("signer key is not active and trusted")
+    key, _ = key_entry
+    key_not_before = _parse_time(key.get("not_before"))
+    key_not_after = _parse_time(key.get("not_after"))
+    maximum_age = int(policy.get("maximum_receipt_age_days", 0))
+    if issued > current or expires <= issued:
+        raise ValueError("receipt validity window is invalid")
+    if (expires - issued).total_seconds() > maximum_age * 86400:
+        raise ValueError("receipt validity exceeds policy")
+    if expires <= current:
+        raise ValueError("receipt would already be expired")
+    if (
+        key_not_before is None
+        or key_not_after is None
+        or issued < key_not_before
+        or issued >= key_not_after
+    ):
+        raise ValueError("receipt was issued outside signer key validity")
+    if expires > key_not_after:
+        raise ValueError("receipt expiry exceeds signer key validity")
+    receipt: dict[str, Any] = {
+        "schema_version": 1,
+        "receipt_id": receipt_id,
+        "evidence_kind": evidence_kind,
+        "evidence_path": relative.as_posix(),
+        "evidence_sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        "product_revision": product_revision,
+        "workflow_identity": key["workflow_identity"],
+        "issued_at": _format_time(issued),
+        "expires_at": _format_time(expires),
+        "signer_key_id": signer_key_id,
+        "payload_type": policy["payload_type"],
+        "signature": "",
+    }
+    payload = admission_signature_payload(receipt)
+    return {
+        "schema_version": 1,
+        "receipt": receipt,
+        "signature_payload_base64": base64.b64encode(payload).decode("ascii"),
+        "signature_payload_sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def finalize_evidence_admission_receipt(
+    repo: Path,
+    policy: Mapping[str, Any],
+    preparation: Mapping[str, Any],
+    *,
+    signature_base64: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Bind an external Ed25519 signature and re-verify the complete receipt."""
+
+    current = _utc_time(now or datetime.now(UTC), label="now")
+    if set(preparation) != _PREPARATION_FIELDS or preparation.get("schema_version") != 1:
+        raise ValueError("receipt preparation fields do not match the schema")
+    raw_receipt = preparation.get("receipt")
+    if not isinstance(raw_receipt, Mapping) or set(raw_receipt) != _RECEIPT_FIELDS:
+        raise ValueError("prepared receipt fields do not match the schema")
+    receipt = dict(raw_receipt)
+    if receipt.get("signature") != "":
+        raise ValueError("prepared receipt must not contain a signature")
+    payload = admission_signature_payload(receipt)
+    expected_payload_base64 = base64.b64encode(payload).decode("ascii")
+    if preparation.get("signature_payload_base64") != expected_payload_base64:
+        raise ValueError("prepared signature payload does not match the receipt")
+    if preparation.get("signature_payload_sha256") != hashlib.sha256(payload).hexdigest():
+        raise ValueError("prepared signature payload digest does not match the receipt")
+    try:
+        signature = base64.b64decode(signature_base64.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError, binascii.Error) as error:
+        raise ValueError("signature is not canonical base64") from error
+    if base64.b64encode(signature).decode("ascii") != signature_base64:
+        raise ValueError("signature is not canonical base64")
+    receipt["signature"] = signature_base64
+    policy_violations = _validate_policy(repo, policy)
+    declared_files, source_violations = _load_policy_files(repo, policy)
+    keys, key_violations, _ = _load_keys(repo, policy, now=current)
+    violations, blockers, _ = _verify_receipt(
+        repo,
+        policy,
+        receipt,
+        keys,
+        declared_files,
+        expected_product_revision=(
+            receipt.get("product_revision")
+            if isinstance(receipt.get("product_revision"), str)
+            else None
+        ),
+        now=current,
+    )
+    failures = [
+        *policy_violations,
+        *source_violations,
+        *key_violations,
+        *violations,
+        *blockers,
+    ]
+    if failures:
+        raise ValueError("final receipt verification failed: " + "; ".join(failures))
+    return receipt
 
 
 def validate_evidence_admission(
