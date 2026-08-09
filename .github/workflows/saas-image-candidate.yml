@@ -19,6 +19,7 @@ on:
       - "saas/supply_chain/**"
       - "saas/scripts/check_image_supply_chain.py"
       - "saas/scripts/compare_oci_rebuilds.py"
+      - "saas/scripts/*evidence_receipt.py"
       - "tests/saas/test_image_supply_chain.py"
   workflow_dispatch:
 

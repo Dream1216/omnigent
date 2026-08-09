@@ -120,6 +120,14 @@ printf '%s' "$PUBLIC_SIGNATURE_BASE64" | \
     --output artifacts/receipt.json
 ```
 
+Every protected prepare or finalize attempt writes
+`artifacts/evidence-receipt/receipt-issuance-report.json`, including failed-closed
+attempts. The diagnostic binds the exact request bytes by SHA-256, records only public
+request metadata and violations, and records whether a signature was present without
+copying that signature into the report. The issuer still exits nonzero on failure, and
+the workflow's `always()` artifact step must archive the report; an absent diagnostic
+artifact is itself an acceptance failure.
+
 Local command success is only a rehearsal: production-authoritative receipts must be
 issued through the protected workflow, backed by the KMS/HSM audit record, reviewed as
 an evidence-only change, and consumed by final admission. Workflow artifacts are not
