@@ -151,6 +151,8 @@ jobs:
             --output artifacts/slo-capacity-readiness-report.json
           uv run python -m saas.scripts.check_image_supply_chain \
             --output artifacts/image-supply-chain-report.json
+          uv run python -m saas.scripts.check_production_readiness \
+            --output artifacts/production-readiness-report.json
       - name: Enforce source-intrusion budget
         run: >-
           uv run python saas/scripts/check_upstream_delta.py
@@ -169,4 +171,5 @@ jobs:
             artifacts/deletion-readiness-report.json
             artifacts/slo-capacity-readiness-report.json
             artifacts/image-supply-chain-report.json
+            artifacts/production-readiness-report.json
           if-no-files-found: error
