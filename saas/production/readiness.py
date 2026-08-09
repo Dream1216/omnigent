@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from saas.production.admission import validate_evidence_admission
 from saas.production.business import load_business_evidence, validate_business_readiness
 from saas.production.deletion import load_deletion_evidence, validate_deletion_readiness
 from saas.production.deployment import (
@@ -36,6 +39,20 @@ _AGGREGATE_GATES = (
     "p6-enterprise-identity-audit-api-platform-console-privacy",
     "p6-two-consecutive-upstream-syncs-and-commercial-gate",
 )
+_PRODUCT_REVISION = re.compile(r"^[0-9a-f]{40}$")
+_EVIDENCE_ONLY_EXACT_PATHS = {
+    "saas/acceptance/p0-p6-evidence.json",
+    "saas/acceptance/p0-production-image-evidence.json",
+}
+_EVIDENCE_ONLY_PREFIXES = (
+    "saas/production/commercial-evidence/",
+    "saas/production/deletion-evidence/",
+    "saas/production/deployment-evidence/",
+    "saas/production/enterprise-evidence/",
+    "saas/production/evidence-admission-receipts/",
+    "saas/production/recovery-evidence/",
+    "saas/production/slo-capacity-evidence/",
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -49,6 +66,102 @@ def _ready(report: Mapping[str, Any]) -> bool:
     return report.get("status") == "pass" and report.get("production_readiness") == "ready"
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("git", "-C", str(repo), *args),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _evidence_only_path(value: str) -> bool:
+    return value in _EVIDENCE_ONLY_EXACT_PATHS or (
+        value.endswith(".json")
+        and any(value.startswith(prefix) for prefix in _EVIDENCE_ONLY_PREFIXES)
+    )
+
+
+def validate_candidate_revision(value: str | None, repo: Path | None = None) -> dict[str, Any]:
+    """Require callers to bind production admission to one exact release SHA."""
+
+    if value is None:
+        return {
+            "status": "pass",
+            "production_readiness": "blocked",
+            "violations": [],
+            "blockers": ["an exact product revision was not supplied for release admission"],
+        }
+    if _PRODUCT_REVISION.fullmatch(value) is None:
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["release admission product revision must be a full Git SHA"],
+            "blockers": [],
+        }
+    if repo is None:
+        return {
+            "status": "pass",
+            "production_readiness": "ready",
+            "violations": [],
+            "blockers": [],
+        }
+    commit = _git(repo, "rev-parse", "--verify", f"{value}^{{commit}}")
+    head = _git(repo, "rev-parse", "--verify", "HEAD")
+    if commit.returncode != 0 or head.returncode != 0:
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["release candidate revision cannot be resolved in this repository"],
+            "blockers": [],
+        }
+    ancestor = _git(repo, "merge-base", "--is-ancestor", value, "HEAD")
+    if ancestor.returncode not in {0, 1}:
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["release candidate ancestry could not be verified"],
+            "blockers": [],
+        }
+    blockers: list[str] = []
+    if ancestor.returncode == 1:
+        blockers.append("release candidate is not an ancestor of the evidence revision")
+    changed = _git(repo, "diff", "--name-only", f"{value}..HEAD", "--")
+    if changed.returncode != 0:
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["release candidate evidence-only delta could not be verified"],
+            "blockers": [],
+        }
+    non_evidence_paths = sorted(
+        path for path in changed.stdout.splitlines() if path and not _evidence_only_path(path)
+    )
+    if non_evidence_paths:
+        blockers.append(
+            "commits after the release candidate modify non-evidence paths: "
+            + ", ".join(non_evidence_paths)
+        )
+    dirty = _git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+    if dirty.returncode != 0:
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["release admission working-tree state could not be verified"],
+            "blockers": [],
+        }
+    if dirty.stdout.strip():
+        blockers.append("release admission requires a clean repository working tree")
+    return {
+        "status": "pass",
+        "production_readiness": "blocked" if blockers else "ready",
+        "violations": [],
+        "blockers": blockers,
+        "candidate_revision": value,
+        "evidence_revision": head.stdout.strip(),
+    }
+
+
 def _report_blockers(name: str, report: Mapping[str, Any]) -> list[str]:
     values = report.get("violations", [])
     blockers = report.get("blockers", [])
@@ -60,6 +173,45 @@ def _report_blockers(name: str, report: Mapping[str, Any]) -> list[str]:
     if not rendered and not _ready(report):
         rendered.append(f"{name}: verifier did not report production ready")
     return rendered
+
+
+def _admission_kind_report(report: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
+    kinds = report.get("kinds")
+    if not isinstance(kinds, Mapping):
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": ["evidence admission report has no kind results"],
+            "blockers": [],
+        }
+    item = kinds.get(kind)
+    if not isinstance(item, Mapping):
+        return {
+            "status": "fail",
+            "production_readiness": "blocked",
+            "violations": [f"evidence admission report omits {kind}"],
+            "blockers": [],
+        }
+    global_violations = report.get("violations", [])
+    item_violations = item.get("violations", [])
+    violations = sorted(
+        {
+            value
+            for values in (global_violations, item_violations)
+            if isinstance(values, list)
+            for value in values
+            if isinstance(value, str)
+        }
+    )
+    blockers = item.get("blockers", [])
+    return {
+        "status": "pass" if not violations else "fail",
+        "production_readiness": (
+            item.get("production_readiness") if not violations else "blocked"
+        ),
+        "violations": violations,
+        "blockers": blockers if isinstance(blockers, list) else [],
+    }
 
 
 def validate_consecutive_upstream_syncs(repo: Path) -> dict[str, Any]:
@@ -167,23 +319,75 @@ def derive_gate_results(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, d
     """Map verifier readiness to the ten aggregate production gates."""
 
     requirements: dict[str, tuple[str, ...]] = {
-        _AGGREGATE_GATES[0]: ("image",),
-        _AGGREGATE_GATES[1]: ("baseline",),
-        _AGGREGATE_GATES[2]: ("deployment",),
-        _AGGREGATE_GATES[3]: ("deployment", "image"),
-        _AGGREGATE_GATES[4]: ("deployment", "recovery"),
-        _AGGREGATE_GATES[5]: ("slo_capacity", "image", "deletion", "deployment"),
-        _AGGREGATE_GATES[6]: (
+        _AGGREGATE_GATES[0]: ("candidate_revision", "image", "image_admission"),
+        _AGGREGATE_GATES[1]: (
+            "candidate_revision",
             "baseline",
-            "image",
-            "deployment",
-            "recovery",
-            "slo_capacity",
-            "deletion",
+            "baseline_admission",
         ),
-        _AGGREGATE_GATES[7]: ("commercial",),
-        _AGGREGATE_GATES[8]: ("enterprise", "deletion"),
-        _AGGREGATE_GATES[9]: ("upstream_sync", "commercial"),
+        _AGGREGATE_GATES[2]: (
+            "candidate_revision",
+            "deployment",
+            "deployment_admission",
+        ),
+        _AGGREGATE_GATES[3]: (
+            "candidate_revision",
+            "deployment",
+            "deployment_admission",
+            "image",
+            "image_admission",
+        ),
+        _AGGREGATE_GATES[4]: (
+            "candidate_revision",
+            "deployment",
+            "deployment_admission",
+            "recovery",
+            "recovery_admission",
+        ),
+        _AGGREGATE_GATES[5]: (
+            "candidate_revision",
+            "slo_capacity",
+            "slo_capacity_admission",
+            "image",
+            "image_admission",
+            "deletion",
+            "deletion_admission",
+            "deployment",
+            "deployment_admission",
+        ),
+        _AGGREGATE_GATES[6]: (
+            "candidate_revision",
+            "baseline",
+            "baseline_admission",
+            "image",
+            "image_admission",
+            "deployment",
+            "deployment_admission",
+            "recovery",
+            "recovery_admission",
+            "slo_capacity",
+            "slo_capacity_admission",
+            "deletion",
+            "deletion_admission",
+        ),
+        _AGGREGATE_GATES[7]: (
+            "candidate_revision",
+            "commercial",
+            "commercial_admission",
+        ),
+        _AGGREGATE_GATES[8]: (
+            "candidate_revision",
+            "enterprise",
+            "enterprise_admission",
+            "deletion",
+            "deletion_admission",
+        ),
+        _AGGREGATE_GATES[9]: (
+            "candidate_revision",
+            "upstream_sync",
+            "commercial",
+            "commercial_admission",
+        ),
     }
     results: dict[str, dict[str, Any]] = {}
     for gate, names in requirements.items():
@@ -246,13 +450,21 @@ def validate_production_readiness(
     deletion_policy = _load_json(repo / "saas/production/deletion-policy.json")
     commercial_policy = _load_json(repo / "saas/production/commercial-policy.json")
     enterprise_policy = _load_json(repo / "saas/production/enterprise-policy.json")
+    admission_policy = _load_json(repo / "saas/production/evidence-admission-policy.json")
 
     image_evidence = load_release_evidence(
         repo,
         image_policy.get("production_evidence"),
         allow_missing=True,
     )
+    admission_report = validate_evidence_admission(
+        repo,
+        admission_policy,
+        expected_product_revision=expected_product_revision,
+        now=current,
+    )
     reports: dict[str, Mapping[str, Any]] = {
+        "candidate_revision": validate_candidate_revision(expected_product_revision, repo),
         "baseline": validate_baseline(repo, baseline),
         "image": validate_release(
             repo,
@@ -309,6 +521,17 @@ def validate_production_readiness(
         ),
         "upstream_sync": validate_consecutive_upstream_syncs(repo),
     }
+    for kind in (
+        "baseline",
+        "image",
+        "deployment",
+        "recovery",
+        "slo_capacity",
+        "deletion",
+        "commercial",
+        "enterprise",
+    ):
+        reports[f"{kind}_admission"] = _admission_kind_report(admission_report, kind)
     gate_results = derive_gate_results(reports)
     violations = list(validate_manifest(repo, manifest))
     ledger_gates = {
