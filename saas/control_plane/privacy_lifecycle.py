@@ -38,7 +38,10 @@ from saas.control_plane.enterprise_identity_models import (
 from saas.control_plane.enterprise_models import EnterpriseGroupMembershipRecord
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
 from saas.control_plane.idempotency import scoped_idempotency_key
-from saas.control_plane.platform_governed_models import PlatformSupportGrantRecord
+from saas.control_plane.platform_governed_models import (
+    PlatformAdminOperationRecord,
+    PlatformSupportGrantRecord,
+)
 from saas.control_plane.platform_models import PlatformUserProjectionRecord
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
@@ -46,7 +49,10 @@ from saas.control_plane.platform_security import (
     ValidatedPlatformPrincipal,
 )
 from saas.control_plane.privacy_models import (
+    PrivacyApprovalBindingRecord,
+    PrivacyBackupRetentionItemRecord,
     PrivacyDeletionManifestRecord,
+    PrivacyDeletionWorkItemRecord,
     PrivacyIdentityTombstoneRecord,
     PrivacyLegalHoldRecord,
 )
@@ -275,6 +281,100 @@ def _rowcount(result: object) -> int:
     return cast(CursorResult[tuple[object]], result).rowcount
 
 
+def expected_deletion_target_status(
+    target_type: Literal["global_user", "tenant"],
+) -> str:
+    """Return the only subject state from which deletion can be finalized."""
+
+    return "suspended" if target_type == "global_user" else "pending_deletion"
+
+
+def deletion_target_state(
+    db: Session,
+    target_type: Literal["global_user", "tenant"],
+    target_id: UUID,
+    *,
+    lock: bool = False,
+) -> tuple[str, int]:
+    """Read the authoritative subject state used by a deletion Manifest."""
+
+    if target_type == "global_user":
+        statement = sa.select(GlobalUser.status, GlobalUser.security_version).where(
+            GlobalUser.id == target_id
+        )
+        missing_code = "platform_user_not_found"
+        missing_message = "Global User was not found"
+    else:
+        statement = sa.select(Tenant.status, Tenant.lifecycle_version).where(
+            Tenant.id == target_id
+        )
+        missing_code = "platform_tenant_not_found"
+        missing_message = "Tenant was not found"
+    row = db.execute(statement.with_for_update() if lock else statement).one_or_none()
+    if row is None:
+        raise PlatformSecurityError(missing_code, missing_message)
+    version = row.security_version if target_type == "global_user" else row.lifecycle_version
+    return row.status, version
+
+
+def lock_privacy_target(
+    db: Session,
+    target_type: Literal["global_user", "tenant"],
+    target_id: UUID,
+) -> None:
+    """Serialize deletion and ordinary restore transitions for one subject."""
+
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:target, 0))"),
+            {"target": f"privacy-target:{target_type}:{target_id}"},
+        )
+
+
+def require_no_privacy_restore_authority(
+    db: Session,
+    target_type: Literal["global_user", "tenant"],
+    target_id: UUID,
+) -> None:
+    """Reject ordinary restore once deletion governance owns the subject."""
+
+    lock_privacy_target(db, target_type, target_id)
+    manifest_id = db.scalar(
+        sa.select(PrivacyDeletionManifestRecord.id)
+        .where(
+            PrivacyDeletionManifestRecord.target_type == target_type,
+            PrivacyDeletionManifestRecord.target_id == target_id,
+        )
+        .limit(1)
+    )
+    if target_type == "global_user":
+        tombstone_scope = PrivacyIdentityTombstoneRecord.target_user_id == target_id
+    else:
+        tombstone_scope = PrivacyIdentityTombstoneRecord.tenant_id == target_id
+    tombstone_id = db.scalar(
+        sa.select(PrivacyIdentityTombstoneRecord.id).where(tombstone_scope).limit(1)
+    )
+    governed_operation_id = db.scalar(
+        sa.select(PrivacyApprovalBindingRecord.operation_id)
+        .join(
+            PlatformAdminOperationRecord,
+            PlatformAdminOperationRecord.id == PrivacyApprovalBindingRecord.operation_id,
+        )
+        .where(
+            PrivacyApprovalBindingRecord.target_type == target_type,
+            PrivacyApprovalBindingRecord.target_id == target_id,
+            PrivacyApprovalBindingRecord.phase.in_(("deletion_start", "deletion_finalize")),
+            PlatformAdminOperationRecord.status.not_in(("rejected", "failed")),
+        )
+        .limit(1)
+    )
+    if manifest_id is not None or tombstone_id is not None or governed_operation_id is not None:
+        raise PlatformSecurityError(
+            "platform_privacy_restore_governance_required",
+            "deletion governance owns this target; ordinary restore is forbidden",
+        )
+
+
 def _contains_identifier(value: object, identifiers: frozenset[str]) -> bool:
     if isinstance(value, str):
         return value in identifiers or any(
@@ -333,6 +433,7 @@ class PrivacyLifecycleService:
         with self._governance.begin() as db:
             self._bind(db, actor, target_type=target_type, target_id=target_id)
             self._authorize_manage(db, actor, changed_at)
+            self._lock_target(db, target_type, target_id)
             self._require_target(db, target_type, target_id)
             existing = db.execute(
                 sa.select(PrivacyLegalHoldRecord).where(
@@ -345,6 +446,13 @@ class PrivacyLifecycleService:
                 raise PlatformSecurityError(
                     "platform_privacy_hold_conflict", "an active Legal Hold already exists"
                 )
+            self._require_no_destructive_lease(
+                db,
+                actor,
+                target_type=target_type,
+                target_id=target_id,
+                now=changed_at,
+            )
             hold = PrivacyLegalHoldRecord(
                 id=uuid4(),
                 target_type=target_type,
@@ -403,6 +511,7 @@ class PrivacyLifecycleService:
         with self._governance.begin() as db:
             self._bind(db, actor, target_type=target_type, target_id=target_id)
             self._authorize_manage(db, actor, changed_at)
+            self._lock_target(db, target_type, target_id)
             hold = db.execute(
                 sa.select(PrivacyLegalHoldRecord)
                 .where(
@@ -549,6 +658,7 @@ class PrivacyLifecycleService:
             self._bind(db, actor, target_type=target_type, target_id=target_id)
             self._serialize(db, actor.principal_id, key)
             self._authorize_manage(db, actor, changed_at)
+            self._lock_target(db, target_type, target_id)
             replay = db.execute(
                 sa.select(PrivacyDeletionManifestRecord).where(
                     PrivacyDeletionManifestRecord.requested_by_principal_id == actor.principal_id,
@@ -605,6 +715,18 @@ class PrivacyLifecycleService:
                 self._anonymize_user(db, manifest, changed_at)
             else:
                 self._anonymize_tenant(db, manifest, changed_at)
+            target_status, target_version = deletion_target_state(
+                db, target_type, target_id, lock=False
+            )
+            if (
+                target_status != expected_deletion_target_status(target_type)
+                or target_version != expected_target_version + 1
+            ):
+                raise PlatformSecurityError(
+                    "platform_privacy_invariant_broken",
+                    "deletion start did not bind the exact target state",
+                )
+            manifest.expected_target_version = target_version
             self._outbox(
                 db,
                 tenant_id=manifest.tenant_id,
@@ -714,6 +836,7 @@ class PrivacyLifecycleService:
                 manifest_id=manifest_id,
             )
             self._authorize_manage(db, actor, changed_at)
+            self._lock_target(db, target_type, target_id)
             manifest = db.execute(
                 sa.select(PrivacyDeletionManifestRecord)
                 .where(
@@ -754,7 +877,11 @@ class PrivacyLifecycleService:
                 )
             if target_type == "global_user":
                 user = db.get(GlobalUser, target_id)
-                if user is None or user.status != "suspended":
+                if (
+                    user is None
+                    or user.status != expected_deletion_target_status(target_type)
+                    or user.security_version != manifest.expected_target_version
+                ):
                     raise PlatformSecurityError(
                         "platform_privacy_deletion_conflict", "Global User state changed"
                     )
@@ -763,7 +890,11 @@ class PrivacyLifecycleService:
                 user.updated_at = changed_at
             else:
                 tenant = db.get(Tenant, target_id)
-                if tenant is None or tenant.status != "pending_deletion":
+                if (
+                    tenant is None
+                    or tenant.status != expected_deletion_target_status(target_type)
+                    or tenant.lifecycle_version != manifest.expected_target_version
+                ):
                     raise PlatformSecurityError(
                         "platform_privacy_deletion_conflict", "Tenant state changed"
                     )
@@ -1619,6 +1750,85 @@ class PrivacyLifecycleService:
             db.execute(
                 sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                 {"key": f"privacy-deletion:{principal_id}:{key}"},
+            )
+
+    @staticmethod
+    def _lock_target(
+        db: Session,
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+    ) -> None:
+        """Serialize Hold and deletion transitions for one authority target."""
+
+        lock_privacy_target(db, target_type, target_id)
+
+    def _require_no_destructive_lease(
+        self,
+        db: Session,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        now: datetime,
+    ) -> None:
+        """Reject Hold placement until every destructive lease is settled."""
+
+        manifest_ids = tuple(
+            db.scalars(
+                sa.select(PrivacyDeletionManifestRecord.id).where(
+                    PrivacyDeletionManifestRecord.target_type == target_type,
+                    PrivacyDeletionManifestRecord.target_id == target_id,
+                )
+            )
+        )
+        active = False
+        expired = False
+        for manifest_id in manifest_ids:
+            self._bind(
+                db,
+                actor,
+                target_type=target_type,
+                target_id=target_id,
+                manifest_id=manifest_id,
+            )
+            expirations = tuple(
+                db.scalars(
+                    sa.select(PrivacyDeletionWorkItemRecord.lease_expires_at).where(
+                        PrivacyDeletionWorkItemRecord.manifest_id == manifest_id,
+                        PrivacyDeletionWorkItemRecord.target_type == target_type,
+                        PrivacyDeletionWorkItemRecord.target_id == target_id,
+                        PrivacyDeletionWorkItemRecord.status == "leased",
+                    )
+                )
+            ) + tuple(
+                db.scalars(
+                    sa.select(PrivacyBackupRetentionItemRecord.lease_expires_at).where(
+                        PrivacyBackupRetentionItemRecord.manifest_id == manifest_id,
+                        PrivacyBackupRetentionItemRecord.target_type == target_type,
+                        PrivacyBackupRetentionItemRecord.target_id == target_id,
+                        PrivacyBackupRetentionItemRecord.status == "leased",
+                    )
+                )
+            )
+            if any(value is None for value in expirations):
+                raise PlatformSecurityError(
+                    "platform_privacy_execution_invariant_broken",
+                    "a destructive Privacy lease has no expiry",
+                )
+            active = active or any(_as_utc(cast(datetime, value)) > now for value in expirations)
+            expired = expired or any(
+                _as_utc(cast(datetime, value)) <= now for value in expirations
+            )
+        self._bind(db, actor, target_type=target_type, target_id=target_id)
+        if active:
+            raise PlatformSecurityError(
+                "platform_privacy_hold_execution_in_progress",
+                "destructive Privacy execution must settle before placing a Legal Hold",
+            )
+        if expired:
+            raise PlatformSecurityError(
+                "platform_privacy_hold_recovery_required",
+                "an expired destructive Privacy lease must be recovered before placing a Hold",
             )
 
     @staticmethod

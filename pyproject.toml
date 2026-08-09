@@ -356,6 +356,7 @@ dev = [
 omnigent = "omnigent.cli:main"
 omni = "omnigent.cli:main"
 omnigent-saas-preview-gateway = "saas.preview_gateway_process:main"
+omnigent-saas-privacy-worker = "saas.privacy_worker:main"
 
 # Share the repository lockfile with standalone automation packages.
 [tool.uv.workspace]

@@ -58,8 +58,8 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
         )
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_eighty_eight_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 88
+def test_canonical_control_plane_rls_inventory_has_exactly_ninety_three_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 93
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
@@ -94,3 +94,8 @@ def test_canonical_control_plane_rls_inventory_has_exactly_eighty_eight_tables()
     assert "saas_privacy_legal_holds" in CONTROL_PLANE_RLS_TABLES
     assert "saas_privacy_deletion_manifests" in CONTROL_PLANE_RLS_TABLES
     assert "saas_privacy_identity_tombstones" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_privacy_approval_bindings" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_privacy_deletion_work_items" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_privacy_deletion_attempts" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_privacy_evidence_attestations" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_privacy_backup_retention_items" in CONTROL_PLANE_RLS_TABLES

@@ -30,6 +30,10 @@ PLATFORM_ADMIN_OPERATION_ACTIONS = (
     "support_session_issue",
     "support_grant_revoke",
     "audit_export",
+    "privacy_deletion_start",
+    "privacy_deletion_finalize",
+    "privacy_surface_replay",
+    "privacy_backup_purge_replay",
 )
 PLATFORM_ADMIN_OPERATION_STATUSES = (
     "pending_customer_approval",

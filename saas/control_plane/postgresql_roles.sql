@@ -53,6 +53,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_executor') THEN
         CREATE ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_dispatcher') THEN
+        CREATE ROLE saas_privacy_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_verifier') THEN
+        CREATE ROLE saas_privacy_verifier NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 
@@ -73,18 +79,24 @@ ALTER ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_privacy_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_privacy_verifier NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 -- The deletion worker is a one-purpose backend identity. It inherits the
 -- content-blind governance policies, while its additional PII privileges are
 -- never inherited by a browser/API Staff login.
 GRANT saas_platform_governance TO saas_privacy_executor;
+REVOKE saas_platform_governance, saas_privacy_executor, saas_privacy_verifier
+FROM saas_privacy_dispatcher;
+REVOKE saas_platform_governance, saas_privacy_executor, saas_privacy_dispatcher
+FROM saas_privacy_verifier;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
     saas_metering, saas_platform, saas_platform_authenticator, saas_platform_app,
     saas_platform_governance, saas_platform_projector, saas_platform_support,
-    saas_privacy_executor;
+    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier;
 
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
@@ -104,13 +116,18 @@ REVOKE ALL PRIVILEGES ON
     saas_platform_audit_exports,
     saas_privacy_legal_holds,
     saas_privacy_deletion_manifests,
-    saas_privacy_identity_tombstones
+    saas_privacy_identity_tombstones,
+    saas_privacy_approval_bindings,
+    saas_privacy_deletion_work_items,
+    saas_privacy_deletion_attempts,
+    saas_privacy_evidence_attestations,
+    saas_privacy_backup_retention_items
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
     saas_platform_authenticator, saas_platform_app, saas_platform_governance,
     saas_platform_projector, saas_platform_support, saas_privacy_executor,
-    saas_platform;
+    saas_privacy_dispatcher, saas_privacy_verifier, saas_platform;
 
 GRANT SELECT ON
     saas_platform_staff_principals,
@@ -199,7 +216,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_platform_audit_exports,
     saas_privacy_legal_holds,
     saas_privacy_deletion_manifests,
-    saas_privacy_identity_tombstones
+    saas_privacy_identity_tombstones,
+    saas_privacy_approval_bindings,
+    saas_privacy_deletion_work_items,
+    saas_privacy_deletion_attempts,
+    saas_privacy_evidence_attestations,
+    saas_privacy_backup_retention_items
 TO saas_platform;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
@@ -213,7 +235,7 @@ GRANT SELECT (principal_id, role, status, expires_at)
 ON saas_platform_role_assignments TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
-    saas_metering, saas_platform_projector;
+    saas_metering, saas_platform_projector, saas_privacy_dispatcher;
 -- PC3 adds a Support-session branch to the Assignment policy. These roles can
 -- already evaluate PC2 Assignment predicates, so PostgreSQL also needs planning
 -- access to exactly the four Session columns used by that branch. The Session
@@ -223,7 +245,7 @@ GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
 ON saas_platform_support_sessions TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
-    saas_metering, saas_platform_projector;
+    saas_metering, saas_platform_projector, saas_privacy_dispatcher;
 GRANT SELECT (principal_id, role, status, expires_at)
 ON saas_platform_role_assignments TO saas_platform_support;
 -- Reapplying this authority file must also remove grants from older PC5
@@ -272,6 +294,15 @@ GRANT SELECT (id, tenant_id, steward_user_id, status) ON saas_service_accounts
 TO saas_platform_governance;
 GRANT SELECT (id, tenant_id, service_account_id, status) ON saas_api_credentials
 TO saas_platform_governance;
+-- Ordinary lifecycle restore must fail closed once deletion governance owns a
+-- target. FORCE RLS still limits these planning columns to the exact Staff and
+-- target GUCs; no erased content or evidence payload is exposed.
+GRANT SELECT (id, target_type, target_id, status)
+ON saas_privacy_deletion_manifests TO saas_platform_governance;
+GRANT SELECT (id, manifest_id, target_user_id, tenant_id)
+ON saas_privacy_identity_tombstones TO saas_platform_governance;
+GRANT SELECT (operation_id, phase, target_type, target_id)
+ON saas_privacy_approval_bindings TO saas_platform_governance;
 GRANT UPDATE (status, security_version, updated_at) ON saas_global_users
 TO saas_platform_governance;
 GRANT UPDATE (revoked_at) ON saas_auth_sessions TO saas_platform_governance;
@@ -360,6 +391,66 @@ GRANT UPDATE (result, redacted_at, redaction_manifest_id, original_result_hash)
 ON saas_enterprise_scim_events TO saas_privacy_executor;
 GRANT UPDATE ON saas_platform_user_projections TO saas_privacy_executor;
 GRANT INSERT ON saas_control_plane_outbox TO saas_privacy_executor;
+
+-- Runtime deletion dispatch is a separate, content-blind workload identity.
+GRANT SELECT ON
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_deletion_work_items,
+    saas_privacy_deletion_attempts,
+    saas_privacy_evidence_attestations,
+    saas_privacy_backup_retention_items
+TO saas_privacy_dispatcher;
+GRANT UPDATE (
+    status, blockers, surface_outcomes, version, retention_status,
+    retention_completed_at, updated_at
+) ON saas_privacy_deletion_manifests TO saas_privacy_dispatcher;
+GRANT UPDATE (
+    status, attempt_count, available_at, leased_at, lease_expires_at,
+    lease_token_hash, executor_identity_sha256, lease_generation,
+    last_error_code, last_error_sha256, outcome_content_sha256,
+    evidence_attestation_id, version, updated_at
+) ON saas_privacy_deletion_work_items TO saas_privacy_dispatcher;
+GRANT UPDATE (
+    status, attempt_count, available_at, leased_at, lease_expires_at,
+    lease_token_hash, executor_identity_sha256, lease_generation,
+    last_error_code, last_error_sha256, purge_evidence_sha256,
+    evidence_attestation_id, purged_at, version, updated_at
+) ON saas_privacy_backup_retention_items TO saas_privacy_dispatcher;
+GRANT INSERT ON
+    saas_privacy_deletion_attempts,
+    saas_privacy_backup_retention_items,
+    saas_control_plane_outbox
+TO saas_privacy_dispatcher;
+
+-- DSSE verification is a separate authority. Its login can inspect the exact
+-- leased subject and append one immutable receipt, but cannot claim or complete work.
+GRANT SELECT ON
+    saas_privacy_deletion_manifests,
+    saas_privacy_deletion_work_items,
+    saas_privacy_backup_retention_items,
+    saas_privacy_evidence_attestations,
+    saas_runtime_partitions
+TO saas_privacy_verifier;
+-- The Staff/auditor policies on Privacy tables transitively evaluate PC3's
+-- assignment and support-session policies. PostgreSQL validates those referenced
+-- columns before selecting the verifier policy; FORCE RLS still exposes no rows.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_privacy_verifier;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_privacy_verifier;
+GRANT INSERT ON saas_privacy_evidence_attestations TO saas_privacy_verifier;
+
+-- Staff-approved Privacy commands create work; only the dispatcher appends attempts.
+GRANT SELECT, INSERT ON saas_privacy_approval_bindings TO saas_privacy_executor;
+GRANT SELECT, INSERT, UPDATE ON
+    saas_privacy_deletion_work_items,
+    saas_privacy_backup_retention_items
+TO saas_privacy_executor;
+GRANT SELECT ON
+    saas_privacy_deletion_attempts,
+    saas_privacy_evidence_attestations
+TO saas_privacy_executor;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;

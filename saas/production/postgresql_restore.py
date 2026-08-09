@@ -71,6 +71,11 @@ _SELECTED_HASH_TABLES = (
     "saas_privacy_legal_holds",
     "saas_privacy_deletion_manifests",
     "saas_privacy_identity_tombstones",
+    "saas_privacy_approval_bindings",
+    "saas_privacy_deletion_work_items",
+    "saas_privacy_deletion_attempts",
+    "saas_privacy_evidence_attestations",
+    "saas_privacy_backup_retention_items",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -556,12 +561,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5b00000003', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5b00000003', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -1374,7 +1379,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc5b00000002":
+            if saas_head != "pc5b00000003":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1456,6 +1461,35 @@ def _verify_restored_database(
             if tuple(privacy_role) != (False, False, False, True, False, True):
                 raise PostgreSqlRestoreContractError(
                     "restored privacy executor authority is missing or Staff PII grants widened"
+                )
+            dispatcher_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_privacy_dispatcher', "
+                    "'saas_platform_governance', 'member'), "
+                    "pg_has_role('saas_privacy_dispatcher', "
+                    "'saas_privacy_executor', 'member'), "
+                    "has_table_privilege('saas_privacy_dispatcher', "
+                    "'saas_global_users', 'SELECT'), "
+                    "has_table_privilege('saas_privacy_dispatcher', "
+                    "'saas_privacy_deletion_work_items', 'UPDATE'), "
+                    "has_table_privilege('saas_privacy_dispatcher', "
+                    "'saas_privacy_deletion_attempts', 'INSERT') "
+                    "FROM pg_roles WHERE rolname = 'saas_privacy_dispatcher'"
+                )
+            ).one()
+            if tuple(dispatcher_role) != (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored privacy dispatcher is missing or gained Staff/PII authority"
                 )
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "

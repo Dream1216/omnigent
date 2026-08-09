@@ -92,8 +92,13 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_privacy_legal_holds",
         "saas_privacy_deletion_manifests",
         "saas_privacy_identity_tombstones",
+        "saas_privacy_approval_bindings",
+        "saas_privacy_deletion_work_items",
+        "saas_privacy_deletion_attempts",
+        "saas_privacy_evidence_attestations",
+        "saas_privacy_backup_retention_items",
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 88:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 88 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 93:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 93 tables")

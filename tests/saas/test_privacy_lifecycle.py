@@ -44,7 +44,9 @@ from saas.control_plane.privacy_lifecycle import (
     sign_surface_evidence,
 )
 from saas.control_plane.privacy_models import (
+    PrivacyBackupRetentionItemRecord,
     PrivacyDeletionManifestRecord,
+    PrivacyDeletionWorkItemRecord,
     PrivacyIdentityTombstoneRecord,
     PrivacyLegalHoldRecord,
 )
@@ -420,6 +422,120 @@ def test_legal_hold_blocks_deletion_until_exact_version_release(privacy) -> None
             status="released",
             cursor=third.hold_id,
             now=NOW + timedelta(seconds=9),
+        )
+
+
+@pytest.mark.parametrize("kind", ["surface", "backup"])
+@pytest.mark.parametrize(
+    ("expires_delta", "expected_code"),
+    [
+        (timedelta(minutes=2), "platform_privacy_hold_execution_in_progress"),
+        (timedelta(seconds=2), "platform_privacy_hold_recovery_required"),
+    ],
+)
+def test_legal_hold_rejects_active_and_expired_destructive_leases(
+    privacy,
+    kind: str,
+    expires_delta: timedelta,
+    expected_code: str,
+) -> None:
+    factory, service, sessions, operator_id = privacy
+    user_id, _tenant_id, _directory_id, _token, _external = _seed_user(factory)
+    actor = _actor(sessions)
+    manifest_id = uuid4()
+    leased_at = NOW + timedelta(seconds=1)
+    expires_at = NOW + expires_delta
+    with factory.begin() as db:
+        db.add(
+            PrivacyDeletionManifestRecord(
+                id=manifest_id,
+                target_type="global_user",
+                target_id=user_id,
+                tenant_id=None,
+                requested_by_principal_id=operator_id,
+                idempotency_key=f"hold-fence-{kind}-{expected_code}",
+                request_hash="1" * 64,
+                approval_ref="hold-fence-fixture",
+                completion_approval_ref="hold-fence-complete",
+                reason="Legal Hold destructive lease fencing fixture",
+                expected_target_version=1,
+                preview_hash="2" * 64,
+                status="completed",
+                blockers=[],
+                surface_outcomes={},
+                manifest_hash="3" * 64,
+                version=1,
+                started_at=NOW,
+                completed_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        db.flush()
+        common = {
+            "manifest_id": manifest_id,
+            "target_type": "global_user",
+            "target_id": user_id,
+            "tenant_id": None,
+            "status": "leased",
+            "attempt_count": 1,
+            "max_attempts": 3,
+            "available_at": NOW,
+            "leased_at": leased_at,
+            "lease_expires_at": expires_at,
+            "lease_token_hash": "4" * 64,
+            "executor_identity_sha256": "5" * 64,
+            "lease_generation": 1,
+            "replay_generation": 0,
+            "version": 1,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        if kind == "surface":
+            db.add(
+                PrivacyDeletionWorkItemRecord(
+                    id=uuid4(),
+                    surface="object_and_artifact_store",
+                    disposition="erase",
+                    resource_scope_hmac="6" * 64,
+                    adapter_type="object-store-v1",
+                    **common,
+                )
+            )
+        else:
+            db.add(
+                PrivacyBackupRetentionItemRecord(
+                    id=uuid4(),
+                    provider="backup-provider-v1",
+                    backup_data_class="database_snapshot",
+                    backup_locator_hmac="7" * 64,
+                    resource_handle_ref="backup://opaque/hold-fence",
+                    catalog_snapshot_sha256="8" * 64,
+                    tombstone_sha256="9" * 64,
+                    purge_due_at=NOW,
+                    **common,
+                )
+            )
+
+    with pytest.raises(PlatformSecurityError) as blocked:
+        service.place_legal_hold(
+            actor,
+            target_type="global_user",
+            target_id=user_id,
+            scope=("all",),
+            authority_ref=f"case:{kind}:{expected_code}",
+            reason="A destructive lease must settle before preservation starts",
+            review_due_at=NOW + timedelta(days=30),
+            now=NOW + timedelta(seconds=3),
+        )
+    assert blocked.value.code == expected_code
+    with factory() as db:
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(PrivacyLegalHoldRecord)
+                .where(PrivacyLegalHoldRecord.target_id == user_id)
+            )
+            == 0
         )
 
 

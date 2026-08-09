@@ -124,16 +124,17 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         now=now,
     )
     config = PlatformHttpConfig(enabled=True, origin=ORIGIN, audience=AUDIENCE)
+    privacy_service = PrivacyLifecycleService(
+        factory,
+        evidence_verifier=DeletionEvidenceKey("privacy-http-key", b"h" * 32),
+    )
     client = TestClient(
         create_platform_admin_app(
             config=config,
             sessions=sessions,
             authorization=authorization,
             projections=PlatformProjectionService(factory),
-            privacy=PrivacyLifecycleService(
-                factory,
-                evidence_verifier=DeletionEvidenceKey("privacy-http-key", b"h" * 32),
-            ),
+            privacy=privacy_service,
         ),
         base_url=ORIGIN,
     )
@@ -197,7 +198,7 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     assert released.json()["status"] == "released"
 
     ready = client.get(f"{path}/deletion-preview").json()
-    started = client.post(
+    retired = client.post(
         f"{path}/deletions",
         headers={**headers, "Idempotency-Key": "privacy-http-delete-1"},
         json={
@@ -207,12 +208,30 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
             "reason": "verified erasure request",
         },
     )
-    assert started.status_code == 202
-    assert started.json()["status"] == "executing"
-    assert len(started.json()["surface_outcomes"]) == 15
-    manifest = client.get(f"{path}/deletions/{started.json()['manifest_id']}")
+    assert retired.status_code == 410
+    assert retired.json()["error"]["code"] == "platform_privacy_legacy_endpoint_retired"
+    operator = sessions.validate_session(
+        operator_session.token,
+        origin=ORIGIN,
+        audience=AUDIENCE,
+        now=now + timedelta(seconds=1),
+    )
+    started = privacy_service.start_deletion(
+        operator,
+        target_type="global_user",
+        target_id=user_id,
+        expected_target_version=ready["target_version"],
+        preview_hash=ready["preview_hash"],
+        approval_ref="legacy-service-only-test",
+        reason="verify read-only projection compatibility",
+        idempotency_key="privacy-service-delete-1",
+        now=now + timedelta(seconds=1),
+    )
+    assert started.status == "executing"
+    assert len(started.surface_outcomes) == 15
+    manifest = client.get(f"{path}/deletions/{started.manifest_id}")
     assert manifest.status_code == 200
-    assert manifest.json()["manifest_id"] == started.json()["manifest_id"]
+    assert manifest.json()["manifest_id"] == str(started.manifest_id)
     manifests = client.get(f"{path}/deletions?status=executing")
     assert manifests.status_code == 200
     assert manifests.json()["content_access"] == "none"
@@ -221,9 +240,16 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         str(user_id),
     )
     assert len(manifests.json()["items"]) == 1
-    assert manifests.json()["items"][0]["manifest_id"] == started.json()["manifest_id"]
+    assert manifests.json()["items"][0]["manifest_id"] == str(started.manifest_id)
     assert "reason" not in manifests.json()["items"][0]
     assert "approval_ref" not in manifests.json()["items"][0]
+    for retired_path in (
+        f"{path}/deletions/{started.manifest_id}/surfaces",
+        f"{path}/deletions/{started.manifest_id}/finalize",
+    ):
+        response = client.post(retired_path, headers=headers, content=b"not-json")
+        assert response.status_code == 410
+        assert response.json()["error"]["code"] == "platform_privacy_legacy_endpoint_retired"
 
     client.cookies.clear()
     client.cookies.set(config.cookie_name, reader_session.token)
@@ -240,12 +266,14 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     )
 
     with factory.begin() as db:
-        stored = db.get(PrivacyDeletionManifestRecord, UUID(started.json()["manifest_id"]))
+        stored = db.get(PrivacyDeletionManifestRecord, UUID(str(started.manifest_id)))
         assert stored is not None
         outcomes = dict(stored.surface_outcomes)
         surface = next(iter(outcomes))
+        current_outcome = outcomes[surface]
+        assert isinstance(current_outcome, dict)
         outcomes[surface] = {
-            **outcomes[surface],
+            **current_outcome,
             "status": "erased",
             "signature": "must-never-reach-the-browser",
             "attestation": {
@@ -259,7 +287,7 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         stored.completion_approval_ref = "private-completion-approval"
         stored.completed_at = now + timedelta(minutes=1)
 
-    protected = client.get(f"{path}/deletions/{started.json()['manifest_id']}")
+    protected = client.get(f"{path}/deletions/{started.manifest_id}")
     assert protected.status_code == 200
     assert "completion_approval_ref" not in protected.json()
     assert all(

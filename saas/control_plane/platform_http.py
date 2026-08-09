@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
-from typing import Literal
+from typing import Literal, TypeVar
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
 from saas.control_plane.platform_governed_access import (
@@ -32,13 +32,22 @@ from saas.control_plane.platform_security import (
     ValidatedPlatformPrincipal,
 )
 from saas.control_plane.privacy_lifecycle import (
-    DeletionSurfaceEvidence,
     PrivacyDeletionManifestView,
     PrivacyLegalHoldView,
     PrivacyLifecycleService,
 )
+from saas.control_plane.privacy_operations import (
+    PrivacyAttemptView,
+    PrivacyAttestationView,
+    PrivacyBackupView,
+    PrivacyOperationService,
+    PrivacyOperationView,
+    PrivacyWorkItemView,
+)
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_MAX_PRIVACY_COMMAND_BYTES = 16 * 1024
+_PrivacyCommandT = TypeVar("_PrivacyCommandT", bound=BaseModel)
 
 
 class _LifecycleCommand(BaseModel):
@@ -118,33 +127,63 @@ class _LegalHoldReleaseCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
 
 
-class _PrivacyDeletionCommand(BaseModel):
+class _StrictPrivacyOperationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _PrivacyApprovalRequestCommand(_StrictPrivacyOperationCommand):
+    reason_code: Literal[
+        "contract_expiry",
+        "data_subject_request",
+        "legal_authority",
+        "security_response",
+        "tenant_termination",
+        "verified_operational_replay",
+    ]
+    case_reference: str = Field(min_length=1, max_length=256)
+    expires_at: datetime
+
+
+class _PrivacyDeletionRequestCommand(_PrivacyApprovalRequestCommand):
     expected_target_version: int = Field(ge=1)
-    preview_hash: str = Field(min_length=64, max_length=64)
-    approval_ref: str = Field(min_length=1, max_length=256)
-    reason: str = Field(min_length=1, max_length=1024)
+    preview_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class _DeletionSurfaceCommand(BaseModel):
+class _PrivacyFinalizationRequestCommand(_PrivacyApprovalRequestCommand):
     expected_manifest_version: int = Field(ge=1)
-    surface: str = Field(min_length=1, max_length=96)
-    disposition: str = Field(min_length=1, max_length=32)
-    status: str = Field(min_length=1, max_length=32)
-    evidence_sha256: str = Field(min_length=64, max_length=64)
-    remaining_item_count: int = Field(ge=0)
-    runtime_accessible: bool
-    direct_identifiers_remaining: bool
-    observed_at: datetime
-    retention_until: datetime | None = None
-    retention_basis: str | None = Field(default=None, max_length=96)
-    tombstone_sha256: str | None = Field(default=None, min_length=64, max_length=64)
-    key_id: str = Field(min_length=1, max_length=256)
-    signature: str = Field(min_length=1, max_length=4096)
 
 
-class _PrivacyFinalizeCommand(BaseModel):
-    expected_manifest_version: int = Field(ge=1)
-    approval_ref: str = Field(min_length=1, max_length=256)
+class _PrivacyReplayRequestCommand(_PrivacyApprovalRequestCommand):
+    expected_version: int = Field(ge=1)
+
+
+class _PrivacyOperationDecisionCommand(_StrictPrivacyOperationCommand):
+    expected_version: int = Field(ge=1)
+    decision: Literal["approve", "reject"]
+    decision_code: Literal[
+        "policy_confirmed",
+        "scope_rejected",
+        "stale_request",
+        "verified_replay",
+    ]
+
+
+def _parse_privacy_operation_command(
+    body: bytes,
+    content_type: str,
+    model: type[_PrivacyCommandT],
+) -> _PrivacyCommandT:
+    media_type = content_type.partition(";")[0].strip().lower()
+    if media_type != "application/json" or not body or len(body) > _MAX_PRIVACY_COMMAND_BYTES:
+        raise PlatformSecurityError(
+            "platform_privacy_invalid", "Privacy operation command is invalid"
+        )
+    try:
+        return model.model_validate_json(body)
+    except ValidationError as error:
+        raise PlatformSecurityError(
+            "platform_privacy_invalid", "Privacy operation command is invalid"
+        ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +224,8 @@ def _status_for(error: PlatformSecurityError) -> int:
         return 403
     if error.code in {"platform_fresh_auth_required"}:
         return 403
+    if error.code == "platform_privacy_legacy_endpoint_retired":
+        return 410
     if error.code.endswith("_unavailable"):
         return 503
     if error.code.endswith("_not_found"):
@@ -203,6 +244,7 @@ def create_platform_admin_app(
     lifecycle: PlatformLifecycleService | None = None,
     governed_access: PlatformGovernedAccessService | None = None,
     privacy: PrivacyLifecycleService | None = None,
+    privacy_operations: PrivacyOperationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -304,6 +346,63 @@ def create_platform_admin_app(
                 "platform_privacy_unavailable", "Platform privacy authority is unavailable"
             )
         return privacy
+
+    def privacy_operation_service() -> PrivacyOperationService:
+        if privacy_operations is None:
+            raise PlatformSecurityError(
+                "platform_privacy_operations_unavailable",
+                "Platform Privacy operation authority is unavailable",
+            )
+        return privacy_operations
+
+    async def privacy_operation_command_context(
+        request: Request,
+        model: type[_PrivacyCommandT],
+    ) -> tuple[ValidatedPlatformPrincipal, PrivacyOperationService, _PrivacyCommandT]:
+        principal, _token = authenticate(request)
+        authority = privacy_operation_service()
+        command = _parse_privacy_operation_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            model,
+        )
+        return principal, authority, command
+
+    async def privacy_deletion_request_context(
+        request: Request,
+    ) -> tuple[
+        ValidatedPlatformPrincipal,
+        PrivacyOperationService,
+        _PrivacyDeletionRequestCommand,
+    ]:
+        return await privacy_operation_command_context(request, _PrivacyDeletionRequestCommand)
+
+    async def privacy_finalization_request_context(
+        request: Request,
+    ) -> tuple[
+        ValidatedPlatformPrincipal,
+        PrivacyOperationService,
+        _PrivacyFinalizationRequestCommand,
+    ]:
+        return await privacy_operation_command_context(request, _PrivacyFinalizationRequestCommand)
+
+    async def privacy_replay_request_context(
+        request: Request,
+    ) -> tuple[
+        ValidatedPlatformPrincipal,
+        PrivacyOperationService,
+        _PrivacyReplayRequestCommand,
+    ]:
+        return await privacy_operation_command_context(request, _PrivacyReplayRequestCommand)
+
+    async def privacy_operation_decision_context(
+        request: Request,
+    ) -> tuple[
+        ValidatedPlatformPrincipal,
+        PrivacyOperationService,
+        _PrivacyOperationDecisionCommand,
+    ]:
+        return await privacy_operation_command_context(request, _PrivacyOperationDecisionCommand)
 
     def mutation_result(request: Request, value: PlatformLifecycleResult) -> dict[str, object]:
         return {
@@ -511,6 +610,196 @@ def create_platform_admin_app(
         }
 
     @app.post(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletion-requests",
+        status_code=202,
+    )
+    def request_privacy_deletion(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        request: Request,
+        context: tuple[
+            ValidatedPlatformPrincipal,
+            PrivacyOperationService,
+            _PrivacyDeletionRequestCommand,
+        ] = Depends(privacy_deletion_request_context),
+    ) -> dict[str, object]:
+        principal, authority, command = context
+        value = authority.request_deletion_start(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            expected_target_version=command.expected_target_version,
+            preview_hash=command.preview_hash,
+            reason_code=command.reason_code,
+            case_reference=command.case_reference,
+            expires_at=command.expires_at,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _privacy_operation_payload(
+            request, value, viewer_principal_id=principal.principal_id
+        )
+
+    @app.post(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/"
+        "{manifest_id}/finalization-requests",
+        status_code=202,
+    )
+    def request_privacy_deletion_finalization(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        request: Request,
+        context: tuple[
+            ValidatedPlatformPrincipal,
+            PrivacyOperationService,
+            _PrivacyFinalizationRequestCommand,
+        ] = Depends(privacy_finalization_request_context),
+    ) -> dict[str, object]:
+        principal, authority, command = context
+        value = authority.request_deletion_finalize(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            expected_manifest_version=command.expected_manifest_version,
+            reason_code=command.reason_code,
+            case_reference=command.case_reference,
+            expires_at=command.expires_at,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _privacy_operation_payload(
+            request, value, viewer_principal_id=principal.principal_id
+        )
+
+    @app.post(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/"
+        "{manifest_id}/work-items/{work_item_id}/replay-requests",
+        status_code=202,
+    )
+    def request_privacy_work_item_replay(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        work_item_id: UUID,
+        request: Request,
+        context: tuple[
+            ValidatedPlatformPrincipal,
+            PrivacyOperationService,
+            _PrivacyReplayRequestCommand,
+        ] = Depends(privacy_replay_request_context),
+    ) -> dict[str, object]:
+        principal, authority, command = context
+        value = authority.request_dead_letter_replay(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            subject_id=work_item_id,
+            subject_kind="work_item",
+            expected_version=command.expected_version,
+            reason_code=command.reason_code,
+            case_reference=command.case_reference,
+            expires_at=command.expires_at,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _privacy_operation_payload(
+            request, value, viewer_principal_id=principal.principal_id
+        )
+
+    @app.post(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/"
+        "{manifest_id}/backups/{backup_item_id}/replay-requests",
+        status_code=202,
+    )
+    def request_privacy_backup_replay(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        backup_item_id: UUID,
+        request: Request,
+        context: tuple[
+            ValidatedPlatformPrincipal,
+            PrivacyOperationService,
+            _PrivacyReplayRequestCommand,
+        ] = Depends(privacy_replay_request_context),
+    ) -> dict[str, object]:
+        principal, authority, command = context
+        value = authority.request_dead_letter_replay(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            subject_id=backup_item_id,
+            subject_kind="backup_item",
+            expected_version=command.expected_version,
+            reason_code=command.reason_code,
+            case_reference=command.case_reference,
+            expires_at=command.expires_at,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _privacy_operation_payload(
+            request, value, viewer_principal_id=principal.principal_id
+        )
+
+    @app.post(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/operations/{operation_id}/decision"
+    )
+    def decide_privacy_operation(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        operation_id: UUID,
+        request: Request,
+        context: tuple[
+            ValidatedPlatformPrincipal,
+            PrivacyOperationService,
+            _PrivacyOperationDecisionCommand,
+        ] = Depends(privacy_operation_decision_context),
+    ) -> dict[str, object]:
+        principal, authority, command = context
+        value = authority.decide(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            operation_id=operation_id,
+            expected_version=command.expected_version,
+            decision=command.decision,
+            decision_code=command.decision_code,
+            idempotency_key=request.headers.get("idempotency-key", ""),
+        )
+        return _privacy_operation_payload(
+            request, value, viewer_principal_id=principal.principal_id
+        )
+
+    @app.get("/v2/platform-admin/privacy/{target_type}/{target_id}/operations")
+    def list_privacy_operations(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        request: Request,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_operation_service().list_operations(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "target_type": target_type,
+            "target_id": str(target_id),
+            "items": [
+                _privacy_operation_item(value, viewer_principal_id=principal.principal_id)
+                for value in page.items
+            ],
+            "next_cursor": str(page.next_cursor) if page.next_cursor is not None else None,
+            "content_access": "none",
+        }
+
+    @app.post(
         "/v2/platform-admin/privacy/{target_type}/{target_id}/legal-holds",
         status_code=201,
     )
@@ -590,28 +879,23 @@ def create_platform_admin_app(
             "released_at": value.released_at.isoformat() if value.released_at else None,
         }
 
+    def reject_legacy_privacy_mutation(request: Request) -> None:
+        """Retire direct Staff mutations in v0.3.0; governed operations replace them."""
+
+        authenticate(request)
+        raise PlatformSecurityError(
+            "platform_privacy_legacy_endpoint_retired",
+            "Direct Privacy mutation is retired; use a governed operation request",
+        )
+
     @app.post(
         "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions",
-        status_code=202,
+        status_code=410,
     )
     def start_privacy_deletion(
-        target_type: Literal["global_user", "tenant"],
-        target_id: UUID,
-        command: _PrivacyDeletionCommand,
         request: Request,
-    ) -> dict[str, object]:
-        principal, _token = authenticate(request)
-        value = privacy_service().start_deletion(
-            principal,
-            target_type=target_type,
-            target_id=target_id,
-            expected_target_version=command.expected_target_version,
-            preview_hash=command.preview_hash,
-            approval_ref=command.approval_ref,
-            reason=command.reason,
-            idempotency_key=request.headers.get("idempotency-key", ""),
-        )
-        return _privacy_manifest_payload(request, value)
+    ) -> None:
+        reject_legacy_privacy_mutation(request)
 
     @app.get("/v2/platform-admin/privacy/{target_type}/{target_id}/deletions")
     def list_privacy_deletions(
@@ -657,61 +941,139 @@ def create_platform_admin_app(
         )
         return _privacy_manifest_payload(request, value)
 
+    @app.get(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/work-items"
+    )
+    def list_privacy_work_items(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        request: Request,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_operation_service().list_work_items(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        return _privacy_resource_page_payload(
+            request,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            items=[_privacy_work_item_item(value) for value in page.items],
+            next_cursor=page.next_cursor,
+        )
+
+    @app.get(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/attempts"
+    )
+    def list_privacy_attempts(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        request: Request,
+        surface: str | None = Query(default=None, min_length=1, max_length=96),
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_operation_service().list_attempts(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            surface=surface,
+            cursor=cursor,
+            limit=limit,
+        )
+        return _privacy_resource_page_payload(
+            request,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            items=[_privacy_attempt_item(value) for value in page.items],
+            next_cursor=page.next_cursor,
+        )
+
+    @app.get(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/attestations"
+    )
+    def list_privacy_attestations(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        request: Request,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_operation_service().list_attestations(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        return _privacy_resource_page_payload(
+            request,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            items=[_privacy_attestation_item(value) for value in page.items],
+            next_cursor=page.next_cursor,
+        )
+
+    @app.get(
+        "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/backups"
+    )
+    def list_privacy_backups(
+        target_type: Literal["global_user", "tenant"],
+        target_id: UUID,
+        manifest_id: UUID,
+        request: Request,
+        cursor: UUID | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = privacy_operation_service().list_backups(
+            principal,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        return _privacy_resource_page_payload(
+            request,
+            target_type=target_type,
+            target_id=target_id,
+            manifest_id=manifest_id,
+            items=[_privacy_backup_item(value) for value in page.items],
+            next_cursor=page.next_cursor,
+        )
+
     @app.post(
         "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/surfaces"
     )
     def record_privacy_deletion_surface(
-        target_type: Literal["global_user", "tenant"],
-        target_id: UUID,
-        manifest_id: UUID,
-        command: _DeletionSurfaceCommand,
         request: Request,
-    ) -> dict[str, object]:
-        principal, _token = authenticate(request)
-        value = privacy_service().record_surface_evidence(
-            principal,
-            target_type=target_type,
-            target_id=target_id,
-            evidence=DeletionSurfaceEvidence(
-                manifest_id=manifest_id,
-                surface=command.surface,
-                disposition=command.disposition,
-                status=command.status,
-                evidence_sha256=command.evidence_sha256,
-                remaining_item_count=command.remaining_item_count,
-                runtime_accessible=command.runtime_accessible,
-                direct_identifiers_remaining=command.direct_identifiers_remaining,
-                observed_at=command.observed_at,
-                retention_until=command.retention_until,
-                retention_basis=command.retention_basis,
-                tombstone_sha256=command.tombstone_sha256,
-                key_id=command.key_id,
-                signature=command.signature,
-            ),
-            expected_manifest_version=command.expected_manifest_version,
-        )
-        return _privacy_manifest_payload(request, value)
+    ) -> None:
+        reject_legacy_privacy_mutation(request)
 
     @app.post(
         "/v2/platform-admin/privacy/{target_type}/{target_id}/deletions/{manifest_id}/finalize"
     )
     def finalize_privacy_deletion(
-        target_type: Literal["global_user", "tenant"],
-        target_id: UUID,
-        manifest_id: UUID,
-        command: _PrivacyFinalizeCommand,
         request: Request,
-    ) -> dict[str, object]:
-        principal, _token = authenticate(request)
-        value = privacy_service().finalize_deletion(
-            principal,
-            target_type=target_type,
-            target_id=target_id,
-            manifest_id=manifest_id,
-            expected_manifest_version=command.expected_manifest_version,
-            approval_ref=command.approval_ref,
-        )
-        return _privacy_manifest_payload(request, value)
+    ) -> None:
+        reject_legacy_privacy_mutation(request)
 
     @app.post("/v2/platform-admin/identity-conflicts/{conflict_id}/assign")
     def assign_identity_conflict(
@@ -1207,6 +1569,170 @@ def _privacy_manifest_item(value: PrivacyDeletionManifestView) -> dict[str, obje
         "manifest_hash": value.manifest_hash,
         "started_at": value.started_at.isoformat(),
         "completed_at": value.completed_at.isoformat() if value.completed_at else None,
+        "replayed": value.replayed,
+        "content_access": "none",
+    }
+
+
+def _privacy_resource_page_payload(
+    request: Request,
+    *,
+    target_type: str,
+    target_id: UUID,
+    manifest_id: UUID,
+    items: list[dict[str, object]],
+    next_cursor: UUID | None,
+) -> dict[str, object]:
+    return {
+        "request_id": _request_id(request),
+        "policy_version": POLICY_VERSION,
+        "target_type": target_type,
+        "target_id": str(target_id),
+        "manifest_id": str(manifest_id),
+        "items": items,
+        "next_cursor": str(next_cursor) if next_cursor is not None else None,
+        "content_access": "none",
+    }
+
+
+def _privacy_work_item_item(value: PrivacyWorkItemView) -> dict[str, object]:
+    return {
+        "work_item_id": str(value.work_item_id),
+        "surface": value.surface,
+        "disposition": value.disposition,
+        "adapter_type": value.adapter_type,
+        "status": value.status,
+        "attempt_count": value.attempt_count,
+        "max_attempts": value.max_attempts,
+        "available_at": value.available_at.isoformat(),
+        "leased_at": value.leased_at.isoformat() if value.leased_at else None,
+        "lease_expires_at": (
+            value.lease_expires_at.isoformat() if value.lease_expires_at else None
+        ),
+        "lease_generation": value.lease_generation,
+        "replay_generation": value.replay_generation,
+        "last_error_code": value.last_error_code,
+        "last_error_sha256": value.last_error_sha256,
+        "outcome_content_sha256": value.outcome_content_sha256,
+        "version": value.version,
+        "created_at": value.created_at.isoformat(),
+        "updated_at": value.updated_at.isoformat(),
+    }
+
+
+def _privacy_attempt_item(value: PrivacyAttemptView) -> dict[str, object]:
+    return {
+        "attempt_id": str(value.attempt_id),
+        "work_item_id": str(value.work_item_id) if value.work_item_id is not None else None,
+        "backup_item_id": (
+            str(value.backup_item_id) if value.backup_item_id is not None else None
+        ),
+        "surface": value.surface,
+        "attempt_number": value.attempt_number,
+        "lease_generation": value.lease_generation,
+        "replay_generation": value.replay_generation,
+        "provider_idempotency_sha256": value.provider_idempotency_sha256,
+        "outcome": value.outcome,
+        "error_code": value.error_code,
+        "error_sha256": value.error_sha256,
+        "evidence_payload_sha256": value.evidence_payload_sha256,
+        "started_at": value.started_at.isoformat(),
+        "completed_at": value.completed_at.isoformat(),
+    }
+
+
+def _privacy_attestation_item(value: PrivacyAttestationView) -> dict[str, object]:
+    return {
+        "attestation_id": str(value.attestation_id),
+        "subject_kind": value.subject_kind,
+        "subject_id": str(value.subject_id),
+        "surface": value.surface,
+        "payload_type": value.payload_type,
+        "payload_sha256": value.payload_sha256,
+        "envelope_sha256": value.envelope_sha256,
+        "immutability_receipt_sha256": value.immutability_receipt_sha256,
+        "kms_audit_receipt_sha256": value.kms_audit_receipt_sha256,
+        "signature_algorithm": value.signature_algorithm,
+        "record_sha256": value.record_sha256,
+        "product_revision": value.product_revision,
+        "upstream_revision": value.upstream_revision,
+        "schema_revision": value.schema_revision,
+        "adapter_contract_version": value.adapter_contract_version,
+        "verifier_policy_version": value.verifier_policy_version,
+        "signed_at": value.signed_at.isoformat(),
+        "verified_at": value.verified_at.isoformat(),
+        "created_at": value.created_at.isoformat(),
+    }
+
+
+def _privacy_backup_item(value: PrivacyBackupView) -> dict[str, object]:
+    return {
+        "backup_item_id": str(value.backup_item_id),
+        "provider": value.provider,
+        "backup_data_class": value.backup_data_class,
+        "catalog_snapshot_sha256": value.catalog_snapshot_sha256,
+        "tombstone_sha256": value.tombstone_sha256,
+        "object_lock_until": (
+            value.object_lock_until.isoformat() if value.object_lock_until else None
+        ),
+        "purge_due_at": value.purge_due_at.isoformat(),
+        "status": value.status,
+        "attempt_count": value.attempt_count,
+        "max_attempts": value.max_attempts,
+        "available_at": value.available_at.isoformat(),
+        "leased_at": value.leased_at.isoformat() if value.leased_at else None,
+        "lease_expires_at": (
+            value.lease_expires_at.isoformat() if value.lease_expires_at else None
+        ),
+        "lease_generation": value.lease_generation,
+        "replay_generation": value.replay_generation,
+        "last_error_code": value.last_error_code,
+        "last_error_sha256": value.last_error_sha256,
+        "purge_evidence_sha256": value.purge_evidence_sha256,
+        "purged_at": value.purged_at.isoformat() if value.purged_at else None,
+        "version": value.version,
+        "created_at": value.created_at.isoformat(),
+        "updated_at": value.updated_at.isoformat(),
+    }
+
+
+def _privacy_operation_payload(
+    request: Request,
+    value: PrivacyOperationView,
+    *,
+    viewer_principal_id: UUID,
+) -> dict[str, object]:
+    return {
+        "request_id": _request_id(request),
+        "policy_version": POLICY_VERSION,
+        **_privacy_operation_item(value, viewer_principal_id=viewer_principal_id),
+    }
+
+
+def _privacy_operation_item(
+    value: PrivacyOperationView,
+    *,
+    viewer_principal_id: UUID,
+) -> dict[str, object]:
+    """Return operational metadata without request, case, signature, or raw-error content."""
+
+    return {
+        "operation_id": str(value.operation_id),
+        "phase": value.phase,
+        "target_type": value.target_type,
+        "target_id": str(value.target_id),
+        "manifest_id": str(value.manifest_id) if value.manifest_id is not None else None,
+        "subject_id": str(value.subject_id) if value.subject_id is not None else None,
+        "status": value.status,
+        "version": value.version,
+        "snapshot_hash": value.snapshot_hash,
+        "requested_by_me": value.requested_by_principal_id == viewer_principal_id,
+        "decision_by_me": value.approved_by_principal_id == viewer_principal_id,
+        "decision_recorded": value.approved_by_principal_id is not None,
+        "expires_at": value.expires_at.isoformat(),
+        "created_at": value.created_at.isoformat(),
+        "completed_at": value.completed_at.isoformat() if value.completed_at else None,
+        "error_code": value.error_code,
         "replayed": value.replayed,
         "content_access": "none",
     }

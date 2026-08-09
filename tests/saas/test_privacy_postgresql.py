@@ -240,6 +240,10 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
             "rls_scim_directories_privacy_auditor_read",
             "rls_runs_privacy_auditor_read",
             "rls_support_grants_privacy_auditor_read",
+            "rls_saas_privacy_deletion_work_items_auditor_read",
+            "rls_saas_privacy_deletion_attempts_auditor_read",
+            "rls_saas_privacy_evidence_attestations_auditor_read",
+            "rls_saas_privacy_backup_retention_items_auditor_read",
         }
         auditor_policies = list(
             connection.execute(

@@ -194,6 +194,16 @@ def test_platform_console_shell_and_assets_require_staff_realm_session() -> None
     assert "innerHTML" not in privacy_javascript.text
     assert "platform.privacy.read" in privacy_javascript.text
     assert "principalId" in privacy_javascript.text
+    assert "/deletion-requests" in privacy_javascript.text
+    assert "/finalization-requests" in privacy_javascript.text
+    assert "/replay-requests" in privacy_javascript.text
+    assert "/operations/${command.operation.operation_id}/decision" in privacy_javascript.text
+    assert "work-items" in privacy_javascript.text
+    assert "attestations" in privacy_javascript.text
+    assert "backups" in privacy_javascript.text
+    assert "deletions/{manifest_id}/surfaces" not in privacy_javascript.text
+    assert "prefers-reduced-motion: reduce" in privacy_css.text
+    assert "min-height: 44px" in privacy_css.text
     assert "CONTROL-PLANE MANIFEST" in page.text
 
     client.cookies.clear()

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from saas.production.deletion import (
+    canonical_deletion_attestation_subject_sha256,
     canonical_deletion_record_sha256,
     load_deletion_evidence,
     validate_deletion_readiness,
@@ -29,16 +30,37 @@ def _hash(seed: str) -> str:
     return (seed.encode("utf-8").hex() + "0" * 64)[:64]
 
 
+def _evidence_artifact(
+    name: str,
+    payload_sha256: str,
+    *,
+    verified_at: str = "2026-08-05T09:00:00Z",
+) -> dict[str, object]:
+    return {
+        "payload_sha256": payload_sha256,
+        "dsse_envelope_sha256": _hash(f"dsse-{name}"),
+        "immutability_receipt_sha256": _hash(f"immutability-{name}"),
+        "kms_receipt_sha256": _hash(f"kms-{name}"),
+        "signature_algorithm": "ed25519",
+        "signing_key_id": "deletion-evidence-production-key-01",
+        "signing_key_purpose": "production-tenant-deletion-evidence",
+        "workflow_identity": "spiffe://omnigent/deletion-evidence",
+        "verified_at": verified_at,
+    }
+
+
 def _outcome(name: str, requirement: dict[str, object]) -> dict[str, object]:
     disposition = requirement["disposition"]
+    evidence_sha256 = _hash(f"evidence-{name}")
     common: dict[str, object] = {
         "disposition": disposition,
-        "evidence_sha256": _hash(f"evidence-{name}"),
+        "evidence_sha256": evidence_sha256,
         "runtime_accessible": False,
         "direct_identifiers_remaining": False,
         "purge_due_at": None,
         "retention_basis": None,
         "tombstone_sha256": None,
+        "artifact": _evidence_artifact(name, evidence_sha256),
     }
     if disposition in {"erase", "cryptographic_erase"}:
         return {**common, "status": "erased", "remaining_item_count": 0}
@@ -76,7 +98,7 @@ def _record() -> dict[str, object]:
     surfaces = policy["required_surfaces"]
     assert isinstance(surfaces, dict)
     record: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_id": "tenant-deletion-20260805",
         "evidence_kind": "production_tenant_deletion",
         "tenant_id_hash": _hash("tenant"),
@@ -110,24 +132,32 @@ def _record() -> dict[str, object]:
             "uri": "s3://deletion-evidence/report.json",
             "sha256": _hash("artifact"),
             "dsse_envelope_uri": "s3://deletion-evidence/report.dsse.json",
-            "dsse_subject_sha256": _hash("subject"),
-            "verified_workflow_identity": "spiffe://omnigent/deletion-evidence",
+            **_evidence_artifact("record", _hash("artifact")),
         },
-        "attestations": [
-            {
-                "role": role,
-                "actor_id_hash": _hash(f"actor-{role}"),
-                "attested_at": "2026-08-05T09:00:00Z",
-                "product_revision": _PRODUCT_REVISION,
-            }
-            for role in policy["required_attestation_roles"]  # type: ignore[union-attr]
-        ],
+        "attestations": [],
     }
+    subject_sha256 = canonical_deletion_attestation_subject_sha256(record)
+    record["attestations"] = [
+        {
+            "role": role,
+            "actor_id_hmac": _hash(f"actor-{role}"),
+            "attested_at": "2026-08-05T09:30:00Z",
+            "product_revision": _PRODUCT_REVISION,
+            "record_subject_sha256": subject_sha256,
+        }
+        for role in policy["required_attestation_roles"]  # type: ignore[union-attr]
+    ]
     record["record_sha256"] = canonical_deletion_record_sha256(record)
     return record
 
 
 def _resign(record: dict[str, object]) -> None:
+    subject_sha256 = canonical_deletion_attestation_subject_sha256(record)
+    attestations = record.get("attestations")
+    if isinstance(attestations, list):
+        for attestation in attestations:
+            if isinstance(attestation, dict):
+                attestation["record_subject_sha256"] = subject_sha256
     record["record_sha256"] = canonical_deletion_record_sha256(record)
 
 
@@ -228,8 +258,11 @@ def test_stale_or_different_release_deletion_is_rejected_for_promotion() -> None
         "purge_due_at": None,
         "retention_basis": None,
     }
+    for outcome in outcomes.values():
+        outcome["artifact"]["verified_at"] = "2026-04-01T09:00:00Z"
+    record["artifact"]["verified_at"] = "2026-04-01T09:00:00Z"  # type: ignore[index]
     record["attestations"] = [
-        {**attestation, "attested_at": "2026-04-01T09:00:00Z"}
+        {**attestation, "attested_at": "2026-04-01T09:30:00Z"}
         for attestation in record["attestations"]  # type: ignore[union-attr]
     ]
     _resign(record)
@@ -284,4 +317,91 @@ def test_duplicate_evidence_ids_and_incomplete_attestations_fail_closed() -> Non
     assert "duplicate deletion evidence_id tenant-deletion-20260805" in report["violations"]
     assert (
         "tenant-deletion-20260805: independent attestations are incomplete" in report["blockers"]
+    )
+
+
+def test_uri_only_or_control_plane_completion_cannot_qualify_as_production_proof() -> None:
+    record = _record()
+    outcomes = record["surface_outcomes"]  # type: ignore[assignment]
+    outcomes["control_plane_database"].pop("artifact")
+    record["artifact"] = {
+        "uri": "s3://deletion-evidence/report.json",
+        "sha256": _hash("artifact"),
+        "dsse_envelope_uri": "s3://deletion-evidence/report.dsse.json",
+    }
+    _resign(record)
+
+    report = validate_deletion_readiness(_repo(), _policy(), [record], now=_NOW)
+
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert report["metrics"]["qualified_record_count"] == 0
+    assert any(
+        "surface control_plane_database artifact proof is required" in violation
+        for violation in report["violations"]
+    )
+    assert any("artifact fields do not match the schema" in item for item in report["violations"])
+
+
+def test_surface_backup_and_global_artifact_proofs_are_fail_closed() -> None:
+    record = _record()
+    outcomes = record["surface_outcomes"]  # type: ignore[assignment]
+    outcomes["control_plane_database"]["artifact"]["payload_sha256"] = _hash("wrong")
+    outcomes["backups_and_snapshots"]["artifact"].pop("kms_receipt_sha256")
+    outcomes["runtime_database"]["artifact"]["workflow_identity"] = "spiffe://untrusted/job"
+    outcomes["logs_and_traces"]["artifact"]["signing_key_id"] = "untrusted-key-01"
+    record["artifact"]["signing_key_purpose"] = "general-purpose"  # type: ignore[index]
+    _resign(record)
+
+    report = validate_deletion_readiness(_repo(), _policy(), [record], now=_NOW)
+
+    assert report["status"] == "fail"
+    assert any("does not bind the evidence payload" in item for item in report["violations"])
+    assert any("kms_receipt_sha256 must be SHA-256" in item for item in report["violations"])
+    assert any("workflow identity is not trusted" in item for item in report["violations"])
+    assert any("signing_key_id is not trusted" in item for item in report["violations"])
+    assert any(
+        "signing key purpose does not match policy" in item for item in report["violations"]
+    )
+
+
+def test_attestors_are_distinct_and_bind_the_same_record_and_revision() -> None:
+    record = _record()
+    attestations = record["attestations"]  # type: ignore[assignment]
+    attestations[1]["actor_id_hmac"] = attestations[0]["actor_id_hmac"]
+    attestations[1]["record_subject_sha256"] = _hash("wrong-subject")
+    attestations[2]["product_revision"] = "b" * 40
+    record["record_sha256"] = canonical_deletion_record_sha256(record)
+
+    report = validate_deletion_readiness(_repo(), _policy(), [record], now=_NOW)
+
+    assert report["status"] == "fail"
+    assert any("actors must be pairwise distinct" in item for item in report["violations"])
+    assert any(
+        "does not bind the canonical record subject" in item for item in report["violations"]
+    )
+    assert any(
+        "attestation revision does not match evidence" in item for item in report["violations"]
+    )
+
+
+def test_evidence_verification_and_approval_times_are_bounded() -> None:
+    record = _record()
+    outcomes = record["surface_outcomes"]  # type: ignore[assignment]
+    outcomes["control_plane_database"]["artifact"]["verified_at"] = "2026-08-05T08:00:00Z"
+    record["artifact"]["verified_at"] = "2026-08-05T13:00:00Z"  # type: ignore[index]
+    for attestation in record["attestations"]:  # type: ignore[union-attr]
+        attestation["attested_at"] = "2026-08-05T09:30:00Z"
+    _resign(record)
+
+    report = validate_deletion_readiness(_repo(), _policy(), [record], now=_NOW)
+
+    assert report["status"] == "fail"
+    assert any(
+        "verified_at must follow completion and not be in the future" in item
+        for item in report["violations"]
+    )
+    assert any(
+        "attestation time must follow evidence verification and not be future" in item
+        for item in report["violations"]
     )
