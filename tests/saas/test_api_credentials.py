@@ -74,9 +74,7 @@ def _fixture() -> tuple[sessionmaker, dict[str, UUID]]:
                     tenant_id=ids["tenant"],
                     user_id=ids[role],
                     role=(
-                        "owner"
-                        if role == "owner"
-                        else ("admin" if role == "admin" else "member")
+                        "owner" if role == "owner" else ("admin" if role == "admin" else "member")
                     ),
                     status="active",
                     version=1,
@@ -101,9 +99,7 @@ def _fixture() -> tuple[sessionmaker, dict[str, UUID]]:
                     space_id=ids["space"],
                     user_id=ids[role],
                     role=(
-                        "owner"
-                        if role == "owner"
-                        else ("admin" if role == "admin" else "member")
+                        "owner" if role == "owner" else ("admin" if role == "admin" else "member")
                     ),
                     status="active",
                     version=1,
@@ -289,9 +285,10 @@ def test_rotation_revocation_and_steward_transfer_invalidate_immediately() -> No
     assert replacement.token is not None
     with pytest.raises(ApiCredentialError):
         service.authenticate(old.token, source_ip="127.0.0.1", now=_NOW)
-    assert service.authenticate(
-        replacement.token, source_ip="127.0.0.1", now=_NOW
-    ).credential_id == replacement.credential_id
+    assert (
+        service.authenticate(replacement.token, source_ip="127.0.0.1", now=_NOW).credential_id
+        == replacement.credential_id
+    )
     rotation_replay = service.rotate_api_credential(
         actor_id=ids["owner"],
         tenant_id=ids["tenant"],
@@ -342,9 +339,7 @@ def test_member_removal_impact_requires_explicit_steward_transfer() -> None:
         idempotency_key="impact-transfer",
         now=_NOW,
     )
-    after = impacts.collect(
-        tenant_id=ids["tenant"], space_id=ids["space"], user_id=ids["steward"]
-    )
+    after = impacts.collect(tenant_id=ids["tenant"], space_id=ids["space"], user_id=ids["steward"])
     assert after.blocking_count == 0
 
 
@@ -435,13 +430,16 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
     )
     assert allowed.status_code == 200
     assert client.get("/saas/auth/me", headers=machine_headers).status_code == 403
-    assert client.post(
-        f"/api/v1/tenants/{ids['tenant']}/service-accounts",
-        headers={**machine_headers, "Idempotency-Key": "machine-must-not-manage"},
-        json={
-            "space_id": str(ids["space"]),
-            "project_id": str(ids["project"]),
-            "steward_user_id": str(ids["steward"]),
-            "name": "forbidden",
-        },
-    ).status_code == 401
+    assert (
+        client.post(
+            f"/api/v1/tenants/{ids['tenant']}/service-accounts",
+            headers={**machine_headers, "Idempotency-Key": "machine-must-not-manage"},
+            json={
+                "space_id": str(ids["space"]),
+                "project_id": str(ids["project"]),
+                "steward_user_id": str(ids["steward"]),
+                "name": "forbidden",
+            },
+        ).status_code
+        == 401
+    )

@@ -223,9 +223,7 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_slo_capacity_evidence(
-    repo: Path, policy: Mapping[str, Any]
-) -> list[dict[str, Any]]:
+def load_slo_capacity_evidence(repo: Path, policy: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Load records only from the safe policy-owned evidence directory."""
 
     relative = policy.get("evidence_directory")
@@ -304,12 +302,7 @@ def _validate_policy(
     elif not (repo / directory).is_dir():
         violations.append("evidence_directory must exist")
     max_age = policy.get("max_evidence_age_days")
-    if (
-        not isinstance(max_age, int)
-        or isinstance(max_age, bool)
-        or max_age < 30
-        or max_age > 35
-    ):
+    if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 30 or max_age > 35:
         violations.append("max_evidence_age_days must be between 30 and 35")
     services, slos = _baseline_maps(baseline)
     required_services = policy.get("required_service_ids")
@@ -601,9 +594,7 @@ def _validate_alerts(
     if value is None or set(value) != _ALERTS:
         return [f"{label}: alert drills do not match the operational matrix"], blockers
     threshold = _integer(
-        (_mapping(policy.get("thresholds")) or {}).get(
-            "maximum_alert_acknowledgement_seconds"
-        ),
+        (_mapping(policy.get("thresholds")) or {}).get("maximum_alert_acknowledgement_seconds"),
         positive=True,
     )
     if threshold is None:
@@ -817,9 +808,7 @@ def validate_slo_capacity_readiness(
     if current.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     current_baseline = (
-        baseline
-        if baseline is not None
-        else _load_json(repo / "saas/production/baseline.json")
+        baseline if baseline is not None else _load_json(repo / "saas/production/baseline.json")
     )
     violations = _validate_policy(repo, policy, baseline=current_baseline)
     blockers: list[str] = []

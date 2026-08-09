@@ -387,13 +387,13 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
 
     with platform_factory() as db:
         provider_usage = db.execute(
-                sa.text(
-                    "SELECT meter, quantity, customer_charge_minor, attributes "
-                    "FROM saas_usage_events WHERE run_id = :run "
-                    "AND provider_request_id LIKE 'omnigent-observer-%'"
-                ),
-                {"run": run_id},
-            ).one()
+            sa.text(
+                "SELECT meter, quantity, customer_charge_minor, attributes "
+                "FROM saas_usage_events WHERE run_id = :run "
+                "AND provider_request_id LIKE 'omnigent-observer-%'"
+            ),
+            {"run": run_id},
+        ).one()
     assert provider_usage[:3] == ("llm.input_tokens", 1500, 38)
     assert provider_usage.attributes == {
         "model": "openai/gpt-test",

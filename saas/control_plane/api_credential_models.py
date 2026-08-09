@@ -140,9 +140,7 @@ class ApiCredentialRecord(SaasBase):
         ),
         sa.CheckConstraint("length(name) > 0", name="ck_api_credential_name_nonempty"),
         sa.CheckConstraint("length(token_hash) = 64", name="ck_api_credential_token_hash"),
-        sa.CheckConstraint(
-            "length(display_prefix) > 0", name="ck_api_credential_prefix_nonempty"
-        ),
+        sa.CheckConstraint("length(display_prefix) > 0", name="ck_api_credential_prefix_nonempty"),
         sa.CheckConstraint(
             "account_security_version > 0", name="ck_api_credential_security_version"
         ),

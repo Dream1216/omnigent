@@ -81,9 +81,7 @@ def upgrade() -> None:
             "status IN ('active', 'suspended', 'deleted')",
             name="ck_service_account_status",
         ),
-        sa.ForeignKeyConstraint(
-            ["created_by"], ["saas_global_users.id"], ondelete="RESTRICT"
-        ),
+        sa.ForeignKeyConstraint(["created_by"], ["saas_global_users.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(
             ["tenant_id", "steward_user_id"],
             ["saas_tenant_memberships.tenant_id", "saas_tenant_memberships.user_id"],
@@ -149,21 +147,15 @@ def upgrade() -> None:
             "account_security_version > 0", name="ck_api_credential_security_version"
         ),
         sa.CheckConstraint("length(name) > 0", name="ck_api_credential_name_nonempty"),
-        sa.CheckConstraint(
-            "length(display_prefix) > 0", name="ck_api_credential_prefix_nonempty"
-        ),
+        sa.CheckConstraint("length(display_prefix) > 0", name="ck_api_credential_prefix_nonempty"),
         sa.CheckConstraint("length(token_hash) = 64", name="ck_api_credential_token_hash"),
         sa.CheckConstraint(
             "(status = 'active' AND revoked_at IS NULL) OR "
             "(status = 'revoked' AND revoked_at IS NOT NULL)",
             name="ck_api_credential_revocation",
         ),
-        sa.CheckConstraint(
-            "status IN ('active', 'revoked')", name="ck_api_credential_status"
-        ),
-        sa.ForeignKeyConstraint(
-            ["created_by"], ["saas_global_users.id"], ondelete="RESTRICT"
-        ),
+        sa.CheckConstraint("status IN ('active', 'revoked')", name="ck_api_credential_status"),
+        sa.ForeignKeyConstraint(["created_by"], ["saas_global_users.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(
             ["tenant_id", "service_account_id"],
             ["saas_service_accounts.tenant_id", "saas_service_accounts.id"],

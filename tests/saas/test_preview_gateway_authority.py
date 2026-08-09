@@ -587,9 +587,7 @@ def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() ->
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_preview_gateway")
             connection.execute(
-                sa.text(
-                    "SELECT set_config('app.gateway_registration_token_hash', :digest, true)"
-                ),
+                sa.text("SELECT set_config('app.gateway_registration_token_hash', :digest, true)"),
                 {"digest": hashlib.sha256(token.encode()).hexdigest()},
             )
             connection.execute(
