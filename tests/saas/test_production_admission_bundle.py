@@ -130,7 +130,7 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
         for step in job["steps"]
         if step.get("name") == "Validate immutable revision inputs"
     )
-    assert "refs/heads/codex/saas-p0-foundation" in preflight
+    assert "refs/heads/main" in preflight
     assert '"$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION"' in preflight
     checkout = next(step for step in job["steps"] if "actions/checkout@" in step.get("uses", ""))
     assert checkout["with"]["ref"] == "${{ inputs.evidence_revision }}"
@@ -149,6 +149,10 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     )
     assert upload["if"] == "always()"
     assert upload["with"]["retention-days"] == "90"
+
+    candidate_path = _repo() / ".github/workflows/saas-image-candidate.yml"
+    candidate = yaml.load(candidate_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assert ".github/workflows/saas-production-admission.yml" in candidate["on"]["push"]["paths"]
 
 
 def test_image_candidate_composite_preserves_reproducible_build_contract() -> None:

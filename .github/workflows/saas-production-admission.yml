@@ -36,7 +36,7 @@ jobs:
           set -euo pipefail
           [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$TRUSTED_REF" == "refs/heads/codex/saas-p0-foundation" ]]
+          [[ "$TRUSTED_REF" == "refs/heads/main" ]]
           [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
       - name: Checkout exact evidence revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

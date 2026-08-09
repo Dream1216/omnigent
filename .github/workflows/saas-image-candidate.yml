@@ -6,6 +6,7 @@ on:
       - "codex/**"
     paths:
       - ".github/workflows/saas-image-candidate.yml"
+      - ".github/workflows/saas-production-admission.yml"
       - "deploy/docker/Dockerfile"
       - "setup.py"
       - "pyproject.toml"

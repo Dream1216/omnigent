@@ -41,13 +41,20 @@ revoked; never delete historical key metadata.
 ## Final admission
 
 Run the final command only from `.github/workflows/saas-production-admission.yml` on
-the protected `codex/saas-p0-foundation` ref. GitHub Environment
+the protected default `main` ref. GitHub Environment
 `production-evidence` supplies the reviewer boundary. The workflow accepts only full
 Git SHAs, requires the evidence input to equal the protected dispatch ref's exact SHA,
 checks out that SHA without persisted credentials, and retains full Git history. It
 runs all eight domain verifiers, cryptographic admission, candidate-lineage checks,
 and the ten-gate verifier. Compatibility CI tests the implementation but cannot claim
 production admission.
+
+GitHub accepts `workflow_dispatch` only when the workflow file exists on the default
+branch. Merging this contract to a staging or integration branch does not activate a
+production entry point. Promote the complete SaaS candidate, including this workflow,
+to protected `main` first; do not change the repository default branch or dispatch from
+the staging branch to bypass that boundary. The image-candidate workflow watches this
+file so a trust-root change always receives a new Product Revision and image candidate.
 
 The protected job executes the equivalent of:
 
