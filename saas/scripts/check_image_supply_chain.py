@@ -22,6 +22,18 @@ _APPROVED_PATHS = {
     "upstream_manifest": "saas/upstream-baseline.json",
     "production_evidence": "saas/acceptance/p0-production-image-evidence.json",
 }
+_CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
+_CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
+_BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+_REQUIRED_BUILD_ARGS = {
+    "PYTHON_IMAGE",
+    "NODE_IMAGE",
+    "SOURCE_DATE_EPOCH",
+    "SOURCE_REVISION",
+    "UPSTREAM_REVISION",
+    "CONTROL_PLANE_SCHEMA_REVISION",
+    "ADAPTER_CONTRACT_VERSION",
+}
 _REQUIRED_LABELS = {
     "org.opencontainers.image.revision",
     "ai.omnigent.upstream.revision",
@@ -360,6 +372,138 @@ def _ids(items: object, field: str = "name") -> set[str]:
     }
 
 
+def _read_repository_contract(
+    repo: Path,
+    relative: str,
+    *,
+    label: str,
+    violations: list[str],
+) -> str | None:
+    """Read a fixed repository contract without following symbolic links."""
+
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        violations.append(f"{label} path must be repository-relative")
+        return None
+    candidate = repo / path
+    current = repo
+    for part in path.parts:
+        current /= part
+        if current.is_symlink():
+            violations.append(f"{label} path must not use symbolic links")
+            return None
+    try:
+        root = repo.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        violations.append(f"{label} must be a repository file")
+        return None
+    if not resolved.is_file():
+        violations.append(f"{label} must be a repository file")
+        return None
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        violations.append(f"{label} must be readable UTF-8 text")
+        return None
+
+
+def validate_candidate_build_contract(repo: Path) -> list[str]:
+    """Validate the workflow and its fixed local composite build action together."""
+
+    violations: list[str] = []
+    workflow = _read_repository_contract(
+        repo,
+        _APPROVED_PATHS["candidate_workflow"],
+        label="candidate workflow",
+        violations=violations,
+    )
+    if workflow is None:
+        return violations
+
+    material_sources = {
+        "python_digest=$(crane digest python:3.12-slim)",
+        "node_digest=$(crane digest node:22-slim)",
+        "source_epoch=$(git show -s --format=%ct HEAD)",
+        "source_revision=$(git rev-parse HEAD)",
+        "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
+        ("adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)"),
+        (
+            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
+            "saas/production/baseline.json)"
+        ),
+    }
+    if any(source not in workflow for source in material_sources):
+        violations.append("candidate workflow build materials are not source-derived")
+
+    material_exports = {
+        'echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"',
+        'echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"',
+        'echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"',
+        'echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"',
+        'echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"',
+        'echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"',
+        ('echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"'),
+    }
+    if any(workflow.count(export) != 1 for export in material_exports):
+        violations.append("candidate workflow must export each resolved build material once")
+
+    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
+        violations.append("candidate workflow must invoke four repeated composite builds")
+    coordinates = {
+        ("server", "runtime", "1"),
+        ("server", "runtime", "2"),
+        ("host", "host", "1"),
+        ("host", "host", "2"),
+    }
+    for artifact, target, attempt in coordinates:
+        invocation = (
+            f"uses: {_CANDIDATE_BUILD_USES}\n"
+            "        with:\n"
+            f"          artifact: {artifact}\n"
+            f"          target: {target}\n"
+            f'          attempt: "{attempt}"'
+        )
+        if workflow.count(invocation) != 1:
+            violations.append(
+                "candidate workflow build coordinates must cover server and host twice"
+            )
+            break
+
+    action = _read_repository_contract(
+        repo,
+        _CANDIDATE_BUILD_ACTION,
+        label="candidate composite build action",
+        violations=violations,
+    )
+    if action is None:
+        return violations
+    required_action_fragments = {
+        "using: composite",
+        f"uses: {_BUILD_PUSH_ACTION}",
+        "push: false",
+        "platforms: linux/amd64,linux/arm64",
+        "provenance: mode=max",
+        "sbom: true",
+        (
+            "outputs: type=oci,dest=${{ runner.temp }}/"
+            "${{ inputs.artifact }}-${{ inputs.attempt }}.tar"
+        ),
+        "server:runtime|host:host",
+        "1|2)",
+    }
+    if any(fragment not in action for fragment in required_action_fragments):
+        violations.append("candidate composite build action weakens the approved build contract")
+    if action.count(f"uses: {_BUILD_PUSH_ACTION}") != 1:
+        violations.append("candidate composite build action must use the pinned builder once")
+    for build_arg in _REQUIRED_BUILD_ARGS:
+        binding = f"{build_arg}=${{{{ env.{build_arg} }}}}"
+        if action.count(binding) != 1:
+            violations.append(f"candidate composite build action must bind resolved {build_arg}")
+    return violations
+
+
 def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if set(policy) != _POLICY_FIELDS:
@@ -374,22 +518,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         value = policy.get(field)
         if value != _APPROVED_PATHS[field] or not (repo / str(value)).is_file():
             violations.append(f"release policy {field} must reference the approved file")
-    workflow_path = repo / str(policy.get("candidate_workflow", ""))
-    if workflow_path.is_file():
-        workflow = workflow_path.read_text(encoding="utf-8")
-        schema_source = (
-            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
-            "saas/production/baseline.json)"
-        )
-        schema_argument = (
-            "CONTROL_PLANE_SCHEMA_REVISION=${{ steps.materials.outputs.schema_revision }}"
-        )
-        if schema_source not in workflow:
-            violations.append("candidate workflow schema revision is not baseline-derived")
-        if workflow.count(schema_argument) != 4:
-            violations.append(
-                "every repeated candidate build must use the resolved schema revision"
-            )
+    violations.extend(validate_candidate_build_contract(repo))
     production_evidence = policy.get("production_evidence")
     if production_evidence != _APPROVED_PATHS["production_evidence"]:
         violations.append("production_evidence must use the approved repository path")
@@ -445,16 +574,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         parsed_args = _string_set(args)
         if parsed_args is not None:
             required_args = parsed_args
-        expected_args = {
-            "PYTHON_IMAGE",
-            "NODE_IMAGE",
-            "SOURCE_DATE_EPOCH",
-            "SOURCE_REVISION",
-            "UPSTREAM_REVISION",
-            "CONTROL_PLANE_SCHEMA_REVISION",
-            "ADAPTER_CONTRACT_VERSION",
-        }
-        if required_args != expected_args:
+        if required_args != _REQUIRED_BUILD_ARGS:
             violations.append("required_build_args does not match the reproducible build contract")
 
     dockerfile_path = policy.get("dockerfile")
