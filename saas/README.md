@@ -1918,3 +1918,48 @@ build carries two attestation descriptors. Artifact `9025955208` has archive dig
 digest `0942f179dc9abe46527252df55578460b20a56d9507e95e43cbe273b5feed7b4`.
 These remain unpublished candidates, not registry promotion, signature, vulnerability
 or license admission, Canary, N-1 rollback, PC5 completion or release `GO`.
+
+The ninth PC5 development slice starts from merged baseline
+`e3172687f9b6f0c6a21d08b62776f1efe9932dce` and advances the SaaS migration head to
+`pc5b00000001`. It adds governed Legal Holds, versioned User/Tenant deletion Manifests,
+opaque OIDC/SCIM identity Tombstones and a one-time SCIM receipt-redaction exception to
+the otherwise immutable receipt trigger. Deletion is Preview/CAS-bound and cannot
+finalize until all 15 database, object, index, cache, queue, provider, identity,
+worktree, webhook, secret, log, ledger and backup surfaces carry valid signed outcomes.
+An active Hold, Owner/Steward dependency, nonterminal Run or active Support Grant blocks
+the relevant target. Every Hold has a bounded mandatory review deadline; passing that
+deadline never releases it implicitly. Finalization persists the exact independent
+approval reference and rejects a replay with another approval. Deleted OIDC subjects
+and SCIM external IDs cannot provision again.
+
+Privacy PII access is not added to the browser/API Staff governance role. A separate
+`NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS` `saas_privacy_executor` inherits content-blind
+governance policy evaluation and receives only the additional erasure privileges. FORCE
+RLS binds it to the exact Staff principal, target and Manifest; the control-plane/runtime
+inventories are now 88/17. HTTP routes use the dedicated Staff cookie, Origin, CSRF,
+permission, fresh-authentication and idempotency boundaries.
+
+Targeted SQLite and real PostgreSQL 16 tests pass for Legal Hold review deadlines,
+Global User and invitation-email anonymization, password and Session revocation, exact
+Tombstone replay denial, SCIM redaction immutability and content-blind role separation.
+Each transformed invitation persists its deletion Manifest ID; FORCE RLS rejects the
+same anonymous shape under any other Target/Manifest while ordinary Tenant and exact
+token invitation reads retain their existing branches.
+The isolated logical restore contract also passes with a released Hold, completed
+15-surface Manifest with its completion approval, Tombstone and redacted receipt restored
+under schema `pc5b00000001`. A clean disposable PostgreSQL database now passes all 503
+SaaS tests; the current local compatibility workflow selection passes 1,056 tests, while the
+host-appropriate hard-sandbox selection passes 40 with 21 Linux-only variants skipped.
+Pre-commit and Pyrefly pass, the migration upgrades/checks/downgrades without drift, the
+Wheel contains 274 required artifacts, both downstream patches replay, and source
+intrusion remains within budget at 10 official files, 498 net lines, two patches and a
+0.9962 isolated-code ratio.
+
+The immutable P0 ADR waiver remains bound to its approved `pc5a00000003` architecture
+snapshot; the current implementation head is tracked separately and must be a linear
+descendant, so advancing an additive migration neither rewrites approval history nor
+allows an unrelated schema branch. The derived production verifier is structurally
+valid but still reports 0/10 and `NO-GO`. This remains a development candidate until an
+exact committed SHA passes the compatibility and image workflows. Local restore and
+test evidence is not a production deletion drill, backup-expiry proof, IdP rollout or
+release `GO`.

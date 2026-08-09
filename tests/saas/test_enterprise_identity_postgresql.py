@@ -511,7 +511,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         service.get_group(overlap_token, scim_group_id=group.id)
     assert disabled_overlap_token.value.code == "scim_authentication_failed"
 
-    assert len(CONTROL_PLANE_RLS_TABLES) == 85
+    assert len(CONTROL_PLANE_RLS_TABLES) == 88
     assert {
         "saas_enterprise_scim_directories",
         "saas_enterprise_scim_users",

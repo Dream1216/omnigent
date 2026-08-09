@@ -56,3 +56,15 @@ def test_production_baseline_rejects_revision_drift() -> None:
         violation.startswith("control_plane_schema_revision must be the only migration head")
         for violation in report["violations"]
     )
+
+
+def test_production_baseline_rejects_unrelated_approved_schema_lineage() -> None:
+    baseline = copy.deepcopy(_baseline())
+    baseline["approval"]["approved_control_plane_schema_revision"] = "not-a-revision"  # type: ignore[index]
+
+    report = validate_baseline(_repo(), baseline)
+
+    assert (
+        "approved control-plane schema revision must be an ancestor of the current head"
+        in report["violations"]
+    )

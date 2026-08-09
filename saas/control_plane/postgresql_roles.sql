@@ -50,6 +50,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_support') THEN
         CREATE ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_executor') THEN
+        CREATE ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 
@@ -69,12 +72,19 @@ ALTER ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
+
+-- The deletion worker is a one-purpose backend identity. It inherits the
+-- content-blind governance policies, while its additional PII privileges are
+-- never inherited by a browser/API Staff login.
+GRANT saas_platform_governance TO saas_privacy_executor;
 
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
     saas_metering, saas_platform, saas_platform_authenticator, saas_platform_app,
-    saas_platform_governance, saas_platform_projector, saas_platform_support;
+    saas_platform_governance, saas_platform_projector, saas_platform_support,
+    saas_privacy_executor;
 
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
@@ -91,12 +101,16 @@ REVOKE ALL PRIVILEGES ON
     saas_platform_support_sessions,
     saas_platform_audit_chain_heads,
     saas_platform_audit_events,
-    saas_platform_audit_exports
+    saas_platform_audit_exports,
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
     saas_platform_authenticator, saas_platform_app, saas_platform_governance,
-    saas_platform_projector, saas_platform_support, saas_platform;
+    saas_platform_projector, saas_platform_support, saas_privacy_executor,
+    saas_platform;
 
 GRANT SELECT ON
     saas_platform_staff_principals,
@@ -182,7 +196,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_platform_support_sessions,
     saas_platform_audit_chain_heads,
     saas_platform_audit_events,
-    saas_platform_audit_exports
+    saas_platform_audit_exports,
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones
 TO saas_platform;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
@@ -209,6 +226,34 @@ ON saas_platform_support_sessions TO
     saas_metering, saas_platform_projector;
 GRANT SELECT (principal_id, role, status, expires_at)
 ON saas_platform_role_assignments TO saas_platform_support;
+-- Reapplying this authority file must also remove grants from older PC5
+-- candidates that briefly placed privacy execution on the browser governance
+-- role. The narrower grants below are then rebuilt deterministically.
+REVOKE ALL PRIVILEGES ON
+    saas_global_users,
+    saas_identity_connections,
+    saas_auth_sessions,
+    saas_password_credentials,
+    saas_oidc_login_transactions,
+    saas_identity_conflicts,
+    saas_tenants,
+    saas_tenant_memberships,
+    saas_space_memberships,
+    saas_membership_invitations,
+    saas_project_memberships,
+    saas_resource_grants,
+    saas_service_accounts,
+    saas_api_credentials,
+    saas_enterprise_group_memberships,
+    saas_enterprise_scim_directories,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups,
+    saas_enterprise_scim_events,
+    saas_runs,
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones
+FROM saas_platform_governance;
 GRANT SELECT (id, status, security_version) ON saas_global_users
 TO saas_platform_governance;
 GRANT SELECT (id, user_id, revoked_at) ON saas_auth_sessions
@@ -247,6 +292,75 @@ GRANT UPDATE (status, revoked_at) ON saas_api_credentials
 TO saas_platform_governance;
 GRANT INSERT ON saas_control_plane_outbox TO saas_platform_governance;
 
+-- PC5 privacy execution is isolated from the normal Staff governance login.
+-- FORCE RLS still binds every row to the exact Staff principal and deletion
+-- target GUC; these grants only make the background command technically able
+-- to hash and erase direct identifiers without exposing them through the UI.
+GRANT SELECT ON
+    saas_global_users,
+    saas_identity_connections,
+    saas_auth_sessions,
+    saas_password_credentials,
+    saas_tenants,
+    saas_tenant_memberships,
+    saas_space_memberships,
+    saas_membership_invitations,
+    saas_project_memberships,
+    saas_resource_grants,
+    saas_service_accounts,
+    saas_api_credentials,
+    saas_enterprise_group_memberships,
+    saas_enterprise_scim_directories,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups,
+    saas_enterprise_scim_events,
+    saas_platform_user_projections,
+    saas_runs,
+    saas_platform_support_grants,
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones
+TO saas_privacy_executor;
+GRANT INSERT, UPDATE ON
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones
+TO saas_privacy_executor;
+GRANT UPDATE (
+    status, display_name, primary_email_normalized, security_version, updated_at
+) ON saas_global_users TO saas_privacy_executor;
+GRANT UPDATE (
+    provider, issuer, subject, email_normalized, email_verified, status, updated_at
+) ON saas_identity_connections TO saas_privacy_executor;
+GRANT UPDATE (revoked_at) ON saas_auth_sessions TO saas_privacy_executor;
+GRANT DELETE ON saas_password_credentials TO saas_privacy_executor;
+GRANT UPDATE (slug, name, status, lifecycle_version, updated_at)
+ON saas_tenants TO saas_privacy_executor;
+GRANT UPDATE (status, version) ON saas_tenant_memberships TO saas_privacy_executor;
+GRANT UPDATE (status, version) ON saas_space_memberships TO saas_privacy_executor;
+GRANT UPDATE (status, version, updated_at)
+ON saas_project_memberships TO saas_privacy_executor;
+GRANT UPDATE (status, version, updated_at)
+ON saas_resource_grants TO saas_privacy_executor;
+GRANT UPDATE (
+    email_normalized, status, accepted_by, deletion_manifest_id, version, updated_at
+)
+ON saas_membership_invitations TO saas_privacy_executor;
+GRANT UPDATE (name, description, status, security_version, updated_at)
+ON saas_service_accounts TO saas_privacy_executor;
+GRANT UPDATE (status, revoked_at) ON saas_api_credentials TO saas_privacy_executor;
+GRANT UPDATE (status, version, updated_at)
+ON saas_enterprise_group_memberships TO saas_privacy_executor;
+GRANT UPDATE ON
+    saas_enterprise_scim_directories,
+    saas_enterprise_scim_users,
+    saas_enterprise_scim_groups
+TO saas_privacy_executor;
+GRANT UPDATE (result, redacted_at, redaction_manifest_id, original_result_hash)
+ON saas_enterprise_scim_events TO saas_privacy_executor;
+GRANT UPDATE ON saas_platform_user_projections TO saas_privacy_executor;
+GRANT INSERT ON saas_control_plane_outbox TO saas_privacy_executor;
+
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
 GRANT INSERT ON saas_control_plane_outbox TO saas_webhook_dispatcher;
@@ -282,6 +396,12 @@ GRANT SELECT ON
 TO saas_authenticator;
 GRANT UPDATE (last_used_at, last_used_ip) ON saas_api_credentials TO saas_authenticator;
 GRANT SELECT ON saas_membership_invitations TO saas_authenticator;
+GRANT SELECT ON saas_privacy_identity_tombstones TO saas_authenticator;
+-- The invitation privacy policy verifies a transformed row against its exact
+-- deletion Manifest. These planning-only columns remain row-empty under the
+-- Manifest table's FORCE RLS for Customer authenticator/governance sessions.
+GRANT SELECT (id, target_type, target_id)
+ON saas_privacy_deletion_manifests TO saas_authenticator, saas_governance;
 GRANT UPDATE (status, accepted_by, accepted_at, version, updated_at)
 ON saas_membership_invitations TO saas_authenticator;
 GRANT INSERT (tenant_id, user_id, role, status, version, joined_at)
@@ -318,6 +438,12 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_control_plane_outbox
 TO saas_governance;
 GRANT SELECT, INSERT ON saas_enterprise_scim_events TO saas_governance;
+GRANT SELECT ON saas_privacy_identity_tombstones TO saas_governance;
+-- The Customer app can read SCIM projections and PostgreSQL validates every
+-- table referenced by their privacy-policy predicate. Tombstone FORCE RLS
+-- still exposes zero rows to this role; these columns only permit planning.
+GRANT SELECT (manifest_id, target_user_id, tenant_id, locator_kind, locator_hash)
+ON saas_privacy_identity_tombstones TO saas_app;
 
 GRANT SELECT ON
     saas_runs,
@@ -677,5 +803,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_billing_reconciliation_mismatches,
     saas_billing_period_closes,
     saas_billing_metering_receipts,
+    saas_privacy_legal_holds,
+    saas_privacy_deletion_manifests,
+    saas_privacy_identity_tombstones,
     saas_control_plane_outbox
 TO saas_platform;

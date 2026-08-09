@@ -1172,3 +1172,38 @@ zero of ten aggregate gates ready, the ledger remains 41/51 with ten pending, an
 release remains `NO-GO`. After the matching Playwright Chromium was installed, the
 complete local SaaS shard passed 438 tests with 32 environment-conditioned skips and
 three existing dependency warnings in 247.21 seconds.
+
+The next PC5 privacy/deletion candidate advances the schema to `pc5b00000001` and the
+control-plane forced-RLS inventory to 88 tables. It introduces released/active Legal
+Hold facts, a CAS/idempotency-bound User or Tenant deletion Manifest, 15 signed surface
+outcomes, opaque OIDC/SCIM Tombstones, and a single governed SCIM receipt-redaction
+transition. The ordinary Staff governance role remains unable to select the Global User
+table; a dedicated non-login privacy executor performs target-bound erasure without
+joining the emergency role. OIDC and SCIM provisioning perform exact locator-hash
+Tombstone checks, invitation addresses are irreversibly replaced and pending invitations
+revoked, and each transformed invitation is bound to its exact deletion Manifest so a
+different Target/Manifest sees zero rows. A redacted receipt cannot be replayed or
+modified again. Legal Holds require a bounded review deadline but never auto-release,
+while completion persists the exact approval reference and rejects a mismatched replay.
+
+Targeted service/HTTP tests and a real PostgreSQL test prove Staff Cookie/Origin/CSRF,
+permission, Legal Hold priority/deadline, user and invitation PII anonymization, password
+deletion, Session and grant revocation, exact RLS, identity non-resurrection, one-time receipt redaction and
+subsequent tamper rejection. The isolated PostgreSQL logical restore also restores one
+released Hold with its review deadline, one completed 15-surface Manifest with its
+completion approval, one identity Tombstone and one
+redacted receipt while retaining 88/17 forced RLS. A clean disposable PostgreSQL run
+passes all 503 SaaS tests; the current local compatibility workflow selection passes
+1,056 tests, the
+host-appropriate hard-sandbox group passes 40 with 21 Linux-only skips, Pyrefly and
+pre-commit pass, migrations round trip without drift, the Wheel contains 274 required
+artifacts, 2/2 patches replay, and the intrusion report passes at 10 official files, 498
+net lines, two patches and a 0.9962 isolated-code ratio.
+
+The approved P0 architectural schema snapshot remains `pc5a00000003` in its immutable
+waiver record; the live implementation contract is separately `pc5b00000001` and must
+remain a linear descendant. This prevents both approval-record rewriting and unrelated
+schema substitution. Restore evidence is explicitly `ci_contract_not_production_drill`;
+the exact committed-SHA compatibility and image workflows still must pass, and real
+all-media deletion, retention expiry, PITR, IdP, SLO/capacity, commercial and enterprise
+evidence remain blocked. The production result stays 0/10 and `NO-GO`.

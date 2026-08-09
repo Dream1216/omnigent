@@ -39,6 +39,8 @@ from saas.control_plane.enterprise_models import (
 )
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.permissions import TENANT_ROLE_PERMISSIONS
+from saas.control_plane.privacy_lifecycle import scim_user_locator_hash
+from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scim_syntax import ScimFilterExpression, expected_core_schema
 
@@ -749,6 +751,26 @@ class EnterpriseScimService:
         request_hash = _hash(request_payload)
         with self._session_factory.begin() as db:
             directory = self._authenticate(db, bearer_token)
+            locator = scim_user_locator_hash(directory.id, external)
+            apply_rls_context(
+                db,
+                RlsContext(
+                    tenant_id=directory.tenant_id,
+                    scim_token_hash=_digest(bearer_token),
+                    privacy_locator_hash=locator,
+                ),
+            )
+            if (
+                db.execute(
+                    sa.select(PrivacyIdentityTombstoneRecord.id).where(
+                        PrivacyIdentityTombstoneRecord.locator_hash == locator
+                    )
+                ).scalar_one_or_none()
+                is not None
+            ):
+                raise LifecycleError(
+                    "scim_subject_deleted", "deleted SCIM subjects cannot be reprovisioned"
+                )
             replay = self._event_replay(db, directory.id, event_key, request_hash)
             if replay is not None:
                 return self._user_result(replay.result, replayed=True)
@@ -2064,6 +2086,10 @@ class EnterpriseScimService:
         ).scalar_one_or_none()
         if event is not None and event.request_hash != request_hash:
             raise LifecycleError("scim_event_conflict", "SCIM event ID has a different request")
+        if event is not None and event.redacted_at is not None:
+            raise LifecycleError(
+                "scim_subject_deleted", "redacted SCIM receipts cannot be replayed"
+            )
         return event
 
     @staticmethod

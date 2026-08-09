@@ -37,6 +37,14 @@ def test_current_adr_contract_is_approved_by_explicit_degraded_waiver() -> None:
     assert report["blockers"] == []
 
 
+def test_approved_architecture_schema_is_separate_from_current_implementation_head() -> None:
+    baseline = _baseline()
+
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == "pc5a00000003"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "pc5b00000001"  # type: ignore[index]
+    assert validate_approval_contract(_repo(), baseline)["status"] == "pass"
+
+
 def test_decision_bundle_detects_document_tampering(tmp_path: Path) -> None:
     shutil.copytree(_repo() / "saas/production", tmp_path / "saas/production")
     candidate_path = tmp_path / "saas/production/adr-approval-candidate.json"
