@@ -1,4 +1,4 @@
-"""Derive all aggregate production gates from authoritative evidence."""
+"""Verify cryptographic admission of every production evidence document."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from saas.production.readiness import validate_production_readiness
+from saas.production.admission import validate_evidence_admission
 
 
 def main() -> int:
@@ -19,8 +19,13 @@ def main() -> int:
         parser.error("--require-ready requires --product-revision")
     repo = Path(__file__).resolve().parents[2]
     try:
-        report = validate_production_readiness(
-            repo, expected_product_revision=args.product_revision
+        policy = json.loads(
+            (repo / "saas/production/evidence-admission-policy.json").read_text(encoding="utf-8")
+        )
+        report = validate_evidence_admission(
+            repo,
+            policy,
+            expected_product_revision=args.product_revision,
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
