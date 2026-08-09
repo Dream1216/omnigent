@@ -706,7 +706,8 @@ class PrivacyLifecycleService:
                 "approval_ref_hash": _digest(approval),
                 "completed_at": changed_at.isoformat(),
             }
-            manifest.manifest_hash = _digest(manifest_payload)
+            completed_manifest_hash = _digest(manifest_payload)
+            manifest.manifest_hash = completed_manifest_hash
             manifest.completion_approval_ref = approval
             manifest.status = "completed"
             manifest.completed_at = changed_at
@@ -719,11 +720,11 @@ class PrivacyLifecycleService:
                 target_id=target_id,
                 event_type="privacy.deletion.completed",
                 idempotency_key=f"deletion-complete:{manifest.id}",
-                request_hash=manifest.manifest_hash,
+                request_hash=completed_manifest_hash,
                 payload={
                     "manifest_id": str(manifest.id),
                     "target_type": target_type,
-                    "manifest_hash": manifest.manifest_hash,
+                    "manifest_hash": completed_manifest_hash,
                 },
                 occurred_at=changed_at,
             )
