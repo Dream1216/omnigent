@@ -586,6 +586,7 @@ class WorktreeControlPlane:
                     run_id=run.id,
                     runner_id=runner.id,
                     created_by=run.created_by,
+                    created_by_service_account_id=run.created_by_service_account_id,
                     opaque_runtime_key=runtime_key,
                     access_mode=access_mode,
                     status="reserved",

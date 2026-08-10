@@ -30,6 +30,7 @@ from saas.control_plane.platform_security import (
     PlatformSecurityError,
     ValidatedPlatformPrincipal,
 )
+from saas.control_plane.privacy_lifecycle import require_no_privacy_restore_authority
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
@@ -713,6 +714,8 @@ class PlatformLifecycleService:
             self._bind(db, actor, user_id=user_id)
             self._serialize(db, actor.principal_id, key)
             self._authorize(db, actor, permission, changed_at)
+            if action == "user_restore":
+                require_no_privacy_restore_authority(db, "global_user", user_id)
             replay = self._replay(db, actor.principal_id, key, request_hash)
             if replay is not None:
                 return replay
@@ -833,6 +836,8 @@ class PlatformLifecycleService:
             self._bind(db, actor, tenant_id=tenant_id)
             self._serialize(db, actor.principal_id, key)
             self._authorize(db, actor, "platform.tenant.lifecycle.manage", changed_at)
+            if action == "tenant_restore":
+                require_no_privacy_restore_authority(db, "tenant", tenant_id)
             replay = self._replay(db, actor.principal_id, key, request_hash)
             if replay is not None:
                 return replay

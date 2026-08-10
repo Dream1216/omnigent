@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
@@ -38,7 +39,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "pc5b00000001"
+        assert revision == "pc5a00000005"
         preflight_indexes = {
             value["name"] for value in inspector.get_indexes("saas_enterprise_access_preflights")
         }
@@ -189,4 +190,76 @@ def test_enterprise_lifecycle_migration_backfills_legacy_terminal_states() -> No
         assert role.retired_at is not None
         assert role.retired_by == user_id.hex
         assert role.retire_reason == "legacy-state-backfill:p6a000000003"
+    engine.dispose()
+
+
+def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "head")
+        inspector = sa.inspect(connection)
+        assert {"provider_type", "attribute_mapping"} <= {
+            column["name"]
+            for column in inspector.get_columns("saas_enterprise_scim_directories")
+        }
+        assert {"core_attributes", "enterprise_attributes"} <= {
+            column["name"]
+            for column in inspector.get_columns("saas_enterprise_scim_users")
+        }
+
+        now = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
+        user_id, tenant_id, directory_id = uuid4(), uuid4(), uuid4()
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_global_users "
+                "(id, status, security_version, created_at, updated_at) "
+                "VALUES (:id, 'active', 1, :now, :now)"
+            ),
+            {"id": user_id.hex, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_tenants "
+                "(id, slug, name, status, plan, home_region, created_at, updated_at) "
+                "VALUES (:id, 'scim-migration', 'SCIM Migration', 'active', "
+                "'enterprise', 'cn-east-1', :now, :now)"
+            ),
+            {"id": tenant_id.hex, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_enterprise_scim_directories "
+                "(id, tenant_id, display_name, provider_type, attribute_mapping, "
+                "token_hash, token_prefix, status, version, configured_by, "
+                "created_at, updated_at) "
+                "VALUES (:id, :tenant_id, 'Migration IdP', 'okta', :mapping, :token_hash, "
+                "'omniscim_migration', 'active', 1, :configured_by, :now, :now)"
+            ),
+            {
+                "id": directory_id.hex,
+                "tenant_id": tenant_id.hex,
+                "mapping": (
+                    '{"department":"urn:ietf:params:scim:schemas:extension:'
+                    'enterprise:2.0:User:department"}'
+                ),
+                "token_hash": "a" * 64,
+                "configured_by": user_id.hex,
+                "now": now,
+            },
+        )
+
+        with pytest.raises(RuntimeError, match="cannot downgrade SCIM schema extensions"):
+            command.downgrade(config, "pc6a00000001")
+
+        connection.execute(
+            sa.text("DELETE FROM saas_enterprise_scim_directories WHERE id = :id"),
+            {"id": directory_id.hex},
+        )
+        command.downgrade(config, "pc6a00000001")
+        downgraded = sa.inspect(connection)
+        assert "provider_type" not in {
+            column["name"]
+            for column in downgraded.get_columns("saas_enterprise_scim_directories")
+        }
     engine.dispose()

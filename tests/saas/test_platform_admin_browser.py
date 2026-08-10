@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import (
     AuditSigningKey,
+    DeletionEvidenceKey,
     GlobalUser,
     IdentityConflict,
     PlatformAuthorizationService,
@@ -32,6 +33,7 @@ from saas.control_plane import (
     PlatformProjectionService,
     PlatformRoleAssignmentRecord,
     PlatformSessionService,
+    PrivacyLifecycleService,
     SaasBase,
     StaffIdentityAssertion,
     Tenant,
@@ -40,6 +42,7 @@ from saas.control_plane import (
     UserProjectionInput,
     create_platform_admin_app,
 )
+from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 
 _AUDIENCE = "omnigent-platform-admin"
 _COOKIE = "__Host-omnigent_platform_session"
@@ -56,11 +59,15 @@ class PlatformAdminFixture:
     origin: str
     operator: BrowserIdentity
     auditor: BrowserIdentity
+    privacy_reader: BrowserIdentity
     support: BrowserIdentity
     roleless: BrowserIdentity
     user_id: UUID
     tenant_id: UUID
     conflict_id: UUID
+    privacy_user_id: UUID
+    privacy_request_user_id: UUID
+    privacy_manifest_id: UUID
 
 
 def _write_certificate(directory: Path) -> tuple[Path, Path]:
@@ -122,14 +129,21 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
             subject=name,
             now=now,
         )
-        for name in ("operator", "auditor", "support", "roleless")
+        for name in ("operator", "auditor", "privacy_reader", "support", "roleless")
     }
     role_by_name = {
         "operator": "platform_operator",
         "auditor": "compliance_operator",
+        "privacy_reader": "platform_security_auditor",
         "support": "support_agent",
     }
-    user_id, tenant_id, conflict_id = uuid4(), uuid4(), uuid4()
+    user_id, tenant_id, conflict_id, privacy_user_id, privacy_request_user_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
     with factory.begin() as db:
         db.add_all(
             PlatformRoleAssignmentRecord(
@@ -151,6 +165,24 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
                     id=user_id,
                     display_name="Contoso Owner",
                     status="active",
+                    security_version=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                GlobalUser(
+                    id=privacy_user_id,
+                    display_name="Privacy Browser Subject",
+                    primary_email_normalized="privacy-browser@example.test",
+                    status="suspended",
+                    security_version=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                GlobalUser(
+                    id=privacy_request_user_id,
+                    display_name="Governed Privacy Subject",
+                    primary_email_normalized="governed-privacy-secret@example.test",
+                    status="suspended",
                     security_version=1,
                     created_at=now,
                     updated_at=now,
@@ -254,6 +286,39 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         now=now + timedelta(seconds=2),
     )
 
+    privacy = PrivacyLifecycleService(
+        factory,
+        evidence_verifier=DeletionEvidenceKey("p1-browser-evidence", b"e" * 32),
+    )
+    privacy_operations = PrivacyOperationService(
+        factory,
+        lifecycle=privacy,
+        locator_key=PrivacyLocatorKey("p1-browser-locator", b"l" * 32),
+    )
+    privacy_actor = sessions.validate_session(
+        issued["auditor"].token,
+        origin=origin,
+        audience=_AUDIENCE,
+        now=now + timedelta(seconds=1),
+    )
+    privacy_preview = privacy.preview_deletion(
+        privacy_actor,
+        target_type="global_user",
+        target_id=privacy_user_id,
+        now=now + timedelta(seconds=2),
+    )
+    privacy_manifest = privacy.start_deletion(
+        privacy_actor,
+        target_type="global_user",
+        target_id=privacy_user_id,
+        expected_target_version=privacy_preview.target_version,
+        preview_hash=privacy_preview.preview_hash,
+        approval_ref="APPROVAL-P1-PRIVACY-BROWSER",
+        reason="seed read-only Privacy evidence workbench",
+        idempotency_key="p1-privacy-browser-seed",
+        now=now + timedelta(seconds=3),
+    )
+
     app = create_platform_admin_app(
         config=PlatformHttpConfig(enabled=True, origin=origin, audience=_AUDIENCE),
         sessions=sessions,
@@ -261,6 +326,8 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         projections=projections,
         lifecycle=PlatformLifecycleService(factory),
         governed_access=governed,
+        privacy=privacy,
+        privacy_operations=privacy_operations,
     )
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
@@ -289,11 +356,15 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
             origin=origin,
             operator=issued["operator"],
             auditor=issued["auditor"],
+            privacy_reader=issued["privacy_reader"],
             support=issued["support"],
             roleless=issued["roleless"],
             user_id=user_id,
             tenant_id=tenant_id,
             conflict_id=conflict_id,
+            privacy_user_id=privacy_user_id,
+            privacy_request_user_id=privacy_request_user_id,
+            privacy_manifest_id=privacy_manifest.manifest_id,
         )
     finally:
         server.should_exit = True
@@ -404,6 +475,42 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
     finally:
         operator_context.close()
 
+    auditor_context = _context(browser, fixture, fixture.privacy_reader)
+    auditor = _open_console(auditor_context, fixture)
+    try:
+        auditor.get_by_test_id("nav-privacy").click()
+        expect(auditor.get_by_test_id("view-privacy")).to_be_visible()
+        auditor.get_by_test_id("privacy-target-id").fill(str(fixture.privacy_user_id))
+        auditor.get_by_test_id("privacy-inspect").click()
+        expect(auditor.get_by_test_id("privacy-message")).to_have_text(
+            "AUTHORITATIVE READ COMPLETE"
+        )
+        expect(auditor.get_by_test_id("privacy-workbench")).to_be_visible()
+        expect(auditor.locator("#privacy-target-state")).to_have_text("SUSPENDED")
+        expect(auditor.get_by_test_id("privacy-manifests-list")).to_contain_text(
+            str(fixture.privacy_manifest_id)
+        )
+        expect(auditor.get_by_test_id("privacy-surface-grid").locator("article")).to_have_count(15)
+        expect(auditor.locator("#privacy-surface-progress")).to_have_text("00/15")
+        expect(auditor.get_by_test_id("privacy-production-boundary")).to_contain_text(
+            "CONTROL-PLANE MANIFEST"
+        )
+        expect(auditor.locator("body")).not_to_contain_text("privacy-browser@example.test")
+        auditor.reload()
+        expect(auditor.locator("#console-shell")).to_have_attribute("aria-busy", "false")
+        expect(auditor.get_by_test_id("view-privacy")).to_be_visible()
+        expect(auditor.get_by_test_id("privacy-surface-grid").locator("article")).to_have_count(15)
+
+        auditor.get_by_test_id("privacy-target-id").fill(str(uuid4()))
+        auditor.get_by_test_id("privacy-inspect").click()
+        expect(auditor.get_by_test_id("privacy-message")).to_contain_text("not found")
+        expect(auditor.get_by_test_id("privacy-workbench")).to_be_hidden()
+
+        expect(auditor.get_by_test_id("nav-audit")).to_be_enabled()
+        expect(auditor.get_by_test_id("view-privacy")).not_to_contain_text("START DELETION")
+    finally:
+        auditor_context.close()
+
     auditor_context = _context(browser, fixture, fixture.auditor)
     auditor = _open_console(auditor_context, fixture)
     try:
@@ -434,6 +541,7 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
     try:
         expect(support.get_by_test_id("nav-users")).to_be_enabled()
         expect(support.get_by_test_id("nav-access")).to_be_disabled()
+        expect(support.get_by_test_id("nav-privacy")).to_be_disabled()
         support.get_by_test_id("nav-support").click()
         issue_session = support.locator('[data-testid^="support-session-"]')
         expect(issue_session).to_have_count(1)
@@ -453,9 +561,102 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         expect(roleless.get_by_test_id("nav-users")).to_be_disabled()
         expect(roleless.get_by_test_id("nav-tenants")).to_be_disabled()
         expect(roleless.get_by_test_id("nav-support")).to_be_disabled()
+        expect(roleless.get_by_test_id("nav-privacy")).to_be_disabled()
         expect(roleless.get_by_test_id("nav-audit")).to_be_disabled()
     finally:
         roleless_context.close()
+
+
+def _privacy_governed_action_matrix(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    target_id = str(fixture.privacy_request_user_id)
+    secret_email = "governed-privacy-secret@example.test"
+
+    reader_context = _context(browser, fixture, fixture.privacy_reader)
+    reader = _open_console(reader_context, fixture)
+    try:
+        reader.set_viewport_size({"width": 390, "height": 844})
+        reader.get_by_test_id("nav-privacy").click()
+        reader.get_by_test_id("privacy-target-id").fill(target_id)
+        reader.get_by_test_id("privacy-inspect").click()
+        expect(reader.get_by_test_id("privacy-message")).to_have_text(
+            "AUTHORITATIVE READ COMPLETE"
+        )
+        expect(reader.get_by_test_id("privacy-request-deletion")).to_be_hidden()
+        expect(reader.get_by_test_id("privacy-request-finalization")).to_be_hidden()
+        expect(reader.locator('[data-testid^="privacy-operation-approve-"]')).to_have_count(0)
+        assert reader.get_by_test_id("privacy-inspect").evaluate(
+            "button => button.getBoundingClientRect().height >= 44"
+        )
+        assert reader.locator("#privacy-target-version").evaluate(
+            "node => parseFloat(getComputedStyle(node).fontSize) >= 12"
+        )
+        assert reader.locator("html").evaluate("html => html.scrollWidth <= html.clientWidth")
+        expect(reader.locator("body")).not_to_contain_text(secret_email)
+        expect(reader.locator("body")).not_to_contain_text("resource_handle_ref")
+        expect(reader.locator("body")).not_to_contain_text("lease_token_hash")
+    finally:
+        reader_context.close()
+
+    requester_context = _context(browser, fixture, fixture.auditor)
+    requester = _open_console(requester_context, fixture)
+    try:
+        requester.get_by_test_id("nav-privacy").click()
+        requester.get_by_test_id("privacy-target-id").fill(target_id)
+        requester.get_by_test_id("privacy-inspect").click()
+        expect(requester.get_by_test_id("privacy-message")).to_have_text(
+            "AUTHORITATIVE READ COMPLETE"
+        )
+        expect(requester.get_by_test_id("privacy-request-deletion")).to_be_enabled()
+        requester.get_by_test_id("privacy-request-deletion").click()
+        dialog = requester.get_by_test_id("privacy-command-dialog")
+        expect(dialog).to_be_visible()
+        expect(dialog).to_contain_text("CONTENT-BLIND BINDING")
+        requester.locator("#privacy-case-reference").fill("DSR-BROWSER-GOVERNED-001")
+        requester.get_by_test_id("privacy-dialog-confirm").click()
+        expect(dialog).to_be_hidden()
+        expect(requester.get_by_test_id("privacy-operation-list")).to_contain_text(
+            "PENDING STAFF APPROVAL"
+        )
+        expect(requester.get_by_test_id("privacy-operation-list")).to_contain_text(
+            "REQUESTED BY YOU"
+        )
+        expect(requester.locator('[data-testid^="privacy-operation-approve-"]')).to_have_count(0)
+        expect(requester.locator("body")).not_to_contain_text(secret_email)
+        expect(requester.locator("body")).not_to_contain_text("DSR-BROWSER-GOVERNED-001")
+    finally:
+        requester_context.close()
+
+    approver_context = _context(browser, fixture, fixture.operator)
+    approver = _open_console(approver_context, fixture)
+    try:
+        approver.get_by_test_id("nav-privacy").click()
+        approver.get_by_test_id("privacy-target-id").fill(target_id)
+        approver.get_by_test_id("privacy-inspect").click()
+        expect(approver.get_by_test_id("privacy-message")).to_have_text(
+            "AUTHORITATIVE READ COMPLETE"
+        )
+        approve = approver.locator('[data-testid^="privacy-operation-approve-"]')
+        expect(approve).to_have_count(1)
+        expect(approve).to_be_enabled()
+        approve.click()
+        decision = approver.get_by_test_id("privacy-command-dialog")
+        expect(decision).to_be_visible()
+        expect(decision).to_contain_text("SEPARATION OF DUTIES")
+        approver.get_by_test_id("privacy-dialog-confirm").click()
+        expect(decision).to_be_hidden()
+        expect(approver.get_by_test_id("privacy-operation-list")).to_contain_text("SUCCEEDED")
+        expect(approver.get_by_test_id("privacy-manifests-list")).to_contain_text("MANIFEST")
+        expect(approver.locator("#privacy-work-count")).to_have_text("15 ITEMS")
+        expect(approver.get_by_test_id("privacy-work-items").locator("article")).to_have_count(15)
+        expect(approver.get_by_test_id("privacy-surface-grid").locator("article")).to_have_count(
+            15
+        )
+        expect(approver.locator("body")).not_to_contain_text(secret_email)
+        expect(approver.locator("body")).not_to_contain_text("resource_handle_ref")
+        expect(approver.locator("body")).not_to_contain_text("envelope_uri")
+        expect(approver.locator("body")).not_to_contain_text("signer_key_id")
+    finally:
+        approver_context.close()
 
 
 def _run_in_browser_thread(
@@ -488,3 +689,9 @@ def test_real_chromium_platform_console_role_page_and_action_matrix(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _role_page_action_matrix)
+
+
+def test_real_chromium_privacy_governed_request_approval_and_content_blindness(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _privacy_governed_action_matrix)

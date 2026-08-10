@@ -6,7 +6,7 @@
   "revision_contract": {
     "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "pc5b00000001"
+    "control_plane_schema_revision": "pc5a00000005"
   },
   "evidence_directory": "saas/production/enterprise-evidence",
   "max_evidence_age_days": 30,
@@ -14,7 +14,25 @@
     "staff_idp": ["privileged_mfa", "session_revocation", "recovery_fail_closed"],
     "customer_oidc": ["code_pkce", "domain_claim", "jit_policy"],
     "customer_saml": ["signed_response", "audience_recipient", "replay_rejection"],
-    "scim": ["token_rotation", "out_of_order_convergence", "deprovision_no_resurrection"]
+    "scim": ["token_rotation", "out_of_order_convergence", "deprovision_no_resurrection"],
+    "scim_microsoft_entra": [
+      "test_connection",
+      "on_demand_user_and_group",
+      "multivalue_mapping",
+      "deprovision_no_resurrection"
+    ],
+    "scim_okta": [
+      "private_integration_crud",
+      "group_push",
+      "multivalue_mapping",
+      "deprovision_no_resurrection"
+    ],
+    "scim_google_workspace": [
+      "catalog_or_approved_connector",
+      "user_and_group_sync",
+      "suspend_and_restore",
+      "deprovision_no_resurrection"
+    ]
   },
   "required_checks": [
     "staff_realm_and_origin_isolated",
@@ -22,6 +40,9 @@
     "oidc_domain_claim_and_jit_enforced",
     "saml_signature_audience_and_replay_enforced",
     "scim_lifecycle_converged",
+    "scim_microsoft_entra_e2e_verified",
+    "scim_okta_e2e_verified",
+    "scim_google_workspace_e2e_verified",
     "privileged_mfa_and_recovery_enforced",
     "group_and_custom_role_lifecycle_enforced",
     "support_and_break_glass_governed",
@@ -36,6 +57,9 @@
     "domain_claim_conflict",
     "saml_replay",
     "scim_duplicate_and_reorder",
+    "scim_microsoft_entra_attribute_and_scope_drift",
+    "scim_okta_attribute_and_group_push_drift",
+    "scim_google_workspace_suspend_restore_drift",
     "scim_owner_deprovision",
     "mfa_enrollment_and_challenge",
     "account_recovery",
@@ -56,6 +80,9 @@
     "enterprise_tenant_count",
     "federated_login_count",
     "scim_operation_count",
+    "scim_microsoft_entra_operation_count",
+    "scim_okta_operation_count",
+    "scim_google_workspace_operation_count",
     "privileged_mfa_challenge_count"
   ],
   "minimum_customer_acceptances": 1,

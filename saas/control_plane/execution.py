@@ -1048,6 +1048,7 @@ class ExecutionControlPlane:
                     object_uri=cleaned_uri,
                     source_revision=cleaned_revision,
                     created_by=run.created_by,
+                    created_by_service_account_id=run.created_by_service_account_id,
                     metadata_json=metadata,
                 )
                 db.add(artifact)

@@ -606,9 +606,11 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() 
     engine.dispose()
 
 
-def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed() -> None:
+def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
 
     with engine.begin() as connection:
         _migrate(connection, root)

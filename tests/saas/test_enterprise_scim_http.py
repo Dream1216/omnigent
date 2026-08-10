@@ -25,6 +25,7 @@ from saas.control_plane.enterprise_scim_http import create_enterprise_scim_route
 
 _USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 _GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
+_ENTERPRISE_USER_SCHEMA = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
 _PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 _BULK_REQUEST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkRequest"
 _BULK_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkResponse"
@@ -162,6 +163,39 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     assert config.json()["filter"] == {"supported": True, "maxResults": 100}
     assert config.json()["sort"] == {"supported": True}
 
+    resource_types = client.get("/saas/scim/v2/ResourceTypes")
+    assert resource_types.status_code == 200
+    assert resource_types.headers["content-type"].startswith("application/scim+json")
+    assert [resource["id"] for resource in resource_types.json()["Resources"]] == [
+        "User",
+        "Group",
+    ]
+    user_resource = client.get("/saas/scim/v2/ResourceTypes/User")
+    assert user_resource.status_code == 200
+    assert user_resource.json()["schema"] == _USER_SCHEMA
+    assert user_resource.json()["schemaExtensions"][0] == {
+        "schema": _ENTERPRISE_USER_SCHEMA,
+        "required": False,
+    }
+
+    schemas = client.get("/saas/scim/v2/Schemas")
+    assert schemas.status_code == 200
+    assert schemas.json()["totalResults"] == 5
+    enterprise_schema = client.get(f"/saas/scim/v2/Schemas/{_ENTERPRISE_USER_SCHEMA}")
+    assert enterprise_schema.status_code == 200
+    assert [
+        attribute["name"] for attribute in enterprise_schema.json()["attributes"]
+    ] == [
+        "employeeNumber",
+        "costCenter",
+        "organization",
+        "division",
+        "department",
+        "manager",
+    ]
+    assert client.get("/saas/scim/v2/ResourceTypes/Device").status_code == 404
+    assert client.get("/saas/scim/v2/Schemas/urn:example:missing").status_code == 404
+
     invalid = client.post(
         "/saas/scim/v2/Users",
         headers={"Authorization": "Bearer invalid", "Idempotency-Key": "invalid-user"},
@@ -206,6 +240,20 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     assert group.headers["etag"] == 'W/"1"'
     group_id = group.json()["id"]
     assert group.json()["members"][0]["value"] == user_id
+    projected_group = client.get(
+        f"/saas/scim/v2/Groups/{group_id}",
+        headers=headers,
+        params={"attributes": "displayName,members.value"},
+    )
+    assert projected_group.status_code == 200
+    assert set(projected_group.json()) == {
+        "schemas",
+        "id",
+        "meta",
+        "displayName",
+        "members",
+    }
+    assert projected_group.json()["members"] == [{"value": user_id}]
 
     deprovision = client.patch(
         f"/saas/scim/v2/Users/{user_id}",
@@ -1364,3 +1412,325 @@ def test_scim_bulk_back_references_replay_conflict_limits_and_fail_on_errors() -
     assert too_many.status_code == 413
     assert "maxOperations (32)" in too_many.json()["detail"]
     assert "scimType" not in too_many.json()
+
+
+def test_scim_idp_configuration_profile_list_get_update_and_replay() -> None:
+    client, _, tenant_id, directory_id = _app()
+    collection = f"/saas/tenants/{tenant_id}/enterprise/scim-directories"
+
+    listed = client.get(collection)
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "no-store"
+    assert listed.json()["total"] == 1
+    original = listed.json()["items"][0]
+    assert original["provider_type"] == "generic"
+    assert original["bearer_token"] is None
+    assert original["endpoints"]["schemas"].endswith("/saas/scim/v2/Schemas")
+
+    item_path = f"{collection}/{directory_id}"
+    fetched = client.get(item_path)
+    assert fetched.status_code == 200
+    assert fetched.json()["token_prefix"].startswith("omniscim_")
+    assert "token_hash" not in fetched.json()
+
+    configuration_path = f"{item_path}/configuration"
+    body = {
+        "expected_version": 1,
+        "providerType": "microsoft_entra",
+        "attributeMapping": {
+            "extensionAttribute1": f"{_ENTERPRISE_USER_SCHEMA}:costCenter"
+        },
+    }
+    configured = client.put(
+        configuration_path,
+        headers={"Idempotency-Key": "configure-entra"},
+        json=body,
+    )
+    assert configured.status_code == 200
+    assert configured.json()["version"] == 2
+    assert configured.json()["provider_type"] == "microsoft_entra"
+    assert configured.json()["idp_profile"]["attributeMappings"][
+        "extensionAttribute1"
+    ] == f"{_ENTERPRISE_USER_SCHEMA}:costCenter"
+
+    replay = client.put(
+        configuration_path,
+        headers={"Idempotency-Key": "configure-entra"},
+        json=body,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["bearer_token"] is None
+
+    conflict = client.put(
+        configuration_path,
+        headers={"Idempotency-Key": "configure-entra"},
+        json={**body, "providerType": "okta"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "idempotency_conflict"
+
+    duplicate_targets = client.put(
+        configuration_path,
+        headers={"Idempotency-Key": "configure-duplicate-targets"},
+        json={
+            "expected_version": 2,
+            "providerType": "okta",
+            "attributeMapping": {
+                "department": f"{_ENTERPRISE_USER_SCHEMA}:department",
+                "division": f"{_ENTERPRISE_USER_SCHEMA}:department",
+            },
+        },
+    )
+    assert duplicate_targets.status_code == 400
+    assert duplicate_targets.json()["detail"]["code"] == "scim_idp_mapping_invalid"
+
+
+def test_scim_enterprise_user_optional_attributes_filters_patch_and_replace() -> None:
+    client, token, _, _ = _app()
+    headers = {"Authorization": f"Bearer {token}"}
+    enterprise = {
+        "employeeNumber": "E-1001",
+        "costCenter": "CC-42",
+        "organization": "Omnigent",
+        "division": "Product",
+        "department": "Engineering",
+        "manager": {"value": str(uuid4()), "$ref": "/Users/manager"},
+    }
+    created = client.post(
+        "/saas/scim/v2/Users",
+        headers={**headers, "Idempotency-Key": "enterprise-user-create"},
+        json={
+            "schemas": [_USER_SCHEMA, _ENTERPRISE_USER_SCHEMA],
+            "externalId": "enterprise-user",
+            "userName": "enterprise.user@example.test",
+            "displayName": "Enterprise User",
+            "name": {"givenName": "Ada", "familyName": "Lovelace"},
+            "title": "Staff Engineer",
+            "preferredLanguage": "en-US",
+            "emails": [
+                {"value": "enterprise.user@example.test", "type": "work", "primary": True},
+                {"value": "ada@example.test", "type": "home"},
+            ],
+            "phoneNumbers": [{"value": "+1-555-0100", "type": "work"}],
+            "addresses": [
+                {
+                    "streetAddress": "1 Computing Lane",
+                    "locality": "London",
+                    "country": "GB",
+                    "type": "work",
+                    "primary": True,
+                }
+            ],
+            _ENTERPRISE_USER_SCHEMA: enterprise,
+            "active": True,
+        },
+    )
+    assert created.status_code == 201
+    payload = created.json()
+    user_id = payload["id"]
+    assert payload["name"]["givenName"] == "Ada"
+    assert payload["emails"][0]["primary"] is True
+    assert payload[_ENTERPRISE_USER_SCHEMA]["department"] == "Engineering"
+    assert _ENTERPRISE_USER_SCHEMA in payload["schemas"]
+
+    by_name = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'name.givenName eq "ada"'},
+    )
+    assert by_name.status_code == 200
+    assert by_name.json()["totalResults"] == 1
+    by_department = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={
+            "filter": (
+                f'{_ENTERPRISE_USER_SCHEMA}:department eq "engineering"'
+            )
+        },
+    )
+    assert by_department.status_code == 200
+    assert by_department.json()["totalResults"] == 1
+
+    by_work_email = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={
+            "filter": (
+                'emails[type eq "work" and value co "enterprise.user"]'
+            )
+        },
+    )
+    assert by_work_email.status_code == 200
+    assert by_work_email.json()["totalResults"] == 1
+    by_phone = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'phoneNumbers[value sw "+1-555"]'},
+    )
+    assert by_phone.status_code == 200
+    assert by_phone.json()["totalResults"] == 1
+    by_address = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'addresses[country eq "gb" and primary eq true]'},
+    )
+    assert by_address.status_code == 200
+    assert by_address.json()["totalResults"] == 1
+    by_direct_value = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'emails.value eq "enterprise.user@example.test"'},
+    )
+    assert by_direct_value.status_code == 200
+    assert by_direct_value.json()["totalResults"] == 1
+
+    projected = client.get(
+        f"/saas/scim/v2/Users/{user_id}",
+        headers=headers,
+        params={
+            "attributes": (
+                "userName,name.givenName,emails.value,"
+                f"{_ENTERPRISE_USER_SCHEMA}:department"
+            )
+        },
+    )
+    assert projected.status_code == 200
+    projected_payload = projected.json()
+    assert set(projected_payload) == {
+        "schemas",
+        "id",
+        "meta",
+        "userName",
+        "name",
+        "emails",
+        _ENTERPRISE_USER_SCHEMA,
+    }
+    assert projected_payload["name"] == {"givenName": "Ada"}
+    assert projected_payload["emails"] == [
+        {"value": "enterprise.user@example.test"},
+        {"value": "ada@example.test"},
+    ]
+    assert projected_payload[_ENTERPRISE_USER_SCHEMA] == {
+        "department": "Engineering"
+    }
+
+    excluded = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={
+            "excludedAttributes": (
+                "displayName,emails.type,"
+                f"{_ENTERPRISE_USER_SCHEMA}:manager"
+            )
+        },
+    )
+    assert excluded.status_code == 200
+    excluded_user = excluded.json()["Resources"][0]
+    assert "displayName" not in excluded_user
+    assert all("type" not in email for email in excluded_user["emails"])
+    assert "manager" not in excluded_user[_ENTERPRISE_USER_SCHEMA]
+    ambiguous_projection = client.get(
+        f"/saas/scim/v2/Users/{user_id}",
+        headers=headers,
+        params={"attributes": "userName", "excludedAttributes": "displayName"},
+    )
+    assert ambiguous_projection.status_code == 400
+    assert ambiguous_projection.json()["scimType"] == "invalidValue"
+
+    invalid_multivalue_filter = client.get(
+        "/saas/scim/v2/Users",
+        headers=headers,
+        params={"filter": 'emails[primary eq "true"]'},
+    )
+    assert invalid_multivalue_filter.status_code == 400
+    assert invalid_multivalue_filter.json()["scimType"] == "invalidFilter"
+
+    patched = client.patch(
+        f"/saas/scim/v2/Users/{user_id}",
+        headers={
+            **headers,
+            "If-Match": 'W/"1"',
+            "Idempotency-Key": "enterprise-user-patch",
+        },
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {"op": "replace", "path": "name.givenName", "value": "Grace"},
+                {
+                    "op": "replace",
+                    "path": f"{_ENTERPRISE_USER_SCHEMA}:department",
+                    "value": "Research",
+                },
+                {
+                    "op": "replace",
+                    "path": 'emails[type eq "work"].value',
+                    "value": "grace@example.test",
+                },
+            ],
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.headers["etag"] == 'W/"2"'
+    assert patched.json()["name"]["givenName"] == "Grace"
+    assert patched.json()[_ENTERPRISE_USER_SCHEMA]["department"] == "Research"
+    assert patched.json()["emails"][0]["value"] == "grace@example.test"
+
+    immutable_manager_display = client.patch(
+        f"/saas/scim/v2/Users/{user_id}",
+        headers={
+            **headers,
+            "If-Match": 'W/"2"',
+            "Idempotency-Key": "enterprise-manager-display",
+        },
+        json={
+            "schemas": [_PATCH_SCHEMA],
+            "Operations": [
+                {
+                    "op": "replace",
+                    "path": f"{_ENTERPRISE_USER_SCHEMA}:manager.displayName",
+                    "value": "Read Only",
+                }
+            ],
+        },
+    )
+    assert immutable_manager_display.status_code == 400
+    assert immutable_manager_display.json()["scimType"] == "mutability"
+
+    replaced = client.put(
+        f"/saas/scim/v2/Users/{user_id}",
+        headers={
+            **headers,
+            "If-Match": 'W/"2"',
+            "Idempotency-Key": "enterprise-user-replace",
+        },
+        json={
+            "schemas": [_USER_SCHEMA],
+            "externalId": "enterprise-user",
+            "userName": "enterprise.user@example.test",
+            "displayName": "Minimal User",
+            "active": True,
+        },
+    )
+    assert replaced.status_code == 200
+    assert replaced.headers["etag"] == 'W/"3"'
+    assert "name" not in replaced.json()
+    assert "emails" not in replaced.json()
+    assert _ENTERPRISE_USER_SCHEMA not in replaced.json()
+
+    duplicate_primary = client.post(
+        "/saas/scim/v2/Users",
+        headers={**headers, "Idempotency-Key": "duplicate-primary"},
+        json={
+            "schemas": [_USER_SCHEMA],
+            "externalId": "duplicate-primary",
+            "userName": "duplicate.primary@example.test",
+            "emails": [
+                {"value": "one@example.test", "primary": True},
+                {"value": "two@example.test", "primary": True},
+            ],
+        },
+    )
+    assert duplicate_primary.status_code == 400
+    assert duplicate_primary.json()["scimType"] == "invalidSyntax"

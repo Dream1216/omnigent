@@ -202,7 +202,59 @@ class ProjectAuthorizer:
         mode: str = "enforce",
         now: datetime | None = None,
     ) -> AuthorizationDecision:
-        """Evaluate within an already Space-scoped transaction and append an audit record."""
+        """Evaluate and append the required immutable authorization decision."""
+
+        return self._evaluate_in_session(
+            db,
+            request,
+            action=action,
+            project_id=project_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            mode=mode,
+            now=now,
+            persist_decision=True,
+        )
+
+    def evaluate_audience_in_session(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        action: str,
+        project_id: UUID,
+        resource_type: str | None = None,
+        resource_id: UUID | None = None,
+        now: datetime | None = None,
+    ) -> AuthorizationDecision:
+        """Pure current-permission check used only to route approval notifications."""
+
+        return self._evaluate_in_session(
+            db,
+            request,
+            action=action,
+            project_id=project_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            mode="enforce",
+            now=now,
+            persist_decision=False,
+        )
+
+    def _evaluate_in_session(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        action: str,
+        project_id: UUID,
+        resource_type: str | None,
+        resource_id: UUID | None,
+        mode: str,
+        now: datetime | None,
+        persist_decision: bool,
+    ) -> AuthorizationDecision:
+        """Shared evaluator; public mutation paths cannot disable decision persistence."""
 
         checked_at = now or _utcnow()
         if mode not in {"shadow", "enforce"}:
@@ -220,6 +272,7 @@ class ProjectAuthorizer:
                 reason="permission_not_registered",
                 sources=(),
                 project_version=None,
+                persist=persist_decision,
             )
         if (resource_type is None) != (resource_id is None):
             return self._record(
@@ -234,6 +287,7 @@ class ProjectAuthorizer:
                 reason="resource_selector_invalid",
                 sources=(),
                 project_version=None,
+                persist=persist_decision,
             )
         if request.project_id is not None and request.project_id != project_id:
             return self._record(
@@ -248,6 +302,7 @@ class ProjectAuthorizer:
                 reason="project_context_mismatch",
                 sources=(),
                 project_version=None,
+                persist=persist_decision,
             )
 
         facts = self._load_scope_facts(db, request)
@@ -272,6 +327,7 @@ class ProjectAuthorizer:
                 reason=scope_reason or "resource_not_accessible",
                 sources=(),
                 project_version=project.authorization_version if project else None,
+                persist=persist_decision,
             )
         if facts is None:
             raise RuntimeError("scope facts disappeared after an allowed scope decision")
@@ -460,6 +516,7 @@ class ProjectAuthorizer:
             reason="allowed" if allowed else "permission_not_granted",
             sources=tuple(sources),
             project_version=project.authorization_version,
+            persist=persist_decision,
         )
 
     @staticmethod
@@ -556,26 +613,28 @@ class ProjectAuthorizer:
         reason: str,
         sources: tuple[AuthorizationSource, ...],
         project_version: int | None,
+        persist: bool = True,
     ) -> AuthorizationDecision:
         decision_id = uuid4()
-        db.add(
-            AuthorizationDecisionRecord(
-                id=decision_id,
-                tenant_id=request.tenant_id,
-                space_id=request.space_id,
-                project_id=project_id,
-                actor_id=request.actor_id,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                mode=mode,
-                allowed=allowed,
-                reason=reason,
-                sources=[source.payload() for source in sources],
-                policy_version=POLICY_VERSION,
-                trace_id=request.trace_id,
+        if persist:
+            db.add(
+                AuthorizationDecisionRecord(
+                    id=decision_id,
+                    tenant_id=request.tenant_id,
+                    space_id=request.space_id,
+                    project_id=project_id,
+                    actor_id=request.actor_id,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    mode=mode,
+                    allowed=allowed,
+                    reason=reason,
+                    sources=[source.payload() for source in sources],
+                    policy_version=POLICY_VERSION,
+                    trace_id=request.trace_id,
+                )
             )
-        )
         return AuthorizationDecision(
             decision_id=decision_id,
             allowed=allowed,

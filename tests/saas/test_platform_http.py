@@ -172,6 +172,7 @@ def test_platform_console_shell_and_assets_require_staff_realm_session() -> None
     assert 'data-testid="view-users"' in page.text
     assert 'data-testid="view-tenants"' in page.text
     assert 'data-testid="view-support"' in page.text
+    assert 'data-testid="view-privacy"' in page.text
     assert 'data-testid="view-audit"' in page.text
     assert 'data-testid="operations-drawer"' in page.text
     assert "script-src 'self'" in page.headers["content-security-policy"]
@@ -179,11 +180,31 @@ def test_platform_console_shell_and_assets_require_staff_realm_session() -> None
 
     css = client.get("/platform-admin/assets/platform-admin.css")
     javascript = client.get("/platform-admin/assets/platform-admin.js")
+    privacy_css = client.get("/platform-admin/assets/platform-privacy.css")
+    privacy_javascript = client.get("/platform-admin/assets/platform-privacy.js")
     assert css.status_code == 200
     assert css.headers["content-type"].startswith("text/css")
     assert javascript.status_code == 200
     assert javascript.headers["content-type"].startswith("text/javascript")
+    assert privacy_css.status_code == 200
+    assert privacy_css.headers["content-type"].startswith("text/css")
+    assert privacy_javascript.status_code == 200
+    assert privacy_javascript.headers["content-type"].startswith("text/javascript")
     assert "innerHTML" not in javascript.text
+    assert "innerHTML" not in privacy_javascript.text
+    assert "platform.privacy.read" in privacy_javascript.text
+    assert "principalId" in privacy_javascript.text
+    assert "/deletion-requests" in privacy_javascript.text
+    assert "/finalization-requests" in privacy_javascript.text
+    assert "/replay-requests" in privacy_javascript.text
+    assert "/operations/${command.operation.operation_id}/decision" in privacy_javascript.text
+    assert "work-items" in privacy_javascript.text
+    assert "attestations" in privacy_javascript.text
+    assert "backups" in privacy_javascript.text
+    assert "deletions/{manifest_id}/surfaces" not in privacy_javascript.text
+    assert "prefers-reduced-motion: reduce" in privacy_css.text
+    assert "min-height: 44px" in privacy_css.text
+    assert "CONTROL-PLANE MANIFEST" in page.text
 
     client.cookies.clear()
     client.cookies.set(config.cookie_name, roleless.token)

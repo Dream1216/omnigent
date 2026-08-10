@@ -1207,3 +1207,34 @@ schema substitution. Restore evidence is explicitly `ci_contract_not_production_
 the exact committed-SHA compatibility and image workflows still must pass, and real
 all-media deletion, retention expiry, PITR, IdP, SLO/capacity, commercial and enterprise
 evidence remain blocked. The production result stays 0/10 and `NO-GO`.
+
+The next local Privacy execution candidate advances the schema to
+`pc5b00000003` and the control-plane forced-RLS inventory to 93 tables. It adds
+governed Start, Finalize, Surface DLQ replay and Backup purge replay requests; every
+mutation requires an exact immutable snapshot, a distinct currently authorized Staff
+approver, fresh authentication, and an idempotent decision receipt. Fifteen Work Items,
+append-only Attempts, bounded retry/DLQ state, signed Backup catalogs, retention Items,
+and the Staff evidence desk expose only content-blind hashes, versions, stable codes and
+timestamps. Ordinary Restore and identity re-entry fail closed after deletion begins.
+
+Legal Hold and external deletion now share a persistent destructive-lease fence. Claims
+check the Hold under the target advisory lock, the Worker reauthorizes immediately
+before Provider I/O, and Hold placement refuses both active and unreconciled expired
+leases. A separate `saas_privacy_verifier` database login verifies canonical Ed25519
+DSSE envelopes and writes attempt-bound immutable receipts; the
+`saas_privacy_dispatcher` cannot write those receipts, while the verifier cannot mutate
+Work, Attempts, Backups or Outbox. Database triggers reject successful Surface or
+Backup transitions without the exact verifier receipt. Backup catalog signatures bind
+Provider, data class, Runtime Partition and an HMAC of the opaque handle. Execution
+Outbox events use an HMAC target locator and an exact JSON key set, and adapter failures
+use a domain-separated keyed digest.
+
+Local evidence for this uncommitted candidate consists of Ruff and Pyrefly success, 64
+passing focused Privacy/Worker/HTTP tests with one environment skip, a real PostgreSQL
+18 dual-login/RLS/concurrency test, and two passing Chromium Platform Console flows.
+These are local candidate facts, not protected exact-SHA CI evidence. Migration
+`pc5b00000003` is forward-only after legacy Manifest backfill or any new execution fact:
+code rollback must retain the schema, while schema reversal requires a reviewed forward
+migration or approved restore. No production Provider, KMS/HSM, immutable evidence
+store, real backup estate, managed-email identity, protected image, or deletion drill was
+created. The production result therefore remains 0/10 and `NO-GO`.

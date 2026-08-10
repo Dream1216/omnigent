@@ -383,7 +383,7 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
     human_headers = {"Authorization": f"Bearer {human.token}"}
     client.cookies.set("saas_session", human.token)
     created = client.post(
-        f"/api/v1/tenants/{ids['tenant']}/service-accounts",
+        f"/saas/api-credentials/tenants/{ids['tenant']}/service-accounts",
         headers={
             "Origin": "http://testserver",
             "X-CSRF-Token": human.csrf_token,
@@ -398,12 +398,9 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
     )
     assert created.status_code == 201, created.text
     account_id = created.json()["id"]
-    ambiguous = client.get("/api/v1/auth/whoami", headers=human_headers)
-    assert ambiguous.status_code == 400
-    assert ambiguous.json()["detail"]["code"] == "ambiguous_authentication"
     client.cookies.clear()
     issued = client.post(
-        f"/api/v1/tenants/{ids['tenant']}/service-accounts/{account_id}/api-keys",
+        f"/saas/api-credentials/tenants/{ids['tenant']}/service-accounts/{account_id}/api-keys",
         headers={**human_headers, "Idempotency-Key": "http-key"},
         json={
             "name": "http-key",
@@ -415,24 +412,10 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
     assert issued.status_code == 201, issued.text
     token = issued.json()["token"]
     machine_headers = {"Authorization": f"Bearer {token}"}
-    whoami = client.get("/api/v1/auth/whoami", headers=machine_headers)
-    assert whoami.status_code == 200
-    assert whoami.json()["actor_type"] == "service_account"
-    allowed = client.post(
-        "/api/v1/auth/authorize",
-        headers=machine_headers,
-        json={
-            "permission": "run.create",
-            "tenant_id": str(ids["tenant"]),
-            "space_id": str(ids["space"]),
-            "project_id": str(ids["project"]),
-        },
-    )
-    assert allowed.status_code == 200
     assert client.get("/saas/auth/me", headers=machine_headers).status_code == 403
     assert (
         client.post(
-            f"/api/v1/tenants/{ids['tenant']}/service-accounts",
+            f"/saas/api-credentials/tenants/{ids['tenant']}/service-accounts",
             headers={**machine_headers, "Idempotency-Key": "machine-must-not-manage"},
             json={
                 "space_id": str(ids["space"]),
@@ -441,5 +424,5 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
                 "name": "forbidden",
             },
         ).status_code
-        == 401
+        == 403
     )

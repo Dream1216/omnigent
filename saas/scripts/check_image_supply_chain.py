@@ -25,6 +25,7 @@ _APPROVED_PATHS = {
 _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+_ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "NODE_IMAGE",
@@ -471,6 +472,28 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             )
             break
 
+    protected_release_fragments = {
+        "environment: production-image",
+        "inputs.publish_signed &&",
+        "github.ref == 'refs/heads/main'",
+        '[[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]]',
+        "id-token: write",
+        "attestations: write",
+        "artifact-metadata: write",
+        "packages: write",
+        "subject-path: dist/*.whl",
+        "--signer-workflow \"$SIGNER_WORKFLOW\"",
+        "--source-ref refs/heads/main",
+        "--source-digest \"$PRODUCT_REVISION\"",
+        "production_deployment_receipt: null",
+    }
+    if any(fragment not in workflow for fragment in protected_release_fragments):
+        violations.append("protected signed release workflow contract is incomplete")
+    if workflow.count(f"uses: {_ATTEST_ACTION}") != 3:
+        violations.append("protected release must sign the wheel and both OCI images")
+    if workflow.count("push-to-registry: true") != 2 or workflow.count("push: true") != 2:
+        violations.append("protected release must publish exactly two signed OCI images")
+
     action = _read_repository_contract(
         repo,
         _CANDIDATE_BUILD_ACTION,
@@ -625,7 +648,9 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
                 "https://github.com/Dream1216/omnigent/.github/workflows/"
                 "saas-image-candidate.yml@refs/heads/main"
             ),
-            "trusted_oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+            "trusted_oidc_subject": (
+                "repo:Dream1216/omnigent:environment:production-image"
+            ),
             "trusted_builder_id": "https://github.com/actions/runner",
             "trusted_environment": "production-image",
         }

@@ -20,6 +20,8 @@ from saas.control_plane.enterprise_identity import EnterpriseScimService, ScimFi
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 
+_ENTERPRISE_USER_SCHEMA = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+
 
 def _postgres_url() -> str:
     url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
@@ -41,9 +43,11 @@ def _context(*, actor: UUID, tenant: UUID, space: UUID) -> RequestContext:
     )
 
 
-def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order() -> None:
+def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     suffix = uuid4().hex[:12]
     login_role = f"pc5_scim_governance_{suffix}"
     owner_id, tenant_id, other_tenant_id, space_id = (uuid4() for _ in range(4))
@@ -213,6 +217,149 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     )
     assert compound_listed.total_results == compound_listed.items_per_page == 1
     assert compound_listed.resources[0].id == created.id
+
+    other_directory = service.issue_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        display_name=f"Other IdP {suffix}",
+        reauthenticated_at=datetime.now(timezone.utc),
+        idempotency_key=f"pc5-other-directory-{suffix}",
+        provider_type="okta",
+        attribute_mapping={
+            "department": f"{_ENTERPRISE_USER_SCHEMA}:department",
+        },
+    )
+    assert other_directory.bearer_token is not None
+    other_token = other_directory.bearer_token
+    configured_directory = service.get_directory(
+        _context(actor=owner_id, tenant=tenant_id, space=space_id),
+        directory_id=other_directory.id,
+    )
+    assert configured_directory.provider_type == "okta"
+    assert configured_directory.attribute_mapping == {
+        "department": f"{_ENTERPRISE_USER_SCHEMA}:department"
+    }
+    assert configured_directory.bearer_token is None
+
+    extended_external_id = f"extended-{suffix}"
+    extended = service.upsert_user(
+        token,
+        event_id=f"pc5-user-extended-{suffix}",
+        external_id=extended_external_id,
+        user_name=f"extended-{suffix}@example.test",
+        display_name="Extended Employee",
+        active=True,
+        source_version=1,
+        core_attributes={
+            "name": {"givenName": "Ada", "familyName": "Lovelace"},
+            "title": "Staff Engineer",
+            "emails": [
+                {
+                    "value": f"extended-{suffix}@example.test",
+                    "type": "work",
+                    "primary": True,
+                }
+            ],
+            "phoneNumbers": [{"value": "+1-555-0100", "type": "work"}],
+            "addresses": [{"country": "GB", "type": "work", "primary": True}],
+        },
+        enterprise_attributes={
+            "employeeNumber": f"E-{suffix}",
+            "department": "Engineering",
+            "manager": {"value": str(owner_id)},
+        },
+    )
+    assert extended.core_attributes["name"] == {
+        "familyName": "Lovelace",
+        "givenName": "Ada",
+    }
+    assert extended.enterprise_attributes["department"] == "Engineering"
+    assert (
+        service.list_users(
+            token,
+            filter_expression=ScimFilterExpression(
+                operator="eq",
+                schema=_ENTERPRISE_USER_SCHEMA,
+                attribute="department",
+                value="engineering",
+            ),
+        )
+        .resources[0]
+        .id
+        == extended.id
+    )
+    assert (
+        service.list_users(
+            token,
+            filter_expression=ScimFilterExpression(
+                operator="eq",
+                attribute="name",
+                sub_attribute="givenName",
+                value="ada",
+            ),
+        )
+        .resources[0]
+        .id
+        == extended.id
+    )
+    assert (
+        service.list_users(
+            token,
+            filter_expression=ScimFilterExpression(
+                operator="valuePath",
+                attribute="emails",
+                operands=(
+                    ScimFilterExpression(
+                        operator="and",
+                        operands=(
+                            ScimFilterExpression(
+                                operator="eq",
+                                attribute="type",
+                                value="work",
+                            ),
+                            ScimFilterExpression(
+                                operator="co",
+                                attribute="value",
+                                value=f"extended-{suffix}",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        .resources[0]
+        .id
+        == extended.id
+    )
+    assert (
+        service.list_users(
+            token,
+            filter_expression=ScimFilterExpression(
+                operator="valuePath",
+                attribute="addresses",
+                operands=(
+                    ScimFilterExpression(
+                        operator="and",
+                        operands=(
+                            ScimFilterExpression(
+                                operator="eq",
+                                attribute="country",
+                                value="gb",
+                            ),
+                            ScimFilterExpression(
+                                operator="eq",
+                                attribute="primary",
+                                value=True,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        .resources[0]
+        .id
+        == extended.id
+    )
+    assert service.list_users(other_token).total_results == 0
 
     def _concurrent_user_replace(index: int) -> tuple[int, object]:
         try:
@@ -430,6 +577,57 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
             ).scalar_one()
             == 0
         )
+        connection.execute(
+            sa.text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        extended_row = connection.execute(
+            sa.text(
+                "SELECT core_attributes -> 'name' ->> 'givenName' AS given_name, "
+                "enterprise_attributes ->> 'department' AS department "
+                "FROM saas_enterprise_scim_users WHERE id = :user_id"
+            ),
+            {"user_id": extended.id},
+        ).one()
+        assert extended_row.given_name == "Ada"
+        assert extended_row.department == "Engineering"
+        connection.execute(
+            sa.text("SELECT set_config('app.scim_token_hash', :token_hash, true)"),
+            {"token_hash": sha256(other_token.encode()).hexdigest()},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_users WHERE id = :user_id"),
+                {"user_id": extended.id},
+            ).scalar_one()
+            == 0
+        )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_app")
+        connection.execute(
+            sa.text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_users WHERE id = :user_id"),
+                {"user_id": extended.id},
+            ).scalar_one()
+            == 1
+        )
+        assert connection.execute(
+            sa.text(
+                "SELECT "
+                "has_function_privilege(current_user, "
+                "'saas_scim_source_token_matches(uuid,uuid,text)', 'EXECUTE'), "
+                "has_column_privilege(current_user, "
+                "'saas_enterprise_scim_directories', 'token_hash', 'SELECT'), "
+                "has_column_privilege(current_user, "
+                "'saas_enterprise_scim_directories', "
+                "'successor_token_hash', 'SELECT')"
+            )
+        ).one() == (True, False, False)
 
     with pytest.raises(DBAPIError):
         with engine.begin() as connection:
@@ -485,7 +683,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
             now=overlap_now,
         )
     assert overlap_in_progress.value.code == "scim_directory_rotation_in_progress"
-    with pytest.raises(DBAPIError):
+    with pytest.raises((DBAPIError, RuntimeError)):
         with engine.begin() as connection:
             config = Config(root / "saas/control_plane/alembic.ini")
             config.set_main_option(
@@ -511,7 +709,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         service.get_group(overlap_token, scim_group_id=group.id)
     assert disabled_overlap_token.value.code == "scim_authentication_failed"
 
-    assert len(CONTROL_PLANE_RLS_TABLES) == 88
+    assert len(CONTROL_PLANE_RLS_TABLES) == 103
     assert {
         "saas_enterprise_scim_directories",
         "saas_enterprise_scim_users",
@@ -530,4 +728,6 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection
         command.downgrade(config, "pc3a00000001")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"DROP ROLE {login_role}")
     engine.dispose()

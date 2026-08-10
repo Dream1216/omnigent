@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable, Coroutine, Mapping
 from contextlib import suppress
+from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
 from typing import Any, Literal, cast
@@ -15,7 +16,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from saas.compatibility import RequestContext
 from saas.control_plane.enterprise_identity import (
@@ -35,15 +36,47 @@ from saas.control_plane.scim_syntax import (
     parse_scim_filter,
     parse_scim_patch_path,
 )
+from saas.scim_schema_catalog import (
+    SCIM_BULK_REQUEST_SCHEMA as _BULK_REQUEST_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_BULK_RESPONSE_SCHEMA as _BULK_RESPONSE_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_CONFIG_SCHEMA as _CONFIG_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_ENTERPRISE_USER_SCHEMA as _ENTERPRISE_USER_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_ERROR_SCHEMA as _ERROR_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_GOVERNANCE_GROUP_SCHEMA as _GOVERNANCE_GROUP_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_GOVERNANCE_USER_SCHEMA as _GOVERNANCE_USER_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_GROUP_SCHEMA as _GROUP_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_LIST_SCHEMA as _LIST_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_PATCH_SCHEMA as _PATCH_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    SCIM_USER_SCHEMA as _USER_SCHEMA,
+)
+from saas.scim_schema_catalog import (
+    idp_configuration_profile,
+    resource_type_resource,
+    resource_type_resources,
+    schema_resource,
+    schema_resources,
+)
 
-_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
-_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
-_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
-_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
-_CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
-_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
-_BULK_REQUEST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkRequest"
-_BULK_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:BulkResponse"
 _BULK_MAX_OPERATIONS = 32
 _BULK_MAX_PAYLOAD_SIZE = 1_048_576
 _ETAG = re.compile(r'^W/"([1-9][0-9]*)"$')
@@ -60,6 +93,88 @@ _BULK_RESOURCE_PATH = re.compile(
     r"^/(Users|Groups)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     re.IGNORECASE,
 )
+_PROJECTION_ALWAYS_RETURNED = frozenset({"schemas", "id", "meta"})
+_PROJECTION_ATTRIBUTES: dict[str, dict[str, dict[str, tuple[str, frozenset[str]]]]] = {
+    "User": {
+        "core": {
+            "schemas": ("schemas", frozenset()),
+            "id": ("id", frozenset()),
+            "externalid": ("externalId", frozenset()),
+            "username": ("userName", frozenset()),
+            "displayname": ("displayName", frozenset()),
+            "active": ("active", frozenset()),
+            "meta": ("meta", frozenset()),
+            "name": (
+                "name",
+                frozenset(
+                    {
+                        "formatted",
+                        "familyName",
+                        "givenName",
+                        "middleName",
+                        "honorificPrefix",
+                        "honorificSuffix",
+                    }
+                ),
+            ),
+            "title": ("title", frozenset()),
+            "usertype": ("userType", frozenset()),
+            "preferredlanguage": ("preferredLanguage", frozenset()),
+            "locale": ("locale", frozenset()),
+            "timezone": ("timezone", frozenset()),
+            "emails": (
+                "emails",
+                frozenset({"value", "display", "type", "primary"}),
+            ),
+            "phonenumbers": (
+                "phoneNumbers",
+                frozenset({"value", "display", "type", "primary"}),
+            ),
+            "addresses": (
+                "addresses",
+                frozenset(
+                    {
+                        "formatted",
+                        "streetAddress",
+                        "locality",
+                        "region",
+                        "postalCode",
+                        "country",
+                        "type",
+                        "primary",
+                    }
+                ),
+            ),
+        },
+        _ENTERPRISE_USER_SCHEMA: {
+            "employeenumber": ("employeeNumber", frozenset()),
+            "costcenter": ("costCenter", frozenset()),
+            "organization": ("organization", frozenset()),
+            "division": ("division", frozenset()),
+            "department": ("department", frozenset()),
+            "manager": ("manager", frozenset({"value", "$ref", "displayName"})),
+        },
+        _GOVERNANCE_USER_SCHEMA: {
+            "disposition": ("disposition", frozenset()),
+            "requiresownerrecovery": ("requiresOwnerRecovery", frozenset()),
+        },
+    },
+    "Group": {
+        "core": {
+            "schemas": ("schemas", frozenset()),
+            "id": ("id", frozenset()),
+            "externalid": ("externalId", frozenset()),
+            "displayname": ("displayName", frozenset()),
+            "members": ("members", frozenset({"value", "$ref", "display", "type"})),
+            "meta": ("meta", frozenset()),
+        },
+        _GOVERNANCE_GROUP_SCHEMA: {
+            "active": ("active", frozenset()),
+            "disposition": ("disposition", frozenset()),
+            "blockedexternalids": ("blockedExternalIds", frozenset()),
+        },
+    },
+}
 
 
 class _ScimHttpError(Exception):
@@ -145,11 +260,34 @@ class _ScimRoute(APIRoute):
 
 
 class DirectoryCreateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     display_name: str = Field(min_length=1, max_length=128)
+    provider_type: Literal[
+        "generic", "microsoft_entra", "okta", "google_workspace"
+    ] = Field(default="generic", alias="providerType")
+    attribute_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        alias="attributeMapping",
+        max_length=32,
+    )
 
 
 class DirectoryMutationBody(BaseModel):
     expected_version: int = Field(ge=1)
+
+
+class DirectoryConfigurationBody(DirectoryMutationBody):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    provider_type: Literal[
+        "generic", "microsoft_entra", "okta", "google_workspace"
+    ] = Field(alias="providerType")
+    attribute_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        alias="attributeMapping",
+        max_length=32,
+    )
 
 
 class DirectoryRotationScheduleBody(DirectoryMutationBody):
@@ -161,14 +299,97 @@ class ScimMemberBody(BaseModel):
     value: str = Field(min_length=1, max_length=64)
 
 
+class ScimNameBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    formatted: str | None = Field(default=None, max_length=512)
+    family_name: str | None = Field(default=None, alias="familyName", max_length=256)
+    given_name: str | None = Field(default=None, alias="givenName", max_length=256)
+    middle_name: str | None = Field(default=None, alias="middleName", max_length=256)
+    honorific_prefix: str | None = Field(
+        default=None, alias="honorificPrefix", max_length=64
+    )
+    honorific_suffix: str | None = Field(
+        default=None, alias="honorificSuffix", max_length=64
+    )
+
+
+class ScimTypedValueBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    value: str = Field(min_length=1, max_length=512)
+    display: str | None = Field(default=None, max_length=256)
+    type: str | None = Field(default=None, max_length=64)
+    primary: bool = Field(default=False, strict=True)
+
+
+class ScimAddressBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    formatted: str | None = Field(default=None, max_length=1024)
+    street_address: str | None = Field(default=None, alias="streetAddress", max_length=512)
+    locality: str | None = Field(default=None, max_length=256)
+    region: str | None = Field(default=None, max_length=256)
+    postal_code: str | None = Field(default=None, alias="postalCode", max_length=64)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    type: str | None = Field(default=None, max_length=64)
+    primary: bool = Field(default=False, strict=True)
+
+
+class ScimManagerBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    value: str | None = Field(default=None, max_length=64)
+    reference: str | None = Field(default=None, alias="$ref", max_length=1024)
+
+
+class ScimEnterpriseUserBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    employee_number: str | None = Field(default=None, alias="employeeNumber", max_length=256)
+    cost_center: str | None = Field(default=None, alias="costCenter", max_length=256)
+    organization: str | None = Field(default=None, max_length=256)
+    division: str | None = Field(default=None, max_length=256)
+    department: str | None = Field(default=None, max_length=256)
+    manager: ScimManagerBody | None = None
+
+
 class ScimUserBody(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schemas: list[str] = Field(min_length=1, max_length=8)
     external_id: str = Field(alias="externalId", min_length=1, max_length=256)
     user_name: str = Field(alias="userName", min_length=1, max_length=320)
     display_name: str | None = Field(default=None, alias="displayName", max_length=256)
+    name: ScimNameBody | None = None
+    title: str | None = Field(default=None, max_length=256)
+    user_type: str | None = Field(default=None, alias="userType", max_length=256)
+    preferred_language: str | None = Field(
+        default=None, alias="preferredLanguage", max_length=64
+    )
+    locale: str | None = Field(default=None, max_length=64)
+    timezone: str | None = Field(default=None, max_length=64)
+    emails: list[ScimTypedValueBody] = Field(default_factory=list, max_length=16)
+    phone_numbers: list[ScimTypedValueBody] = Field(
+        default_factory=list,
+        alias="phoneNumbers",
+        max_length=16,
+    )
+    addresses: list[ScimAddressBody] = Field(default_factory=list, max_length=16)
+    enterprise_user: ScimEnterpriseUserBody | None = Field(
+        default=None,
+        alias=_ENTERPRISE_USER_SCHEMA,
+    )
     active: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def _one_primary_per_attribute(self) -> ScimUserBody:
+        for values in (self.emails, self.phone_numbers, self.addresses):
+            if sum(item.primary for item in values) > 1:
+                raise ValueError("multi-valued SCIM attributes allow one primary value")
+        if self.enterprise_user is not None and _ENTERPRISE_USER_SCHEMA not in self.schemas:
+            raise ValueError("Enterprise User extension must be declared in schemas")
+        return self
 
 
 class ScimGroupBody(BaseModel):
@@ -279,6 +500,8 @@ def _directory_management_error(error: LifecycleError) -> HTTPException:
         "scim_directory_rotation_grace_invalid",
         "scim_directory_rotation_time_invalid",
         "scim_directory_version_invalid",
+        "scim_idp_mapping_invalid",
+        "scim_idp_provider_invalid",
     }:
         status = 400
     else:
@@ -294,6 +517,8 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
         "id": str(value.id),
         "tenant_id": str(value.tenant_id),
         "display_name": value.display_name,
+        "provider_type": value.provider_type,
+        "attribute_mapping": value.attribute_mapping,
         "token_prefix": value.token_prefix,
         "successor_token_prefix": value.successor_token_prefix,
         "rotation_activates_at": (
@@ -310,6 +535,29 @@ def _directory_payload(value: IssuedScimDirectory) -> dict[str, object]:
         "status": value.status,
         "version": value.version,
         "replayed": value.replayed,
+    }
+
+
+def _directory_configuration_payload(
+    value: IssuedScimDirectory,
+    request: Request,
+) -> dict[str, object]:
+    base_url = str(request.base_url).rstrip("/") + "/saas/scim/v2"
+    profile = idp_configuration_profile(value.provider_type, value.attribute_mapping)
+    if profile is None:  # pragma: no cover - database constraint and service validation
+        raise RuntimeError("SCIM IdP profile is invalid")
+    return {
+        **_directory_payload(value),
+        "idp_profile": profile,
+        "endpoints": {
+            "base_url": base_url,
+            "service_provider_config": f"{base_url}/ServiceProviderConfig",
+            "resource_types": f"{base_url}/ResourceTypes",
+            "schemas": f"{base_url}/Schemas",
+            "users": f"{base_url}/Users",
+            "groups": f"{base_url}/Groups",
+            "bulk": f"{base_url}/Bulk",
+        },
     }
 
 
@@ -354,6 +602,200 @@ def _list_payload(
     }
 
 
+_ProjectionPath = tuple[str | None, str, str | None]
+
+
+def _projection_paths(
+    request: Request,
+    *,
+    resource_type: Literal["User", "Group"],
+) -> tuple[tuple[_ProjectionPath, ...] | None, tuple[_ProjectionPath, ...]]:
+    included_values = request.query_params.getlist("attributes")
+    excluded_values = request.query_params.getlist("excludedAttributes")
+    if len(included_values) > 1 or len(excluded_values) > 1:
+        raise _error(
+            LifecycleError("invalidValue", "SCIM projection parameters must be singular")
+        )
+    if included_values and excluded_values:
+        raise _error(
+            LifecycleError(
+                "invalidValue",
+                "attributes and excludedAttributes cannot be combined",
+            )
+        )
+
+    def _parse(values: list[str]) -> tuple[_ProjectionPath, ...]:
+        if not values:
+            return ()
+        raw_value = values[0]
+        if not raw_value or len(raw_value) > 4096:
+            raise _error(LifecycleError("invalidValue", "SCIM projection is invalid"))
+        items = [item.strip() for item in raw_value.split(",")]
+        if not 1 <= len(items) <= 32 or any(not item for item in items):
+            raise _error(LifecycleError("invalidValue", "SCIM projection is invalid"))
+        resolved: list[_ProjectionPath] = []
+        seen: set[_ProjectionPath] = set()
+        for item in items:
+            path = _projection_path(item, resource_type=resource_type)
+            if path not in seen:
+                seen.add(path)
+                resolved.append(path)
+        return tuple(resolved)
+
+    included = _parse(included_values)
+    excluded = _parse(excluded_values)
+    return (included if included_values else None), excluded
+
+
+def _projection_path(
+    raw_path: str,
+    *,
+    resource_type: Literal["User", "Group"],
+) -> _ProjectionPath:
+    schema: str | None = None
+    attribute_path = raw_path
+    schemas = {
+        "User": (
+            _USER_SCHEMA,
+            _ENTERPRISE_USER_SCHEMA,
+            _GOVERNANCE_USER_SCHEMA,
+        ),
+        "Group": (_GROUP_SCHEMA, _GOVERNANCE_GROUP_SCHEMA),
+    }[resource_type]
+    for candidate in schemas:
+        prefix = f"{candidate}:"
+        if raw_path.casefold().startswith(prefix.casefold()):
+            schema = candidate
+            attribute_path = raw_path[len(prefix) :]
+            break
+    if ":" in attribute_path:
+        raise _error(LifecycleError("invalidValue", "SCIM projection schema is unsupported"))
+    parts = attribute_path.split(".")
+    if len(parts) > 2 or not parts[0]:
+        raise _error(LifecycleError("invalidValue", "SCIM projection path is invalid"))
+    catalog_key = (
+        "core"
+        if schema is None or schema.casefold() == expected_core_schema(resource_type).casefold()
+        else schema
+    )
+    catalog = _PROJECTION_ATTRIBUTES[resource_type].get(catalog_key)
+    attribute = catalog.get(parts[0].casefold()) if catalog is not None else None
+    if attribute is None:
+        raise _error(LifecycleError("invalidValue", "SCIM projection attribute is unsupported"))
+    canonical_attribute, sub_attributes = attribute
+    sub_attribute: str | None = None
+    if len(parts) == 2:
+        sub_attribute = next(
+            (item for item in sub_attributes if item.casefold() == parts[1].casefold()),
+            None,
+        )
+        if sub_attribute is None:
+            raise _error(
+                LifecycleError("invalidValue", "SCIM projection sub-attribute is unsupported")
+            )
+    return (
+        None if catalog_key == "core" else catalog_key,
+        canonical_attribute,
+        sub_attribute,
+    )
+
+
+def _copy_projection_path(
+    source: dict[str, object],
+    target: dict[str, object],
+    path: _ProjectionPath,
+) -> None:
+    schema, attribute, sub_attribute = path
+    source_container = source if schema is None else source.get(schema)
+    if not isinstance(source_container, dict) or attribute not in source_container:
+        return
+    target_container = target
+    if schema is not None:
+        existing = target.get(schema)
+        if not isinstance(existing, dict):
+            existing = {}
+            target[schema] = existing
+        target_container = existing
+    value = source_container[attribute]
+    if sub_attribute is None:
+        target_container[attribute] = deepcopy(value)
+        return
+    if isinstance(value, dict) and sub_attribute in value:
+        target_container[attribute] = {sub_attribute: deepcopy(value[sub_attribute])}
+    elif isinstance(value, list):
+        projected = [
+            {sub_attribute: deepcopy(item[sub_attribute])}
+            for item in value
+            if isinstance(item, dict) and sub_attribute in item
+        ]
+        if projected:
+            target_container[attribute] = projected
+
+
+def _remove_projection_path(payload: dict[str, object], path: _ProjectionPath) -> None:
+    schema, attribute, sub_attribute = path
+    if schema is None and attribute in _PROJECTION_ALWAYS_RETURNED:
+        return
+    container = payload if schema is None else payload.get(schema)
+    if not isinstance(container, dict):
+        return
+    if sub_attribute is None:
+        container.pop(attribute, None)
+    else:
+        value = container.get(attribute)
+        if isinstance(value, dict):
+            value.pop(sub_attribute, None)
+            if not value:
+                container.pop(attribute, None)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    item.pop(sub_attribute, None)
+    if schema is not None and not container:
+        payload.pop(schema, None)
+
+
+def _project_resource(
+    payload: dict[str, object],
+    request: Request,
+    *,
+    resource_type: Literal["User", "Group"],
+) -> dict[str, object]:
+    included, excluded = _projection_paths(request, resource_type=resource_type)
+    if included is None:
+        projected = deepcopy(payload)
+    else:
+        projected = {
+            key: deepcopy(payload[key])
+            for key in _PROJECTION_ALWAYS_RETURNED
+            if key in payload
+        }
+        for path in included:
+            _copy_projection_path(payload, projected, path)
+    for path in excluded:
+        _remove_projection_path(projected, path)
+    return projected
+
+
+def _discovery_payload(
+    value: dict[str, object],
+    request: Request,
+    *,
+    collection: str,
+    resource_type: str,
+) -> dict[str, object]:
+    payload = dict(value)
+    identifier = str(payload["id"])
+    payload["meta"] = {
+        "resourceType": resource_type,
+        "location": (
+            str(request.base_url).rstrip("/")
+            + f"/saas/scim/v2/{collection}/{identifier}"
+        ),
+    }
+    return payload
+
+
 def _etag(version: int) -> str:
     return f'W/"{version}"'
 
@@ -388,10 +830,45 @@ def _response(
     )
 
 
+def _core_user_attributes(body: ScimUserBody) -> dict[str, object]:
+    attributes: dict[str, object] = {}
+    if body.name is not None:
+        attributes["name"] = body.name.model_dump(by_alias=True, exclude_none=True)
+    for name, value in (
+        ("title", body.title),
+        ("userType", body.user_type),
+        ("preferredLanguage", body.preferred_language),
+        ("locale", body.locale),
+        ("timezone", body.timezone),
+    ):
+        if value is not None:
+            attributes[name] = value
+    for name, values in (
+        ("emails", body.emails),
+        ("phoneNumbers", body.phone_numbers),
+        ("addresses", body.addresses),
+    ):
+        if values:
+            attributes[name] = [
+                value.model_dump(by_alias=True, exclude_none=True) for value in values
+            ]
+    return attributes
+
+
+def _enterprise_user_attributes(body: ScimUserBody) -> dict[str, object]:
+    if body.enterprise_user is None:
+        return {}
+    return body.enterprise_user.model_dump(by_alias=True, exclude_none=True)
+
+
 def _user_payload(value: ScimUserView, request: Request) -> dict[str, object]:
     location = str(request.base_url).rstrip("/") + f"/saas/scim/v2/Users/{value.id}"
-    return {
-        "schemas": [_USER_SCHEMA],
+    schemas = [_USER_SCHEMA]
+    if value.enterprise_attributes:
+        schemas.append(_ENTERPRISE_USER_SCHEMA)
+    schemas.append(_GOVERNANCE_USER_SCHEMA)
+    payload: dict[str, object] = {
+        "schemas": schemas,
         "id": str(value.id),
         "externalId": value.external_id,
         "userName": value.user_name,
@@ -402,17 +879,21 @@ def _user_payload(value: ScimUserView, request: Request) -> dict[str, object]:
             "version": _etag(value.version),
             "location": location,
         },
-        "urn:omnigent:params:scim:schemas:extension:governance:1.0:User": {
+        _GOVERNANCE_USER_SCHEMA: {
             "disposition": value.disposition,
             "requiresOwnerRecovery": value.requires_owner_recovery,
         },
     }
+    payload.update(value.core_attributes)
+    if value.enterprise_attributes:
+        payload[_ENTERPRISE_USER_SCHEMA] = value.enterprise_attributes
+    return _project_resource(payload, request, resource_type="User")
 
 
 def _group_payload(value: ScimGroupView, request: Request) -> dict[str, object]:
     base = str(request.base_url).rstrip("/") + "/saas/scim/v2"
-    return {
-        "schemas": [_GROUP_SCHEMA],
+    payload: dict[str, object] = {
+        "schemas": [_GROUP_SCHEMA, _GOVERNANCE_GROUP_SCHEMA],
         "id": str(value.id),
         "externalId": value.external_id,
         "displayName": value.display_name,
@@ -425,12 +906,13 @@ def _group_payload(value: ScimGroupView, request: Request) -> dict[str, object]:
             "version": _etag(value.version),
             "location": f"{base}/Groups/{value.id}",
         },
-        "urn:omnigent:params:scim:schemas:extension:governance:1.0:Group": {
+        _GOVERNANCE_GROUP_SCHEMA: {
             "active": value.active,
             "disposition": value.disposition,
             "blockedExternalIds": list(value.blocked_external_ids),
         },
     }
+    return _project_resource(payload, request, resource_type="Group")
 
 
 _PATCH_ATTRIBUTES = {
@@ -440,6 +922,15 @@ _PATCH_ATTRIBUTES = {
         "username": "userName",
         "displayname": "displayName",
         "active": "active",
+        "name": "name",
+        "title": "title",
+        "usertype": "userType",
+        "preferredlanguage": "preferredLanguage",
+        "locale": "locale",
+        "timezone": "timezone",
+        "emails": "emails",
+        "phonenumbers": "phoneNumbers",
+        "addresses": "addresses",
         "schemas": "schemas",
         "meta": "meta",
     },
@@ -453,6 +944,43 @@ _PATCH_ATTRIBUTES = {
     },
 }
 _MEMBER_SUB_ATTRIBUTES = {"value": "value", "$ref": "$ref", "display": "display"}
+_ENTERPRISE_PATCH_ATTRIBUTES = {
+    "employeenumber": "employeeNumber",
+    "costcenter": "costCenter",
+    "organization": "organization",
+    "division": "division",
+    "department": "department",
+    "manager": "manager",
+}
+_USER_SUB_ATTRIBUTES = {
+    "name": {
+        "formatted": "formatted",
+        "familyname": "familyName",
+        "givenname": "givenName",
+        "middlename": "middleName",
+        "honorificprefix": "honorificPrefix",
+        "honorificsuffix": "honorificSuffix",
+    },
+    "emails": {"value": "value", "display": "display", "type": "type", "primary": "primary"},
+    "phoneNumbers": {
+        "value": "value",
+        "display": "display",
+        "type": "type",
+        "primary": "primary",
+    },
+    "addresses": {
+        "formatted": "formatted",
+        "streetaddress": "streetAddress",
+        "locality": "locality",
+        "region": "region",
+        "postalcode": "postalCode",
+        "country": "country",
+        "type": "type",
+        "primary": "primary",
+    },
+    "manager": {"value": "value", "$ref": "$ref", "displayname": "displayName"},
+}
+_USER_MULTI_ATTRIBUTES = {"emails", "phoneNumbers", "addresses"}
 
 
 def _patch_error(scim_type: str, message: str) -> _ScimHttpError:
@@ -466,20 +994,35 @@ def _patch_path(value: object, *, resource_type: str) -> ScimPatchPath:
         parsed = parse_scim_patch_path(value)
     except ScimSyntaxError as error:
         raise _patch_error(error.scim_type, str(error)) from error
-    if (
-        parsed.schema is not None
-        and parsed.schema.casefold() != expected_core_schema(resource_type).casefold()
+    enterprise_path = (
+        resource_type == "User"
+        and parsed.schema is not None
+        and parsed.schema.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
+    )
+    if parsed.schema is not None and not enterprise_path and (
+        parsed.schema.casefold() != expected_core_schema(resource_type).casefold()
     ):
         raise _patch_error("invalidPath", "PATCH schema URI does not match the resource")
-    attribute = _PATCH_ATTRIBUTES[resource_type].get(parsed.attribute.casefold())
+    attribute = (
+        _ENTERPRISE_PATCH_ATTRIBUTES.get(parsed.attribute.casefold())
+        if enterprise_path
+        else _PATCH_ATTRIBUTES[resource_type].get(parsed.attribute.casefold())
+    )
     if attribute is None:
         raise _patch_error("invalidPath", "PATCH attribute is unsupported")
     sub_attribute = parsed.sub_attribute
     if sub_attribute is not None:
-        sub_attribute = _MEMBER_SUB_ATTRIBUTES.get(sub_attribute.casefold())
-        if attribute != "members" or sub_attribute is None:
+        sub_attribute = (
+            _MEMBER_SUB_ATTRIBUTES.get(sub_attribute.casefold())
+            if resource_type == "Group"
+            else _USER_SUB_ATTRIBUTES.get(attribute, {}).get(sub_attribute.casefold())
+        )
+        if sub_attribute is None:
             raise _patch_error("invalidPath", "PATCH sub-attribute is unsupported")
-    if parsed.value_filter is not None and attribute != "members":
+    if parsed.value_filter is not None and attribute not in {
+        "members",
+        *_USER_MULTI_ATTRIBUTES,
+    }:
         raise _patch_error("invalidPath", "PATCH valuePath requires a multi-valued attribute")
     return ScimPatchPath(
         attribute=attribute,
@@ -517,6 +1060,21 @@ def _pathless_values(value: object, *, resource_type: str) -> list[tuple[str, ob
         raise _patch_error("invalidValue", "pathless PATCH value must contain attributes")
     resolved: list[tuple[str, object]] = []
     for raw_attribute, item in value.items():
+        if (
+            resource_type == "User"
+            and raw_attribute.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
+        ):
+            if not isinstance(item, Mapping):
+                raise _patch_error(
+                    "invalidValue", "Enterprise User extension must be a complex value"
+                )
+            for extension_attribute, extension_value in item.items():
+                path = _patch_path(
+                    f"{_ENTERPRISE_USER_SCHEMA}:{extension_attribute}",
+                    resource_type=resource_type,
+                )
+                resolved.append((path.attribute, extension_value))
+            continue
         path = _patch_path(raw_attribute, resource_type=resource_type)
         if path.value_filter is not None or path.sub_attribute is not None:
             raise _patch_error("invalidPath", "pathless PATCH value contains an invalid path")
@@ -528,17 +1086,187 @@ def _immutable(attribute: str) -> _ScimHttpError:
     return _patch_error("mutability", f"{attribute} cannot be modified")
 
 
+def _complex_filter_matches(
+    expression: ScimFilterExpression,
+    value: Mapping[str, object],
+) -> bool:
+    if expression.operator == "and":
+        return all(_complex_filter_matches(item, value) for item in expression.operands)
+    if expression.operator == "or":
+        return any(_complex_filter_matches(item, value) for item in expression.operands)
+    if expression.operator == "not":
+        return not _complex_filter_matches(expression.operands[0], value)
+    if (
+        expression.operator == "valuePath"
+        or expression.schema is not None
+        or expression.sub_attribute is not None
+        or not isinstance(expression.attribute, str)
+    ):
+        raise _patch_error("invalidPath", "complex valuePath filter is invalid")
+    actual = next(
+        (
+            item
+            for key, item in value.items()
+            if key.casefold() == expression.attribute.casefold()
+        ),
+        None,
+    )
+    if expression.operator == "pr":
+        return actual is not None
+    expected = expression.value
+    if actual is None or expected is None:
+        return expression.operator == "ne" and actual is not expected
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        if type(actual) is not bool or type(expected) is not bool:
+            return expression.operator == "ne"
+        return actual == expected if expression.operator == "eq" else actual != expected
+    left, right = str(actual).casefold(), str(expected).casefold()
+    matched = {
+        "eq": left == right,
+        "ne": left != right,
+        "co": right in left,
+        "sw": left.startswith(right),
+        "ew": left.endswith(right),
+        "gt": left > right,
+        "ge": left >= right,
+        "lt": left < right,
+        "le": left <= right,
+    }.get(expression.operator)
+    if matched is None:
+        raise _patch_error("invalidPath", "complex valuePath operator is invalid")
+    return matched
+
+
+def _patch_mapping(value: object, *, attribute: str) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise _patch_error("invalidValue", f"{attribute} must be a complex value")
+    return {str(key): item for key, item in value.items()}
+
+
+def _patch_mapping_list(value: object, *, attribute: str) -> list[dict[str, object]]:
+    values = value if isinstance(value, list) else [value]
+    return [_patch_mapping(item, attribute=attribute) for item in values]
+
+
 def _apply_user_attribute(
-    state: dict[str, object], *, action: str, attribute: str, value: object
+    state: dict[str, object],
+    *,
+    action: str,
+    path: ScimPatchPath,
+    value: object,
 ) -> None:
+    attribute = path.attribute
     if attribute in {"id", "externalId", "schemas", "meta"}:
         raise _immutable(attribute)
-    if action == "remove":
-        if attribute != "displayName":
-            raise _immutable(attribute)
-        state[attribute] = None
+    if attribute in {"userName", "displayName", "active"}:
+        if path.sub_attribute is not None or path.value_filter is not None:
+            raise _patch_error("invalidPath", "PATCH path is invalid")
+        if attribute == "active" and action != "remove" and type(value) is not bool:
+            raise _patch_error("scim_active_invalid", "active must be a Boolean")
+        if action == "remove":
+            if attribute != "displayName":
+                raise _immutable(attribute)
+            state[attribute] = None
+        else:
+            state[attribute] = value
+        return
+
+    target_key = (
+        "enterpriseAttributes"
+        if path.schema is not None
+        and path.schema.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
+        else "coreAttributes"
+    )
+    target = cast(dict[str, object], state[target_key])
+    if attribute in {
+        "title",
+        "userType",
+        "preferredLanguage",
+        "locale",
+        "timezone",
+        "employeeNumber",
+        "costCenter",
+        "organization",
+        "division",
+        "department",
+    }:
+        if path.sub_attribute is not None or path.value_filter is not None:
+            raise _patch_error("invalidPath", "PATCH path is invalid")
+        if action == "remove":
+            target.pop(attribute, None)
+        else:
+            target[attribute] = value
+        return
+
+    if attribute in {"name", "manager"}:
+        if path.value_filter is not None:
+            raise _patch_error("invalidPath", "PATCH valuePath is invalid")
+        if attribute == "manager" and path.sub_attribute == "displayName":
+            raise _immutable("manager.displayName")
+        if path.sub_attribute is None:
+            if action == "remove":
+                target.pop(attribute, None)
+                return
+            incoming = _patch_mapping(value, attribute=attribute)
+            current = target.get(attribute)
+            target[attribute] = (
+                {**cast(dict[str, object], current), **incoming}
+                if action == "add" and isinstance(current, dict)
+                else incoming
+            )
+            return
+        current = target.get(attribute)
+        complex_value = dict(current) if isinstance(current, dict) else {}
+        if action == "remove":
+            complex_value.pop(path.sub_attribute, None)
+        else:
+            complex_value[path.sub_attribute] = value
+        if complex_value:
+            target[attribute] = complex_value
+        else:
+            target.pop(attribute, None)
+        return
+
+    if attribute not in _USER_MULTI_ATTRIBUTES:
+        raise _patch_error("invalidPath", "PATCH attribute is unsupported")
+    existing = target.get(attribute)
+    values = [dict(item) for item in existing] if isinstance(existing, list) else []
+    if path.value_filter is None:
+        if path.sub_attribute is not None:
+            raise _patch_error("invalidPath", "multi-valued sub-attribute requires valuePath")
+        if action == "remove":
+            target.pop(attribute, None)
+        elif action == "add":
+            values.extend(_patch_mapping_list(value, attribute=attribute))
+            target[attribute] = values
+        else:
+            target[attribute] = _patch_mapping_list(value, attribute=attribute)
+        return
+    selected = [
+        index
+        for index, item in enumerate(values)
+        if _complex_filter_matches(path.value_filter, item)
+    ]
+    if not selected:
+        if action == "remove":
+            return
+        raise _patch_error("noTarget", "PATCH valuePath selected no values")
+    if action == "remove" and path.sub_attribute is None:
+        target[attribute] = [
+            item for index, item in enumerate(values) if index not in selected
+        ]
+        return
+    if path.sub_attribute is not None:
+        for index in selected:
+            if action == "remove":
+                values[index].pop(path.sub_attribute, None)
+            else:
+                values[index][path.sub_attribute] = value
     else:
-        state[attribute] = value
+        replacement = _patch_mapping(value, attribute=attribute)
+        for index in selected:
+            values[index] = replacement.copy()
+    target[attribute] = values
 
 
 def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, object]:
@@ -548,23 +1276,49 @@ def _patched_user(current: ScimUserView, patch: ScimPatchBody) -> dict[str, obje
         "userName": current.user_name,
         "displayName": current.display_name,
         "active": current.active,
+        "coreAttributes": deepcopy(current.core_attributes),
+        "enterpriseAttributes": deepcopy(current.enterprise_attributes),
     }
     for operation in patch.operations:
         action, path, value = _patch_operation(operation, resource_type="User")
         if path is None:
             for attribute, item in _pathless_values(value, resource_type="User"):
-                _apply_user_attribute(state, action=action, attribute=attribute, value=item)
+                schema = (
+                    _ENTERPRISE_USER_SCHEMA
+                    if attribute in _ENTERPRISE_PATCH_ATTRIBUTES.values()
+                    else None
+                )
+                _apply_user_attribute(
+                    state,
+                    action=action,
+                    path=ScimPatchPath(attribute=attribute, schema=schema),
+                    value=item,
+                )
             continue
-        if path.value_filter is not None or path.sub_attribute is not None:
-            raise _patch_error("invalidPath", "User PATCH valuePath is unsupported")
-        _apply_user_attribute(state, action=action, attribute=path.attribute, value=value)
-    if not isinstance(state["userName"], str):
-        raise _error(LifecycleError("scim_user_name_invalid", "userName is invalid"))
-    if state["displayName"] is not None and not isinstance(state["displayName"], str):
-        raise _error(LifecycleError("scim_display_name_invalid", "displayName is invalid"))
-    if type(state["active"]) is not bool:
-        raise _error(LifecycleError("scim_active_invalid", "active must be a Boolean"))
-    return state
+        _apply_user_attribute(state, action=action, path=path, value=value)
+    core = cast(dict[str, object], state["coreAttributes"])
+    enterprise = cast(dict[str, object], state["enterpriseAttributes"])
+    document: dict[str, object] = {
+        "schemas": [_USER_SCHEMA] + ([_ENTERPRISE_USER_SCHEMA] if enterprise else []),
+        "externalId": current.external_id,
+        "userName": state["userName"],
+        "displayName": state["displayName"],
+        "active": state["active"],
+        **core,
+    }
+    if enterprise:
+        document[_ENTERPRISE_USER_SCHEMA] = enterprise
+    try:
+        validated = ScimUserBody.model_validate(document)
+    except ValidationError as error:
+        raise _patch_error("invalidValue", "PATCH User value is invalid") from error
+    return {
+        "userName": validated.user_name,
+        "displayName": validated.display_name,
+        "active": validated.active,
+        "coreAttributes": _core_user_attributes(validated),
+        "enterpriseAttributes": _enterprise_user_attributes(validated),
+    }
 
 
 def _member_filter_matches(expression: ScimFilterExpression, member: Mapping[str, str]) -> bool:
@@ -851,6 +1605,8 @@ def _execute_bulk_operation(
                 display_name=body.display_name,
                 active=body.active,
                 source_version=1,
+                core_attributes=_core_user_attributes(body),
+                enterprise_attributes=_enterprise_user_attributes(body),
             )
             location = _bulk_location(request, "User", value.id)
             return (
@@ -911,6 +1667,8 @@ def _execute_bulk_operation(
                 "userName": body.user_name,
                 "displayName": body.display_name,
                 "active": body.active,
+                "coreAttributes": _core_user_attributes(body),
+                "enterpriseAttributes": _enterprise_user_attributes(body),
             }
             external_id = body.external_id
             operation_name = "replace"
@@ -926,6 +1684,8 @@ def _execute_bulk_operation(
                 "userName": current.user_name,
                 "displayName": current.display_name,
                 "active": False,
+                "coreAttributes": current.core_attributes,
+                "enterpriseAttributes": current.enterprise_attributes,
             }
             external_id = current.external_id
             operation_name = "delete"
@@ -941,6 +1701,10 @@ def _execute_bulk_operation(
             ),
             active=cast(bool, state["active"]),
             source_version=None,
+            core_attributes=cast(dict[str, object], state.get("coreAttributes", {})),
+            enterprise_attributes=cast(
+                dict[str, object], state.get("enterpriseAttributes", {})
+            ),
             scim_user_id=resource_id,
             expected_version=expected_version,
             operation=operation_name,
@@ -1036,12 +1800,93 @@ def create_enterprise_scim_router(
                 display_name=body.display_name,
                 reauthenticated_at=reauthenticated_at,
                 idempotency_key=idempotency_key,
+                provider_type=body.provider_type,
+                attribute_mapping=body.attribute_mapping,
             )
         except LifecycleError as error:
             raise _directory_management_error(error) from error
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         return _directory_payload(value)
+
+    @router.get("/tenants/{tenant_id}/enterprise/scim-directories")
+    def list_directories(
+        tenant_id: UUID,
+        request: Request,
+        response: Response,
+    ) -> dict[str, object]:
+        context, _ = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            values = service.list_directories(context)
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return {
+            "items": [
+                _directory_configuration_payload(value, request) for value in values
+            ],
+            "total": len(values),
+        }
+
+    @router.get("/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}")
+    def get_directory(
+        tenant_id: UUID,
+        directory_id: UUID,
+        request: Request,
+        response: Response,
+    ) -> dict[str, object]:
+        context, _ = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = service.get_directory(context, directory_id=directory_id)
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return _directory_configuration_payload(value, request)
+
+    @router.put(
+        "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/configuration"
+    )
+    def update_directory_configuration(
+        tenant_id: UUID,
+        directory_id: UUID,
+        body: DirectoryConfigurationBody,
+        request: Request,
+        response: Response,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, object]:
+        context, reauthenticated_at = _tenant_context(
+            request,
+            auth_provider=auth_provider,
+            resolver=resolver,
+            tenant_id=tenant_id,
+        )
+        try:
+            value = service.update_directory_configuration(
+                context,
+                directory_id=directory_id,
+                provider_type=body.provider_type,
+                attribute_mapping=body.attribute_mapping,
+                expected_version=body.expected_version,
+                reauthenticated_at=reauthenticated_at,
+                idempotency_key=idempotency_key,
+            )
+        except LifecycleError as error:
+            raise _directory_management_error(error) from error
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return _directory_configuration_payload(value, request)
 
     @router.post(
         "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate",
@@ -1139,7 +1984,7 @@ def create_enterprise_scim_router(
         return _directory_payload(value)
 
     @router.get("/scim/v2/ServiceProviderConfig")
-    def service_provider_config() -> JSONResponse:
+    def service_provider_config(request: Request) -> JSONResponse:
         return _response(
             {
                 "schemas": [_CONFIG_SCHEMA],
@@ -1162,7 +2007,88 @@ def create_enterprise_scim_router(
                         "primary": True,
                     }
                 ],
+                "meta": {
+                    "resourceType": "ServiceProviderConfig",
+                    "location": (
+                        str(request.base_url).rstrip("/")
+                        + "/saas/scim/v2/ServiceProviderConfig"
+                    ),
+                },
             }
+        )
+
+    @router.get("/scim/v2/ResourceTypes")
+    def list_resource_types(request: Request) -> JSONResponse:
+        resources = [
+            _discovery_payload(
+                value,
+                request,
+                collection="ResourceTypes",
+                resource_type="ResourceType",
+            )
+            for value in resource_type_resources()
+        ]
+        return _response(
+            _list_payload(
+                resources,
+                total_results=len(resources),
+                start_index=1,
+                items_per_page=len(resources),
+            )
+        )
+
+    @router.get("/scim/v2/ResourceTypes/{resource_type_id}")
+    def get_resource_type(resource_type_id: str, request: Request) -> JSONResponse:
+        value = resource_type_resource(resource_type_id)
+        if value is None:
+            raise _error(
+                LifecycleError("scim_resource_not_found", "SCIM ResourceType was not found"),
+                status=404,
+            )
+        return _response(
+            _discovery_payload(
+                value,
+                request,
+                collection="ResourceTypes",
+                resource_type="ResourceType",
+            )
+        )
+
+    @router.get("/scim/v2/Schemas")
+    def list_schemas(request: Request) -> JSONResponse:
+        resources = [
+            _discovery_payload(
+                value,
+                request,
+                collection="Schemas",
+                resource_type="Schema",
+            )
+            for value in schema_resources()
+        ]
+        return _response(
+            _list_payload(
+                resources,
+                total_results=len(resources),
+                start_index=1,
+                items_per_page=len(resources),
+            )
+        )
+
+    @router.get("/scim/v2/Schemas/{schema_id}")
+    def get_schema(schema_id: str, request: Request) -> JSONResponse:
+        value = schema_resource(schema_id)
+        if value is None:
+            raise _error(
+                LifecycleError("scim_resource_not_found", "SCIM Schema was not found"),
+                status=404,
+            )
+        return _response(
+            _discovery_payload(
+                value,
+                request,
+                collection="Schemas",
+                resource_type="Schema",
+            )
         )
 
     @router.post("/scim/v2/Bulk")
@@ -1290,6 +2216,8 @@ def create_enterprise_scim_router(
                 display_name=body.display_name,
                 active=body.active,
                 source_version=1,
+                core_attributes=_core_user_attributes(body),
+                enterprise_attributes=_enterprise_user_attributes(body),
             )
         except LifecycleError as error:
             raise _error(error) from error
@@ -1356,6 +2284,8 @@ def create_enterprise_scim_router(
                 display_name=body.display_name,
                 active=body.active,
                 source_version=None,
+                core_attributes=_core_user_attributes(body),
+                enterprise_attributes=_enterprise_user_attributes(body),
                 scim_user_id=scim_user_id,
                 expected_version=_required_version(if_match),
                 operation="replace",
@@ -1387,6 +2317,10 @@ def create_enterprise_scim_router(
                 ),
                 active=cast(bool, state["active"]),
                 source_version=None,
+                core_attributes=cast(dict[str, object], state.get("coreAttributes", {})),
+                enterprise_attributes=cast(
+                    dict[str, object], state.get("enterpriseAttributes", {})
+                ),
                 scim_user_id=scim_user_id,
                 expected_version=expected_version,
                 operation="patch",
@@ -1413,6 +2347,8 @@ def create_enterprise_scim_router(
                 display_name=current.display_name,
                 active=False,
                 source_version=None,
+                core_attributes=current.core_attributes,
+                enterprise_attributes=current.enterprise_attributes,
                 scim_user_id=scim_user_id,
                 expected_version=_required_version(if_match),
                 operation="delete",

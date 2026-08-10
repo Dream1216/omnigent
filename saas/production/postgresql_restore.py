@@ -26,6 +26,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL, make_url
 
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
@@ -59,6 +60,8 @@ _SELECTED_HASH_TABLES = (
     "saas_runner_certificates",
     "saas_service_accounts",
     "saas_api_credentials",
+    "saas_public_api_mutation_receipts",
+    "saas_public_api_rate_limits",
     "saas_enterprise_groups",
     "saas_enterprise_group_memberships",
     "saas_enterprise_custom_roles",
@@ -71,6 +74,19 @@ _SELECTED_HASH_TABLES = (
     "saas_privacy_legal_holds",
     "saas_privacy_deletion_manifests",
     "saas_privacy_identity_tombstones",
+    "saas_privacy_approval_bindings",
+    "saas_privacy_deletion_work_items",
+    "saas_privacy_deletion_attempts",
+    "saas_privacy_evidence_attestations",
+    "saas_privacy_backup_retention_items",
+    "saas_approval_work_items",
+    "saas_approval_delegations",
+    "saas_notification_templates",
+    "saas_notification_preferences",
+    "saas_notification_deliveries",
+    "saas_notification_delivery_attempts",
+    "saas_operation_batches",
+    "saas_operation_batch_items",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -556,12 +572,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000001', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -1367,6 +1383,8 @@ def _verify_restored_database(
     endpoint: PostgreSqlEndpoint,
     database: str,
     identifiers: Mapping[str, str | int],
+    *,
+    expected_saas_head: str,
 ) -> dict[str, Any]:
     engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
     try:
@@ -1374,7 +1392,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc5b00000001":
+            if saas_head != expected_saas_head:
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1457,6 +1475,162 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "restored privacy executor authority is missing or Staff PII grants widened"
                 )
+            dispatcher_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_privacy_dispatcher', "
+                    "'saas_platform_governance', 'member'), "
+                    "pg_has_role('saas_privacy_dispatcher', "
+                    "'saas_privacy_executor', 'member'), "
+                    "has_table_privilege('saas_privacy_dispatcher', "
+                    "'saas_global_users', 'SELECT'), "
+                    "has_column_privilege('saas_privacy_dispatcher', "
+                    "'saas_privacy_deletion_work_items', 'status', 'UPDATE'), "
+                    "has_table_privilege('saas_privacy_dispatcher', "
+                    "'saas_privacy_deletion_attempts', 'INSERT') "
+                    "FROM pg_roles WHERE rolname = 'saas_privacy_dispatcher'"
+                )
+            ).one()
+            if tuple(dispatcher_role) != (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored privacy dispatcher is missing or gained Staff/PII authority"
+                )
+            notification_scheduler_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_scheduler', "
+                    "'saas_platform_governance', 'member'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'SELECT'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'status', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'priority', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'escalation_at', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'action', 'UPDATE'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_notification_deliveries', 'INSERT'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_notification_deliveries', 'DELETE') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_scheduler'"
+                )
+            ).one()
+            if tuple(notification_scheduler_role) != (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+                True,
+                True,
+                False,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification scheduler authority widened or drifted"
+                )
+            notification_dispatcher_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_dispatcher', "
+                    "'saas_platform_governance', 'member'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'SELECT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'status', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'recipient_read_at', 'UPDATE'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_delivery_attempts', 'INSERT'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'INSERT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_approval_work_items', 'status', 'SELECT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_approval_work_items', 'action', 'SELECT') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_dispatcher'"
+                )
+            ).one()
+            if tuple(notification_dispatcher_role) != (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+                False,
+                True,
+                True,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification dispatcher authority widened or drifted"
+                )
+            notification_directory_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_platform_governance', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_governance', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_notification_dispatcher', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_notification_scheduler', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_platform', 'member'), "
+                    "has_table_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'primary_email_normalized', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'security_version', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_staff_principals', 'email_normalized', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_staff_principals', 'issuer', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_role_assignments', 'principal_id', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_role_assignments', "
+                    "'assigned_by_principal_id', 'SELECT') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_directory'"
+                )
+            ).one()
+            if tuple(notification_directory_role) != (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                False,
+                True,
+                False,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification directory authority widened or drifted"
+                )
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "
                 f"SET LOCAL app.actor_id = '{identifiers['actor_a']}'; "
@@ -1513,6 +1687,22 @@ def _verify_restored_database(
             ):
                 raise PostgreSqlRestoreContractError(
                     "restored enterprise SCIM RLS exposed another tenant"
+                )
+            scim_reader_privileges = connection.execute(
+                sa.text(
+                    "SELECT "
+                    "has_function_privilege(current_user, "
+                    "'saas_scim_source_token_matches(uuid,uuid,text)', 'EXECUTE'), "
+                    "has_column_privilege(current_user, "
+                    "'saas_enterprise_scim_directories', 'token_hash', 'SELECT'), "
+                    "has_column_privilege(current_user, "
+                    "'saas_enterprise_scim_directories', "
+                    "'successor_token_hash', 'SELECT')"
+                )
+            ).one()
+            if tuple(scim_reader_privileges) != (True, False, False):
+                raise PostgreSqlRestoreContractError(
+                    "restored SCIM reader lost content-blind matching or gained bearer digests"
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
@@ -1887,13 +2077,15 @@ def _run_pg_tool(
     endpoint: PostgreSqlEndpoint,
     database: str,
     archive: Path,
+    *,
+    server_major: int,
 ) -> str:
     _require_database_name(database)
     password_env = {**os.environ}
     if endpoint.password is not None:
         password_env["PGPASSWORD"] = endpoint.password
     host_tool = shutil.which(tool)
-    if host_tool is not None and _tool_version_major(tool) == 16:
+    if host_tool is not None and _tool_version_major(tool) == server_major:
         command_line = [
             host_tool,
             "--host",
@@ -1924,12 +2116,12 @@ def _run_pg_tool(
                     str(archive),
                 ]
             )
-        implementation = "host-postgresql-client-16"
+        implementation = f"host-postgresql-client-{server_major}"
     else:
         docker = shutil.which("docker")
         if docker is None:
             raise PostgreSqlRestoreContractError(
-                "PostgreSQL 16 client or Docker is required for the restore contract"
+                f"PostgreSQL {server_major} client or Docker is required for the restore contract"
             )
         mounted_archive = f"/evidence/{archive.name}"
         command_line = [
@@ -1939,7 +2131,7 @@ def _run_pg_tool(
             "--network=host",
             f"--volume={archive.parent}:/evidence",
             "--env=PGPASSWORD",
-            "postgres:16",
+            f"postgres:{server_major}",
             tool,
             "--host",
             endpoint.host,
@@ -1969,7 +2161,7 @@ def _run_pg_tool(
                     mounted_archive,
                 ]
             )
-        implementation = "docker-postgres-16-client"
+        implementation = f"docker-postgres-{server_major}-client"
     completed = subprocess.run(
         command_line,
         check=False,
@@ -2000,6 +2192,27 @@ def run_logical_restore_contract(
     if re.fullmatch(r"[0-9a-f]{40}", product_revision) is None:
         raise PostgreSqlRestoreContractError("product_revision must be a full Git SHA")
     endpoint = PostgreSqlEndpoint.parse(admin_url)
+    migration_config = Config(repo / "saas/control_plane/alembic.ini")
+    migration_config.set_main_option(
+        "script_location",
+        str(repo / "saas/control_plane/migrations"),
+    )
+    expected_saas_head = ScriptDirectory.from_config(migration_config).get_current_head()
+    if expected_saas_head is None:
+        raise PostgreSqlRestoreContractError("SaaS migration head is missing")
+    admin_engine = sa.create_engine(endpoint.sqlalchemy_url(endpoint.admin_database))
+    try:
+        with admin_engine.connect() as connection:
+            server_version_num = int(
+                connection.exec_driver_sql("SHOW server_version_num").scalar_one()
+            )
+    finally:
+        admin_engine.dispose()
+    server_major = server_version_num // 10000
+    if server_major < 14:
+        raise PostgreSqlRestoreContractError(
+            f"PostgreSQL server major {server_major} is below the supported restore baseline"
+        )
     source_database = _database_name("restore_source")
     target_database = _database_name("restore_target")
     started = datetime.now(UTC)
@@ -2011,7 +2224,13 @@ def run_logical_restore_contract(
         identifiers = _seed_source(endpoint, source_database)
         with tempfile.TemporaryDirectory(prefix="omnigent-logical-restore-") as temporary:
             archive = Path(temporary) / "backup.dump"
-            dump_client = _run_pg_tool("pg_dump", endpoint, source_database, archive)
+            dump_client = _run_pg_tool(
+                "pg_dump",
+                endpoint,
+                source_database,
+                archive,
+                server_major=server_major,
+            )
             if not archive.is_file() or archive.stat().st_size <= 0:
                 raise PostgreSqlRestoreContractError("pg_dump produced an empty archive")
             backup_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -2019,7 +2238,13 @@ def run_logical_restore_contract(
             source_hash, source_counts = _database_digest(endpoint, source_database)
             _create_database(endpoint, target_database)
             created.append(target_database)
-            restore_client = _run_pg_tool("pg_restore", endpoint, target_database, archive)
+            restore_client = _run_pg_tool(
+                "pg_restore",
+                endpoint,
+                target_database,
+                archive,
+                server_major=server_major,
+            )
         target_engine = sa.create_engine(
             endpoint.sqlalchemy_url(target_database), poolclass=sa.pool.NullPool
         )
@@ -2034,7 +2259,12 @@ def run_logical_restore_contract(
         finally:
             target_engine.dispose()
         _apply_post_backup_replay(endpoint, target_database, identifiers)
-        restored_facts = _verify_restored_database(endpoint, target_database, identifiers)
+        restored_facts = _verify_restored_database(
+            endpoint,
+            target_database,
+            identifiers,
+            expected_saas_head=expected_saas_head,
+        )
         target_hash, target_counts = _database_digest(endpoint, target_database)
         if target_hash != source_hash or target_counts != source_counts:
             raise PostgreSqlRestoreContractError("restored selected-table content hash drifted")

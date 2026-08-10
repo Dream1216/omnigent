@@ -42,9 +42,10 @@ class TaskRecord(SaasBase):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     space_id: Mapped[UUID] = mapped_column(nullable=False)
     project_id: Mapped[UUID] = mapped_column(nullable=False)
-    created_by: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
+    created_by_service_account_id: Mapped[UUID | None] = mapped_column()
     title: Mapped[str] = mapped_column(sa.String(256), nullable=False)
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
@@ -64,10 +65,31 @@ class TaskRecord(SaasBase):
             name="fk_task_project_scope",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "created_by_service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            name="fk_task_service_account_actor",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "(created_by IS NOT NULL) <> (created_by_service_account_id IS NOT NULL)",
+            name="ck_task_actor_xor",
+        ),
         sa.CheckConstraint("length(title) > 0", name="ck_task_title_nonempty"),
         sa.CheckConstraint("version > 0", name="ck_task_version"),
         sa.UniqueConstraint("id", "tenant_id", "space_id", "project_id", name="uq_task_scope"),
         sa.Index("ix_task_project_created", "tenant_id", "space_id", "project_id", "created_at"),
+        sa.Index(
+            "ix_task_service_account_created",
+            "tenant_id",
+            "created_by_service_account_id",
+            "created_at",
+        ),
     )
 
 
@@ -136,9 +158,10 @@ class SessionTaskRecord(SaasBase):
     project_id: Mapped[UUID] = mapped_column(nullable=False)
     session_id: Mapped[UUID] = mapped_column(nullable=False)
     task_id: Mapped[UUID] = mapped_column(nullable=False)
-    attached_by: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    attached_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
+    attached_by_service_account_id: Mapped[UUID | None] = mapped_column()
     attached_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -166,6 +189,21 @@ class SessionTaskRecord(SaasBase):
             name="fk_session_task_task_scope",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "attached_by_service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            name="fk_session_task_service_account_actor",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "(attached_by IS NOT NULL) <> (attached_by_service_account_id IS NOT NULL)",
+            name="ck_session_task_actor_xor",
+        ),
         sa.UniqueConstraint("session_id", "task_id", name="uq_session_task_link"),
         sa.Index("ix_session_task_task", "tenant_id", "space_id", "project_id", "task_id"),
     )
@@ -182,9 +220,11 @@ class RunRecord(SaasBase):
     project_id: Mapped[UUID] = mapped_column(nullable=False)
     task_id: Mapped[UUID] = mapped_column(nullable=False)
     session_id: Mapped[UUID | None] = mapped_column()
-    created_by: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    parent_run_id: Mapped[UUID | None] = mapped_column()
+    created_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
+    created_by_service_account_id: Mapped[UUID | None] = mapped_column()
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="created")
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     event_sequence: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
@@ -193,6 +233,7 @@ class RunRecord(SaasBase):
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     input: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    api_metadata: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False, default=dict)
     product_revision: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     upstream_revision: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     schema_revision: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -237,6 +278,32 @@ class RunRecord(SaasBase):
             name="fk_run_session_scope",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ("parent_run_id", "tenant_id", "space_id", "project_id"),
+            (
+                "saas_runs.id",
+                "saas_runs.tenant_id",
+                "saas_runs.space_id",
+                "saas_runs.project_id",
+            ),
+            name="fk_run_parent_scope",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "created_by_service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            name="fk_run_service_account_actor",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "(created_by IS NOT NULL) <> (created_by_service_account_id IS NOT NULL)",
+            name="ck_run_actor_xor",
+        ),
         sa.CheckConstraint(f"status IN ({_values(RUN_STATUSES)})", name="ck_run_status"),
         sa.CheckConstraint("version > 0", name="ck_run_version"),
         sa.CheckConstraint("event_sequence >= 0", name="ck_run_event_sequence"),
@@ -269,6 +336,13 @@ class RunRecord(SaasBase):
             "created_at",
         ),
         sa.Index("ix_run_task_created", "task_id", "created_at"),
+        sa.Index("ix_run_parent_created", "parent_run_id", "created_at"),
+        sa.Index(
+            "ix_run_service_account_created",
+            "tenant_id",
+            "created_by_service_account_id",
+            "created_at",
+        ),
         sa.Index("ix_run_lease_expiry", "status", "lease_expires_at"),
     )
 
@@ -476,9 +550,10 @@ class ArtifactRecord(SaasBase):
     media_type: Mapped[str] = mapped_column(sa.String(256), nullable=False)
     object_uri: Mapped[str] = mapped_column(sa.String(2048), nullable=False)
     source_revision: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    created_by: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
+    created_by_service_account_id: Mapped[UUID | None] = mapped_column()
     metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", sa.JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
@@ -490,6 +565,21 @@ class ArtifactRecord(SaasBase):
             ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
             name="fk_artifact_project_scope",
             ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "created_by_service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            name="fk_artifact_service_account_actor",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "(created_by IS NOT NULL) <> (created_by_service_account_id IS NOT NULL)",
+            name="ck_artifact_actor_xor",
         ),
         sa.CheckConstraint("length(sha256) = 64", name="ck_artifact_sha256"),
         sa.CheckConstraint("size_bytes >= 0", name="ck_artifact_size"),
@@ -503,6 +593,12 @@ class ArtifactRecord(SaasBase):
         ),
         sa.UniqueConstraint(
             "id", "tenant_id", "space_id", "project_id", name="uq_artifact_id_scope"
+        ),
+        sa.Index(
+            "ix_artifact_service_account_created",
+            "tenant_id",
+            "created_by_service_account_id",
+            "created_at",
         ),
     )
 

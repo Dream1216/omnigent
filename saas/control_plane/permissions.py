@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-09.pc5-privacy-deletion"
+POLICY_VERSION: Final = "2026-08-10.p1-notify-ops"
 
 
 class PermissionScope(StrEnum):
@@ -280,6 +280,44 @@ _DEFINITIONS = (
         audit_event="platform.operation.approved",
     ),
     _permission(
+        "platform.notification.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=(
+            "GET /v2/platform-admin/notification-operations/inbox",
+            "GET /v2/platform-admin/notification-operations/delegations",
+            "GET /v2/platform-admin/notification-operations/deliveries",
+            "GET /v2/platform-admin/notification-operations/preferences",
+            "GET /v2/platform-admin/notification-operations/templates",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_operations.read",
+    ),
+    _permission(
+        "platform.notification.replay",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/notification-operations/deliveries/{id}/replay",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_delivery.replayed",
+    ),
+    _permission(
+        "platform.notification_template.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/notification-operations/templates",
+            "POST /v2/platform-admin/notification-operations/templates/{id}/retire",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_template.changed",
+    ),
+    _permission(
         "platform.runner.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
@@ -334,22 +372,77 @@ _DEFINITIONS = (
         audit_event="platform.audit_export.requested",
     ),
     _permission(
+        "platform.privacy.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=(
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletion-preview",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/legal-holds",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/operations",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/work-items",
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/attempts",
+            (
+                "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/"
+                "{manifest_id}/attestations"
+            ),
+            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/backups",
+        ),
+        ui_surface="data-lifecycle",
+        audit_event="platform.privacy.read",
+    ),
+    _permission(
         "platform.data_request.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
         approval_required=True,
         api_surfaces=(
-            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletion-preview",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds",
             "POST /v2/platform-admin/privacy/{target_type}/{id}/legal-holds/{hold_id}/release",
-            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions",
-            "GET /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}",
-            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/surfaces",
-            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/{manifest_id}/finalize",
         ),
         ui_surface="data-lifecycle",
         audit_event="platform.data_request.changed",
+    ),
+    _permission(
+        "platform.data_request.request",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/privacy/{target_type}/{id}/deletion-requests",
+            (
+                "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/"
+                "{manifest_id}/finalization-requests"
+            ),
+            (
+                "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/"
+                "{manifest_id}/work-items/{work_item_id}/replay-requests"
+            ),
+            (
+                "POST /v2/platform-admin/privacy/{target_type}/{id}/deletions/"
+                "{manifest_id}/backups/{backup_item_id}/replay-requests"
+            ),
+        ),
+        ui_surface="data-lifecycle",
+        audit_event="platform.privacy_operation.requested",
+    ),
+    _permission(
+        "platform.data_request.approve",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            (
+                "POST /v2/platform-admin/privacy/{target_type}/{id}/operations/"
+                "{operation_id}/decision"
+            ),
+        ),
+        ui_surface="data-lifecycle",
+        audit_event="platform.privacy_operation.decided",
     ),
     _permission("tenant.read", PermissionScope.TENANT, PermissionRisk.LOW),
     _permission("tenant.update", PermissionScope.TENANT, PermissionRisk.HIGH),
@@ -507,11 +600,16 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.manage",
                 "platform.operations.read",
                 "platform.operation.approve",
+                "platform.notification.read",
+                "platform.notification.replay",
+                "platform.notification_template.manage",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",
                 "platform.support_grant.manage",
+                "platform.privacy.read",
                 "platform.data_request.manage",
+                "platform.data_request.approve",
             }
         ),
         "platform_security_auditor": frozenset(
@@ -525,9 +623,11 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.read",
                 "platform.support.read",
                 "platform.operations.read",
+                "platform.notification.read",
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",
+                "platform.privacy.read",
             }
         ),
         "support_agent": frozenset(
@@ -540,6 +640,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.support.request",
                 "platform.break_glass.request",
                 "platform.operations.read",
+                "platform.notification.read",
             }
         ),
         "billing_operator": frozenset(
@@ -559,9 +660,12 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.user.read",
                 "platform.user.pii.read",
                 "platform.operations.read",
+                "platform.notification.read",
                 "platform.audit.read",
                 "platform.audit.export",
+                "platform.privacy.read",
                 "platform.data_request.manage",
+                "platform.data_request.request",
             }
         ),
     }

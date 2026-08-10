@@ -6,7 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>Omnigent · Platform Operations</title>
     <link rel="stylesheet" href="/platform-admin/assets/platform-admin.css">
+    <link rel="stylesheet" href="/platform-admin/assets/platform-privacy.css">
     <script src="/platform-admin/assets/platform-admin.js" defer></script>
+    <script src="/platform-admin/assets/platform-privacy.js" defer></script>
   </head>
   <body>
     <div class="signal-grid" aria-hidden="true"></div>
@@ -53,8 +55,14 @@
           <button data-testid="nav-support" data-permission="platform.support.read" data-view="support" type="button">
             <span>05</span><strong>SUPPORT</strong><small>受控支持</small>
           </button>
+          <button data-testid="nav-privacy" data-permission="platform.privacy.read" data-view="privacy" type="button">
+            <span>06</span><strong>PRIVACY</strong><small>数据生命周期</small>
+          </button>
           <button data-testid="nav-audit" data-permission="platform.audit.read" data-view="audit" type="button">
-            <span>06</span><strong>AUDIT</strong><small>审计与导出</small>
+            <span>07</span><strong>AUDIT</strong><small>审计与导出</small>
+          </button>
+          <button id="notification-operations-link" data-testid="nav-notifications" data-permission="platform.notification.read" type="button" hidden>
+            <span>08</span><strong>NOTIFY OPS</strong><small>审批与投递</small>
           </button>
         </nav>
 
@@ -169,9 +177,131 @@
           </div>
         </section>
 
+        <section class="console-view" data-testid="view-privacy" data-view-panel="privacy" hidden>
+          <header class="view-heading privacy-heading">
+            <div><p class="kicker">06 / DATA LIFECYCLE COMMAND</p><h1>隐私证据台</h1><p>把审批、删除队列、重试 / DLQ、备份清除与 DSSE 验证串成一条可审计作业链。浏览器保持内容盲，只接收状态、版本和不可逆摘要。</p></div>
+            <div class="privacy-mode"><span>PRODUCTION CONTROL</span><strong>GOVERNED LIVE</strong><small>精确目标 · 双人审批 · Executor 隔离</small></div>
+          </header>
+
+          <form class="privacy-target-form" data-testid="privacy-target-form" id="privacy-target-form">
+            <label><span>TARGET TYPE</span><select data-testid="privacy-target-type" id="privacy-target-type"><option value="global_user">GLOBAL USER</option><option value="tenant">TENANT</option></select></label>
+            <label><span>EXACT TARGET ID</span><input data-testid="privacy-target-id" id="privacy-target-id" required placeholder="00000000-0000-0000-0000-000000000000"></label>
+            <button data-testid="privacy-inspect" id="privacy-inspect" type="submit">BIND TARGET ↗</button>
+          </form>
+          <p class="privacy-message" data-testid="privacy-message" id="privacy-message" aria-live="polite"></p>
+
+          <div class="privacy-empty-state" data-testid="privacy-empty" id="privacy-empty">
+            <span>NO TARGET BOUND</span><strong>先锁定对象，再打开证据舱。</strong>
+            <p>不提供跨租户全表搜索。每次查询和决策均重新校验 Staff Assignment、精确目标 RLS、CSRF 与新鲜认证状态。</p>
+          </div>
+
+          <div data-testid="privacy-workbench" id="privacy-workbench" hidden>
+            <code class="privacy-result-target" data-testid="privacy-result-target" id="privacy-result-target">TARGET / —</code>
+            <div class="privacy-fact-grid">
+              <article><span>TARGET STATE</span><strong id="privacy-target-state">—</strong><small id="privacy-target-version">VERSION —</small></article>
+              <article><span>ACTIVE BLOCKERS</span><strong id="privacy-blocker-count">—</strong><small id="privacy-target-blockers">尚未读取</small></article>
+              <article><span>LEGAL HOLDS</span><strong id="privacy-hold-count">—</strong><small>逾期只升级，不自动释放</small></article>
+              <article class="privacy-signal"><span>EXECUTION / DSSE</span><strong id="privacy-surface-progress">—</strong><small id="privacy-execution-note">选择 Manifest 查看执行证据</small></article>
+            </div>
+
+            <section class="privacy-command-deck" aria-labelledby="privacy-command-title">
+              <div>
+                <span class="privacy-eyebrow">TWO-PERSON DESTRUCTIVE GATE</span>
+                <h2 id="privacy-command-title">审批不是按钮，是删除执行的前置证据。</h2>
+                <p>发起人只能提交精确快照；另一名具备批准权限且认证新鲜的 Staff 才能批准或拒绝。审批完成前不会创建、重放或终结删除作业。</p>
+              </div>
+              <div class="privacy-command-actions">
+                <button data-testid="privacy-request-deletion" id="privacy-request-deletion" type="button">REQUEST DELETION</button>
+                <button data-testid="privacy-request-finalization" id="privacy-request-finalization" type="button" disabled>REQUEST FINALIZATION</button>
+              </div>
+            </section>
+
+            <article class="privacy-approval-panel">
+              <div class="panel-heading"><span>01 / APPROVAL RAIL</span><small id="privacy-operation-count">0 OPERATIONS</small></div>
+              <div class="privacy-operation-list" data-testid="privacy-operation-list" id="privacy-operation-list" aria-live="polite"></div>
+              <button class="load-more" data-testid="privacy-operations-more" id="privacy-operations-more" type="button" hidden>LOAD OLDER OPERATIONS ↓</button>
+            </article>
+
+            <div class="privacy-layout">
+              <article class="work-panel privacy-impact-panel">
+                <div class="panel-heading"><span>AUTHORITATIVE PREVIEW</span><small id="privacy-preview-hash">HASH / —</small></div>
+                <div class="privacy-impact-list" data-testid="privacy-impact-counts" id="privacy-impact-counts"></div>
+              </article>
+              <article class="work-panel privacy-hold-panel">
+                <div class="panel-heading"><span>LEGAL HOLD INTERLOCK</span><small id="privacy-hold-page-state">0 LOADED</small></div>
+                <div class="record-list" data-testid="privacy-holds-list" id="privacy-holds-list"></div>
+                <button class="load-more" data-testid="privacy-holds-more" id="privacy-holds-more" type="button" hidden>LOAD OLDER HOLDS ↓</button>
+              </article>
+            </div>
+
+            <article class="privacy-manifest-ledger">
+              <div class="panel-heading"><span>02 / MANIFEST LEDGER</span><small id="privacy-manifest-count">0 LOADED</small></div>
+              <div class="privacy-manifest-list" data-testid="privacy-manifests-list" id="privacy-manifests-list"></div>
+              <button class="load-more" data-testid="privacy-manifests-more" id="privacy-manifests-more" type="button" hidden>LOAD OLDER MANIFESTS ↓</button>
+            </article>
+
+            <article class="privacy-evidence-panel" data-testid="privacy-manifest-detail" id="privacy-manifest-detail" hidden>
+              <div class="privacy-evidence-heading">
+                <div><span>03 / SELECTED MANIFEST</span><h2 id="privacy-manifest-title">—</h2><code id="privacy-manifest-hash">MANIFEST HASH / PENDING</code></div>
+                <div class="privacy-evidence-legend" aria-label="Evidence status legend"><span data-tone="success">VERIFIED</span><span data-tone="retained">RETENTION</span><span data-tone="pending">PENDING</span><span data-tone="failure">DLQ / BLOCKED</span></div>
+              </div>
+
+              <ol class="privacy-stage-rail" aria-label="Deletion evidence stages">
+                <li id="privacy-stage-approval"><span>01</span><strong>APPROVAL</strong><small>EXACT SNAPSHOT</small></li>
+                <li id="privacy-stage-erasure"><span>02</span><strong>ERASURE</strong><small>15 SURFACES</small></li>
+                <li id="privacy-stage-dsse"><span>03</span><strong>DSSE</strong><small>CRYPTO VERIFIED</small></li>
+                <li id="privacy-stage-retention"><span>04</span><strong>RETENTION</strong><small>BACKUP PURGE</small></li>
+              </ol>
+
+              <div class="privacy-execution-grid">
+                <article><span>WORK QUEUE</span><strong id="privacy-work-summary">—</strong><small>LEASED / RETRY / DLQ</small></article>
+                <article><span>ATTEMPTS</span><strong id="privacy-attempt-summary">—</strong><small>APPEND-ONLY RECEIPTS</small></article>
+                <article><span>DSSE VERIFIED</span><strong id="privacy-attestation-summary">—</strong><small>PAYLOAD + ENVELOPE</small></article>
+                <article><span>BACKUP PURGE</span><strong id="privacy-backup-summary">—</strong><small>LOCK / HOLD / DUE</small></article>
+              </div>
+
+              <div class="privacy-operations-grid" id="privacy-resource-deck" aria-busy="false">
+                <section class="privacy-resource-panel" aria-labelledby="privacy-work-title">
+                  <div class="privacy-resource-heading"><div><span>04 / EXECUTOR QUEUE</span><h3 id="privacy-work-title">Surface work items</h3></div><small id="privacy-work-count">0 ITEMS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-work-items" id="privacy-work-items"></div>
+                  <button class="load-more" data-kind="workItems" data-testid="privacy-work-more" id="privacy-work-more" type="button" hidden>LOAD MORE WORK ITEMS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel" aria-labelledby="privacy-attempt-title">
+                  <div class="privacy-resource-heading"><div><span>05 / RETRY &amp; DLQ</span><h3 id="privacy-attempt-title">Attempt ledger</h3></div><small id="privacy-attempt-count">0 ATTEMPTS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-attempts" id="privacy-attempts"></div>
+                  <button class="load-more" data-kind="attempts" data-testid="privacy-attempt-more" id="privacy-attempt-more" type="button" hidden>LOAD MORE ATTEMPTS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel privacy-backup-panel" aria-labelledby="privacy-backup-title">
+                  <div class="privacy-resource-heading"><div><span>06 / RETENTION TAIL</span><h3 id="privacy-backup-title">Backup purge</h3></div><small id="privacy-backup-count">0 OBJECTS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-backups" id="privacy-backups"></div>
+                  <button class="load-more" data-kind="backups" data-testid="privacy-backup-more" id="privacy-backup-more" type="button" hidden>LOAD MORE BACKUPS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel privacy-dsse-panel" aria-labelledby="privacy-dsse-title">
+                  <div class="privacy-resource-heading"><div><span>07 / SIGNED EVIDENCE</span><h3 id="privacy-dsse-title">DSSE attestations</h3></div><small id="privacy-attestation-count">0 ENVELOPES</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-attestations" id="privacy-attestations"></div>
+                  <button class="load-more" data-kind="attestations" data-testid="privacy-attestation-more" id="privacy-attestation-more" type="button" hidden>LOAD MORE ATTESTATIONS ↓</button>
+                </section>
+              </div>
+
+              <details class="privacy-surface-disclosure" open>
+                <summary>08 / SIGNED SURFACE PROJECTION <span>15 ADAPTER CONTRACTS</span></summary>
+                <div class="privacy-surface-grid" data-testid="privacy-surface-grid" id="privacy-surface-grid"></div>
+              </details>
+            </article>
+
+            <aside class="privacy-boundary" data-testid="privacy-production-boundary">
+              <strong>CONTROL-PLANE MANIFEST ≠ PRODUCTION DELETION PROOF</strong>
+              <p>只有执行 Attempt、通过密码学验证的 DSSE、不可变存储 / KMS Receipt，以及备份到期后的 Purge Evidence 共同闭环，才构成生产证据。Pending Retention、Retry 与 DLQ 永远不会被渲染成“彻底删除”。</p>
+            </aside>
+          </div>
+        </section>
+
         <section class="console-view" data-testid="view-audit" data-view-panel="audit" hidden>
           <header class="view-heading">
-            <div><p class="kicker">06 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
+            <div><p class="kicker">07 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
             <span class="view-total" id="audit-total">00</span>
           </header>
           <form class="audit-filter" id="audit-filter-form">
@@ -200,6 +330,27 @@
         <p id="dialog-summary"></p>
         <div class="dialog-fields" id="dialog-fields"></div>
         <div class="dialog-actions"><button value="cancel" type="button" id="dialog-cancel">CANCEL</button><button class="danger-action" data-testid="dialog-confirm" id="dialog-confirm" type="submit">CONFIRM</button></div>
+      </form>
+    </dialog>
+
+    <dialog aria-labelledby="privacy-dialog-title" class="privacy-command-dialog" data-testid="privacy-command-dialog" id="privacy-command-dialog">
+      <form id="privacy-command-form">
+        <header>
+          <div><span id="privacy-dialog-index">PRIVACY OPERATION / CRITICAL</span><h2 id="privacy-dialog-title">Governed request</h2></div>
+          <button aria-label="Close privacy operation dialog" id="privacy-dialog-close" type="button">×</button>
+        </header>
+        <p id="privacy-dialog-summary">The server will bind this command to an exact, expiring snapshot.</p>
+        <div class="privacy-dialog-fingerprint"><span>CONTENT-BLIND BINDING</span><code id="privacy-dialog-fingerprint">—</code></div>
+        <div class="privacy-dialog-fields" id="privacy-request-fields">
+          <label><span>REASON CODE</span><select id="privacy-reason-code" required><option value="data_subject_request">DATA SUBJECT REQUEST</option><option value="contract_expiry">CONTRACT EXPIRY</option><option value="tenant_termination">TENANT TERMINATION</option><option value="legal_authority">LEGAL AUTHORITY</option><option value="security_response">SECURITY RESPONSE</option><option value="verified_operational_replay">VERIFIED OPERATIONAL REPLAY</option></select></label>
+          <label><span>CASE REFERENCE</span><input autocomplete="off" id="privacy-case-reference" maxlength="256" required></label>
+          <label><span>REQUEST EXPIRES AT</span><input id="privacy-expires-at" required type="datetime-local"></label>
+        </div>
+        <div class="privacy-dialog-fields" id="privacy-decision-fields" hidden>
+          <label><span>DECISION CODE</span><select id="privacy-decision-code" required><option value="policy_confirmed">POLICY CONFIRMED</option><option value="verified_replay">VERIFIED REPLAY</option><option value="scope_rejected">SCOPE REJECTED</option><option value="stale_request">STALE REQUEST</option></select></label>
+          <div class="privacy-separation-note"><strong>SEPARATION OF DUTIES</strong><span id="privacy-separation-copy">The requester cannot decide their own operation.</span></div>
+        </div>
+        <div class="privacy-dialog-actions"><button id="privacy-dialog-cancel" type="button">CANCEL</button><button data-testid="privacy-dialog-confirm" id="privacy-dialog-confirm" type="submit">SUBMIT GOVERNED REQUEST</button></div>
       </form>
     </dialog>
 

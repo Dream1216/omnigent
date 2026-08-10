@@ -2,7 +2,9 @@
   "adapter_contract_version": "0.2.0",
   "audit_verified_at": "2026-08-09",
   "downstream_owned_prefixes": [
+    ".github/workflows/saas-",
     "saas/",
+    "sdks/saas-",
     "tests/saas/"
   ],
   "forbidden_upstream_prefixes": [

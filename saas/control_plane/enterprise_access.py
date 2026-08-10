@@ -14,6 +14,11 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import RequestContext
+from saas.control_plane.approval_source_projection import (
+    SourceApprovalProjectionBridge,
+    SourceApprovalProjectionSpec,
+    bounded_deadlines,
+)
 from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.db_models import (
     AuthSessionRecord,
@@ -215,9 +220,12 @@ class EnterpriseAccessService:
         self,
         session_factory: sessionmaker[Session],
         authorizer: ProjectAuthorizer | None = None,
+        *,
+        approval_projection: SourceApprovalProjectionBridge | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
+        self._approval_projection = approval_projection
 
     def create_group(
         self,
@@ -536,6 +544,8 @@ class EnterpriseAccessService:
         reauthenticated_at: datetime,
         idempotency_key: str,
         now: datetime | None = None,
+        approval_projection_version: int | None = None,
+        approval_decision_code: str | None = None,
     ) -> EnterpriseAccessPreflightView:
         """Approve or reject as a currently authorized, distinct principal."""
 
@@ -619,6 +629,19 @@ class EnterpriseAccessService:
                 request_hash=digest,
                 payload=event_payload,
             )
+            if self._approval_projection is not None:
+                self._approval_projection.terminal_in_transaction(
+                    db,
+                    self._approval_spec(preflight, decided_at),
+                    status="approved" if decision == "approve" else "rejected",
+                    decision_code=(
+                        approval_decision_code
+                        or ("source_approved" if decision == "approve" else "source_rejected")
+                    ),
+                    decided_by_id=request.actor_id,
+                    decided_at=decided_at,
+                    expected_projection_version=approval_projection_version,
+                )
             return self._preflight_view(preflight)
 
     def archive_group(
@@ -1593,6 +1616,7 @@ class EnterpriseAccessService:
             snapshot_hash=_hash(snapshot),
             status="pending_approval",
             expires_at=created_at + _ENTERPRISE_PREFLIGHT_TTL,
+            created_at=created_at,
         )
         db.add(record)
         db.flush()
@@ -1607,7 +1631,45 @@ class EnterpriseAccessService:
             request_hash=request_hash,
             payload=payload,
         )
+        if self._approval_projection is not None:
+            self._approval_projection.project_in_transaction(
+                db,
+                self._approval_spec(record, created_at),
+                now=created_at,
+            )
         return self._preflight_view(record)
+
+    @staticmethod
+    def _approval_spec(
+        record: EnterpriseAccessPreflightRecord,
+        now: datetime,
+    ) -> SourceApprovalProjectionSpec:
+        due_at, escalation_at = bounded_deadlines(
+            now=_comparable(record.created_at or now),
+            source_expires_at=_comparable(record.expires_at),
+            default_ttl=_ENTERPRISE_PREFLIGHT_TTL,
+        )
+        is_group = record.operation_type == "group_archive"
+        return SourceApprovalProjectionSpec(
+            authority="enterprise",
+            work_item_id=record.id,
+            source_subject_id=None,
+            realm="tenant",
+            tenant_id=record.tenant_id,
+            requester_realm="tenant",
+            requester_id=record.requested_by,
+            operation_kind="enterprise",
+            operation_id=record.id,
+            action=("enterprise.group_archive" if is_group else "enterprise.custom_role_retire"),
+            target_type="enterprise_group" if is_group else "enterprise_custom_role",
+            target_id=record.target_id,
+            required_permission="group.manage" if is_group else "custom_role.manage",
+            risk_level="high",
+            snapshot_hash=record.snapshot_hash,
+            due_at=due_at,
+            escalation_at=escalation_at,
+            priority="high",
+        )
 
     def _group_archive_snapshot(
         self,
@@ -1892,6 +1954,8 @@ class EnterpriseAccessService:
         db: Session,
         request: RequestContext,
         preflight: EnterpriseAccessPreflightRecord,
+        *,
+        persist_decisions: bool = True,
     ) -> None:
         if preflight.operation_type == "group_archive":
             self._require_tenant_group_admin(db, request)
@@ -1904,7 +1968,11 @@ class EnterpriseAccessService:
             raise LifecycleError("enterprise_preflight_not_found", "preflight is not in scope")
         self._active_project(db, request, preflight.project_id, lock=False)
         self._require_project_permissions(
-            db, request, preflight.project_id, ("grant.manage", "custom_role.manage")
+            db,
+            request,
+            preflight.project_id,
+            ("grant.manage", "custom_role.manage"),
+            persist_decisions=persist_decisions,
         )
 
     def _require_approver_still_authorized(
@@ -2138,11 +2206,25 @@ class EnterpriseAccessService:
         request: RequestContext,
         project_id: UUID,
         permissions: tuple[str, ...],
+        *,
+        persist_decisions: bool = True,
     ) -> None:
         for permission in permissions:
-            decision = self._authorizer.evaluate_in_session(
-                db, request, action=permission, project_id=project_id, mode="enforce"
-            )
+            if persist_decisions:
+                decision = self._authorizer.evaluate_in_session(
+                    db,
+                    request,
+                    action=permission,
+                    project_id=project_id,
+                    mode="enforce",
+                )
+            else:
+                decision = self._authorizer.evaluate_audience_in_session(
+                    db,
+                    request,
+                    action=permission,
+                    project_id=project_id,
+                )
             if not decision.allowed:
                 raise LifecycleError("permission_not_granted", "delegated permission is not held")
 

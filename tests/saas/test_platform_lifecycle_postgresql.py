@@ -284,9 +284,11 @@ def test_real_postgresql_pc2_lifecycle_is_exact_target_operator_only_and_forced_
     engine.dispose()
 
 
-def test_real_postgresql_identity_conflict_review_is_content_blind_and_exact_target() -> None:
+def test_real_postgresql_identity_conflict_review_is_content_blind_and_exact_target(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     operator_id, roleless_id = uuid4(), uuid4()
     candidate_id, conflict_id, other_conflict_id = uuid4(), uuid4(), uuid4()
     now = datetime.now(timezone.utc)

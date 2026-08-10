@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -43,7 +44,9 @@ from saas.control_plane.privacy_lifecycle import (
     sign_surface_evidence,
 )
 from saas.control_plane.privacy_models import (
+    PrivacyBackupRetentionItemRecord,
     PrivacyDeletionManifestRecord,
+    PrivacyDeletionWorkItemRecord,
     PrivacyIdentityTombstoneRecord,
     PrivacyLegalHoldRecord,
 )
@@ -363,6 +366,232 @@ def test_legal_hold_blocks_deletion_until_exact_version_release(privacy) -> None
     with factory() as db:
         assert db.get(PrivacyLegalHoldRecord, hold.hold_id).version == 2
 
+    second = service.place_legal_hold(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        scope=("audit",),
+        authority_ref="case-2026-101",
+        reason="second preservation request",
+        review_due_at=NOW + timedelta(days=31),
+        now=NOW + timedelta(seconds=6),
+    )
+    service.release_legal_hold(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        hold_id=second.hold_id,
+        expected_version=second.version,
+        reason="second preservation authority released the case",
+        now=NOW + timedelta(seconds=7),
+    )
+    third = service.place_legal_hold(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        scope=("identity",),
+        authority_ref="case-2026-102",
+        reason="third preservation request",
+        review_due_at=NOW + timedelta(days=32),
+        now=NOW + timedelta(seconds=8),
+    )
+    page = service.list_legal_holds(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        limit=2,
+        now=NOW + timedelta(seconds=9),
+    )
+    assert tuple(item.hold_id for item in page.items) == (third.hold_id, second.hold_id)
+    assert page.next_cursor == second.hold_id
+    older = service.list_legal_holds(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        cursor=page.next_cursor,
+        limit=2,
+        now=NOW + timedelta(seconds=9),
+    )
+    assert tuple(item.hold_id for item in older.items) == (hold.hold_id,)
+    assert older.next_cursor is None
+    with pytest.raises(PlatformSecurityError, match="cursor is invalid"):
+        service.list_legal_holds(
+            actor,
+            target_type="global_user",
+            target_id=user_id,
+            status="released",
+            cursor=third.hold_id,
+            now=NOW + timedelta(seconds=9),
+        )
+
+
+@pytest.mark.parametrize("kind", ["surface", "backup"])
+@pytest.mark.parametrize(
+    ("expires_delta", "expected_code"),
+    [
+        (timedelta(minutes=2), "platform_privacy_hold_execution_in_progress"),
+        (timedelta(seconds=2), "platform_privacy_hold_recovery_required"),
+    ],
+)
+def test_legal_hold_rejects_active_and_expired_destructive_leases(
+    privacy,
+    kind: str,
+    expires_delta: timedelta,
+    expected_code: str,
+) -> None:
+    factory, service, sessions, operator_id = privacy
+    user_id, _tenant_id, _directory_id, _token, _external = _seed_user(factory)
+    actor = _actor(sessions)
+    manifest_id = uuid4()
+    leased_at = NOW + timedelta(seconds=1)
+    expires_at = NOW + expires_delta
+    with factory.begin() as db:
+        db.add(
+            PrivacyDeletionManifestRecord(
+                id=manifest_id,
+                target_type="global_user",
+                target_id=user_id,
+                tenant_id=None,
+                requested_by_principal_id=operator_id,
+                idempotency_key=f"hold-fence-{kind}-{expected_code}",
+                request_hash="1" * 64,
+                approval_ref="hold-fence-fixture",
+                completion_approval_ref="hold-fence-complete",
+                reason="Legal Hold destructive lease fencing fixture",
+                expected_target_version=1,
+                preview_hash="2" * 64,
+                status="completed",
+                blockers=[],
+                surface_outcomes={},
+                manifest_hash="3" * 64,
+                version=1,
+                started_at=NOW,
+                completed_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        db.flush()
+        common = {
+            "manifest_id": manifest_id,
+            "target_type": "global_user",
+            "target_id": user_id,
+            "tenant_id": None,
+            "status": "leased",
+            "attempt_count": 1,
+            "max_attempts": 3,
+            "available_at": NOW,
+            "leased_at": leased_at,
+            "lease_expires_at": expires_at,
+            "lease_token_hash": "4" * 64,
+            "executor_identity_sha256": "5" * 64,
+            "lease_generation": 1,
+            "replay_generation": 0,
+            "version": 1,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        if kind == "surface":
+            db.add(
+                PrivacyDeletionWorkItemRecord(
+                    id=uuid4(),
+                    surface="object_and_artifact_store",
+                    disposition="erase",
+                    resource_scope_hmac="6" * 64,
+                    adapter_type="object-store-v1",
+                    **common,
+                )
+            )
+        else:
+            db.add(
+                PrivacyBackupRetentionItemRecord(
+                    id=uuid4(),
+                    provider="backup-provider-v1",
+                    backup_data_class="database_snapshot",
+                    backup_locator_hmac="7" * 64,
+                    resource_handle_ref="backup://opaque/hold-fence",
+                    catalog_snapshot_sha256="8" * 64,
+                    tombstone_sha256="9" * 64,
+                    purge_due_at=NOW,
+                    **common,
+                )
+            )
+
+    with pytest.raises(PlatformSecurityError) as blocked:
+        service.place_legal_hold(
+            actor,
+            target_type="global_user",
+            target_id=user_id,
+            scope=("all",),
+            authority_ref=f"case:{kind}:{expected_code}",
+            reason="A destructive lease must settle before preservation starts",
+            review_due_at=NOW + timedelta(days=30),
+            now=NOW + timedelta(seconds=3),
+        )
+    assert blocked.value.code == expected_code
+    with factory() as db:
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(PrivacyLegalHoldRecord)
+                .where(PrivacyLegalHoldRecord.target_id == user_id)
+            )
+            == 0
+        )
+
+
+def test_manifest_history_uses_stable_time_and_id_keyset(privacy) -> None:
+    factory, service, sessions, operator_id = privacy
+    user_id, _tenant_id, _directory_id, _token, _external = _seed_user(factory)
+    actor = _actor(sessions)
+    manifests = []
+    with factory.begin() as db:
+        for index in range(3):
+            manifest = PrivacyDeletionManifestRecord(
+                target_type="global_user",
+                target_id=user_id,
+                tenant_id=None,
+                requested_by_principal_id=operator_id,
+                idempotency_key=f"history-{index}",
+                request_hash=str(index) * 64,
+                approval_ref=f"approval-{index}",
+                completion_approval_ref=f"completion-{index}",
+                reason="history pagination fixture",
+                expected_target_version=1,
+                preview_hash=str(index + 1) * 64,
+                status="completed",
+                blockers=[],
+                surface_outcomes={},
+                manifest_hash=str(index + 2) * 64,
+                version=1,
+                started_at=NOW + timedelta(minutes=index),
+                completed_at=NOW + timedelta(minutes=index, seconds=30),
+                updated_at=NOW + timedelta(minutes=index, seconds=30),
+            )
+            db.add(manifest)
+            manifests.append(manifest)
+    page = service.list_manifests(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        limit=2,
+        now=NOW + timedelta(minutes=4),
+    )
+    assert tuple(item.manifest_id for item in page.items) == (
+        manifests[2].id,
+        manifests[1].id,
+    )
+    assert page.next_cursor == manifests[1].id
+    older = service.list_manifests(
+        actor,
+        target_type="global_user",
+        target_id=user_id,
+        cursor=page.next_cursor,
+        limit=2,
+        now=NOW + timedelta(minutes=4),
+    )
+    assert tuple(item.manifest_id for item in older.items) == (manifests[0].id,)
+    assert older.next_cursor is None
+
 
 def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfaces(
     privacy,
@@ -429,6 +658,22 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
         )
 
     manifest = started
+    first_name, first_pending = next(iter(started.surface_outcomes.items()))
+    with pytest.raises(PlatformSecurityError) as stale_surface:
+        service.record_surface_evidence(
+            replace(actor, authenticated_at=NOW - timedelta(minutes=6)),
+            target_type="global_user",
+            target_id=user_id,
+            evidence=_surface(
+                started.manifest_id,
+                first_name,
+                str(first_pending["disposition"]),
+                NOW + timedelta(seconds=4),
+            ),
+            expected_manifest_version=manifest.version,
+            now=NOW + timedelta(seconds=5),
+        )
+    assert stale_surface.value.code == "platform_fresh_auth_required"
     for name, pending in started.surface_outcomes.items():
         evidence = _surface(
             started.manifest_id,

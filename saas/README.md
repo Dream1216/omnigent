@@ -1963,3 +1963,82 @@ valid but still reports 0/10 and `NO-GO`. This remains a development candidate u
 exact committed SHA passes the compatibility and image workflows. Local restore and
 test evidence is not a production deletion drill, backup-expiry proof, IdP rollout or
 release `GO`.
+
+The first Privacy administration product slice is implemented on
+`codex/saas-p1-privacy-admin-ui` without an official-runtime source change. The
+policy-only `pc5b00000002` migration adds exact-target, `FOR SELECT` PostgreSQL
+policies for the read-only Platform Security Auditor; it does not alter an existing
+migration or grant an Auditor write path. The slice separates `platform.privacy.read`
+from the existing destructive
+`platform.data_request.manage` permission and adds exact-target, cursor-bounded Legal
+Hold and deletion Manifest history reads. `platform_security_auditor` can inspect those
+content-blind projections but cannot create a Hold or start, update, or finalize a
+deletion. The dedicated Staff console exposes the same boundary as a read-only Privacy
+evidence desk: an operator must supply an exact Global User or Tenant UUID, after which
+the page shows authoritative blockers, Hold history, Manifest history, and all 15
+surface outcomes without exposing request reasons, approval references, signatures,
+customer content, or direct identity data. The browser never receives the executor
+surface-signing capability.
+
+This slice restores target progress after a browser refresh and closes only the first
+Privacy UI discovery gap. It does not add a global privacy queue, failure/attempt state,
+retry or DLQ controls, backup-expiry purge receipts, a first-class approval object,
+production workers, or the DSSE/attestation bridge required for production deletion
+proof. A control-plane Manifest, including one marked completed, therefore remains
+distinct from qualified production erasure evidence. P1 as a whole and production
+release remain `NO-GO`.
+
+The second Privacy development slice advances the migration head to
+`pc5b00000003` and replaces the legacy direct deletion write path with governed
+operations for Start, Finalize, Surface DLQ replay, and Backup purge replay. A
+Compliance Operator can only request an exact target/version snapshot; a distinct,
+freshly authenticated Platform Operator decides it. Approval revalidates the
+requester's current role and security version and executes the bound mutation in the
+same transaction. The retired direct Surface and Finalize HTTP endpoints return `410`.
+The Staff UI and API expose content-blind status, stable error codes, versions, hashes,
+and timestamps only; executor identity, resource handles, raw errors, signing keys, and
+customer content are never returned.
+
+Fifteen per-surface Work Items now use fenced leases, deterministic idempotency,
+allowlisted retry classes, bounded exponential backoff, append-only Attempts, and a
+governed DLQ replay generation. Backup discovery materializes an exact signed catalog;
+Legal Hold, purge deadline, and object lock are rechecked at claim, immediately before
+the external adapter call, and at commit. Placing a Hold fails closed while a destructive
+lease is active, so it cannot claim protection while a Provider deletion is in flight.
+Deletion Start records the post-anonymization User or Tenant version; ordinary Restore
+and Finalize both reject an open Manifest, Tombstone, or target-version drift. Every
+successful Surface or Backup result must pass canonical DSSE PAE verification with an
+active, purpose-bound Ed25519 trust key, exact workload identity, Product/Upstream/
+Schema/Adapter revisions, immutable-artifact URI and digest, storage receipt, and KMS
+audit receipt digest. Adapter failures use a rotating-key, domain-separated HMAC rather
+than a dictionary-testable raw SHA-256.
+Logical deletion may finalize while verified Backup retention remains pending, but it
+cannot be represented as complete retention until every catalog item has a purge
+attestation. The external three-role Manifest attestation remains a production
+admission requirement rather than an unreachable operational database shortcut.
+
+Five new tables for approval bindings, Work Items, Attempts, Evidence Attestations, and
+Backup retention run with `ENABLE + FORCE RLS`, moving the control-plane/runtime
+inventories to `93/17`. The dedicated `saas_privacy_dispatcher` is a
+`NOLOGIN`, `NOSUPERUSER`, `NOBYPASSRLS` role that does not inherit Staff governance or
+the PII erasure executor. It can update only allowlisted columns on the exact
+target/Manifest work projection, append Attempts, materialize Backup items, and emit one
+of eight exact-schema events whose target is an HMAC locator. A separate
+`saas_privacy_verifier` login verifies Ed25519 and writes an immutable, attempt-bound
+receipt but cannot modify Work, Attempt, Backup, or Outbox state. Database transition
+triggers reject `succeeded` or `purged` without that independent receipt. PostgreSQL 18
+tests exercise both logins, missing/cross-target denial, column privileges, forged
+success rejection, Outbox allowlisting, append-only triggers, Hold races, and cleanup of
+disposable databases and login roles.
+
+Migration `pc5b00000003` is deliberately forward-only once any pre-existing Manifest is
+backfilled or a new approval/execution/retention fact exists. An application rollback
+must retain the new schema and reapply the matching role contract; a schema downgrade is
+permitted only on an empty candidate. Production rollback after data exists requires a
+reviewed forward migration or an approved restore, never destructive table removal.
+
+This is a local code and isolated-database candidate. The repository still contains no
+production Provider/KMS/HSM account, immutable evidence bucket, real backup estate,
+cross-region restore drill, or protected exact-SHA CI/image admission for this slice.
+Consequently it closes neither the production Deletion gate nor P1 as a whole, and the
+release decision remains `NO-GO`.

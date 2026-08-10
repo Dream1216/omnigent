@@ -56,7 +56,7 @@
     "trusted_repository": "Dream1216/omnigent",
     "trusted_workflow_ref": ".github/workflows/saas-image-candidate.yml@refs/heads/main",
     "trusted_workflow_identity": "https://github.com/Dream1216/omnigent/.github/workflows/saas-image-candidate.yml@refs/heads/main",
-    "trusted_oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+    "trusted_oidc_subject": "repo:Dream1216/omnigent:environment:production-image",
     "trusted_builder_id": "https://github.com/actions/runner",
     "trusted_environment": "production-image"
   },

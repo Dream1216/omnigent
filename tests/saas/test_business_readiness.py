@@ -120,7 +120,9 @@ def test_empty_business_evidence_is_structurally_valid_but_blocked(
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
     assert report["blockers"] == [f"no current qualifying {policy['evidence_kind']} evidence"]
-    assert report["metrics"]["required_integration_count"] == 4
+    assert report["metrics"]["required_integration_count"] == len(
+        policy["required_integrations"]
+    )
 
 
 @pytest.mark.parametrize("policy_name", _POLICIES)

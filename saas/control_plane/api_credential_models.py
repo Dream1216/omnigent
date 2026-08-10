@@ -85,6 +85,13 @@ class ServiceAccountRecord(SaasBase):
             name="ck_service_account_project_requires_space",
         ),
         sa.UniqueConstraint("tenant_id", "id", name="uq_service_account_tenant_id"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "space_id",
+            "project_id",
+            "id",
+            name="uq_service_account_project_identity",
+        ),
         sa.Index(
             "ix_service_account_scope_status",
             "tenant_id",

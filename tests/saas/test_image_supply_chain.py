@@ -94,7 +94,9 @@ def _valid_evidence() -> dict[str, object]:
                         "https://github.com/Dream1216/omnigent/.github/workflows/"
                         "saas-image-candidate.yml@refs/heads/main"
                     ),
-                    "oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+                    "oidc_subject": (
+                        "repo:Dream1216/omnigent:environment:production-image"
+                    ),
                     "subject_digest": manifest_digest,
                     "transparency_log_verified": True,
                     "transparency_log_entry_sha256": "4" * 64,
@@ -139,7 +141,7 @@ def _valid_evidence() -> dict[str, object]:
             "workflow_ref": (".github/workflows/saas-image-candidate.yml@refs/heads/main"),
             "source_ref": "refs/heads/main",
             "source_ref_protected": True,
-            "oidc_subject": "repo:Dream1216/omnigent:ref:refs/heads/main",
+            "oidc_subject": "repo:Dream1216/omnigent:environment:production-image",
             "run_id": 1,
             "run_attempt": 1,
             "builder_id": "https://github.com/actions/runner",
@@ -283,6 +285,26 @@ def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -
 
     assert "candidate workflow must invoke four repeated composite builds" in violations
     assert "candidate workflow build coordinates must cover server and host twice" in violations
+
+
+def test_candidate_contract_rejects_unprotected_or_unsigned_release(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8")
+        .replace("environment: production-image", "environment: unprotected", 1)
+        .replace(
+            "uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4",
+            "uses: actions/attest@main",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "protected signed release workflow contract is incomplete" in violations
+    assert "protected release must sign the wheel and both OCI images" in violations
 
 
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
