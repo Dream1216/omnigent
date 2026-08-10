@@ -200,9 +200,13 @@ async def test_supervisor_crash_watch_revokes_target_and_records_exit() -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="Preview supervision requires POSIX")
 @pytest.mark.asyncio
 async def test_supervisor_expiry_revokes_and_terminates_process() -> None:
+    lease_seconds = 8
     route = replace(
         _route(opaque_key="pvr_expiry_watch"),
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=2),
+        # Keep expiry beyond the five-second bounded startup contract. A
+        # two-second lease made this acceptance depend on host load and could
+        # expire before the fixture had bound its UDS in a full-suite run.
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=lease_seconds),
     )
     with (
         tempfile.TemporaryDirectory(prefix="omnigent-preview-sockets-", dir="/tmp") as sockets,
@@ -222,7 +226,11 @@ async def test_supervisor_expiry_revokes_and_terminates_process() -> None:
         )
         snapshot = await supervisor.start(route, _spec())
 
-        exit_state = await _wait_for_exit(supervisor, route.preview_id)
+        exit_state = await _wait_for_exit(
+            supervisor,
+            route.preview_id,
+            timeout=lease_seconds + 2,
+        )
         assert exit_state.reason == "expired"
         assert exit_state.returncode is not None
         assert await supervisor.snapshot(route.preview_id) is None

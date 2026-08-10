@@ -71,9 +71,11 @@ def _actor(principal_id: UUID, role: str, now: datetime) -> ValidatedPlatformPri
     )
 
 
-def test_real_postgresql_pc3_support_is_exact_token_tenant_and_immutable() -> None:
+def test_real_postgresql_pc3_support_is_exact_token_tenant_and_immutable(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     support_id, operator_id, customer_id = uuid4(), uuid4(), uuid4()
     tenant_id, other_tenant_id = uuid4(), uuid4()
     now = datetime.now(timezone.utc)
