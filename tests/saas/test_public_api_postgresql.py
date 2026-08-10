@@ -48,7 +48,7 @@ def _public_service(factory: sessionmaker[Session]) -> PublicApiExecutionService
         active_idempotency_key_id="2026-08",
         product_revision="product-acceptance",
         upstream_revision="upstream-acceptance",
-        schema_revision="pc5a00000004",
+        schema_revision="pc5a00000005",
         adapter_contract_version="v1",
         rate_limits={
             "projects.read": (3, timedelta(minutes=1)),
@@ -128,7 +128,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
         )
         assert connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
-        ).scalar_one() == "pc5a00000004"
+        ).scalar_one() == "pc5a00000005"
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(
             sa.text(

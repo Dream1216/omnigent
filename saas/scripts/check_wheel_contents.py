@@ -172,6 +172,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/pc5a00000002_scim_bulk_receipts.py",
     "saas/control_plane/migrations/versions/pc5a00000003_scim_credential_overlap.py",
     "saas/control_plane/migrations/versions/pc5a00000004_scim_schema_extensions.py",
+    "saas/control_plane/migrations/versions/pc5a00000005_scim_token_match_helper.py",
     "saas/control_plane/migrations/versions/pc5b00000001_privacy_deletion_foundation.py",
     "saas/control_plane/migrations/versions/pc5b00000002_privacy_auditor_read.py",
     "saas/control_plane/migrations/versions/pc5b00000003_privacy_execution_authority.py",

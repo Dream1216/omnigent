@@ -43,9 +43,11 @@ def _context(*, actor: UUID, tenant: UUID, space: UUID) -> RequestContext:
     )
 
 
-def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order() -> None:
+def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     suffix = uuid4().hex[:12]
     login_role = f"pc5_scim_governance_{suffix}"
     owner_id, tenant_id, other_tenant_id, space_id = (uuid4() for _ in range(4))
@@ -258,9 +260,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 }
             ],
             "phoneNumbers": [{"value": "+1-555-0100", "type": "work"}],
-            "addresses": [
-                {"country": "GB", "type": "work", "primary": True}
-            ],
+            "addresses": [{"country": "GB", "type": "work", "primary": True}],
         },
         enterprise_attributes={
             "employeeNumber": f"E-{suffix}",
@@ -282,7 +282,9 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 attribute="department",
                 value="engineering",
             ),
-        ).resources[0].id
+        )
+        .resources[0]
+        .id
         == extended.id
     )
     assert (
@@ -294,7 +296,9 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 sub_attribute="givenName",
                 value="ada",
             ),
-        ).resources[0].id
+        )
+        .resources[0]
+        .id
         == extended.id
     )
     assert (
@@ -321,7 +325,9 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                     ),
                 ),
             ),
-        ).resources[0].id
+        )
+        .resources[0]
+        .id
         == extended.id
     )
     assert (
@@ -348,7 +354,9 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                     ),
                 ),
             ),
-        ).resources[0].id
+        )
+        .resources[0]
+        .id
         == extended.id
     )
     assert service.list_users(other_token).total_results == 0
@@ -589,13 +597,37 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         )
         assert (
             connection.execute(
-                sa.text(
-                    "SELECT count(*) FROM saas_enterprise_scim_users WHERE id = :user_id"
-                ),
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_users WHERE id = :user_id"),
                 {"user_id": extended.id},
             ).scalar_one()
             == 0
         )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_app")
+        connection.execute(
+            sa.text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_enterprise_scim_users WHERE id = :user_id"),
+                {"user_id": extended.id},
+            ).scalar_one()
+            == 1
+        )
+        assert connection.execute(
+            sa.text(
+                "SELECT "
+                "has_function_privilege(current_user, "
+                "'saas_scim_source_token_matches(uuid,uuid,text)', 'EXECUTE'), "
+                "has_column_privilege(current_user, "
+                "'saas_enterprise_scim_directories', 'token_hash', 'SELECT'), "
+                "has_column_privilege(current_user, "
+                "'saas_enterprise_scim_directories', "
+                "'successor_token_hash', 'SELECT')"
+            )
+        ).one() == (True, False, False)
 
     with pytest.raises(DBAPIError):
         with engine.begin() as connection:

@@ -61,4 +61,8 @@ def test_scim_schema_catalog_matrix_and_migration_are_required_wheel_artifacts()
         "saas/control_plane/migrations/versions/pc5a00000004_scim_schema_extensions.py"
         in REQUIRED_WHEEL_PATHS
     )
+    assert (
+        "saas/control_plane/migrations/versions/pc5a00000005_scim_token_match_helper.py"
+        in REQUIRED_WHEEL_PATHS
+    )
     assert "saas/production/runbooks/scim-idp-e2e.md" in REQUIRED_WHEEL_PATHS

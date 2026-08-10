@@ -1039,6 +1039,21 @@ BEGIN
 END
 $$;
 
+-- Exact SCIM bearer matching remains inside a content-blind SECURITY DEFINER
+-- predicate. Application readers can execute the boolean check but never gain
+-- SELECT on either current or successor bearer digests.
+DO $$
+BEGIN
+    IF to_regprocedure('saas_scim_source_token_matches(uuid,uuid,text)') IS NOT NULL THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION '
+            'saas_scim_source_token_matches(uuid, uuid, text) FROM PUBLIC';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION '
+            'saas_scim_source_token_matches(uuid, uuid, text) TO '
+            'saas_app, saas_governance, saas_platform, saas_privacy_executor';
+    END IF;
+END
+$$;
+
 GRANT INSERT, UPDATE ON
     saas_egress_policies,
     saas_execution_profiles,
