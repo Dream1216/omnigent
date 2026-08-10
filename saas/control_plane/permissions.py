@@ -298,9 +298,7 @@ _DEFINITIONS = (
         PermissionScope.PLATFORM,
         PermissionRisk.HIGH,
         fresh_auth_required=True,
-        api_surfaces=(
-            "POST /v2/platform-admin/notification-operations/deliveries/{id}/replay",
-        ),
+        api_surfaces=("POST /v2/platform-admin/notification-operations/deliveries/{id}/replay",),
         ui_surface="notification-operations",
         audit_event="platform.notification_delivery.replayed",
     ),

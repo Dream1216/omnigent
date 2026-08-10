@@ -263,9 +263,9 @@ class DirectoryCreateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     display_name: str = Field(min_length=1, max_length=128)
-    provider_type: Literal[
-        "generic", "microsoft_entra", "okta", "google_workspace"
-    ] = Field(default="generic", alias="providerType")
+    provider_type: Literal["generic", "microsoft_entra", "okta", "google_workspace"] = Field(
+        default="generic", alias="providerType"
+    )
     attribute_mapping: dict[str, str] = Field(
         default_factory=dict,
         alias="attributeMapping",
@@ -280,9 +280,9 @@ class DirectoryMutationBody(BaseModel):
 class DirectoryConfigurationBody(DirectoryMutationBody):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    provider_type: Literal[
-        "generic", "microsoft_entra", "okta", "google_workspace"
-    ] = Field(alias="providerType")
+    provider_type: Literal["generic", "microsoft_entra", "okta", "google_workspace"] = Field(
+        alias="providerType"
+    )
     attribute_mapping: dict[str, str] = Field(
         default_factory=dict,
         alias="attributeMapping",
@@ -306,12 +306,8 @@ class ScimNameBody(BaseModel):
     family_name: str | None = Field(default=None, alias="familyName", max_length=256)
     given_name: str | None = Field(default=None, alias="givenName", max_length=256)
     middle_name: str | None = Field(default=None, alias="middleName", max_length=256)
-    honorific_prefix: str | None = Field(
-        default=None, alias="honorificPrefix", max_length=64
-    )
-    honorific_suffix: str | None = Field(
-        default=None, alias="honorificSuffix", max_length=64
-    )
+    honorific_prefix: str | None = Field(default=None, alias="honorificPrefix", max_length=64)
+    honorific_suffix: str | None = Field(default=None, alias="honorificSuffix", max_length=64)
 
 
 class ScimTypedValueBody(BaseModel):
@@ -364,9 +360,7 @@ class ScimUserBody(BaseModel):
     name: ScimNameBody | None = None
     title: str | None = Field(default=None, max_length=256)
     user_type: str | None = Field(default=None, alias="userType", max_length=256)
-    preferred_language: str | None = Field(
-        default=None, alias="preferredLanguage", max_length=64
-    )
+    preferred_language: str | None = Field(default=None, alias="preferredLanguage", max_length=64)
     locale: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
     emails: list[ScimTypedValueBody] = Field(default_factory=list, max_length=16)
@@ -613,9 +607,7 @@ def _projection_paths(
     included_values = request.query_params.getlist("attributes")
     excluded_values = request.query_params.getlist("excludedAttributes")
     if len(included_values) > 1 or len(excluded_values) > 1:
-        raise _error(
-            LifecycleError("invalidValue", "SCIM projection parameters must be singular")
-        )
+        raise _error(LifecycleError("invalidValue", "SCIM projection parameters must be singular"))
     if included_values and excluded_values:
         raise _error(
             LifecycleError(
@@ -766,9 +758,7 @@ def _project_resource(
         projected = deepcopy(payload)
     else:
         projected = {
-            key: deepcopy(payload[key])
-            for key in _PROJECTION_ALWAYS_RETURNED
-            if key in payload
+            key: deepcopy(payload[key]) for key in _PROJECTION_ALWAYS_RETURNED if key in payload
         }
         for path in included:
             _copy_projection_path(payload, projected, path)
@@ -789,8 +779,7 @@ def _discovery_payload(
     payload["meta"] = {
         "resourceType": resource_type,
         "location": (
-            str(request.base_url).rstrip("/")
-            + f"/saas/scim/v2/{collection}/{identifier}"
+            str(request.base_url).rstrip("/") + f"/saas/scim/v2/{collection}/{identifier}"
         ),
     }
     return payload
@@ -999,8 +988,10 @@ def _patch_path(value: object, *, resource_type: str) -> ScimPatchPath:
         and parsed.schema is not None
         and parsed.schema.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
     )
-    if parsed.schema is not None and not enterprise_path and (
-        parsed.schema.casefold() != expected_core_schema(resource_type).casefold()
+    if (
+        parsed.schema is not None
+        and not enterprise_path
+        and (parsed.schema.casefold() != expected_core_schema(resource_type).casefold())
     ):
         raise _patch_error("invalidPath", "PATCH schema URI does not match the resource")
     attribute = (
@@ -1104,11 +1095,7 @@ def _complex_filter_matches(
     ):
         raise _patch_error("invalidPath", "complex valuePath filter is invalid")
     actual = next(
-        (
-            item
-            for key, item in value.items()
-            if key.casefold() == expression.attribute.casefold()
-        ),
+        (item for key, item in value.items() if key.casefold() == expression.attribute.casefold()),
         None,
     )
     if expression.operator == "pr":
@@ -1173,8 +1160,7 @@ def _apply_user_attribute(
 
     target_key = (
         "enterpriseAttributes"
-        if path.schema is not None
-        and path.schema.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
+        if path.schema is not None and path.schema.casefold() == _ENTERPRISE_USER_SCHEMA.casefold()
         else "coreAttributes"
     )
     target = cast(dict[str, object], state[target_key])
@@ -1252,9 +1238,7 @@ def _apply_user_attribute(
             return
         raise _patch_error("noTarget", "PATCH valuePath selected no values")
     if action == "remove" and path.sub_attribute is None:
-        target[attribute] = [
-            item for index, item in enumerate(values) if index not in selected
-        ]
+        target[attribute] = [item for index, item in enumerate(values) if index not in selected]
         return
     if path.sub_attribute is not None:
         for index in selected:
@@ -1702,9 +1686,7 @@ def _execute_bulk_operation(
             active=cast(bool, state["active"]),
             source_version=None,
             core_attributes=cast(dict[str, object], state.get("coreAttributes", {})),
-            enterprise_attributes=cast(
-                dict[str, object], state.get("enterpriseAttributes", {})
-            ),
+            enterprise_attributes=cast(dict[str, object], state.get("enterpriseAttributes", {})),
             scim_user_id=resource_id,
             expected_version=expected_version,
             operation=operation_name,
@@ -1828,9 +1810,7 @@ def create_enterprise_scim_router(
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         return {
-            "items": [
-                _directory_configuration_payload(value, request) for value in values
-            ],
+            "items": [_directory_configuration_payload(value, request) for value in values],
             "total": len(values),
         }
 
@@ -1855,9 +1835,7 @@ def create_enterprise_scim_router(
         response.headers["Pragma"] = "no-cache"
         return _directory_configuration_payload(value, request)
 
-    @router.put(
-        "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/configuration"
-    )
+    @router.put("/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/configuration")
     def update_directory_configuration(
         tenant_id: UUID,
         directory_id: UUID,
@@ -2010,8 +1988,7 @@ def create_enterprise_scim_router(
                 "meta": {
                     "resourceType": "ServiceProviderConfig",
                     "location": (
-                        str(request.base_url).rstrip("/")
-                        + "/saas/scim/v2/ServiceProviderConfig"
+                        str(request.base_url).rstrip("/") + "/saas/scim/v2/ServiceProviderConfig"
                     ),
                 },
             }

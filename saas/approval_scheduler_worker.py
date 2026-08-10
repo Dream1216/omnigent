@@ -33,12 +33,9 @@ from saas.notification_runtime import notification_digesters
 
 _LOGGER = logging.getLogger("omnigent-saas-approval-scheduler")
 _DEFAULT_SOURCE_FACTORY = (
-    "saas.control_plane.approval_source_adapters:"
-    "production_approval_scheduler_source_factory"
+    "saas.control_plane.approval_source_adapters:production_approval_scheduler_source_factory"
 )
-_SOURCE_KINDS = frozenset(
-    {"enterprise", "privacy", "audit", "support.customer", "support.staff"}
-)
+_SOURCE_KINDS = frozenset({"enterprise", "privacy", "audit", "support.customer", "support.staff"})
 _SOURCE_ROLE_NAMES = {
     "enterprise": "saas_approval_scheduler_enterprise",
     "privacy": "saas_approval_scheduler_privacy",
@@ -164,9 +161,7 @@ def build_approval_scheduler(
         {
             "hmac_key_id": _required(configuration, "hmac_key_id"),
             "hmac_secret_b64": _required(configuration, "hmac_secret_b64"),
-            "previous_hmac_keys_json": configuration.get(
-                "previous_hmac_keys_json", "[]"
-            ),
+            "previous_hmac_keys_json": configuration.get("previous_hmac_keys_json", "[]"),
         }
     )
     projection = ApprovalProjectionService()
@@ -233,15 +228,11 @@ def verify_approval_scheduler_database_role(engine: Engine) -> None:
                 "FROM pg_roles AS role WHERE role.rolname = current_user"
             )
         ).one()
-    if facts[1] or facts[2] or not facts[3] or any(
-        facts[index] for index in (4, 5, 6, 7, 8)
-    ):
+    if facts[1] or facts[2] or not facts[3] or any(facts[index] for index in (4, 5, 6, 7, 8)):
         raise RuntimeError("approval scheduler database role boundary is invalid")
 
 
-def verify_approval_source_scheduler_database_role(
-    engine: Engine, *, source_kind: str
-) -> None:
+def verify_approval_source_scheduler_database_role(engine: Engine, *, source_kind: str) -> None:
     """Require one exact source authority role and reject cross-source authority."""
 
     expected_role = _SOURCE_ROLE_NAMES.get(source_kind)
@@ -303,17 +294,13 @@ def main() -> int:
                 max_overflow=0,
             )
             source_engines[source_kind] = source_engine
-            verify_approval_source_scheduler_database_role(
-                source_engine, source_kind=source_kind
-            )
+            verify_approval_source_scheduler_database_role(source_engine, source_kind=source_kind)
             source_sessions[source_kind] = sessionmaker(
                 source_engine, class_=Session, expire_on_commit=False
             )
         configuration = {
             "hmac_key_id": _required_env("OMNIGENT_NOTIFICATION_HMAC_KEY_ID"),
-            "hmac_secret_b64": _required_env(
-                "OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"
-            ),
+            "hmac_secret_b64": _required_env("OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"),
             "previous_hmac_keys_json": os.environ.get(
                 "OMNIGENT_NOTIFICATION_PREVIOUS_HMAC_KEYS_JSON", "[]"
             ),
@@ -336,9 +323,7 @@ def main() -> int:
         worker = ApprovalSchedulerWorker(
             scheduler,
             interval=_positive_env("OMNIGENT_APPROVAL_SCHEDULER_INTERVAL_SECONDS", 15.0),
-            error_backoff=_positive_env(
-                "OMNIGENT_APPROVAL_SCHEDULER_ERROR_BACKOFF_SECONDS", 1.0
-            ),
+            error_backoff=_positive_env("OMNIGENT_APPROVAL_SCHEDULER_ERROR_BACKOFF_SECONDS", 1.0),
             max_error_backoff=_positive_env(
                 "OMNIGENT_APPROVAL_SCHEDULER_MAX_ERROR_BACKOFF_SECONDS", 30.0
             ),

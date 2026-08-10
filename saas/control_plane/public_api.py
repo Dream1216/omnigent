@@ -270,10 +270,7 @@ class PublicApiExecutionService:
             )
             if db.get_bind().dialect.name == "postgresql":
                 db.execute(
-                    sa.text(
-                        "SELECT pg_advisory_xact_lock("
-                        "hashtextextended(:rate_limit_key, 0))"
-                    ),
+                    sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:rate_limit_key, 0))"),
                     {
                         "rate_limit_key": (
                             f"public-api-rate:{principal.credential_id}:{route_class}"
@@ -366,9 +363,7 @@ class PublicApiExecutionService:
                 after_created_at is None
                 or after_id is None
                 or (_aware(project.created_at), project.id) > (after_created_at, after_id)
-            ) and (
-                status is None or project.status == status
-            ):
+            ) and (status is None or project.status == status):
                 items = (self._project_view(project),)
             return PublicApiPage(items[:limit], None)
 
@@ -711,9 +706,7 @@ class PublicApiExecutionService:
         clean_reason = _text(reason, "reason", 1024)
         clean_trace = _text(trace_id, "trace_id", 128)
         changed_at = now or _now()
-        idempotency_key_id, idempotency_hmac = self._idempotency.active_digest(
-            idempotency_key
-        )
+        idempotency_key_id, idempotency_hmac = self._idempotency.active_digest(idempotency_key)
         request_hash = _canonical_hash(
             {
                 "operation": "run.cancel",
@@ -992,9 +985,7 @@ class PublicApiExecutionService:
             else:
                 query = query.where(
                     sa.tuple_(RunEventRecord.sequence, RunEventRecord.id)
-                    > sa.tuple_(
-                        sa.literal(resolved_after_sequence), sa.literal(after_event_id)
-                    )
+                    > sa.tuple_(sa.literal(resolved_after_sequence), sa.literal(after_event_id))
                 )
             rows = tuple(
                 db.scalars(
@@ -1251,10 +1242,7 @@ class PublicApiExecutionService:
             }
         )
         db.execute(
-            sa.text(
-                "SELECT pg_advisory_xact_lock("
-                "hashtextextended(:idempotency_fingerprint, 0))"
-            ),
+            sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:idempotency_fingerprint, 0))"),
             {"idempotency_fingerprint": lock_fingerprint},
         )
 
@@ -1462,9 +1450,7 @@ class PublicApiExecutionService:
             UUID(cast(str, payload["id"])),
             UUID(cast(str, payload["task_id"])),
             UUID(cast(str, payload["session_id"])) if payload.get("session_id") else None,
-            UUID(cast(str, payload["parent_run_id"]))
-            if payload.get("parent_run_id")
-            else None,
+            UUID(cast(str, payload["parent_run_id"])) if payload.get("parent_run_id") else None,
             UUID(cast(str, payload["tenant_id"])),
             UUID(cast(str, payload["space_id"])),
             UUID(cast(str, payload["project_id"])),

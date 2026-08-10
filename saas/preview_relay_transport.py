@@ -826,11 +826,35 @@ class MutualTlsPreviewRelayClient:
                     "Preview Relay Gateway certificate is not active",
                 )
             writer.write(encoded_request)
-            await asyncio.wait_for(writer.drain(), timeout=self._connect_timeout_seconds)
-            prefix = await asyncio.wait_for(
-                reader.readexactly(_RESPONSE_PREFIX.size),
-                timeout=self._response_head_timeout_seconds,
-            )
+            drain_failure: BaseException | None = None
+            try:
+                await asyncio.wait_for(writer.drain(), timeout=self._connect_timeout_seconds)
+            except (OSError, ssl.SSLError, asyncio.TimeoutError) as exc:
+                # The owner can reject the client certificate before consuming
+                # the request. Its stable error frame may already be readable
+                # even though the local write side observes the TLS close first.
+                drain_failure = exc
+            try:
+                prefix = await asyncio.wait_for(
+                    reader.readexactly(_RESPONSE_PREFIX.size),
+                    timeout=(
+                        self._response_head_timeout_seconds
+                        if drain_failure is None
+                        else min(
+                            self._connect_timeout_seconds,
+                            self._response_head_timeout_seconds,
+                        )
+                    ),
+                )
+            except (
+                OSError,
+                ssl.SSLError,
+                asyncio.IncompleteReadError,
+                asyncio.TimeoutError,
+            ) as response_failure:
+                if drain_failure is not None:
+                    raise drain_failure from response_failure
+                raise
             magic, head_length = _RESPONSE_PREFIX.unpack(prefix)
             if magic != _MAGIC or not 1 <= head_length <= _MAX_RESPONSE_HEAD_BYTES:
                 raise PreviewRelayTransportError(

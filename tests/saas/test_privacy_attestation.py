@@ -69,9 +69,7 @@ def _envelope(
         envelope={
             "payloadType": PRIVACY_DSSE_PAYLOAD_TYPE,
             "payload": base64.b64encode(encoded).decode("ascii"),
-            "signatures": [
-                {"keyid": key_id, "sig": base64.b64encode(signature).decode("ascii")}
-            ],
+            "signatures": [{"keyid": key_id, "sig": base64.b64encode(signature).decode("ascii")}],
         },
         artifact_uri="https://evidence.example.test/privacy/immutable-envelope.json",
         immutability_receipt_sha256="5" * 64,

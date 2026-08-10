@@ -57,9 +57,7 @@ def delivery() -> DeliveryHarness:
     )
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    tenant_id, other_tenant_id, user_id, other_user_id, staff_id = (
-        uuid4() for _ in range(5)
-    )
+    tenant_id, other_tenant_id, user_id, other_user_id, staff_id = (uuid4() for _ in range(5))
     with factory.begin() as db:
         db.add_all(
             (
@@ -206,17 +204,13 @@ def test_retry_budget_dlq_replay_rotation_and_platform_visibility(
         assert settled.status == ("dead_letter" if attempt == 8 else "retry")
         at = settled.available_at or at
 
-    dlq = delivery.service.list_deliveries(
-        delivery.platform_actor, status="dead_letter", now=at
-    )
+    dlq = delivery.service.list_deliveries(delivery.platform_actor, status="dead_letter", now=at)
     assert [value.id for value in dlq.items] == [delivery_id]
     own_only = replace(
         delivery.platform_actor,
         permissions=frozenset(),
     )
-    assert not delivery.service.list_deliveries(
-        own_only, status="dead_letter", now=at
-    ).items
+    assert not delivery.service.list_deliveries(own_only, status="dead_letter", now=at).items
 
     rotated = NotificationDeliveryService(
         delivery.factory, digester=NEW, previous_digesters=(OLD,)
@@ -319,9 +313,7 @@ def test_claim_envelope_and_authority_inputs_are_revalidated(
     assert raised.value.code == "notification_delivery_claim_invalid"
 
     with pytest.raises(NotificationDeliveryError) as raised:
-        delivery.service.ensure_sendable(
-            replace(claim, source_delivery_id=uuid4()), now=NOW
-        )
+        delivery.service.ensure_sendable(replace(claim, source_delivery_id=uuid4()), now=NOW)
     assert raised.value.code == "notification_delivery_claim_invalid"
 
     with pytest.raises(NotificationDeliveryError) as raised:

@@ -119,35 +119,21 @@ def main() -> int:
         pool_size=2,
         max_overflow=0,
     )
-    dispatcher_sessions = sessionmaker(
-        dispatcher_engine, class_=Session, expire_on_commit=False
-    )
-    directory_sessions = sessionmaker(
-        directory_engine, class_=Session, expire_on_commit=False
-    )
+    dispatcher_sessions = sessionmaker(dispatcher_engine, class_=Session, expire_on_commit=False)
+    directory_sessions = sessionmaker(directory_engine, class_=Session, expire_on_commit=False)
     components = build_default_notification_components(
         dispatcher_engine=dispatcher_engine,
         directory_engine=directory_engine,
         dispatcher_sessions=dispatcher_sessions,
         directory_sessions=directory_sessions,
         configuration={
-            "workload_token_file": _required_env(
-                "OMNIGENT_NOTIFICATION_WORKLOAD_TOKEN_FILE"
-            ),
-            "workload_issuer": _required_env(
-                "OMNIGENT_NOTIFICATION_WORKLOAD_ISSUER"
-            ),
-            "workload_jwks_url": _required_env(
-                "OMNIGENT_NOTIFICATION_WORKLOAD_JWKS_URL"
-            ),
+            "workload_token_file": _required_env("OMNIGENT_NOTIFICATION_WORKLOAD_TOKEN_FILE"),
+            "workload_issuer": _required_env("OMNIGENT_NOTIFICATION_WORKLOAD_ISSUER"),
+            "workload_jwks_url": _required_env("OMNIGENT_NOTIFICATION_WORKLOAD_JWKS_URL"),
             "email_endpoint": _required_env("OMNIGENT_NOTIFICATION_EMAIL_ENDPOINT"),
-            "email_bearer_token": _required_env(
-                "OMNIGENT_NOTIFICATION_EMAIL_BEARER_TOKEN"
-            ),
+            "email_bearer_token": _required_env("OMNIGENT_NOTIFICATION_EMAIL_BEARER_TOKEN"),
             "hmac_key_id": _required_env("OMNIGENT_NOTIFICATION_HMAC_KEY_ID"),
-            "hmac_secret_b64": _required_env(
-                "OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"
-            ),
+            "hmac_secret_b64": _required_env("OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"),
             "previous_hmac_keys_json": os.environ.get(
                 "OMNIGENT_NOTIFICATION_PREVIOUS_HMAC_KEYS_JSON", "[]"
             ),
@@ -165,9 +151,7 @@ def main() -> int:
         delivery_worker,
         idle_interval=_positive_env("OMNIGENT_NOTIFICATION_IDLE_SECONDS", 0.5),
         error_backoff=_positive_env("OMNIGENT_NOTIFICATION_ERROR_BACKOFF_SECONDS", 1.0),
-        max_error_backoff=_positive_env(
-            "OMNIGENT_NOTIFICATION_MAX_ERROR_BACKOFF_SECONDS", 30.0
-        ),
+        max_error_backoff=_positive_env("OMNIGENT_NOTIFICATION_MAX_ERROR_BACKOFF_SECONDS", 30.0),
     )
     stop = threading.Event()
 

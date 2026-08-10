@@ -546,6 +546,63 @@ async def test_mtls_preview_relay_rejects_revoked_or_ambiguous_client_identity(
 
 
 @pytest.mark.asyncio
+async def test_mtls_preview_relay_preserves_identity_error_when_write_side_closes_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    certificates = _certificate_fixture(
+        tmp_path, client_gateway_uris=("gateway-a", "gateway-shadow")
+    )
+    server, client, _placements, local, *_rest, placement = await _relay_pair(
+        tmp_path,
+        certificates=certificates,
+    )
+    error_written = asyncio.Event()
+    original_write_error = server._write_error
+    original_open_connection = asyncio.open_connection
+
+    async def recording_write_error(writer: asyncio.StreamWriter, code: str) -> None:
+        await original_write_error(writer, code)
+        error_written.set()
+
+    class DrainFailingWriter:
+        def __init__(self, writer: asyncio.StreamWriter) -> None:
+            self._writer = writer
+
+        def get_extra_info(self, name: str, default: object | None = None) -> object:
+            return self._writer.get_extra_info(name, default)
+
+        def write(self, data: bytes) -> None:
+            self._writer.write(data)
+
+        async def drain(self) -> None:
+            await asyncio.wait_for(error_written.wait(), timeout=1)
+            raise ConnectionResetError("simulated TLS close after framed rejection")
+
+        def close(self) -> None:
+            self._writer.close()
+
+        async def wait_closed(self) -> None:
+            await self._writer.wait_closed()
+
+    async def write_failing_open_connection(
+        *args: object, **kwargs: object
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        reader, writer = await original_open_connection(*args, **kwargs)
+        return reader, cast(asyncio.StreamWriter, DrainFailingWriter(writer))
+
+    server._write_error = recording_write_error  # type: ignore[method-assign]
+    monkeypatch.setattr(asyncio, "open_connection", write_failing_open_connection)
+    try:
+        with pytest.raises(PreviewRelayTransportError) as invalid:
+            await client.forward(placement, _request(placement))
+    finally:
+        await server.aclose()
+    assert invalid.value.code == "preview_relay_gateway_identity_invalid"
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
 async def test_mtls_preview_relay_requires_client_certificate(tmp_path: Path) -> None:
     certificates = _certificate_fixture(tmp_path)
     (

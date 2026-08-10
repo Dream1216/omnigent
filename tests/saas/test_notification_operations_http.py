@@ -205,9 +205,7 @@ class _Approvals:
         return delegation
 
     def list_delegations(self, actor: ApprovalActor, **_: Any) -> object:
-        return _Page(
-            tuple(value for value in self.delegations if value.realm == actor.realm)
-        )
+        return _Page(tuple(value for value in self.delegations if value.realm == actor.realm))
 
     def revoke_delegation(self, actor: ApprovalActor, **values: Any) -> ApprovalDelegationView:
         self.last = {"actor": actor, **values}
@@ -279,19 +277,38 @@ class _Page:
 class _Notifications:
     def __init__(self) -> None:
         self.delivery = SimpleNamespace(
-            id=uuid4(), realm="tenant", tenant_id=TENANT_ID, event_type="approval.pending",
-            channel="in_app", status="succeeded", attempt_count=1, max_attempts=8,
+            id=uuid4(),
+            realm="tenant",
+            tenant_id=TENANT_ID,
+            event_type="approval.pending",
+            channel="in_app",
+            status="succeeded",
+            attempt_count=1,
+            max_attempts=8,
             source_delivery_id=None,
-            available_at=NOW, recipient_read_at=None, acknowledged_at=None,
-            last_error_code=None, version=1,
+            available_at=NOW,
+            recipient_read_at=None,
+            acknowledged_at=None,
+            last_error_code=None,
+            version=1,
         )
         self.preference = SimpleNamespace(
-            id=uuid4(), event_type="approval.pending", channel="in_app",
-            enabled=True, locale="zh-CN", version=1,
+            id=uuid4(),
+            event_type="approval.pending",
+            channel="in_app",
+            enabled=True,
+            locale="zh-CN",
+            version=1,
         )
         self.template = SimpleNamespace(
-            id=uuid4(), template_key="approval.pending", channel="in_app",
-            locale="zh-CN", version=1, status="active", created_at=NOW, retired_at=None,
+            id=uuid4(),
+            template_key="approval.pending",
+            channel="in_app",
+            locale="zh-CN",
+            version=1,
+            status="active",
+            created_at=NOW,
+            retired_at=None,
         )
         self.last: dict[str, Any] = {}
 
@@ -326,9 +343,14 @@ class _Notifications:
     def create_template(self, actor: ApprovalActor, **values: Any) -> object:
         self.last = {"actor": actor, **values}
         self.template = SimpleNamespace(
-            id=uuid4(), template_key=values["template_key"], channel=values["channel"],
-            locale=values["locale"], version=values["version"], status="active",
-            created_at=NOW, retired_at=None,
+            id=uuid4(),
+            template_key=values["template_key"],
+            channel=values["channel"],
+            locale=values["locale"],
+            version=values["version"],
+            status="active",
+            created_at=NOW,
+            retired_at=None,
         )
         return self.template
 
@@ -470,10 +492,13 @@ def test_staff_realm_rejects_tenant_or_bearer_and_governs_template_without_echo(
     client.cookies.set("__Host-omnigent_saas_session", "tenant-session")
     assert client.get("/v2/platform-admin/notification-operations/inbox").status_code == 401
     client.cookies.clear()
-    assert client.get(
-        "/v2/platform-admin/notification-operations/inbox",
-        headers={"Authorization": "Bearer staff-session"},
-    ).status_code == 401
+    assert (
+        client.get(
+            "/v2/platform-admin/notification-operations/inbox",
+            headers={"Authorization": "Bearer staff-session"},
+        ).status_code
+        == 401
+    )
 
     client.cookies.set("__Host-omnigent_platform_session", "staff-session")
     handle = "opaque-package-0000000001"
@@ -519,8 +544,7 @@ def test_batch_execute_rechecks_transient_reason_without_echoing_it() -> None:
     assert preview_reason not in preview.text
     batch = preview.json()
     execute_path = (
-        f"/saas/tenants/{TENANT_ID}/notification-operations/batches/"
-        f"{batch['batch_id']}/execute"
+        f"/saas/tenants/{TENANT_ID}/notification-operations/batches/{batch['batch_id']}/execute"
     )
     wrong_reason = "different-secret-reason"
     mismatch = client.post(
@@ -570,9 +594,7 @@ def test_optional_tenant_and_platform_composition_exposes_capability_only_when_w
 
     disabled_client = TestClient(tenant_app(enabled=False), base_url=ORIGIN)
     disabled_client.cookies.set(cookie.name, "tenant-session")
-    capability_path = (
-        f"/saas/tenants/{TENANT_ID}/notification-operations/capabilities"
-    )
+    capability_path = f"/saas/tenants/{TENANT_ID}/notification-operations/capabilities"
     disabled_capability = disabled_client.get(capability_path)
     assert disabled_capability.status_code == 200
     assert disabled_capability.json() == {
@@ -587,9 +609,7 @@ def test_optional_tenant_and_platform_composition_exposes_capability_only_when_w
     assert capability.status_code == 200
     assert capability.json()["notification_operations_enabled"] is True
 
-    platform_config = PlatformHttpConfig(
-        enabled=True, origin=ORIGIN, audience="omnigent-platform"
-    )
+    platform_config = PlatformHttpConfig(enabled=True, origin=ORIGIN, audience="omnigent-platform")
     sessions = _StaffSessions()
     plain_platform = create_platform_admin_app(
         config=platform_config,

@@ -1688,9 +1688,7 @@ def _drop_cross_table_policies() -> None:
         "rls_saas_approval_work_items_governance",
         "rls_saas_approval_work_items_governance_inbox",
     ):
-        op.execute(
-            f"DROP POLICY IF EXISTS {policy} ON saas_approval_work_items"
-        )
+        op.execute(f"DROP POLICY IF EXISTS {policy} ON saas_approval_work_items")
 
 
 def _drop_postgresql_functions() -> None:

@@ -19,9 +19,7 @@ depends_on: str | Sequence[str] | None = None
 _REALM = "NULLIF(current_setting('app.notification_realm', true), '')"
 _TENANT = "NULLIF(current_setting('app.notification_tenant_id', true), '')::uuid"
 _USER = "NULLIF(current_setting('app.notification_recipient_user_id', true), '')::uuid"
-_PRINCIPAL = (
-    "NULLIF(current_setting('app.notification_staff_principal_id', true), '')::uuid"
-)
+_PRINCIPAL = "NULLIF(current_setting('app.notification_staff_principal_id', true), '')::uuid"
 _DELIVERY = "NULLIF(current_setting('app.notification_delivery_id', true), '')::uuid"
 _TEMPLATE = "NULLIF(current_setting('app.notification_template_id', true), '')::uuid"
 _WORK_ITEM = "NULLIF(current_setting('app.notification_work_item_id', true), '')::uuid"
@@ -38,9 +36,7 @@ _STAFF_GOVERNANCE = "pg_has_role(current_user, 'saas_platform_governance', 'memb
 _EMERGENCY = "pg_has_role(current_user, 'saas_platform', 'member')"
 
 _DIRECTORY = "pg_has_role(current_user, 'saas_notification_directory', 'member')"
-_DIRECTORY_KIND = (
-    "NULLIF(current_setting('app.notification_directory_recipient_kind', true), '')"
-)
+_DIRECTORY_KIND = "NULLIF(current_setting('app.notification_directory_recipient_kind', true), '')"
 _DIRECTORY_RECIPIENT = (
     "NULLIF(current_setting('app.notification_directory_recipient_id', true), '')::uuid"
 )
@@ -51,23 +47,14 @@ _DEAD_LETTER_AUDIENCE = (
     "NULLIF(current_setting('app.notification_dead_letter_audience', true), '')"
 )
 _NOTIFICATION_READER_ROLES = (
-    "'platform_operator', 'platform_security_auditor', "
-    "'support_agent', 'compliance_operator'"
+    "'platform_operator', 'platform_security_auditor', 'support_agent', 'compliance_operator'"
 )
 
 _SOURCE_KIND = "NULLIF(current_setting('app.approval_source_kind', true), '')"
-_SOURCE_OPERATION = (
-    "NULLIF(current_setting('app.approval_source_operation_id', true), '')::uuid"
-)
-_SOURCE_SUBJECT = (
-    "NULLIF(current_setting('app.approval_source_subject_id', true), '')::uuid"
-)
-_SOURCE_WORK_ITEM = (
-    "NULLIF(current_setting('app.approval_source_work_item_id', true), '')::uuid"
-)
-_SOURCE_TENANT = (
-    "NULLIF(current_setting('app.approval_source_tenant_id', true), '')::uuid"
-)
+_SOURCE_OPERATION = "NULLIF(current_setting('app.approval_source_operation_id', true), '')::uuid"
+_SOURCE_SUBJECT = "NULLIF(current_setting('app.approval_source_subject_id', true), '')::uuid"
+_SOURCE_WORK_ITEM = "NULLIF(current_setting('app.approval_source_work_item_id', true), '')::uuid"
+_SOURCE_TENANT = "NULLIF(current_setting('app.approval_source_tenant_id', true), '')::uuid"
 _SOURCE_REALM = "NULLIF(current_setting('app.approval_source_realm', true), '')"
 _SOURCE_MUTATION = "NULLIF(current_setting('app.approval_source_mutation', true), '')"
 
@@ -90,8 +77,7 @@ def _source_role_union() -> str:
 
 def _source_role_kind() -> str:
     return " OR ".join(
-        f"({_has_source_role(kind)} AND {_SOURCE_KIND} = '{kind}')"
-        for kind in _SOURCE_ROLES
+        f"({_has_source_role(kind)} AND {_SOURCE_KIND} = '{kind}')" for kind in _SOURCE_ROLES
     )
 
 
@@ -129,21 +115,16 @@ def _add_dead_letter_source() -> None:
             "(event_type <> 'notification.delivery_dead_letter' "
             "AND source_delivery_id IS NULL)",
         )
-        batch_op.create_index(
-            "ix_notification_delivery_source", ["source_delivery_id", "id"]
-        )
+        batch_op.create_index("ix_notification_delivery_source", ["source_delivery_id", "id"])
 
 
 def _replace_policy(table: str, name: str, command: str, predicate: str) -> None:
     op.execute(f"DROP POLICY IF EXISTS {name} ON {table}")
     if command == "SELECT":
-        op.execute(
-            f"CREATE POLICY {name} ON {table} FOR SELECT USING ({predicate})"
-        )
+        op.execute(f"CREATE POLICY {name} ON {table} FOR SELECT USING ({predicate})")
     elif command == "ALL":
         op.execute(
-            f"CREATE POLICY {name} ON {table} FOR ALL USING ({predicate}) "
-            f"WITH CHECK ({predicate})"
+            f"CREATE POLICY {name} ON {table} FOR ALL USING ({predicate}) WITH CHECK ({predicate})"
         )
     else:
         raise ValueError(f"unsupported policy command: {command}")
@@ -157,13 +138,9 @@ def _install_source_security() -> None:
     privacy = f"({_has_source_role('privacy')} AND {_SOURCE_KIND} = 'privacy')"
     audit = f"({_has_source_role('audit')} AND {_SOURCE_KIND} = 'audit')"
     support_customer = (
-        f"({_has_source_role('support.customer')} "
-        f"AND {_SOURCE_KIND} = 'support.customer')"
+        f"({_has_source_role('support.customer')} AND {_SOURCE_KIND} = 'support.customer')"
     )
-    support_staff = (
-        f"({_has_source_role('support.staff')} "
-        f"AND {_SOURCE_KIND} = 'support.staff')"
-    )
+    support_staff = f"({_has_source_role('support.staff')} AND {_SOURCE_KIND} = 'support.staff')"
     exact_source = f"({_SOURCE_MUTATION} <> 'scan' AND id = {_SOURCE_OPERATION})"
 
     _replace_policy(
@@ -201,8 +178,7 @@ def _install_source_security() -> None:
     )
     customer_grant = f"({support_customer} AND mode = 'standard')"
     staff_grant = (
-        f"({support_staff} AND (mode = 'break_glass' "
-        "OR status <> 'pending_customer_approval'))"
+        f"({support_staff} AND (mode = 'break_glass' OR status <> 'pending_customer_approval'))"
     )
     _replace_policy(
         "saas_platform_support_grants",
@@ -272,8 +248,7 @@ def _install_source_security() -> None:
         )
 
     staff_audience = (
-        f"({_SOURCE_MUTATION} = 'audience' "
-        f"AND ({privacy} OR {audit} OR {support_staff}))"
+        f"({_SOURCE_MUTATION} = 'audience' AND ({privacy} OR {audit} OR {support_staff}))"
     )
     _replace_policy(
         "saas_platform_staff_principals",
@@ -684,8 +659,7 @@ def _install_source_security() -> None:
     )
 
     notification_writer = (
-        f"({_SCHEDULER} OR {_TENANT_GOVERNANCE} OR {_STAFF_GOVERNANCE} "
-        f"OR ({source_roles}))"
+        f"({_SCHEDULER} OR {_TENANT_GOVERNANCE} OR {_STAFF_GOVERNANCE} OR ({source_roles}))"
     )
     notification_binding = (
         f"({_MUTATION} IN ('enqueue_template_resolve', 'enqueue') "
@@ -842,8 +816,7 @@ def _install_postgresql_security() -> None:
     )
 
     worker_template_scope = (
-        "realm = 'staff' AND status = 'active' "
-        f"AND (tenant_id IS NULL OR tenant_id = {_TENANT})"
+        f"realm = 'staff' AND status = 'active' AND (tenant_id IS NULL OR tenant_id = {_TENANT})"
     )
     worker_template_resolve = (
         f"({_MUTATION} = 'enqueue_template_resolve' "
@@ -981,8 +954,7 @@ def _install_postgresql_security() -> None:
     )
 
     op.execute(
-        "DROP POLICY IF EXISTS rls_global_users_notification_directory_exact "
-        "ON saas_global_users"
+        "DROP POLICY IF EXISTS rls_global_users_notification_directory_exact ON saas_global_users"
     )
     op.execute(
         "CREATE POLICY rls_global_users_notification_directory_exact "
@@ -1282,8 +1254,7 @@ def downgrade() -> None:
         }
         for role in present_roles:
             op.execute(
-                "REVOKE ALL PRIVILEGES ON TABLE "
-                f"{', '.join(source_authority_tables)} FROM {role}"
+                f"REVOKE ALL PRIVILEGES ON TABLE {', '.join(source_authority_tables)} FROM {role}"
             )
             op.execute(f"REVOKE USAGE ON SCHEMA public FROM {role}")
             inherited_roles = bind.execute(
@@ -1305,13 +1276,9 @@ def downgrade() -> None:
         )
     ).scalar_one()
     if source_count:
-        raise RuntimeError(
-            "pc5c00000002 downgrade refused: dead-letter source bindings exist"
-        )
+        raise RuntimeError("pc5c00000002 downgrade refused: dead-letter source bindings exist")
     with op.batch_alter_table("saas_notification_deliveries") as batch_op:
         batch_op.drop_index("ix_notification_delivery_source")
-        batch_op.drop_constraint(
-            "ck_notification_delivery_dead_letter_source", type_="check"
-        )
+        batch_op.drop_constraint("ck_notification_delivery_dead_letter_source", type_="check")
         batch_op.drop_constraint("fk_notification_delivery_source", type_="foreignkey")
         batch_op.drop_column("source_delivery_id")

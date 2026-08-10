@@ -413,9 +413,7 @@ def _create_public_execution_router(
         )
         _set_public_headers(response, rate=rate)
         return {
-            "items": [
-                _project_resource(cast(PublicApiProjectView, item)) for item in page.items
-            ],
+            "items": [_project_resource(cast(PublicApiProjectView, item)) for item in page.items],
             "next_cursor": page.next_cursor,
         }
 
@@ -698,9 +696,7 @@ def _create_public_execution_router(
         )
         _set_public_headers(response, rate=rate)
         return {
-            "items": [
-                _event_resource(cast(PublicApiRunEventView, item)) for item in page.items
-            ],
+            "items": [_event_resource(cast(PublicApiRunEventView, item)) for item in page.items],
             "next_cursor": page.next_cursor,
         }
 

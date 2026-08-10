@@ -176,20 +176,21 @@ def test_default_bootstrap_catalog_and_transaction_local_source_events() -> None
     assert len(seeded) == 15
     assert all(
         value.replayed
-        for value in NotificationTemplateBootstrap(delivery).seed(
-            platform_actor, now=NOW
-        )
+        for value in NotificationTemplateBootstrap(delivery).seed(platform_actor, now=NOW)
     )
     catalog = PackagedNotificationTemplateCatalog()
     first = seeded[0]
-    assert catalog.get(
-        key=first.template_key,
-        locale=first.locale,
-        version=first.version,
-        artifact_handle=first.content_artifact_handle,
-        expected_content_sha256=first.content_sha256,
-        expected_variables_schema_sha256=first.variables_schema_sha256,
-    ) is not None
+    assert (
+        catalog.get(
+            key=first.template_key,
+            locale=first.locale,
+            version=first.version,
+            artifact_handle=first.content_artifact_handle,
+            expected_content_sha256=first.content_sha256,
+            expected_variables_schema_sha256=first.variables_schema_sha256,
+        )
+        is not None
+    )
 
     with factory.begin() as db:
         work = projection.project_in_transaction(db, command, now=NOW)
@@ -247,8 +248,7 @@ def test_default_bootstrap_catalog_and_transaction_local_source_events() -> None
         alerts = tuple(
             db.execute(
                 sa.select(NotificationDeliveryRecord).where(
-                    NotificationDeliveryRecord.event_type
-                    == "notification.delivery_dead_letter"
+                    NotificationDeliveryRecord.event_type == "notification.delivery_dead_letter"
                 )
             ).scalars()
         )

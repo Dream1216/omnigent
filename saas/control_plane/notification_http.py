@@ -494,8 +494,7 @@ def _register_operations_routes(
         response.headers["Cache-Control"] = "private, no-store"
         return {
             "items": [
-                _delegation_payload(cast(ApprovalDelegationView, value), actor)
-                for value in items
+                _delegation_payload(cast(ApprovalDelegationView, value), actor) for value in items
             ],
             "next_cursor": str(next_cursor) if next_cursor else None,
             "content_access": "none",
@@ -687,9 +686,7 @@ def _register_operations_routes(
         def create_template(
             body: TemplateCreateBody,
             request: Request,
-            idempotency_key: str = Header(
-                alias="Idempotency-Key", min_length=1, max_length=128
-            ),
+            idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
         ) -> dict[str, object]:
             actor, at = _mutation_actor(request, actor_for_request, clock, idempotency_key)
             try:
@@ -715,9 +712,7 @@ def _register_operations_routes(
             template_id: UUID,
             body: TemplateRetireBody,
             request: Request,
-            idempotency_key: str = Header(
-                alias="Idempotency-Key", min_length=1, max_length=128
-            ),
+            idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
         ) -> dict[str, object]:
             actor, at = _mutation_actor(request, actor_for_request, clock, idempotency_key)
             try:

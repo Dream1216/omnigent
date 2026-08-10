@@ -94,9 +94,7 @@ def _valid_evidence() -> dict[str, object]:
                         "https://github.com/Dream1216/omnigent/.github/workflows/"
                         "saas-image-candidate.yml@refs/heads/main"
                     ),
-                    "oidc_subject": (
-                        "repo:Dream1216/omnigent:environment:production-image"
-                    ),
+                    "oidc_subject": ("repo:Dream1216/omnigent:environment:production-image"),
                     "subject_digest": manifest_digest,
                     "transparency_log_verified": True,
                     "transparency_log_entry_sha256": "4" * 64,

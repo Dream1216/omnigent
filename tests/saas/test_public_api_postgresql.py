@@ -113,22 +113,31 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
-        assert connection.execute(
-            sa.text("SELECT to_regclass('saas_public_api_mutation_receipts')")
-        ).scalar_one_or_none() is None
-        assert connection.execute(
-            sa.text(
-                "SELECT has_column_privilege("
-                "'saas_public_api', 'saas_tenant_memberships', 'tenant_id', 'SELECT')"
-            )
-        ).scalar_one() is False
+        assert (
+            connection.execute(
+                sa.text("SELECT to_regclass('saas_public_api_mutation_receipts')")
+            ).scalar_one_or_none()
+            is None
+        )
+        assert (
+            connection.execute(
+                sa.text(
+                    "SELECT has_column_privilege("
+                    "'saas_public_api', 'saas_tenant_memberships', 'tenant_id', 'SELECT')"
+                )
+            ).scalar_one()
+            is False
+        )
         command.upgrade(migration, "head")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
-        assert connection.execute(
-            sa.text("SELECT version_num FROM saas_alembic_version")
-        ).scalar_one() == "pc5a00000005"
+        assert (
+            connection.execute(
+                sa.text("SELECT version_num FROM saas_alembic_version")
+            ).scalar_one()
+            == "pc5a00000005"
+        )
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(
             sa.text(
@@ -361,9 +370,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
     assert len({run_id for run_id, _replayed in parallel}) == 1
     assert sorted(replayed for _run_id, replayed in parallel) == [False, True]
 
-    content = service.get_run_content(
-        principal, project_id=project_id, run_id=created.id
-    )
+    content = service.get_run_content(principal, project_id=project_id, run_id=created.id)
     assert content.input == {"prompt": "hello"}
     events = service.list_run_events(
         principal,
@@ -384,12 +391,16 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
             service_account_id=service_account_id,
             credential_id=credential_id,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_tenant_memberships")
-        ).scalar_one() == 0
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_space_memberships")
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_tenant_memberships")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(sa.text("SELECT count(*) FROM saas_space_memberships")).scalar_one()
+            == 0
+        )
         with pytest.raises(DBAPIError) as forged:
             connection.execute(
                 sa.text(

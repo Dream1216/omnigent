@@ -77,14 +77,10 @@ class JwtNotificationWorkloadIdentityProvider:
                 options={"require": ["sub", "iat", "exp", "iss", "aud"]},
             )
             subject = str(claims["sub"])
-            authenticated_at = datetime.fromtimestamp(
-                int(claims["iat"]), tz=timezone.utc
-            )
+            authenticated_at = datetime.fromtimestamp(int(claims["iat"]), tz=timezone.utc)
             expires_at = datetime.fromtimestamp(int(claims["exp"]), tz=timezone.utc)
         except (OSError, KeyError, TypeError, ValueError, jwt.PyJWTError) as error:
-            raise NotificationDeliveryError(
-                "notification_workload_identity_invalid"
-            ) from error
+            raise NotificationDeliveryError("notification_workload_identity_invalid") from error
         if (
             not subject.startswith(self.subject_prefix)
             or authenticated_at > at
@@ -130,9 +126,7 @@ class DatabaseNotificationRecipientResolver:
             )
             if kind == "user":
                 column = (
-                    GlobalUser.id
-                    if channel == "in_app"
-                    else GlobalUser.primary_email_normalized
+                    GlobalUser.id if channel == "in_app" else GlobalUser.primary_email_normalized
                 )
                 value = db.execute(
                     sa.select(column).where(
@@ -194,9 +188,7 @@ class EmptyNotificationRenderContextResolver:
         ):
             raise NotificationDeliveryError("notification_render_context_invalid")
         at = _aware(now)
-        return ResolvedRenderContext(
-            variables={}, purpose=purpose, expires_at=at + self.ttl
-        )
+        return ResolvedRenderContext(variables={}, purpose=purpose, expires_at=at + self.ttl)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,9 +240,7 @@ class HttpEmailNotificationProvider:
             endpoint = urlsplit(self.endpoint)
             port = endpoint.port
         except ValueError as error:
-            raise ValueError(
-                "notification email provider configuration is invalid"
-            ) from error
+            raise ValueError("notification email provider configuration is invalid") from error
         if (
             len(self.endpoint) > 2048
             or endpoint.scheme != "https"
@@ -387,8 +377,7 @@ def build_default_notification_components(
         endpoint=_required(configuration, "email_endpoint"),
         bearer_token=_required(configuration, "email_bearer_token"),
         digesters=digesters,
-        client=http_client
-        or httpx.Client(http2=True, trust_env=False, follow_redirects=False),
+        client=http_client or httpx.Client(http2=True, trust_env=False, follow_redirects=False),
     )
     return NotificationRuntimeComponents(
         authority=NotificationDeliveryService(
@@ -403,9 +392,7 @@ def build_default_notification_components(
         recipient_resolver=DatabaseNotificationRecipientResolver(directory_sessions),
         context_resolver=EmptyNotificationRenderContextResolver(),
         catalog=PackagedNotificationTemplateCatalog(),
-        provider=CompositeNotificationProvider(
-            InAppNotificationProvider(digesters), email
-        ),
+        provider=CompositeNotificationProvider(InAppNotificationProvider(digesters), email),
     )
 
 
@@ -447,9 +434,7 @@ def verify_notification_directory_database_role(engine: Engine) -> None:
                 "FROM pg_roles AS role WHERE role.rolname = current_user"
             )
         ).one()
-    if facts[1] or facts[2] or not facts[3] or any(
-        facts[index] for index in (4, 5, 6, 7, 8)
-    ):
+    if facts[1] or facts[2] or not facts[3] or any(facts[index] for index in (4, 5, 6, 7, 8)):
         raise RuntimeError("notification directory database role boundary is invalid")
 
 

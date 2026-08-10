@@ -232,9 +232,7 @@ def test_openapi_compatibility_guard_detects_surface_and_schema_breaks() -> None
     changed_operation["paths"]["/api/v1/projects"]["get"][  # type: ignore[index]
         "x-omnigent-cursor-binding"
     ]["filters"] = []
-    rendered = [
-        change.render() for change in find_breaking_changes(baseline, changed_operation)
-    ]
+    rendered = [change.render() for change in find_breaking_changes(baseline, changed_operation)]
     assert "GET /api/v1/projects: operationId changed" in rendered
     assert "GET /api/v1/projects: x-omnigent-required-permission changed" in rendered
     assert "GET /api/v1/projects: x-omnigent-cursor-binding changed" in rendered
@@ -268,5 +266,6 @@ def test_actual_public_router_conforms_to_frozen_contract_core() -> None:
                 continue
             actual_operation = actual["paths"][path][method]
             assert {
-                key: frozen_operation.get(key) for key in compared_keys  # type: ignore[union-attr]
+                key: frozen_operation.get(key)
+                for key in compared_keys  # type: ignore[union-attr]
             } == {key: actual_operation.get(key) for key in compared_keys}

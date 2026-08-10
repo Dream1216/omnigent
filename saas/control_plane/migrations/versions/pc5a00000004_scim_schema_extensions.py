@@ -36,8 +36,7 @@ def _replace_postgresql_source_policies(*, exact_directory: bool) -> None:
                 f"OR scim_source.successor_token_hash = {token}))"
             )
             tenant_scope = (
-                f"({platform} OR (tenant_id = {tenant} AND "
-                f"(NOT {governance} OR {source_scope})))"
+                f"({platform} OR (tenant_id = {tenant} AND (NOT {governance} OR {source_scope})))"
             )
         op.execute(f"DROP POLICY IF EXISTS rls_{table}_select ON {table}")
         op.execute(
@@ -45,8 +44,7 @@ def _replace_postgresql_source_policies(*, exact_directory: bool) -> None:
         )
         op.execute(f"DROP POLICY IF EXISTS rls_{table}_insert ON {table}")
         op.execute(
-            f"CREATE POLICY rls_{table}_insert ON {table} FOR INSERT "
-            f"WITH CHECK ({tenant_scope})"
+            f"CREATE POLICY rls_{table}_insert ON {table} FOR INSERT WITH CHECK ({tenant_scope})"
         )
         if table != "saas_enterprise_scim_events":
             op.execute(f"DROP POLICY IF EXISTS rls_{table}_update ON {table}")
@@ -105,8 +103,7 @@ def downgrade() -> None:
         provider_type != "generic" or bool(attribute_mapping)
         for provider_type, attribute_mapping in bind.execute(
             sa.text(
-                "SELECT provider_type, attribute_mapping "
-                "FROM saas_enterprise_scim_directories"
+                "SELECT provider_type, attribute_mapping FROM saas_enterprise_scim_directories"
             )
         )
     )
@@ -114,8 +111,7 @@ def downgrade() -> None:
         bool(core_attributes) or bool(enterprise_attributes)
         for core_attributes, enterprise_attributes in bind.execute(
             sa.text(
-                "SELECT core_attributes, enterprise_attributes "
-                "FROM saas_enterprise_scim_users"
+                "SELECT core_attributes, enterprise_attributes FROM saas_enterprise_scim_users"
             )
         )
     )

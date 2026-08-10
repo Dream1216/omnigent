@@ -307,11 +307,7 @@ class ApprovalProjectionService:
             source_subject_id=source_subject_id,
             operation_kind=work.operation_kind,
         )
-        if (
-            work.realm != realm
-            or work.tenant_id != tenant_id
-            or work.operation_id != operation_id
-        ):
+        if work.realm != realm or work.tenant_id != tenant_id or work.operation_id != operation_id:
             raise ApprovalOperationsError("approval_projection_source_binding_conflict")
         return _work_view(work)
 
@@ -354,12 +350,8 @@ class ApprovalProjectionService:
                 requested_by_principal_id=(
                     command.requester_id if command.requester_realm == "staff" else None
                 ),
-                assignee_user_id=(
-                    command.assignee_id if command.realm == "tenant" else None
-                ),
-                assignee_principal_id=(
-                    command.assignee_id if command.realm == "staff" else None
-                ),
+                assignee_user_id=(command.assignee_id if command.realm == "tenant" else None),
+                assignee_principal_id=(command.assignee_id if command.realm == "staff" else None),
                 operation_kind=command.operation_kind,
                 operation_id=command.operation_id,
                 action=command.action,
@@ -415,9 +407,7 @@ class ApprovalProjectionService:
             )
         )
         existing.assignee_user_id = command.assignee_id if command.realm == "tenant" else None
-        existing.assignee_principal_id = (
-            command.assignee_id if command.realm == "staff" else None
-        )
+        existing.assignee_principal_id = command.assignee_id if command.realm == "staff" else None
         existing.priority = command.priority
         existing.due_at = command.due_at
         existing.escalation_at = command.escalation_at
@@ -480,12 +470,8 @@ class ApprovalProjectionService:
         work.status = command.status
         work.decision_code = _code(command.decision_code, "decision_code", 128)
         work.decided_at = decided_at
-        work.decided_by_user_id = (
-            command.decided_by_id if work.realm == "tenant" else None
-        )
-        work.decided_by_principal_id = (
-            command.decided_by_id if work.realm == "staff" else None
-        )
+        work.decided_by_user_id = command.decided_by_id if work.realm == "tenant" else None
+        work.decided_by_principal_id = command.decided_by_id if work.realm == "staff" else None
         work.version += 1
         work.updated_at = decided_at
         db.flush()
@@ -570,9 +556,7 @@ class ApprovalOperationsService:
                 if status is not None:
                     query = query.where(ApprovalWorkItemRecord.status == status)
                 values = tuple(
-                    db.execute(
-                        query.order_by(ApprovalWorkItemRecord.id).limit(101)
-                    ).scalars()
+                    db.execute(query.order_by(ApprovalWorkItemRecord.id).limit(101)).scalars()
                 )
                 page_records = values[:100]
                 candidates = tuple(
@@ -659,9 +643,7 @@ class ApprovalOperationsService:
                     ApprovalDelegationRecord.realm == actor.realm,
                     ApprovalDelegationRecord.tenant_id == actor.tenant_id,
                     getattr(ApprovalDelegationRecord, delegator_column) == actor.actor_id,
-                    ApprovalDelegationRecord.create_idempotency_hmac.in_(
-                        tuple(candidate_keys)
-                    ),
+                    ApprovalDelegationRecord.create_idempotency_hmac.in_(tuple(candidate_keys)),
                 )
             ).scalar_one_or_none()
             if replay is not None:
@@ -686,9 +668,7 @@ class ApprovalOperationsService:
                     or replay.hmac_key_id != replay_digester.key_id
                     or not hmac.compare_digest(replay.create_request_hmac, expected_request)
                 ):
-                    raise ApprovalOperationsError(
-                        "approval_delegation_idempotency_conflict"
-                    )
+                    raise ApprovalOperationsError("approval_delegation_idempotency_conflict")
                 return _delegation_view(replay)
         with self._sessions.begin() as db:
             _apply_approval_actor_rls(
@@ -841,9 +821,7 @@ class ApprovalOperationsService:
             if status is not None:
                 query = query.where(ApprovalDelegationRecord.status == status)
             values = tuple(
-                db.execute(
-                    query.order_by(ApprovalDelegationRecord.id).limit(limit + 1)
-                ).scalars()
+                db.execute(query.order_by(ApprovalDelegationRecord.id).limit(limit + 1)).scalars()
             )
             for value in values:
                 if value.status == "active" and _stored_utc(value.expires_at) <= at:
@@ -891,9 +869,7 @@ class ApprovalOperationsService:
             )
             if record.status == "revoked":
                 if not hmac.compare_digest(record.revoke_idempotency_hmac or "", key_hmac):
-                    raise ApprovalOperationsError(
-                        "approval_delegation_idempotency_conflict"
-                    )
+                    raise ApprovalOperationsError("approval_delegation_idempotency_conflict")
                 if not hmac.compare_digest(record.revoke_request_hmac or "", request_hmac):
                     raise ApprovalOperationsError("approval_delegation_payload_conflict")
                 return _delegation_view(record)
@@ -928,9 +904,7 @@ class ApprovalOperationsService:
         reason = _code(decision_reason, "decision_reason", 1024)
         key = _code(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="decision", work_item_id=work_item_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="decision", work_item_id=work_item_id)
             work = db.execute(
                 sa.select(ApprovalWorkItemRecord).where(ApprovalWorkItemRecord.id == work_item_id)
             ).scalar_one_or_none()
@@ -999,9 +973,7 @@ class ApprovalOperationsService:
                 item_payload,
                 decision,
                 code,
-                value.digest(
-                    domain="operation-batch-decision-reason", values=(reason,)
-                ),
+                value.digest(domain="operation-batch-decision-reason", values=(reason,)),
             )
 
         candidate_keys = {
@@ -1032,9 +1004,7 @@ class ApprovalOperationsService:
                 values=(actor.realm, str(actor.actor_id), key),
             )
             batch_id = UUID(hex=key_hmac[:32])
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_preview", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_preview", batch_id=batch_id)
             works = tuple(
                 db.execute(
                     sa.select(ApprovalWorkItemRecord).where(
@@ -1093,9 +1063,7 @@ class ApprovalOperationsService:
                     tenant_id=first.tenant_id,
                     hmac_key_id=self._digester.key_id,
                     requested_by_user_id=(actor.actor_id if actor.realm == "tenant" else None),
-                    requested_by_principal_id=(
-                        actor.actor_id if actor.realm == "staff" else None
-                    ),
+                    requested_by_principal_id=(actor.actor_id if actor.realm == "staff" else None),
                     sequence=sequence,
                     target_type=by_id[command.work_item_id].target_type,
                     target_locator_hmac=by_id[command.work_item_id].target_locator_hmac,
@@ -1127,9 +1095,7 @@ class ApprovalOperationsService:
         lease_token = secrets.token_urlsafe(32)
         lease_token_hmac = ""
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_execute", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_execute", batch_id=batch_id)
             batch = db.execute(
                 sa.select(OperationBatchRecord)
                 .where(OperationBatchRecord.id == batch_id)
@@ -1140,9 +1106,7 @@ class ApprovalOperationsService:
             batch_digester = self._digester_for_key(batch.hmac_key_id)
             if not hmac.compare_digest(
                 batch.decision_reason_hmac,
-                batch_digester.digest(
-                    domain="operation-batch-decision-reason", values=(reason,)
-                ),
+                batch_digester.digest(domain="operation-batch-decision-reason", values=(reason,)),
             ):
                 raise ApprovalOperationsError("operation_batch_decision_reason_conflict")
             lease_token_hmac = batch_digester.digest(
@@ -1198,13 +1162,9 @@ class ApprovalOperationsService:
             if item.status in {"succeeded", "failed", "skipped"}:
                 continue
             item_at = _aware(now or self._clock())
-            if not self._refresh_batch_lease(
-                actor, batch_id, lease_token_hmac, item_at
-            ):
+            if not self._refresh_batch_lease(actor, batch_id, lease_token_hmac, item_at):
                 raise ApprovalOperationsError("operation_batch_lease_lost")
-            if not self._claim_batch_item(
-                actor, item.id, batch_id, lease_token_hmac, item_at
-            ):
+            if not self._claim_batch_item(actor, item.id, batch_id, lease_token_hmac, item_at):
                 raise ApprovalOperationsError("operation_batch_lease_lost")
             try:
                 result = self.decide(
@@ -1242,9 +1202,7 @@ class ApprovalOperationsService:
                 )
         completed_at = _aware(now or self._clock())
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_complete", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_complete", batch_id=batch_id)
             batch = db.execute(
                 sa.select(OperationBatchRecord)
                 .where(OperationBatchRecord.id == batch_id)
@@ -1271,9 +1229,7 @@ class ApprovalOperationsService:
             failure = sum(value.status == "failed" for value in rows)
             batch.success_count = success
             batch.failure_count = failure
-            batch.status = (
-                "succeeded" if failure == 0 else "failed" if success == 0 else "partial"
-            )
+            batch.status = "succeeded" if failure == 0 else "failed" if success == 0 else "partial"
             batch.completed_at = completed_at
             batch.leased_at = None
             batch.lease_expires_at = None
@@ -1327,18 +1283,14 @@ class ApprovalOperationsService:
         at: datetime,
     ) -> None:
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_item_settle", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_item_settle", batch_id=batch_id)
             batch = db.get(OperationBatchRecord, batch_id)
             if (
                 batch is None
                 or batch.status != "running"
                 or batch.lease_expires_at is None
                 or _stored_utc(batch.lease_expires_at) <= at
-                or not hmac.compare_digest(
-                    batch.lease_token_hmac or "", lease_token_hmac
-                )
+                or not hmac.compare_digest(batch.lease_token_hmac or "", lease_token_hmac)
             ):
                 raise ApprovalOperationsError("operation_batch_lease_lost")
             batch_digester = self._digester_for_key(batch.hmac_key_id)
@@ -1354,9 +1306,7 @@ class ApprovalOperationsService:
             item.error_hmac = (
                 None
                 if error_code is None
-                else batch_digester.digest(
-                    domain="operation-batch-error", values=(error_code,)
-                )
+                else batch_digester.digest(domain="operation-batch-error", values=(error_code,))
             )
             item.result_hmac = result_hmac or batch_digester.digest(
                 domain="operation-batch-item-result",
@@ -1373,9 +1323,7 @@ class ApprovalOperationsService:
         at: datetime,
     ) -> bool:
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_lease_refresh", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_lease_refresh", batch_id=batch_id)
             batch = db.execute(
                 sa.select(OperationBatchRecord)
                 .where(OperationBatchRecord.id == batch_id)
@@ -1386,9 +1334,7 @@ class ApprovalOperationsService:
                 or batch.status != "running"
                 or batch.lease_expires_at is None
                 or _stored_utc(batch.lease_expires_at) <= at
-                or not hmac.compare_digest(
-                    batch.lease_token_hmac or "", lease_token_hmac
-                )
+                or not hmac.compare_digest(batch.lease_token_hmac or "", lease_token_hmac)
             ):
                 return False
             deadline = _stored_utc(batch.created_at) + _BATCH_EXECUTION_WINDOW
@@ -1409,18 +1355,14 @@ class ApprovalOperationsService:
         at: datetime,
     ) -> bool:
         with self._sessions.begin() as db:
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_item_claim", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_item_claim", batch_id=batch_id)
             batch = db.get(OperationBatchRecord, batch_id)
             if (
                 batch is None
                 or batch.status != "running"
                 or batch.lease_expires_at is None
                 or _stored_utc(batch.lease_expires_at) <= at
-                or not hmac.compare_digest(
-                    batch.lease_token_hmac or "", lease_token_hmac
-                )
+                or not hmac.compare_digest(batch.lease_token_hmac or "", lease_token_hmac)
             ):
                 return False
             item = db.execute(
@@ -1490,9 +1432,7 @@ class ApprovalOperationsService:
     ) -> OperationBatchRecord | None:
         for key_hmac in key_hmacs:
             batch_id = UUID(hex=key_hmac[:32])
-            _apply_approval_actor_rls(
-                db, actor, mutation="batch_replay", batch_id=batch_id
-            )
+            _apply_approval_actor_rls(db, actor, mutation="batch_replay", batch_id=batch_id)
             value = db.get(OperationBatchRecord, batch_id)
             if value is not None:
                 return value

@@ -121,18 +121,12 @@ def _create_receipts() -> None:
             ["saas_api_credentials.id"],
             ondelete="RESTRICT",
         ),
-        sa.CheckConstraint(
-            "length(operation) > 0", name="ck_public_api_receipt_operation"
-        ),
-        sa.CheckConstraint(
-            "length(idempotency_key_id) > 0", name="ck_public_api_receipt_key_id"
-        ),
+        sa.CheckConstraint("length(operation) > 0", name="ck_public_api_receipt_operation"),
+        sa.CheckConstraint("length(idempotency_key_id) > 0", name="ck_public_api_receipt_key_id"),
         sa.CheckConstraint(
             "length(idempotency_hmac) = 64", name="ck_public_api_receipt_idempotency"
         ),
-        sa.CheckConstraint(
-            "length(request_hash) = 64", name="ck_public_api_receipt_request_hash"
-        ),
+        sa.CheckConstraint("length(request_hash) = 64", name="ck_public_api_receipt_request_hash"),
         sa.CheckConstraint(
             "length(resource_type) > 0", name="ck_public_api_receipt_resource_type"
         ),
@@ -207,9 +201,7 @@ def _add_run_contract_fields() -> None:
 
 def _add_session_task_actor() -> None:
     with op.batch_alter_table("saas_session_tasks") as batch:
-        batch.add_column(
-            sa.Column("attached_by_service_account_id", sa.Uuid(), nullable=True)
-        )
+        batch.add_column(sa.Column("attached_by_service_account_id", sa.Uuid(), nullable=True))
         batch.alter_column("attached_by", existing_type=sa.Uuid(), nullable=True)
         batch.create_foreign_key(
             "fk_session_task_service_account_actor",
@@ -284,16 +276,14 @@ def _install_postgresql_security() -> None:
             legacy_scope = f"({_APP} AND {legacy_scope})"
         public_scope = (
             f"({_PUBLIC_API} AND tenant_id = {_TENANT} AND space_id = {_SPACE} "
-            f'AND {_exact_credential_project_scope(f"{table}.project_id")})'
+            f"AND {_exact_credential_project_scope(f'{table}.project_id')})"
         )
         legacy_predicate = (
             f"({_PLATFORM} OR {_EXECUTOR} OR "
             f"(NOT ({_PUBLIC_API}) AND {_CREDENTIAL} IS NULL AND {legacy_scope}))"
         )
         op.execute(f'DROP POLICY IF EXISTS "rls_{table}_scope" ON "{table}"')
-        op.execute(
-            f'DROP POLICY IF EXISTS "rls_{table}_public_api_exact" ON "{table}"'
-        )
+        op.execute(f'DROP POLICY IF EXISTS "rls_{table}_public_api_exact" ON "{table}"')
         op.execute(
             f'CREATE POLICY "rls_{table}_scope" ON "{table}" FOR ALL '
             f"USING ({legacy_predicate}) WITH CHECK ({legacy_predicate})"
@@ -415,7 +405,7 @@ def _install_postgresql_security() -> None:
     )
     op.execute(
         'CREATE TRIGGER "trg_saas_session_tasks_actor_immutable" '
-        'BEFORE UPDATE OF attached_by, attached_by_service_account_id '
+        "BEFORE UPDATE OF attached_by, attached_by_service_account_id "
         'ON "saas_session_tasks" FOR EACH ROW '
         "EXECUTE FUNCTION saas_reject_session_task_actor_mutation()"
     )
@@ -527,8 +517,7 @@ def _assert_machine_rows_absent() -> None:
     for table in ("saas_tasks", "saas_runs", "saas_artifacts", "saas_worktree_instances"):
         count = bind.execute(
             sa.text(
-                f'SELECT count(*) FROM "{table}" '
-                "WHERE created_by_service_account_id IS NOT NULL"
+                f'SELECT count(*) FROM "{table}" WHERE created_by_service_account_id IS NOT NULL'
             )
         ).scalar_one()
         if count:
@@ -546,9 +535,7 @@ def _assert_machine_rows_absent() -> None:
             "cannot downgrade public API actor provenance while machine session links exist"
         )
     usage_count = bind.execute(
-        sa.text(
-            "SELECT count(*) FROM saas_usage_events WHERE service_account_id IS NOT NULL"
-        )
+        sa.text("SELECT count(*) FROM saas_usage_events WHERE service_account_id IS NOT NULL")
     ).scalar_one()
     if usage_count:
         raise RuntimeError(
@@ -564,21 +551,17 @@ def _restore_postgresql_security() -> None:
         if table == "saas_runs":
             legacy_scope = f"({_APP} AND {legacy_scope})"
         predicate = f"({_PLATFORM} OR {_EXECUTOR} OR {legacy_scope})"
-        op.execute(
-            f'DROP POLICY IF EXISTS "rls_{table}_public_api_exact" ON "{table}"'
-        )
+        op.execute(f'DROP POLICY IF EXISTS "rls_{table}_public_api_exact" ON "{table}"')
         op.execute(f'DROP POLICY IF EXISTS "rls_{table}_scope" ON "{table}"')
         op.execute(
             f'CREATE POLICY "rls_{table}_scope" ON "{table}" FOR ALL '
             f"USING ({predicate}) WITH CHECK ({predicate})"
         )
     op.execute(
-        'DROP POLICY IF EXISTS "rls_api_credentials_public_api_exact" '
-        'ON "saas_api_credentials"'
+        'DROP POLICY IF EXISTS "rls_api_credentials_public_api_exact" ON "saas_api_credentials"'
     )
     op.execute(
-        'DROP POLICY IF EXISTS "rls_service_accounts_public_api_exact" '
-        'ON "saas_service_accounts"'
+        'DROP POLICY IF EXISTS "rls_service_accounts_public_api_exact" ON "saas_service_accounts"'
     )
     op.execute(
         'DROP POLICY IF EXISTS "rls_space_memberships_public_api_hidden" '
@@ -589,8 +572,7 @@ def _restore_postgresql_security() -> None:
         'ON "saas_tenant_memberships"'
     )
     op.execute(
-        'DROP TRIGGER IF EXISTS "trg_saas_session_tasks_actor_immutable" '
-        'ON "saas_session_tasks"'
+        'DROP TRIGGER IF EXISTS "trg_saas_session_tasks_actor_immutable" ON "saas_session_tasks"'
     )
     for table in (
         "saas_tasks",
@@ -691,12 +673,8 @@ def downgrade() -> None:
             'DROP POLICY IF EXISTS "rls_public_api_mutation_receipts_exact" '
             'ON "saas_public_api_mutation_receipts"'
         )
-        op.execute(
-            'ALTER TABLE "saas_public_api_mutation_receipts" NO FORCE ROW LEVEL SECURITY'
-        )
-        op.execute(
-            'ALTER TABLE "saas_public_api_mutation_receipts" DISABLE ROW LEVEL SECURITY'
-        )
+        op.execute('ALTER TABLE "saas_public_api_mutation_receipts" NO FORCE ROW LEVEL SECURITY')
+        op.execute('ALTER TABLE "saas_public_api_mutation_receipts" DISABLE ROW LEVEL SECURITY')
     op.drop_index(
         "ix_public_api_rate_tenant_window",
         table_name="saas_public_api_rate_limits",

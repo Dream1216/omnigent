@@ -169,8 +169,7 @@ def _check_schema(
             changes.append(
                 BreakingChange(
                     location,
-                    "strict response properties were added: "
-                    f"{sorted(added_properties)!r}",
+                    f"strict response properties were added: {sorted(added_properties)!r}",
                 )
             )
         if new_resolved.get("additionalProperties") is not False:

@@ -301,9 +301,7 @@ class BillingMeteringAuthority:
                 "project_id": str(run.project_id),
                 "session_id": str(run.session_id) if run.session_id else None,
                 "run_id": str(run_id),
-                "actor_kind": (
-                    "user" if run.created_by is not None else "service_account"
-                ),
+                "actor_kind": ("user" if run.created_by is not None else "service_account"),
                 "user_id": str(run.created_by) if run.created_by is not None else None,
                 "service_account_id": (
                     str(run.created_by_service_account_id)

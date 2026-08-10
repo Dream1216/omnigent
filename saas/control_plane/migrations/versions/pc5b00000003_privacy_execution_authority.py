@@ -1184,8 +1184,7 @@ def _drop_postgresql_security() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
     op.execute(
-        "DROP POLICY IF EXISTS rls_privacy_legal_holds_executor_read "
-        "ON saas_privacy_legal_holds"
+        "DROP POLICY IF EXISTS rls_privacy_legal_holds_executor_read ON saas_privacy_legal_holds"
     )
     op.execute(
         'DROP POLICY IF EXISTS "rls_platform_admin_operation_privacy_update_guard" '
@@ -1232,8 +1231,7 @@ def _drop_postgresql_security() -> None:
         "ON saas_privacy_backup_retention_items"
     )
     op.execute(
-        "DROP POLICY IF EXISTS rls_outbox_privacy_dispatcher_insert "
-        "ON saas_control_plane_outbox"
+        "DROP POLICY IF EXISTS rls_outbox_privacy_dispatcher_insert ON saas_control_plane_outbox"
     )
     op.execute(
         "DROP POLICY IF EXISTS rls_saas_privacy_deletion_attempts_executor_insert "
