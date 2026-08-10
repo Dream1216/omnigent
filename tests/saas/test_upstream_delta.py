@@ -11,7 +11,12 @@ from saas.scripts.check_upstream_delta import FileDelta, evaluate_delta
 
 def _manifest():
     return {
-        "downstream_owned_prefixes": ["saas/", "tests/saas/"],
+        "downstream_owned_prefixes": [
+            ".github/workflows/saas-",
+            "saas/",
+            "sdks/saas-",
+            "tests/saas/",
+        ],
         "forbidden_upstream_prefixes": [
             "omnigent/runner/native/",
             "omnigent/runtime/workflow.py",
@@ -39,8 +44,28 @@ def test_isolated_downstream_change_passes_budget() -> None:
     )
 
     assert report["status"] == "pass"
+    assert report["metrics"]["direct_upstream_file_count"] == 0
+    assert report["metrics"]["isolated_custom_code_ratio"] == 1.0
+
+
+def test_saas_workflows_and_sdks_are_owned_without_hiding_official_source() -> None:
+    report = evaluate_delta(
+        [
+            FileDelta(".github/workflows/saas-image-candidate.yml", 100, 0),
+            FileDelta("sdks/saas-python/src/omnigent_saas_client/client.py", 200, 0),
+            FileDelta("omnigent/db/utils.py", 23, 0),
+        ],
+        _manifest(),
+        active_patch_count=0,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+    )
+
+    assert report["status"] == "pass"
     assert report["metrics"]["direct_upstream_file_count"] == 1
-    assert report["metrics"]["isolated_custom_code_ratio"] == 0.9
+    assert report["metrics"]["upstream_net_added_loc"] == 23
+    assert report["metrics"]["isolated_custom_code_ratio"] == pytest.approx(300 / 323, 0.0001)
 
 
 def test_forbidden_native_bridge_change_fails_budget() -> None:
