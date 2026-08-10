@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Query, Request, Response
@@ -44,6 +44,12 @@ from saas.control_plane.privacy_operations import (
     PrivacyOperationView,
     PrivacyWorkItemView,
 )
+
+if TYPE_CHECKING:
+    from saas.control_plane.notification_http import (
+        ApprovalOperationsProtocol,
+        NotificationOperationsProtocol,
+    )
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _MAX_PRIVACY_COMMAND_BYTES = 16 * 1024
@@ -245,6 +251,8 @@ def create_platform_admin_app(
     governed_access: PlatformGovernedAccessService | None = None,
     privacy: PrivacyLifecycleService | None = None,
     privacy_operations: PrivacyOperationService | None = None,
+    approval_operations: ApprovalOperationsProtocol | None = None,
+    notification_operations: NotificationOperationsProtocol | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -463,6 +471,11 @@ def create_platform_admin_app(
             "permissions": sorted(principal.permissions),
             "content_access": "none",
             "audience": config.audience,
+            "capabilities": {
+                "notification_operations_enabled": (
+                    approval_operations is not None and notification_operations is not None
+                )
+            },
         }
 
     @app.get("/v2/platform-admin/permissions")
@@ -1485,6 +1498,24 @@ def create_platform_admin_app(
         )
         response.status_code = 204
         return response
+
+    if (approval_operations is None) != (notification_operations is None):
+        raise ValueError(
+            "Platform approval and notification operations must be configured together"
+        )
+    if approval_operations is not None and notification_operations is not None:
+        from saas.control_plane.platform_notification_http import (
+            create_platform_notification_router,
+        )
+
+        app.include_router(
+            create_platform_notification_router(
+                config=config,
+                sessions=sessions,
+                approvals=approval_operations,
+                notifications=notification_operations,
+            )
+        )
 
     return app
 

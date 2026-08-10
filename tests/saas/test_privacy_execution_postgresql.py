@@ -315,7 +315,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 connection.execute(
                     sa.text("SELECT version_num FROM saas_alembic_version")
                 ).scalar_one()
-                == "pc5b00000003"
+                == "pc5a00000004"
             )
             connection.exec_driver_sql(
                 f'CREATE ROLE "{dispatcher_login_role}" LOGIN PASSWORD '

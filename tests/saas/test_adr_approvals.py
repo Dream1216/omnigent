@@ -41,7 +41,7 @@ def test_approved_architecture_schema_is_separate_from_current_implementation_he
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "pc5a00000003"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "pc5b00000003"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "pc5a00000004"  # type: ignore[index]
     assert validate_approval_contract(_repo(), baseline)["status"] == "pass"
 
 

@@ -16,6 +16,7 @@ class RlsContext:
     actor_id: UUID | None = None
     tenant_id: UUID | None = None
     space_id: UUID | None = None
+    project_id: UUID | None = None
     api_credential_id: UUID | None = None
     invitation_token_hash: str | None = None
     scim_token_hash: str | None = None
@@ -72,6 +73,11 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     _set_local(session, "app.space_id", str(context.space_id) if context.space_id else "")
     _set_local(
         session,
+        "app.project_id",
+        str(context.project_id) if context.project_id else "",
+    )
+    _set_local(
+        session,
         "app.api_credential_id",
         str(context.api_credential_id) if context.api_credential_id else "",
     )
@@ -99,6 +105,7 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         "app.actor_id",
         "app.tenant_id",
         "app.space_id",
+        "app.project_id",
         "app.api_credential_id",
         "app.invitation_token_hash",
         "app.scim_token_hash",

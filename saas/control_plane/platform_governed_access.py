@@ -16,6 +16,12 @@ import sqlalchemy as sa
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.approval_source_projection import (
+    SourceApprovalProjectionBridge,
+    SourceApprovalProjectionSpec,
+    bounded_deadlines,
+    support_work_item_id,
+)
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, GlobalUser, TenantMembership
 from saas.control_plane.permissions import PLATFORM_ROLE_PERMISSIONS
 from saas.control_plane.platform_governed_models import (
@@ -46,6 +52,7 @@ from saas.control_plane.rls import (
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
 _STANDARD_MAX_TTL = timedelta(hours=1)
 _BREAK_GLASS_MAX_TTL = timedelta(minutes=15)
+_AUDIT_APPROVAL_TTL = timedelta(hours=24)
 _ZERO_HASH = "0" * 64
 _TENANT_SUPPORT_ROLES = frozenset({"owner", "admin", "security_auditor"})
 
@@ -266,11 +273,13 @@ class PlatformGovernedAccessService:
         tenant_factory: sessionmaker[Session] | None = None,
         support_factory: sessionmaker[Session] | None = None,
         signing_key: AuditSigner | None = None,
+        approval_projection: SourceApprovalProjectionBridge | None = None,
     ) -> None:
         self._platform = platform_factory
         self._tenant = tenant_factory or platform_factory
         self._support = support_factory or platform_factory
         self._signing_key = signing_key
+        self._approval_projection = approval_projection
 
     def request_support_grant(
         self,
@@ -436,6 +445,18 @@ class PlatformGovernedAccessService:
                     "expires_at": expires_at.isoformat(),
                 },
             )
+            if self._approval_projection is not None:
+                stage: Literal["customer", "staff"] = "customer" if mode == "standard" else "staff"
+                self._approval_projection.project_in_transaction(
+                    db,
+                    self._support_approval_spec(
+                        grant,
+                        operation,
+                        stage=stage,
+                        now=requested_at,
+                    ),
+                    now=requested_at,
+                )
             return self._grant_view(grant)
 
     def decide_customer_approval(
@@ -449,6 +470,8 @@ class PlatformGovernedAccessService:
         reauthenticated_at: datetime,
         idempotency_key: str,
         now: datetime | None = None,
+        approval_projection_version: int | None = None,
+        approval_decision_code: str | None = None,
     ) -> SupportGrantView:
         decided_at = now or _now()
         _fresh_customer(reauthenticated_at, decided_at)
@@ -547,6 +570,35 @@ class PlatformGovernedAccessService:
                     "version": grant.version,
                 },
             )
+            if self._approval_projection is not None:
+                self._approval_projection.terminal_in_transaction(
+                    db,
+                    self._support_approval_spec(
+                        grant,
+                        operation,
+                        stage="customer",
+                        now=decided_at,
+                    ),
+                    status="approved" if decision == "approve" else "rejected",
+                    decision_code=(
+                        approval_decision_code
+                        or ("customer_approved" if decision == "approve" else "customer_rejected")
+                    ),
+                    decided_by_id=request.actor_id,
+                    decided_at=decided_at,
+                    expected_projection_version=approval_projection_version,
+                )
+                if decision == "approve":
+                    self._approval_projection.project_in_transaction(
+                        db,
+                        self._support_approval_spec(
+                            grant,
+                            operation,
+                            stage="staff",
+                            now=decided_at,
+                        ),
+                        now=decided_at,
+                    )
             return self._grant_view(grant)
 
     def decide_staff_approval(
@@ -559,6 +611,8 @@ class PlatformGovernedAccessService:
         reason: str,
         idempotency_key: str,
         now: datetime | None = None,
+        approval_projection_version: int | None = None,
+        approval_decision_code: str | None = None,
     ) -> SupportGrantView:
         decided_at = now or _now()
         _fresh(actor, decided_at)
@@ -680,6 +734,24 @@ class PlatformGovernedAccessService:
                     "expires_at": grant.expires_at.isoformat(),
                 },
             )
+            if self._approval_projection is not None:
+                self._approval_projection.terminal_in_transaction(
+                    db,
+                    self._support_approval_spec(
+                        grant,
+                        operation,
+                        stage="staff",
+                        now=decided_at,
+                    ),
+                    status="approved" if decision == "approve" else "rejected",
+                    decision_code=(
+                        approval_decision_code
+                        or ("staff_approved" if decision == "approve" else "staff_rejected")
+                    ),
+                    decided_by_id=actor.principal_id,
+                    decided_at=decided_at,
+                    expected_projection_version=approval_projection_version,
+                )
             return self._grant_view(grant)
 
     def issue_support_session(
@@ -1297,6 +1369,12 @@ class PlatformGovernedAccessService:
                 },
                 occurred_at=requested_at,
             )
+            if self._approval_projection is not None:
+                self._approval_projection.project_in_transaction(
+                    db,
+                    self._audit_approval_spec(operation, requested_at),
+                    now=requested_at,
+                )
             return AuditExportRequest(
                 operation_id=operation_id,
                 export_id=export_id,
@@ -1313,6 +1391,8 @@ class PlatformGovernedAccessService:
         expected_version: int,
         approval_reason: str,
         now: datetime | None = None,
+        approval_projection_version: int | None = None,
+        approval_decision_code: str | None = None,
     ) -> SignedAuditExport:
         approved_at = now or _now()
         _fresh(actor, approved_at)
@@ -1341,6 +1421,10 @@ class PlatformGovernedAccessService:
             if operation is None or operation.action != "audit_export":
                 raise PlatformSecurityError(
                     "platform_operation_not_found", "audit export operation was not found"
+                )
+            if _as_utc(operation.created_at) + _AUDIT_APPROVAL_TTL <= approved_at:
+                raise PlatformSecurityError(
+                    "audit_export_approval_expired", "audit export approval has expired"
                 )
             existing = db.execute(
                 sa.select(PlatformAuditExportRecord).where(
@@ -1483,7 +1567,121 @@ class PlatformGovernedAccessService:
                 },
                 occurred_at=approved_at,
             )
+            if self._approval_projection is not None:
+                self._approval_projection.terminal_in_transaction(
+                    db,
+                    self._audit_approval_spec(operation, approved_at),
+                    status="approved",
+                    decision_code=approval_decision_code or "audit_export_approved",
+                    decided_by_id=actor.principal_id,
+                    decided_at=approved_at,
+                    expected_projection_version=approval_projection_version,
+                )
             return self._signed_export(export, replayed=False)
+
+    def reject_audit_export(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        operation_id: UUID,
+        expected_version: int,
+        rejection_reason: str,
+        idempotency_key: str,
+        now: datetime | None = None,
+        approval_projection_version: int | None = None,
+        approval_decision_code: str | None = None,
+    ) -> AdminOperationView:
+        """Reject an Audit Export through the same source authority and SOD rules."""
+
+        rejected_at = now or _now()
+        _fresh(actor, rejected_at)
+        reason = _clean(rejection_reason, "rejection_reason", 1024)
+        key = _clean(idempotency_key, "idempotency_key", 128)
+        with self._platform.begin() as db:
+            self._bind_platform(db, actor, admin_operation_id=operation_id)
+            self._authorize(db, actor, "platform.operation.approve", rejected_at)
+            operation = db.execute(
+                sa.select(PlatformAdminOperationRecord)
+                .where(PlatformAdminOperationRecord.id == operation_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if operation is None or operation.action != "audit_export":
+                raise PlatformSecurityError(
+                    "platform_operation_not_found", "audit export operation was not found"
+                )
+            if _as_utc(operation.created_at) + _AUDIT_APPROVAL_TTL <= rejected_at:
+                raise PlatformSecurityError(
+                    "audit_export_approval_expired", "audit export approval has expired"
+                )
+            request_hash = _digest(
+                {
+                    "operation_id": str(operation_id),
+                    "expected_version": expected_version,
+                    "decision": "reject",
+                    "reason": reason,
+                }
+            )
+            outbox_key = f"pc5:audit-export-reject:{actor.principal_id}:{key}"
+            if self._outbox_replay(db, outbox_key, request_hash):
+                return self._operation_view(operation)
+            if operation.requested_by_principal_id == actor.principal_id:
+                raise PlatformSecurityError(
+                    "platform_separation_of_duties",
+                    "audit export requester cannot reject its own export",
+                )
+            if (
+                operation.status != "pending_staff_approval"
+                or operation.version != expected_version
+            ):
+                raise PlatformSecurityError(
+                    "platform_operation_conflict", "audit export operation changed"
+                )
+            operation.approved_by_principal_id = actor.principal_id
+            operation.approved_at = rejected_at
+            operation.completed_at = rejected_at
+            operation.status = "rejected"
+            operation.version += 1
+            operation.result = {
+                "decision": "rejected",
+                "reason_hash": _digest(reason),
+            }
+            operation.updated_at = rejected_at
+            self._append_audit(
+                db,
+                tenant_id=operation.tenant_id,
+                actor_type="staff",
+                actor_id=actor.principal_id,
+                event_type="platform.audit_export.rejected",
+                target_type="audit_export",
+                target_id=operation.target_id,
+                operation_id=operation.id,
+                payload={"reason_hash": _digest(reason), "version": operation.version},
+                occurred_at=rejected_at,
+            )
+            self._outbox(
+                db,
+                tenant_id=operation.tenant_id,
+                aggregate_key=str(operation.id),
+                event_type="platform.audit_export.rejected",
+                idempotency_key=outbox_key,
+                request_hash=request_hash,
+                payload={
+                    "operation_id": str(operation.id),
+                    "status": operation.status,
+                    "version": operation.version,
+                },
+            )
+            if self._approval_projection is not None:
+                self._approval_projection.terminal_in_transaction(
+                    db,
+                    self._audit_approval_spec(operation, rejected_at),
+                    status="rejected",
+                    decision_code=approval_decision_code or "audit_export_rejected",
+                    decided_by_id=actor.principal_id,
+                    decided_at=rejected_at,
+                    expected_projection_version=approval_projection_version,
+                )
+            return self._operation_view(operation)
 
     def verify_audit_chain(
         self,
@@ -1608,6 +1806,77 @@ class PlatformGovernedAccessService:
                 "support_project_scope_invalid",
                 "project content scope requires exact projects and other scopes forbid them",
             )
+
+    @staticmethod
+    def _support_approval_spec(
+        grant: PlatformSupportGrantRecord,
+        operation: PlatformAdminOperationRecord,
+        *,
+        stage: Literal["customer", "staff"],
+        now: datetime,
+    ) -> SourceApprovalProjectionSpec:
+        _as_utc(now)
+        due_at, escalation_at = bounded_deadlines(
+            now=_as_utc(grant.requested_at),
+            source_expires_at=_as_utc(grant.expires_at),
+            default_ttl=(_STANDARD_MAX_TTL if grant.mode == "standard" else _BREAK_GLASS_MAX_TTL),
+        )
+        return SourceApprovalProjectionSpec(
+            authority="support",
+            work_item_id=support_work_item_id(grant.id, stage),
+            source_subject_id=grant.id,
+            realm="tenant" if stage == "customer" else "staff",
+            tenant_id=grant.tenant_id,
+            requester_realm="staff",
+            requester_id=grant.requested_by_principal_id,
+            operation_kind=f"support.{stage}",
+            operation_id=grant.id,
+            action=f"support.{grant.mode}.{stage}_approval",
+            target_type="support_grant",
+            target_id=grant.id,
+            required_permission=(
+                "support.customer.approve"
+                if stage == "customer"
+                else "platform.support_grant.manage"
+            ),
+            risk_level="critical" if grant.mode == "break_glass" else "high",
+            snapshot_hash=operation.request_hash,
+            due_at=due_at,
+            escalation_at=escalation_at,
+            priority="critical" if grant.mode == "break_glass" else "high",
+        )
+
+    @staticmethod
+    def _audit_approval_spec(
+        operation: PlatformAdminOperationRecord,
+        now: datetime,
+    ) -> SourceApprovalProjectionSpec:
+        _as_utc(now)
+        due_at, escalation_at = bounded_deadlines(
+            now=_as_utc(operation.created_at),
+            source_expires_at=_as_utc(operation.created_at) + _AUDIT_APPROVAL_TTL,
+            default_ttl=_AUDIT_APPROVAL_TTL,
+        )
+        return SourceApprovalProjectionSpec(
+            authority="audit",
+            work_item_id=operation.id,
+            source_subject_id=None,
+            realm="staff",
+            tenant_id=operation.tenant_id,
+            requester_realm="staff",
+            requester_id=operation.requested_by_principal_id,
+            operation_kind="audit",
+            operation_id=operation.id,
+            action="audit.export",
+            target_type="audit_export",
+            target_id=operation.target_id,
+            required_permission="platform.operation.approve",
+            risk_level="high",
+            snapshot_hash=operation.request_hash,
+            due_at=due_at,
+            escalation_at=escalation_at,
+            priority="high",
+        )
 
     def _bind_platform(
         self,

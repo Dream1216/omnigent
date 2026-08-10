@@ -147,6 +147,10 @@
   }
 
   function configureNavigation() {
+    const notificationLink = $("#notification-operations-link");
+    notificationLink.hidden = !Boolean(
+      state.context?.capabilities?.notification_operations_enabled
+    );
     document.querySelectorAll("[data-permission]").forEach((button) => {
       const permitted = can(button.dataset.permission);
       button.disabled = !permitted;
@@ -852,6 +856,13 @@
 
   document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
   document.querySelectorAll("[data-view-link]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.viewLink)));
+  $("#notification-operations-link").addEventListener("click", () => {
+    if (!can("platform.notification.read")) {
+      toast("platform_permission_denied: notification operations are not assigned", "error");
+      return;
+    }
+    window.location.assign("/platform-notification-ops");
+  });
   $("#users-filter-form").addEventListener("submit", (event) => { event.preventDefault(); renderUsers(); });
   $("#tenants-filter-form").addEventListener("submit", (event) => { event.preventDefault(); renderTenants(); });
   $("#users-more").addEventListener("click", () => void run(() => loadUsers(true)));

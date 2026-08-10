@@ -13,6 +13,11 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.approval_source_projection import (
+    SourceApprovalProjectionBridge,
+    SourceApprovalProjectionSpec,
+    bounded_deadlines,
+)
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, GlobalUser, Tenant
 from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.permissions import PLATFORM_ROLE_PERMISSIONS, POLICY_VERSION
@@ -309,10 +314,12 @@ class PrivacyOperationService:
         *,
         lifecycle: PrivacyLifecycleService,
         locator_key: PrivacyLocatorKey,
+        approval_projection: SourceApprovalProjectionBridge | None = None,
     ) -> None:
         self._governance = governance_factory
         self._lifecycle = lifecycle
         self._locator_key = locator_key
+        self._approval_projection = approval_projection
 
     def request_deletion_start(
         self,
@@ -565,6 +572,7 @@ class PrivacyOperationService:
         decision_code: str,
         idempotency_key: str,
         now: datetime | None = None,
+        approval_projection_version: int | None = None,
     ) -> PrivacyOperationView:
         decided_at = _utc(now or _now())
         _fresh(actor, decided_at)
@@ -655,6 +663,7 @@ class PrivacyOperationService:
                     actor,
                     "approval_expired",
                     decided_at,
+                    approval_projection_version=approval_projection_version,
                 )
             try:
                 self._require_requester_current(db, operation, binding, decided_at)
@@ -667,6 +676,7 @@ class PrivacyOperationService:
                         actor,
                         "requester_authority_revoked",
                         decided_at,
+                        approval_projection_version=approval_projection_version,
                     )
                 raise
             if decision == "reject":
@@ -696,6 +706,16 @@ class PrivacyOperationService:
                     },
                     occurred_at=decided_at,
                 )
+                self._sync_approval_terminal(
+                    db,
+                    operation,
+                    binding,
+                    status="rejected",
+                    decision_code=decision_code,
+                    decided_by_id=actor.principal_id,
+                    decided_at=decided_at,
+                    expected_projection_version=approval_projection_version,
+                )
                 return self._view(operation, binding)
             try:
                 result = self._execute_approved(db, operation, binding, actor, decided_at)
@@ -708,6 +728,7 @@ class PrivacyOperationService:
                         actor,
                         "approval_stale",
                         decided_at,
+                        approval_projection_version=approval_projection_version,
                     )
                 raise
             operation.status = "succeeded"
@@ -736,6 +757,16 @@ class PrivacyOperationService:
                     "result_hash": _digest(result),
                 },
                 occurred_at=decided_at,
+            )
+            self._sync_approval_terminal(
+                db,
+                operation,
+                binding,
+                status="approved",
+                decision_code=decision_code,
+                decided_by_id=actor.principal_id,
+                decided_at=decided_at,
+                expected_projection_version=approval_projection_version,
             )
             return self._view(operation, binding)
 
@@ -1184,6 +1215,12 @@ class PrivacyOperationService:
             },
             occurred_at=requested_at,
         )
+        if self._approval_projection is not None:
+            self._approval_projection.project_in_transaction(
+                db,
+                self._approval_spec(operation, binding, requested_at),
+                now=requested_at,
+            )
         return self._view(operation, binding)
 
     def _execute_approved(
@@ -1716,6 +1753,8 @@ class PrivacyOperationService:
         actor: ValidatedPlatformPrincipal,
         error_code: str,
         at: datetime,
+        *,
+        approval_projection_version: int | None = None,
     ) -> PrivacyOperationView:
         operation.status = "failed"
         operation.approved_by_principal_id = actor.principal_id
@@ -1740,7 +1779,74 @@ class PrivacyOperationService:
             },
             occurred_at=at,
         )
+        self._sync_approval_terminal(
+            db,
+            operation,
+            binding,
+            status="expired" if error_code == "approval_expired" else "cancelled",
+            decision_code=error_code,
+            decided_by_id=None,
+            decided_at=at,
+            expected_projection_version=approval_projection_version,
+        )
         return self._view(operation, binding)
+
+    def _sync_approval_terminal(
+        self,
+        db: Session,
+        operation: PlatformAdminOperationRecord,
+        binding: PrivacyApprovalBindingRecord,
+        *,
+        status: Literal["approved", "rejected", "expired", "cancelled"],
+        decision_code: str,
+        decided_by_id: UUID | None,
+        decided_at: datetime,
+        expected_projection_version: int | None,
+    ) -> None:
+        if self._approval_projection is None:
+            return
+        self._approval_projection.terminal_in_transaction(
+            db,
+            self._approval_spec(operation, binding, decided_at),
+            status=status,
+            decision_code=decision_code,
+            decided_by_id=decided_by_id,
+            decided_at=decided_at,
+            expected_projection_version=expected_projection_version,
+        )
+
+    @staticmethod
+    def _approval_spec(
+        operation: PlatformAdminOperationRecord,
+        binding: PrivacyApprovalBindingRecord,
+        now: datetime,
+    ) -> SourceApprovalProjectionSpec:
+        _stored_utc(now)
+        due_at, escalation_at = bounded_deadlines(
+            now=_stored_utc(binding.created_at),
+            source_expires_at=_stored_utc(binding.expires_at),
+            default_ttl=_MAX_APPROVAL_WINDOW,
+        )
+        return SourceApprovalProjectionSpec(
+            authority="privacy",
+            work_item_id=operation.id,
+            source_subject_id=None,
+            realm="staff",
+            tenant_id=binding.tenant_id,
+            requester_realm="staff",
+            requester_id=operation.requested_by_principal_id,
+            operation_kind="privacy",
+            operation_id=operation.id,
+            action=f"privacy.{binding.phase}",
+            target_type=f"privacy_{binding.target_type}",
+            target_id=binding.target_id,
+            required_permission="platform.data_request.approve",
+            risk_level="critical",
+            snapshot_hash=binding.snapshot_hash,
+            due_at=due_at,
+            escalation_at=escalation_at,
+            priority="critical",
+        )
 
     def _require_requester_current(
         self,

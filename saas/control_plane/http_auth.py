@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -39,6 +40,7 @@ from saas.control_plane.lifecycle import (
 )
 from saas.control_plane.oidc import OidcAuthorizationService
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
+from saas.public_api_contract import ApiVersionPolicy
 
 if TYPE_CHECKING:
     from saas.control_plane.authorization import ProjectAuthorizer
@@ -47,10 +49,17 @@ if TYPE_CHECKING:
     from saas.control_plane.enterprise_access import EnterpriseAccessService
     from saas.control_plane.enterprise_identity import EnterpriseScimService
     from saas.control_plane.member_admin import TenantMemberAdministrationService
+    from saas.control_plane.notification_http import (
+        ApprovalOperationsProtocol,
+        NotificationOperationsProtocol,
+    )
     from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
+    from saas.control_plane.public_api import PublicApiExecutionService
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_PUBLIC_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_PUBLIC_VERSION_POLICY = ApiVersionPolicy()
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,7 +516,13 @@ class SaasAuthContextMiddleware:
     def _is_public_request(self, path: str, method: str) -> bool:
         if path in self._public_paths:
             return True
-        scim_resources = ("/saas/scim/v2/Users", "/saas/scim/v2/Groups")
+        scim_resources = (
+            "/saas/scim/v2/Users",
+            "/saas/scim/v2/Groups",
+            "/saas/scim/v2/Bulk",
+            "/saas/scim/v2/ResourceTypes",
+            "/saas/scim/v2/Schemas",
+        )
         if path == "/saas/scim/v2/ServiceProviderConfig" or any(
             path == resource or path.startswith(f"{resource}/") for resource in scim_resources
         ):
@@ -647,10 +662,33 @@ class SaasAuthContextMiddleware:
             await send({"type": "websocket.close", "code": 1008, "reason": code})
             return
         path = str(scope.get("path", ""))
-        envelope = "detail" if path == "/api/v1" or path.startswith("/api/v1/") else "error"
+        public_api = path == "/api/v1" or path.startswith("/api/v1/")
+        if public_api:
+            connection = HTTPConnection(scope)
+            supplied = connection.headers.get("x-request-id", "")
+            request_id = (
+                supplied if _PUBLIC_REQUEST_ID_PATTERN.fullmatch(supplied) else str(uuid4())
+            )
+            await JSONResponse(
+                status_code=status,
+                content={
+                    "error": {
+                        "code": code,
+                        "message": str(error),
+                        "request_id": request_id,
+                        "details": {},
+                    }
+                },
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Request-Id": request_id,
+                    **_PUBLIC_VERSION_POLICY.headers(),
+                },
+            )(scope, receive, send)
+            return
         await JSONResponse(
             status_code=status,
-            content={envelope: {"code": code, "message": str(error)}},
+            content={"error": {"code": code, "message": str(error)}},
             headers={"Cache-Control": "no-store"},
         )(scope, receive, send)
 
@@ -1128,12 +1166,16 @@ def create_saas_http_integration(
     availability_gate: ControlPlaneAvailabilityGate | None = None,
     degraded_read_paths: frozenset[str] = frozenset(),
     api_credentials: ApiCredentialService | None = None,
+    public_api_execution: PublicApiExecutionService | None = None,
     enterprise_access: EnterpriseAccessService | None = None,
     enterprise_scim: EnterpriseScimService | None = None,
     member_admin: TenantMemberAdministrationService | None = None,
     member_lifecycle: MembershipLifecycleService | None = None,
     billing: BillingControlPlane | None = None,
     platform_support_access: PlatformGovernedAccessService | None = None,
+    approval_operations: ApprovalOperationsProtocol | None = None,
+    notification_operations: NotificationOperationsProtocol | None = None,
+    notification_origin: str | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1211,14 +1253,73 @@ def create_saas_http_integration(
                 governed_access=platform_support_access,
             )
         )
-    public_api_router = None
-    if api_credentials is not None:
-        from saas.control_plane.api_http import create_public_api_router
-
-        public_api_router = create_public_api_router(
-            auth_provider=auth_provider,
-            api_credentials=api_credentials,
+    notification_dependencies = (
+        approval_operations,
+        notification_operations,
+        notification_origin,
+    )
+    if any(value is not None for value in notification_dependencies) and not all(
+        value is not None for value in notification_dependencies
+    ):
+        raise ValueError(
+            "Approval operations, notification operations, and notification Origin "
+            "must be configured together"
         )
+    if (
+        approval_operations is not None
+        and notification_operations is not None
+        and notification_origin is not None
+    ):
+        from saas.control_plane.notification_http import (
+            TenantNotificationHttpConfig,
+            create_notification_router,
+        )
+
+        router.include_router(
+            create_notification_router(
+                config=TenantNotificationHttpConfig(origin=notification_origin),
+                auth_provider=auth_provider,
+                approvals=approval_operations,
+                notifications=notification_operations,
+            )
+        )
+    else:
+
+        @router.get("/tenants/{tenant_id}/notification-operations/capabilities")
+        def disabled_notification_capabilities(
+            tenant_id: UUID, request: Request, response: Response
+        ) -> dict[str, object]:
+            """Expose a stable, authenticated capability probe when operations are unwired."""
+
+            _ = tenant_id
+            _require_principal(auth_provider, request)
+            response.headers["Cache-Control"] = "private, no-store"
+            return {
+                "notification_operations_enabled": False,
+                "template_management": "unavailable",
+                "content_access": "none",
+            }
+    public_api_router = None
+    if public_api_execution is not None and api_credentials is None:
+        raise ValueError("Public API execution requires API credentials")
+    if api_credentials is not None:
+        from saas.control_plane.api_http import (
+            create_api_credential_management_router,
+            create_public_api_router,
+        )
+
+        router.include_router(
+            create_api_credential_management_router(
+                auth_provider=auth_provider,
+                api_credentials=api_credentials,
+            ),
+            prefix="/api-credentials",
+        )
+        if public_api_execution is not None:
+            public_api_router = create_public_api_router(
+                auth_provider=auth_provider,
+                public_execution=public_api_execution,
+            )
     return SaasHttpIntegration(
         auth_provider=auth_provider,
         router=router,

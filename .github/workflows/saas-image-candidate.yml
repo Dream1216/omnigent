@@ -22,6 +22,16 @@ on:
       - "saas/scripts/*evidence_receipt.py"
       - "tests/saas/test_image_supply_chain.py"
   workflow_dispatch:
+    inputs:
+      publish_signed:
+        description: Build, sign and publish the exact main revision from the protected environment
+        required: true
+        type: boolean
+        default: false
+      product_revision:
+        description: Exact 40-character main revision; required when publish_signed is enabled
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -148,3 +158,219 @@ jobs:
           path: artifacts/saas-image-candidate.json
           if-no-files-found: error
           retention-days: 30
+
+  publish-signed:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_signed &&
+      github.ref == 'refs/heads/main'
+    needs: build-candidate
+    environment: production-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      PRODUCT_REVISION: ${{ inputs.product_revision }}
+      SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+    steps:
+      - name: Validate protected release coordinates
+        env:
+          TRUSTED_REF: ${{ github.ref }}
+          TRUSTED_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_REF" == "refs/heads/main" ]]
+          [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]]
+      - name: Checkout immutable release candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.product_revision }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Build and verify the SaaS wheel
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra saas
+          uv build --wheel --out-dir dist
+          uv run python -m saas.scripts.check_wheel_contents dist
+          sha256sum dist/*.whl > dist/SHA256SUMS
+      - name: Sign wheel provenance with GitHub OIDC
+        id: attest-wheel
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: dist/*.whl
+      - name: Verify wheel signature identity and revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          wheel=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
+          test -n "$wheel"
+          gh attestation verify "$wheel" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --source-ref refs/heads/main \
+            --source-digest "$PRODUCT_REVISION" \
+            --deny-self-hosted-runners
+      - name: Upload signed wheel and checksum
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnigent-saas-wheel-${{ inputs.product_revision }}
+          path: |
+            dist/*.whl
+            dist/SHA256SUMS
+            ${{ steps.attest-wheel.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve immutable image coordinates and build materials
+        id: release
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          prefix="ghcr.io/${owner}"
+          python_digest=$(crane digest python:3.12-slim)
+          node_digest=$(crane digest node:22-slim)
+          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
+          upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
+          adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
+          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
+          echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
+          printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
+          printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
+          printf '%s\n' "SOURCE_REVISION=${PRODUCT_REVISION}" >> "$GITHUB_ENV"
+          printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
+          printf '%s\n' "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
+          printf '%s\n' "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Build and publish server image by immutable revision
+        id: build-server
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: runtime
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.release.outputs.prefix }}/omnigent-saas-server:${{ steps.release.outputs.tag }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=saas-server-release
+          cache-to: type=gha,scope=saas-server-release,mode=max
+          build-args: |
+            PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+            NODE_IMAGE=${{ env.NODE_IMAGE }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
+            CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
+            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+      - name: Build and publish host image by immutable revision
+        id: build-host
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: host
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.release.outputs.prefix }}/omnigent-saas-host:${{ steps.release.outputs.tag }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=saas-host-release
+          cache-to: type=gha,scope=saas-host-release,mode=max
+          build-args: |
+            PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+            NODE_IMAGE=${{ env.NODE_IMAGE }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
+            CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
+            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+      - name: Sign server image provenance with GitHub OIDC
+        id: attest-server
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
+          subject-digest: ${{ steps.build-server.outputs.digest }}
+          push-to-registry: true
+      - name: Sign host image provenance with GitHub OIDC
+        id: attest-host
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
+          subject-digest: ${{ steps.build-host.outputs.digest }}
+          push-to-registry: true
+      - name: Verify image signatures and protected workflow identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for image in "$SERVER_IMAGE" "$HOST_IMAGE"; do
+            gh attestation verify "oci://${image}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref refs/heads/main \
+              --source-digest "$PRODUCT_REVISION" \
+              --deny-self-hosted-runners
+          done
+      - name: Record signed candidate facts
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
+          SERVER_DIGEST: ${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
+          HOST_DIGEST: ${{ steps.build-host.outputs.digest }}
+          WHEEL_ATTESTATION: ${{ steps.attest-wheel.outputs.attestation-url }}
+          SERVER_ATTESTATION: ${{ steps.attest-server.outputs.attestation-url }}
+          HOST_ATTESTATION: ${{ steps.attest-host.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          jq -n \
+            --arg revision "$PRODUCT_REVISION" \
+            --arg workflow "$GITHUB_WORKFLOW_REF" \
+            --arg wheel_attestation "$WHEEL_ATTESTATION" \
+            --arg server_image "$SERVER_IMAGE" \
+            --arg server_digest "$SERVER_DIGEST" \
+            --arg server_attestation "$SERVER_ATTESTATION" \
+            --arg host_image "$HOST_IMAGE" \
+            --arg host_digest "$HOST_DIGEST" \
+            --arg host_attestation "$HOST_ATTESTATION" \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], production_deployment_receipt: null}' \
+            > artifacts/signed-release-candidate.json
+      - name: Upload signed release candidate facts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-release-candidate-${{ inputs.product_revision }}
+          path: artifacts/signed-release-candidate.json
+          if-no-files-found: error
+          retention-days: 90

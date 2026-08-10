@@ -357,6 +357,9 @@ omnigent = "omnigent.cli:main"
 omni = "omnigent.cli:main"
 omnigent-saas-preview-gateway = "saas.preview_gateway_process:main"
 omnigent-saas-privacy-worker = "saas.privacy_worker:main"
+omnigent-saas-notification-bootstrap = "saas.notification_bootstrap:main"
+omnigent-saas-notification-worker = "saas.notification_worker:main"
+omnigent-saas-approval-scheduler = "saas.approval_scheduler_worker:main"
 
 # Share the repository lockfile with standalone automation packages.
 [tool.uv.workspace]
@@ -383,7 +386,7 @@ include = ["omnigent*", "saas*"]
 "omnigent.db.migrations" = ["script.py.mako"]
 "saas.control_plane" = ["alembic.ini", "postgresql_roles.sql"]
 "saas.control_plane.migrations" = ["script.py.mako"]
-"saas" = ["upstream-baseline.json"]
+"saas" = ["upstream-baseline.json", "openapi-v1.json"]
 "saas.acceptance" = ["*.json", "README.md"]
 "saas.admin_ui" = ["*.html", "*.css", "*.js"]
 "saas.production" = ["*.json", "runbooks/*.md", "adrs/*.md", "adr-approvals/*.json", "adr-approvals/*.md", "evidence-admission-receipts/*.json", "evidence-admission-receipts/*.md"]

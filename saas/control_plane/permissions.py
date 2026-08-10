@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-10.p1-privacy-execution"
+POLICY_VERSION: Final = "2026-08-10.p1-notify-ops"
 
 
 class PermissionScope(StrEnum):
@@ -278,6 +278,44 @@ _DEFINITIONS = (
         api_surfaces=("POST /v2/platform-admin/operations/{id}/approve",),
         ui_surface="operations",
         audit_event="platform.operation.approved",
+    ),
+    _permission(
+        "platform.notification.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.LOW,
+        api_surfaces=(
+            "GET /v2/platform-admin/notification-operations/inbox",
+            "GET /v2/platform-admin/notification-operations/delegations",
+            "GET /v2/platform-admin/notification-operations/deliveries",
+            "GET /v2/platform-admin/notification-operations/preferences",
+            "GET /v2/platform-admin/notification-operations/templates",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_operations.read",
+    ),
+    _permission(
+        "platform.notification.replay",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/notification-operations/deliveries/{id}/replay",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_delivery.replayed",
+    ),
+    _permission(
+        "platform.notification_template.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/notification-operations/templates",
+            "POST /v2/platform-admin/notification-operations/templates/{id}/retire",
+        ),
+        ui_surface="notification-operations",
+        audit_event="platform.notification_template.changed",
     ),
     _permission(
         "platform.runner.manage",
@@ -562,6 +600,9 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.manage",
                 "platform.operations.read",
                 "platform.operation.approve",
+                "platform.notification.read",
+                "platform.notification.replay",
+                "platform.notification_template.manage",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",
@@ -582,6 +623,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.read",
                 "platform.support.read",
                 "platform.operations.read",
+                "platform.notification.read",
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",
@@ -598,6 +640,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.support.request",
                 "platform.break_glass.request",
                 "platform.operations.read",
+                "platform.notification.read",
             }
         ),
         "billing_operator": frozenset(
@@ -617,6 +660,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.user.read",
                 "platform.user.pii.read",
                 "platform.operations.read",
+                "platform.notification.read",
                 "platform.audit.read",
                 "platform.audit.export",
                 "platform.privacy.read",

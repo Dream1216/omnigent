@@ -14,6 +14,7 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection, CursorResult, Engine
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
@@ -43,6 +44,11 @@ from saas.control_plane.privacy_lifecycle import scim_user_locator_hash
 from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scim_syntax import ScimFilterExpression, expected_core_schema
+from saas.scim_schema_catalog import (
+    IDP_PROVIDER_TYPES,
+    SCIM_ENTERPRISE_USER_SCHEMA,
+    SUPPORTED_IDP_ATTRIBUTE_PATHS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +56,8 @@ class IssuedScimDirectory:
     id: UUID
     tenant_id: UUID
     display_name: str
+    provider_type: str
+    attribute_mapping: dict[str, str]
     token_prefix: str
     successor_token_prefix: str | None
     rotation_activates_at: datetime | None
@@ -69,6 +77,8 @@ class ScimUserView:
     external_id: str
     user_name: str
     display_name: str | None
+    core_attributes: dict[str, object]
+    enterprise_attributes: dict[str, object]
     active: bool
     version: int
     source_version: int
@@ -133,7 +143,14 @@ def _utcnow() -> datetime:
 
 
 def _hash(payload: Mapping[str, object]) -> str:
-    return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
 
 
 def _digest(value: str) -> str:
@@ -149,6 +166,57 @@ def _clean(value: str, *, maximum: int, code: str) -> str:
 
 def _normalize_user_name(value: str) -> str:
     return _clean(value, maximum=320, code="scim_user_name_invalid").casefold()
+
+
+def _structured_attributes(
+    value: Mapping[str, object] | None,
+    *,
+    code: str,
+    maximum_bytes: int = 32_768,
+) -> dict[str, object]:
+    candidate = dict(value or {})
+    try:
+        encoded = json.dumps(
+            candidate,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        normalized = json.loads(encoded)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise LifecycleError(code, "SCIM structured attributes are invalid") from error
+    if len(encoded.encode()) > maximum_bytes or not isinstance(normalized, dict):
+        raise LifecycleError(code, "SCIM structured attributes are invalid")
+    return cast(dict[str, object], normalized)
+
+
+def _directory_configuration(
+    provider_type: str,
+    attribute_mapping: Mapping[str, str] | None,
+) -> tuple[str, dict[str, str]]:
+    provider = provider_type.strip().casefold()
+    if provider not in IDP_PROVIDER_TYPES:
+        raise LifecycleError("scim_idp_provider_invalid", "SCIM IdP provider is invalid")
+    mapping = dict(attribute_mapping or {})
+    if len(mapping) > 32:
+        raise LifecycleError("scim_idp_mapping_invalid", "SCIM IdP mapping is too large")
+    normalized: dict[str, str] = {}
+    for source, target in mapping.items():
+        if (
+            not isinstance(source, str)
+            or not isinstance(target, str)
+            or not source.strip()
+            or len(source) > 256
+            or target not in SUPPORTED_IDP_ATTRIBUTE_PATHS
+        ):
+            raise LifecycleError("scim_idp_mapping_invalid", "SCIM IdP mapping is invalid")
+        normalized[source.strip()] = target
+    if len(set(normalized.values())) != len(normalized):
+        raise LifecycleError(
+            "scim_idp_mapping_invalid",
+            "SCIM IdP mapping targets must be unique",
+        )
+    return provider, normalized
 
 
 def _integer(payload: Mapping[str, object], key: str) -> int:
@@ -215,16 +283,21 @@ class EnterpriseScimService:
         display_name: str,
         reauthenticated_at: datetime,
         idempotency_key: str,
+        provider_type: str = "generic",
+        attribute_mapping: Mapping[str, str] | None = None,
         now: datetime | None = None,
     ) -> IssuedScimDirectory:
         issued_at = now or _utcnow()
         _require_fresh_auth(reauthenticated_at, issued_at)
         name = _clean(display_name, maximum=128, code="scim_directory_name_invalid")
+        provider, mapping = _directory_configuration(provider_type, attribute_mapping)
         key = _clean(idempotency_key, maximum=128, code="invalid_idempotency_key")
         payload: dict[str, object] = {
             "actor_id": str(request.actor_id),
             "tenant_id": str(request.tenant_id),
             "display_name": name,
+            "provider_type": provider,
+            "attribute_mapping": mapping,
         }
         request_hash = _hash(payload)
         receipt_key = f"scim-directory:{request.tenant_id}:{_digest(key)[:48]}"
@@ -249,6 +322,8 @@ class EnterpriseScimService:
                 id=uuid4(),
                 tenant_id=request.tenant_id,
                 display_name=name,
+                provider_type=provider,
+                attribute_mapping=mapping,
                 token_hash=token_hash,
                 token_prefix=raw_token[:24],
                 status="active",
@@ -261,6 +336,8 @@ class EnterpriseScimService:
                 **payload,
                 "directory_id": str(directory.id),
                 "token_prefix": directory.token_prefix,
+                "provider_type": directory.provider_type,
+                "attribute_mapping": directory.attribute_mapping,
                 "status": directory.status,
                 "version": directory.version,
             }
@@ -277,6 +354,143 @@ class EnterpriseScimService:
                 )
             )
             return self._issued_directory(result, bearer_token=raw_token, replayed=False)
+
+    def list_directories(self, request: RequestContext) -> tuple[IssuedScimDirectory, ...]:
+        """List content-blind Directory configuration for one tenant."""
+
+        with self._session_factory.begin() as db:
+            self._apply_request_context(db, request)
+            self._require_manage(db, request)
+            directories = db.scalars(
+                sa.select(EnterpriseScimDirectoryRecord)
+                .where(EnterpriseScimDirectoryRecord.tenant_id == request.tenant_id)
+                .order_by(
+                    EnterpriseScimDirectoryRecord.created_at,
+                    EnterpriseScimDirectoryRecord.id,
+                )
+            )
+            return tuple(
+                self._issued_directory(
+                    self._directory_record_payload(directory),
+                    bearer_token=None,
+                    replayed=False,
+                )
+                for directory in directories
+            )
+
+    def get_directory(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+    ) -> IssuedScimDirectory:
+        """Read one content-blind Directory configuration."""
+
+        with self._session_factory.begin() as db:
+            self._apply_request_context(db, request)
+            self._require_manage(db, request)
+            directory = db.execute(
+                sa.select(EnterpriseScimDirectoryRecord).where(
+                    EnterpriseScimDirectoryRecord.tenant_id == request.tenant_id,
+                    EnterpriseScimDirectoryRecord.id == directory_id,
+                )
+            ).scalar_one_or_none()
+            if directory is None:
+                raise LifecycleError("scim_directory_not_found", "SCIM Directory was not found")
+            return self._issued_directory(
+                self._directory_record_payload(directory),
+                bearer_token=None,
+                replayed=False,
+            )
+
+    def update_directory_configuration(
+        self,
+        request: RequestContext,
+        *,
+        directory_id: UUID,
+        provider_type: str,
+        attribute_mapping: Mapping[str, str] | None,
+        expected_version: int,
+        reauthenticated_at: datetime,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> IssuedScimDirectory:
+        """Update one IdP profile with CAS, fresh auth and immutable replay evidence."""
+
+        changed_at = now or _utcnow()
+        _require_fresh_auth(reauthenticated_at, changed_at)
+        if expected_version < 1:
+            raise LifecycleError("scim_directory_version_invalid", "version is invalid")
+        provider, mapping = _directory_configuration(provider_type, attribute_mapping)
+        key = _clean(idempotency_key, maximum=128, code="invalid_idempotency_key")
+        request_payload: dict[str, object] = {
+            "action": "configure_idp",
+            "actor_id": str(request.actor_id),
+            "tenant_id": str(request.tenant_id),
+            "directory_id": str(directory_id),
+            "expected_version": expected_version,
+            "provider_type": provider,
+            "attribute_mapping": mapping,
+        }
+        request_hash = _hash(request_payload)
+        receipt_key = (
+            f"scim-directory-configure:{request.tenant_id}:"
+            f"{_digest(f'{directory_id}:{key}')[:48]}"
+        )
+        with self._session_factory.begin() as db:
+            self._apply_request_context(db, request)
+            self._require_manage(db, request)
+            directory = db.execute(
+                sa.select(EnterpriseScimDirectoryRecord)
+                .where(
+                    EnterpriseScimDirectoryRecord.tenant_id == request.tenant_id,
+                    EnterpriseScimDirectoryRecord.id == directory_id,
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if directory is None:
+                raise LifecycleError("scim_directory_not_found", "SCIM Directory was not found")
+            receipt = db.execute(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.idempotency_key == receipt_key
+                )
+            ).scalar_one_or_none()
+            if receipt is not None:
+                if receipt.request_hash != request_hash:
+                    raise LifecycleError(
+                        "idempotency_conflict", "idempotency key has a different request"
+                    )
+                return self._issued_directory(receipt.payload, bearer_token=None, replayed=True)
+            if directory.version != expected_version:
+                raise LifecycleError(
+                    "scim_directory_version_conflict", "SCIM Directory version changed"
+                )
+            if directory.status != "active":
+                raise LifecycleError(
+                    "scim_directory_not_active", "active SCIM Directory is required"
+                )
+            directory.provider_type = provider
+            directory.attribute_mapping = cast(dict[str, object], mapping)
+            directory.configured_by = request.actor_id
+            directory.version += 1
+            db.flush()
+            result = self._directory_record_payload(directory)
+            result.update(request_payload)
+            result["version"] = directory.version
+            db.add(
+                ControlPlaneOutboxEvent(
+                    id=uuid4(),
+                    tenant_id=request.tenant_id,
+                    aggregate_type="enterprise_scim_directory",
+                    aggregate_key=str(directory.id),
+                    event_type="enterprise.scim_directory.idp_configuration_updated",
+                    payload=result,
+                    idempotency_key=receipt_key,
+                    request_hash=request_hash,
+                    created_at=changed_at,
+                )
+            )
+            return self._issued_directory(result, bearer_token=None, replayed=False)
 
     def rotate_directory_credential(
         self,
@@ -503,6 +717,8 @@ class EnterpriseScimService:
             result: dict[str, object] = {
                 **request_payload,
                 "display_name": directory.display_name,
+                "provider_type": directory.provider_type,
+                "attribute_mapping": directory.attribute_mapping,
                 "token_prefix": directory.token_prefix,
                 "successor_token_prefix": directory.successor_token_prefix,
                 "rotation_activates_at": (
@@ -711,6 +927,8 @@ class EnterpriseScimService:
         display_name: str | None,
         active: bool,
         source_version: int | None,
+        core_attributes: Mapping[str, object] | None = None,
+        enterprise_attributes: Mapping[str, object] | None = None,
         scim_user_id: UUID | None = None,
         expected_version: int | None = None,
         operation: str = "upsert",
@@ -722,6 +940,11 @@ class EnterpriseScimService:
             _clean(display_name, maximum=256, code="scim_display_name_invalid")
             if display_name is not None
             else None
+        )
+        core = _structured_attributes(core_attributes, code="scim_core_attributes_invalid")
+        enterprise = _structured_attributes(
+            enterprise_attributes,
+            code="scim_enterprise_attributes_invalid",
         )
         guarded = scim_user_id is not None or expected_version is not None
         if guarded:
@@ -736,6 +959,8 @@ class EnterpriseScimService:
             "external_id": external,
             "user_name": normalized,
             "display_name": shown_name,
+            "core_attributes": core,
+            "enterprise_attributes": enterprise,
             "active": active,
         }
         request_payload = (
@@ -800,6 +1025,8 @@ class EnterpriseScimService:
                     operation == "patch"
                     and user.user_name_normalized == normalized
                     and user.display_name == shown_name
+                    and user.core_attributes == core
+                    and user.enterprise_attributes == enterprise
                     and user.active is active
                 ):
                     result = self._user_payload(
@@ -901,6 +1128,8 @@ class EnterpriseScimService:
                     user_id=global_user.id if global_user else None,
                     user_name_normalized=normalized,
                     display_name=shown_name,
+                    core_attributes=core,
+                    enterprise_attributes=enterprise,
                     active=active,
                     version=1,
                     source_version=source_version,
@@ -921,6 +1150,8 @@ class EnterpriseScimService:
                 owner_recovery = False
                 user.user_name_normalized = normalized
                 user.display_name = shown_name
+                user.core_attributes = core
+                user.enterprise_attributes = enterprise
                 user.source_version = source_version
                 user.source_state_hash = state_hash
                 user.version += 1
@@ -1017,7 +1248,13 @@ class EnterpriseScimService:
                 EnterpriseScimUserRecord.directory_id == directory.id
             ]
             if resolved_filter is not None:
-                predicates.append(self._filter_predicate(resolved_filter, resource_type="User"))
+                predicates.append(
+                    self._filter_predicate(
+                        resolved_filter,
+                        resource_type="User",
+                        dialect=db.get_bind().dialect.name,
+                    )
+                )
             total = int(
                 db.scalar(
                     sa.select(sa.func.count())
@@ -1314,7 +1551,13 @@ class EnterpriseScimService:
                 EnterpriseScimGroupRecord.directory_id == directory.id
             ]
             if resolved_filter is not None:
-                predicates.append(self._filter_predicate(resolved_filter, resource_type="Group"))
+                predicates.append(
+                    self._filter_predicate(
+                        resolved_filter,
+                        resource_type="Group",
+                        dialect=db.get_bind().dialect.name,
+                    )
+                )
             total = int(
                 db.scalar(
                     sa.select(sa.func.count())
@@ -1483,6 +1726,18 @@ class EnterpriseScimService:
                 resource_type=resource_type,
             )
             if (
+                resource_type == "User"
+                and attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}
+                and sub_attribute is None
+                and expression.value is None
+                and len(expression.operands) == 1
+            ):
+                return cls._validate_user_multivalue_filter_expression(
+                    expression.operands[0],
+                    collection=attribute.removeprefix("core."),
+                    depth=depth + 1,
+                )
+            if (
                 resource_type != "Group"
                 or attribute != "members"
                 or sub_attribute is not None
@@ -1511,6 +1766,24 @@ class EnterpriseScimService:
                     attribute=sub_attribute,
                     value=expression.value,
                 ),
+                depth=depth + 1,
+            )
+        if attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}:
+            collection = attribute.removeprefix("core.")
+            if sub_attribute is None:
+                if operator == "pr" and expression.value is None:
+                    return 1
+                raise LifecycleError(
+                    "invalidFilter",
+                    "SCIM multi-valued filter requires a sub-attribute or valuePath",
+                )
+            return cls._validate_user_multivalue_filter_expression(
+                ScimFilterExpression(
+                    operator=operator,
+                    attribute=sub_attribute,
+                    value=expression.value,
+                ),
+                collection=collection,
                 depth=depth + 1,
             )
         if operator == "pr":
@@ -1551,11 +1824,51 @@ class EnterpriseScimService:
         *,
         resource_type: str,
     ) -> tuple[str, str | None]:
-        if (
-            expression.schema is not None
-            and expression.schema.casefold() != expected_core_schema(resource_type).casefold()
+        schema = expression.schema.casefold() if expression.schema is not None else None
+        core_schema = expected_core_schema(resource_type).casefold()
+        enterprise_schema = SCIM_ENTERPRISE_USER_SCHEMA.casefold()
+        if schema not in {None, core_schema} and not (
+            resource_type == "User" and schema == enterprise_schema
         ):
             raise LifecycleError("invalidFilter", "SCIM filter schema does not match resource")
+        if schema == enterprise_schema:
+            enterprise_attribute_map = {
+                "employeenumber": "enterprise.employeeNumber",
+                "costcenter": "enterprise.costCenter",
+                "organization": "enterprise.organization",
+                "division": "enterprise.division",
+                "department": "enterprise.department",
+                "manager": "enterprise.manager",
+            }
+            raw_attribute = expression.attribute
+            attribute = (
+                enterprise_attribute_map.get(raw_attribute.casefold())
+                if isinstance(raw_attribute, str)
+                else None
+            )
+            if attribute is None:
+                raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
+            raw_sub_attribute = expression.sub_attribute
+            if attribute != "enterprise.manager":
+                if raw_sub_attribute is not None:
+                    raise LifecycleError(
+                        "invalidFilter", "SCIM filter sub-attribute is unsupported"
+                    )
+                return attribute, None
+            if raw_sub_attribute is None:
+                raise LifecycleError(
+                    "invalidFilter", "SCIM manager filter requires a sub-attribute"
+                )
+            manager_sub_attribute = {
+                "value": "value",
+                "$ref": "$ref",
+                "displayname": "displayName",
+            }.get(raw_sub_attribute.casefold())
+            if manager_sub_attribute is None:
+                raise LifecycleError(
+                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
+                )
+            return f"{attribute}.{manager_sub_attribute}", None
         attribute_map = {
             "User": {
                 "id": "id",
@@ -1563,6 +1876,15 @@ class EnterpriseScimService:
                 "username": "userName",
                 "displayname": "displayName",
                 "active": "active",
+                "name": "core.name",
+                "title": "core.title",
+                "usertype": "core.userType",
+                "preferredlanguage": "core.preferredLanguage",
+                "locale": "core.locale",
+                "timezone": "core.timezone",
+                "emails": "core.emails",
+                "phonenumbers": "core.phoneNumbers",
+                "addresses": "core.addresses",
             },
             "Group": {
                 "id": "id",
@@ -1579,6 +1901,55 @@ class EnterpriseScimService:
         if attribute is None:
             raise LifecycleError("invalidFilter", "SCIM filter attribute is unsupported")
         raw_sub_attribute = expression.sub_attribute
+        if attribute == "core.name":
+            if raw_sub_attribute is None:
+                raise LifecycleError("invalidFilter", "SCIM name filter requires a sub-attribute")
+            name_sub_attribute = {
+                "formatted": "formatted",
+                "familyname": "familyName",
+                "givenname": "givenName",
+                "middlename": "middleName",
+                "honorificprefix": "honorificPrefix",
+                "honorificsuffix": "honorificSuffix",
+            }.get(raw_sub_attribute.casefold())
+            if name_sub_attribute is None:
+                raise LifecycleError(
+                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
+                )
+            return f"{attribute}.{name_sub_attribute}", None
+        if attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}:
+            if raw_sub_attribute is None:
+                return attribute, None
+            allowed_sub_attributes = {
+                "addresses": {
+                    "formatted": "formatted",
+                    "streetaddress": "streetAddress",
+                    "locality": "locality",
+                    "region": "region",
+                    "postalcode": "postalCode",
+                    "country": "country",
+                    "type": "type",
+                    "primary": "primary",
+                },
+                "emails": {
+                    "value": "value",
+                    "display": "display",
+                    "type": "type",
+                    "primary": "primary",
+                },
+                "phoneNumbers": {
+                    "value": "value",
+                    "display": "display",
+                    "type": "type",
+                    "primary": "primary",
+                },
+            }[attribute.removeprefix("core.")]
+            sub_attribute = allowed_sub_attributes.get(raw_sub_attribute.casefold())
+            if sub_attribute is None:
+                raise LifecycleError(
+                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
+                )
+            return attribute, sub_attribute
         if raw_sub_attribute is None:
             return attribute, None
         if attribute != "members" or raw_sub_attribute.casefold() != "value":
@@ -1647,31 +2018,137 @@ class EnterpriseScimService:
         return 1
 
     @classmethod
+    def _validate_user_multivalue_filter_expression(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        collection: str,
+        depth: int,
+    ) -> int:
+        if depth > 16 or expression.schema is not None:
+            raise LifecycleError("invalidFilter", "SCIM multi-valued filter is invalid")
+        if expression.operator in {"and", "or"}:
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or expression.sub_attribute is not None
+                or len(expression.operands) != 2
+            ):
+                raise LifecycleError("invalidFilter", "SCIM multi-valued filter is invalid")
+            return sum(
+                cls._validate_user_multivalue_filter_expression(
+                    item,
+                    collection=collection,
+                    depth=depth + 1,
+                )
+                for item in expression.operands
+            )
+        if expression.operator == "not":
+            if (
+                expression.attribute is not None
+                or expression.value is not None
+                or expression.sub_attribute is not None
+                or len(expression.operands) != 1
+            ):
+                raise LifecycleError("invalidFilter", "SCIM multi-valued filter is invalid")
+            return cls._validate_user_multivalue_filter_expression(
+                expression.operands[0],
+                collection=collection,
+                depth=depth + 1,
+            )
+        allowed_attributes = {
+            "addresses": {
+                "formatted",
+                "streetaddress",
+                "locality",
+                "region",
+                "postalcode",
+                "country",
+                "type",
+                "primary",
+            },
+            "emails": {"value", "display", "type", "primary"},
+            "phoneNumbers": {"value", "display", "type", "primary"},
+        }[collection]
+        attribute = (expression.attribute or "").casefold()
+        if (
+            expression.operator == "valuePath"
+            or expression.operands
+            or expression.sub_attribute is not None
+            or attribute not in allowed_attributes
+        ):
+            raise LifecycleError("invalidFilter", "SCIM multi-valued filter is unsupported")
+        if expression.operator == "pr":
+            if expression.value is not None:
+                raise LifecycleError("invalidFilter", "SCIM presence filter is invalid")
+            return 1
+        if attribute == "primary":
+            if expression.operator not in {"eq", "ne"} or type(expression.value) is not bool:
+                raise LifecycleError("invalidFilter", "SCIM Boolean filter is invalid")
+            return 1
+        if expression.value is None:
+            if expression.operator not in {"eq", "ne"}:
+                raise LifecycleError("invalidFilter", "SCIM null filter is invalid")
+            return 1
+        if not isinstance(expression.value, str) or len(expression.value) > 320:
+            raise LifecycleError("invalidFilter", "SCIM filter value is invalid")
+        if expression.operator not in {"eq", "ne", "co", "sw", "ew", "gt", "ge", "lt", "le"}:
+            raise LifecycleError("invalidFilter", "SCIM filter operator is unsupported")
+        return 1
+
+    @classmethod
     def _filter_predicate(
         cls,
         expression: ScimFilterExpression,
         *,
         resource_type: str,
+        dialect: str,
     ) -> sa.ColumnElement[bool]:
         if expression.operator == "and":
             return sa.and_(
                 *(
-                    cls._filter_predicate(operand, resource_type=resource_type)
+                    cls._filter_predicate(
+                        operand,
+                        resource_type=resource_type,
+                        dialect=dialect,
+                    )
                     for operand in expression.operands
                 )
             )
         if expression.operator == "or":
             return sa.or_(
                 *(
-                    cls._filter_predicate(operand, resource_type=resource_type)
+                    cls._filter_predicate(
+                        operand,
+                        resource_type=resource_type,
+                        dialect=dialect,
+                    )
                     for operand in expression.operands
                 )
             )
         if expression.operator == "not":
             return sa.not_(
-                cls._filter_predicate(expression.operands[0], resource_type=resource_type)
+                cls._filter_predicate(
+                    expression.operands[0],
+                    resource_type=resource_type,
+                    dialect=dialect,
+                )
             )
         if expression.operator == "valuePath":
+            attribute, sub_attribute = cls._resolved_filter_attribute(
+                expression,
+                resource_type=resource_type,
+            )
+            if (
+                resource_type == "User"
+                and attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}
+                and sub_attribute is None
+            ):
+                return cls._user_multivalue_exists_predicate(
+                    collection=attribute.removeprefix("core."),
+                    expression=expression.operands[0],
+                    dialect=dialect,
+                )
             return cls._member_exists_predicate(expression.operands[0])
         attribute, sub_attribute = cls._resolved_filter_attribute(
             expression,
@@ -1689,6 +2166,21 @@ class EnterpriseScimService:
                     value=expression.value,
                 )
             )
+        if attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}:
+            collection = attribute.removeprefix("core.")
+            return cls._user_multivalue_exists_predicate(
+                collection=collection,
+                expression=(
+                    None
+                    if sub_attribute is None
+                    else ScimFilterExpression(
+                        operator=expression.operator,
+                        attribute=sub_attribute,
+                        value=expression.value,
+                    )
+                ),
+                dialect=dialect,
+            )
         column = cls._filter_column(resource_type=resource_type, attribute=attribute)
         if expression.operator == "pr":
             return column.is_not(None)
@@ -1701,12 +2193,153 @@ class EnterpriseScimService:
             predicate = column == cast(bool, value)
         else:
             text_value = cast(str, value)
-            comparison_column = column
-            if attribute in {"userName", "displayName"}:
-                comparison_column = sa.func.lower(column)
-                text_value = text_value.casefold()
+            comparison_column = sa.func.lower(column)
+            text_value = text_value.casefold()
             if attribute == "userName" and expression.operator in {"eq", "ne"}:
                 text_value = _normalize_user_name(text_value)
+            if expression.operator in {"eq", "ne"}:
+                predicate = comparison_column == text_value
+            elif expression.operator == "co":
+                predicate = comparison_column.contains(text_value, autoescape=True)
+            elif expression.operator == "sw":
+                predicate = comparison_column.startswith(text_value, autoescape=True)
+            elif expression.operator == "ew":
+                predicate = comparison_column.endswith(text_value, autoescape=True)
+            elif expression.operator == "gt":
+                predicate = comparison_column > text_value
+            elif expression.operator == "ge":
+                predicate = comparison_column >= text_value
+            elif expression.operator == "lt":
+                predicate = comparison_column < text_value
+            else:
+                predicate = comparison_column <= text_value
+        if expression.operator == "ne":
+            predicate = sa.not_(predicate)
+        return sa.func.coalesce(predicate, sa.false())
+
+    @classmethod
+    def _user_multivalue_exists_predicate(
+        cls,
+        *,
+        collection: str,
+        expression: ScimFilterExpression | None,
+        dialect: str,
+    ) -> sa.ColumnElement[bool]:
+        if dialect == "postgresql":
+            collection_column = sa.cast(
+                EnterpriseScimUserRecord.core_attributes[collection],
+                JSONB,
+            )
+            items = sa.func.jsonb_array_elements(collection_column).table_valued(
+                sa.column("value", JSONB),
+                joins_implicitly=True,
+            )
+        elif dialect == "sqlite":
+            collection_column = sa.func.json_extract(
+                EnterpriseScimUserRecord.core_attributes,
+                f"$.{collection}",
+            )
+            items = sa.func.json_each(collection_column).table_valued(
+                sa.column("key"),
+                sa.column("value"),
+                joins_implicitly=True,
+            )
+        else:  # pragma: no cover - supported production/test dialects are explicit
+            raise LifecycleError(
+                "invalidFilter",
+                "SCIM multi-valued filters are unsupported by this database",
+            )
+        values = items.alias(f"scim_{collection.casefold()}_values")
+        predicate = (
+            sa.true()
+            if expression is None
+            else cls._user_multivalue_value_predicate(
+                expression,
+                value=values.c.value,
+                dialect=dialect,
+            )
+        )
+        return sa.exists(
+            sa.select(1)
+            .select_from(values)
+            .where(predicate)
+            .correlate(EnterpriseScimUserRecord)
+        )
+
+    @classmethod
+    def _user_multivalue_value_predicate(
+        cls,
+        expression: ScimFilterExpression,
+        *,
+        value: sa.ColumnElement[Any],
+        dialect: str,
+    ) -> sa.ColumnElement[bool]:
+        if expression.operator == "and":
+            return sa.and_(
+                *(
+                    cls._user_multivalue_value_predicate(
+                        item,
+                        value=value,
+                        dialect=dialect,
+                    )
+                    for item in expression.operands
+                )
+            )
+        if expression.operator == "or":
+            return sa.or_(
+                *(
+                    cls._user_multivalue_value_predicate(
+                        item,
+                        value=value,
+                        dialect=dialect,
+                    )
+                    for item in expression.operands
+                )
+            )
+        if expression.operator == "not":
+            return sa.not_(
+                cls._user_multivalue_value_predicate(
+                    expression.operands[0],
+                    value=value,
+                    dialect=dialect,
+                )
+            )
+        attribute = cast(str, expression.attribute)
+        canonical_attribute = {
+            "streetaddress": "streetAddress",
+            "postalcode": "postalCode",
+        }.get(attribute.casefold(), attribute)
+        if dialect == "postgresql":
+            json_value = sa.cast(value, JSONB)[canonical_attribute]
+            column: sa.ColumnElement[Any] = cast(
+                sa.ColumnElement[Any],
+                (
+                    json_value.as_boolean()
+                    if canonical_attribute == "primary"
+                    else json_value.as_string()
+                ),
+            )
+        else:
+            extracted = sa.func.json_extract(value, f"$.{canonical_attribute}")
+            column = cast(
+                sa.ColumnElement[Any],
+                sa.cast(extracted, sa.Boolean())
+                if canonical_attribute == "primary"
+                else extracted,
+            )
+        if expression.operator == "pr":
+            return column.is_not(None)
+        if expression.value is None:
+            return (
+                column.is_(None)
+                if expression.operator == "eq"
+                else column.is_not(None)
+            )
+        if canonical_attribute == "primary":
+            predicate = column == cast(bool, expression.value)
+        else:
+            text_value = cast(str, expression.value).casefold()
+            comparison_column = sa.func.lower(column)
             if expression.operator in {"eq", "ne"}:
                 predicate = comparison_column == text_value
             elif expression.operator == "co":
@@ -1809,6 +2442,18 @@ class EnterpriseScimService:
     @staticmethod
     def _filter_column(*, resource_type: str, attribute: str) -> sa.ColumnElement[Any]:
         if resource_type == "User":
+            if attribute.startswith("core."):
+                path = attribute.split(".")[1:]
+                value: Any = EnterpriseScimUserRecord.core_attributes
+                for component in path:
+                    value = value[component]
+                return cast(sa.ColumnElement[Any], value.as_string())
+            if attribute.startswith("enterprise."):
+                path = attribute.split(".")[1:]
+                value = EnterpriseScimUserRecord.enterprise_attributes
+                for component in path:
+                    value = value[component]
+                return cast(sa.ColumnElement[Any], value.as_string())
             return cast(
                 sa.ColumnElement[Any],
                 {
@@ -2142,6 +2787,32 @@ class EnterpriseScimService:
         )
 
     @staticmethod
+    def _directory_record_payload(
+        directory: EnterpriseScimDirectoryRecord,
+    ) -> dict[str, object]:
+        return {
+            "directory_id": str(directory.id),
+            "tenant_id": str(directory.tenant_id),
+            "display_name": directory.display_name,
+            "provider_type": directory.provider_type,
+            "attribute_mapping": dict(directory.attribute_mapping),
+            "token_prefix": directory.token_prefix,
+            "successor_token_prefix": directory.successor_token_prefix,
+            "rotation_activates_at": (
+                directory.rotation_activates_at.isoformat()
+                if directory.rotation_activates_at is not None
+                else None
+            ),
+            "rotation_grace_expires_at": (
+                directory.rotation_grace_expires_at.isoformat()
+                if directory.rotation_grace_expires_at is not None
+                else None
+            ),
+            "status": directory.status,
+            "version": directory.version,
+        }
+
+    @staticmethod
     def _issued_directory(
         payload: dict[str, object], *, bearer_token: str | None, replayed: bool
     ) -> IssuedScimDirectory:
@@ -2149,6 +2820,15 @@ class EnterpriseScimService:
             id=UUID(str(payload["directory_id"])),
             tenant_id=UUID(str(payload["tenant_id"])),
             display_name=str(payload["display_name"]),
+            provider_type=str(payload.get("provider_type", "generic")),
+            attribute_mapping=(
+                {
+                    str(source): str(target)
+                    for source, target in raw_mapping.items()
+                }
+                if isinstance((raw_mapping := payload.get("attribute_mapping")), dict)
+                else {}
+            ),
             token_prefix=str(payload["token_prefix"]),
             successor_token_prefix=(
                 str(payload["successor_token_prefix"])
@@ -2188,6 +2868,8 @@ class EnterpriseScimService:
             "external_id": user.external_id,
             "user_name": user.user_name_normalized,
             "display_name": user.display_name,
+            "core_attributes": user.core_attributes,
+            "enterprise_attributes": user.enterprise_attributes,
             "active": user.active,
             "version": user.version,
             "source_version": user.source_version,
@@ -2208,6 +2890,16 @@ class EnterpriseScimService:
             user_name=str(payload["user_name"]),
             display_name=(
                 str(payload["display_name"]) if payload.get("display_name") is not None else None
+            ),
+            core_attributes=(
+                cast(dict[str, object], payload["core_attributes"])
+                if isinstance(payload.get("core_attributes"), dict)
+                else {}
+            ),
+            enterprise_attributes=(
+                cast(dict[str, object], payload["enterprise_attributes"])
+                if isinstance(payload.get("enterprise_attributes"), dict)
+                else {}
             ),
             active=bool(payload["active"]),
             version=_integer(payload, "version"),

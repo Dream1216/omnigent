@@ -357,7 +357,7 @@ def test_real_postgresql_pc3_support_is_exact_token_tenant_and_immutable() -> No
             "saas_platform_audit_events, "
             "saas_platform_support_sessions, "
             "saas_platform_support_grants, "
-            "saas_platform_admin_operations"
+            "saas_platform_admin_operations CASCADE"
         )
         connection.exec_driver_sql(
             "UPDATE saas_platform_audit_chain_heads "

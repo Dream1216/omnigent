@@ -289,9 +289,10 @@ class WorktreeInstanceRecord(SaasBase):
     runner_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_runner_registrations.id", ondelete="RESTRICT"), nullable=False
     )
-    created_by: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
+    created_by_service_account_id: Mapped[UUID | None] = mapped_column()
     opaque_runtime_key: Mapped[str] = mapped_column(sa.String(96), nullable=False, unique=True)
     access_mode: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="reserved")
@@ -340,6 +341,21 @@ class WorktreeInstanceRecord(SaasBase):
             ("saas_runs.id", "saas_runs.tenant_id", "saas_runs.space_id", "saas_runs.project_id"),
             name="fk_worktree_run_scope",
             ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "created_by_service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            name="fk_worktree_service_account_actor",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "(created_by IS NOT NULL) <> (created_by_service_account_id IS NOT NULL)",
+            name="ck_worktree_actor_xor",
         ),
         sa.CheckConstraint(
             f"access_mode IN ({_values(WORKTREE_ACCESS_MODES)})",
@@ -395,6 +411,12 @@ class WorktreeInstanceRecord(SaasBase):
         ),
         sa.Index("ix_worktree_scope_status", "tenant_id", "space_id", "project_id", "status"),
         sa.Index("ix_worktree_run_status", "run_id", "status"),
+        sa.Index(
+            "ix_worktree_service_account_created",
+            "tenant_id",
+            "created_by_service_account_id",
+            "created_at",
+        ),
         sa.Index("ix_worktree_lease_expiry", "status", "lease_expires_at"),
         sa.Index("ix_worktree_gc", "status", "released_at"),
         sa.UniqueConstraint(

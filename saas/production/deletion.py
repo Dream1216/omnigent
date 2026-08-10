@@ -592,7 +592,7 @@ def _validate_attestations(
         else:
             roles.add(role)
         actor_id_hmac = item.get("actor_id_hmac")
-        if not _sha256(actor_id_hmac):
+        if not isinstance(actor_id_hmac, str) or not _sha256(actor_id_hmac):
             violations.append(f"{label}: attestation actor_id_hmac is invalid")
         elif actor_id_hmac in actor_id_hmacs:
             violations.append(f"{label}: attestation actors must be pairwise distinct")

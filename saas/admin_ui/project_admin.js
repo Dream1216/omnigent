@@ -72,6 +72,20 @@
     return payload;
   }
 
+  async function refreshNotificationCapability() {
+    const button = $("#view-notification-ops");
+    button.hidden = true;
+    if (!state.tenantId) return;
+    try {
+      const capability = await api(
+        `/tenants/${state.tenantId}/notification-operations/capabilities`
+      );
+      button.hidden = capability.notification_operations_enabled !== true;
+    } catch (_) {
+      button.hidden = true;
+    }
+  }
+
   function idempotency(prefix) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
@@ -122,6 +136,7 @@
     $("#context-state").textContent = "NO CONTEXT";
     $("#snapshot-state").textContent = "UNBOUND";
     $("#scope-connect").disabled = true;
+    $("#view-notification-ops").hidden = true;
     hideOneTimeToken();
     showView("projects", { load: false });
   }
@@ -1374,6 +1389,13 @@
   $("#view-members").addEventListener("click", () => showView("members"));
   $("#view-approvals").addEventListener("click", () => showView("approvals"));
   $("#view-billing").addEventListener("click", () => showView("billing"));
+  $("#view-notification-ops").addEventListener("click", () => {
+    if (!state.tenantId) {
+      log("Connect a Tenant before opening Notification Operations", "error");
+      return;
+    }
+    window.location.assign(`/saas/tenants/${state.tenantId}/notification-ops`);
+  });
   $("#approval-refresh").addEventListener("click", () => void loadApprovalWorkspace());
   $("#billing-refresh").addEventListener("click", () => void loadBillingWorkspace());
   $("#invitation-refresh").addEventListener("click", () => void loadInvitations());
@@ -1668,6 +1690,7 @@
       });
       state.contextSnapshot = context.context_snapshot;
       $("#snapshot-state").textContent = `SIGNED / ${context.max_age_seconds}s`;
+      await refreshNotificationCapability();
       await loadProjects();
       if (state.view === "members") await loadMemberWorkspace();
       if (state.view === "approvals") await loadApprovalWorkspace();

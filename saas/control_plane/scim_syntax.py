@@ -11,6 +11,10 @@ _CORE_SCHEMAS = {
     "user": "urn:ietf:params:scim:schemas:core:2.0:User",
     "group": "urn:ietf:params:scim:schemas:core:2.0:Group",
 }
+_EXTENSION_SCHEMAS = {
+    "enterprise_user": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User",
+}
+_SUPPORTED_SCHEMAS = (*_CORE_SCHEMAS.values(), *_EXTENSION_SCHEMAS.values())
 _ATTRIBUTE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*|\$ref")
 _NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 
@@ -169,7 +173,7 @@ class _ScimExpressionParser:
         raw = self._consume_word()
         schema: str | None = None
         path = raw
-        for supported in _CORE_SCHEMAS.values():
+        for supported in _SUPPORTED_SCHEMAS:
             prefix = f"{supported}:"
             if raw.casefold().startswith(prefix.casefold()):
                 schema = supported

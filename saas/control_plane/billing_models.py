@@ -285,6 +285,7 @@ class UsageEventRecord(SaasBase):
     session_id: Mapped[UUID | None] = mapped_column()
     run_id: Mapped[UUID | None] = mapped_column()
     user_id: Mapped[UUID | None] = mapped_column()
+    service_account_id: Mapped[UUID | None] = mapped_column()
     meter: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(sa.Numeric(38, 12), nullable=False)
     unit: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -330,6 +331,25 @@ class UsageEventRecord(SaasBase):
             ("saas_tenant_memberships.tenant_id", "saas_tenant_memberships.user_id"),
             ondelete="RESTRICT",
             name="fk_usage_event_user",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "space_id", "project_id", "service_account_id"),
+            (
+                "saas_service_accounts.tenant_id",
+                "saas_service_accounts.space_id",
+                "saas_service_accounts.project_id",
+                "saas_service_accounts.id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_usage_event_service_account",
+        ),
+        sa.CheckConstraint(
+            "user_id IS NULL OR service_account_id IS NULL",
+            name="ck_usage_event_actor_not_ambiguous",
+        ),
+        sa.CheckConstraint(
+            "service_account_id IS NULL OR (space_id IS NOT NULL AND project_id IS NOT NULL)",
+            name="ck_usage_event_service_account_scope",
         ),
         sa.CheckConstraint("length(meter) > 0", name="ck_usage_event_meter"),
         sa.CheckConstraint("quantity > 0", name="ck_usage_event_quantity"),

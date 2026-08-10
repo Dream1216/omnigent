@@ -90,7 +90,8 @@ class _RunAuthority:
     space_id: UUID
     project_id: UUID
     session_id: UUID | None
-    created_by: UUID
+    created_by: UUID | None
+    created_by_service_account_id: UUID | None
     status: str
     fence_token: int
     lease_owner: str | None
@@ -300,7 +301,15 @@ class BillingMeteringAuthority:
                 "project_id": str(run.project_id),
                 "session_id": str(run.session_id) if run.session_id else None,
                 "run_id": str(run_id),
-                "user_id": str(run.created_by),
+                "actor_kind": (
+                    "user" if run.created_by is not None else "service_account"
+                ),
+                "user_id": str(run.created_by) if run.created_by is not None else None,
+                "service_account_id": (
+                    str(run.created_by_service_account_id)
+                    if run.created_by_service_account_id is not None
+                    else None
+                ),
                 "runner_id": str(runner_id),
                 "pricing_snapshot_id": str(pricing.id),
                 "meter": clean_meter,
@@ -352,6 +361,7 @@ class BillingMeteringAuthority:
                 session_id=run.session_id,
                 run_id=run_id,
                 user_id=run.created_by,
+                service_account_id=run.created_by_service_account_id,
                 meter=clean_meter,
                 quantity=units,
                 unit=clean_unit,
@@ -502,11 +512,17 @@ class BillingMeteringAuthority:
         db.execute(
             sa.text(
                 "SELECT set_config('app.metering_session_id', :session_id, true), "
-                "set_config('app.metering_user_id', :user_id, true)"
+                "set_config('app.metering_user_id', :user_id, true), "
+                "set_config('app.metering_service_account_id', :service_account_id, true)"
             ),
             {
                 "session_id": str(run.session_id) if run.session_id else "",
-                "user_id": str(run.created_by),
+                "user_id": str(run.created_by) if run.created_by is not None else "",
+                "service_account_id": (
+                    str(run.created_by_service_account_id)
+                    if run.created_by_service_account_id is not None
+                    else ""
+                ),
             },
         )
 
@@ -549,6 +565,7 @@ class BillingMeteringAuthority:
                 RunRecord.project_id,
                 RunRecord.session_id,
                 RunRecord.created_by,
+                RunRecord.created_by_service_account_id,
                 RunRecord.status,
                 RunRecord.fence_token,
                 RunRecord.lease_owner,

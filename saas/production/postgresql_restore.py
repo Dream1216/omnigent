@@ -59,6 +59,8 @@ _SELECTED_HASH_TABLES = (
     "saas_runner_certificates",
     "saas_service_accounts",
     "saas_api_credentials",
+    "saas_public_api_mutation_receipts",
+    "saas_public_api_rate_limits",
     "saas_enterprise_groups",
     "saas_enterprise_group_memberships",
     "saas_enterprise_custom_roles",
@@ -76,6 +78,14 @@ _SELECTED_HASH_TABLES = (
     "saas_privacy_deletion_attempts",
     "saas_privacy_evidence_attestations",
     "saas_privacy_backup_retention_items",
+    "saas_approval_work_items",
+    "saas_approval_delegations",
+    "saas_notification_templates",
+    "saas_notification_preferences",
+    "saas_notification_deliveries",
+    "saas_notification_delivery_attempts",
+    "saas_operation_batches",
+    "saas_operation_batch_items",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -561,12 +571,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000003', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5b00000003', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -1379,7 +1389,7 @@ def _verify_restored_database(
             saas_head = connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            if saas_head != "pc5b00000003":
+            if saas_head != "pc5c00000002":
                 raise PostgreSqlRestoreContractError("restored SaaS migration head drifted")
             official_heads = sorted(
                 connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars()
@@ -1490,6 +1500,133 @@ def _verify_restored_database(
             ):
                 raise PostgreSqlRestoreContractError(
                     "restored privacy dispatcher is missing or gained Staff/PII authority"
+                )
+            notification_scheduler_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_scheduler', "
+                    "'saas_platform_governance', 'member'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'SELECT'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'status', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'priority', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'escalation_at', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_scheduler', "
+                    "'saas_approval_work_items', 'action', 'UPDATE'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_notification_deliveries', 'INSERT'), "
+                    "has_table_privilege('saas_notification_scheduler', "
+                    "'saas_notification_deliveries', 'DELETE') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_scheduler'"
+                )
+            ).one()
+            if tuple(notification_scheduler_role) != (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+                True,
+                True,
+                False,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification scheduler authority widened or drifted"
+                )
+            notification_dispatcher_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_dispatcher', "
+                    "'saas_platform_governance', 'member'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'SELECT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'status', 'UPDATE'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'recipient_read_at', 'UPDATE'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_delivery_attempts', 'INSERT'), "
+                    "has_table_privilege('saas_notification_dispatcher', "
+                    "'saas_notification_deliveries', 'INSERT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_approval_work_items', 'status', 'SELECT'), "
+                    "has_column_privilege('saas_notification_dispatcher', "
+                    "'saas_approval_work_items', 'action', 'SELECT') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_dispatcher'"
+                )
+            ).one()
+            if tuple(notification_dispatcher_role) != (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+                False,
+                True,
+                True,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification dispatcher authority widened or drifted"
+                )
+            notification_directory_role = connection.execute(
+                sa.text(
+                    "SELECT rolcanlogin, rolsuper, rolbypassrls, "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_platform_governance', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_governance', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_notification_dispatcher', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_notification_scheduler', 'member'), "
+                    "pg_has_role('saas_notification_directory', "
+                    "'saas_platform', 'member'), "
+                    "has_table_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'primary_email_normalized', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_global_users', 'security_version', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_staff_principals', 'email_normalized', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_staff_principals', 'issuer', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_role_assignments', 'principal_id', 'SELECT'), "
+                    "has_column_privilege('saas_notification_directory', "
+                    "'saas_platform_role_assignments', "
+                    "'assigned_by_principal_id', 'SELECT') "
+                    "FROM pg_roles WHERE rolname = 'saas_notification_directory'"
+                )
+            ).one()
+            if tuple(notification_directory_role) != (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                False,
+                True,
+                False,
+                True,
+                False,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored notification directory authority widened or drifted"
                 )
             connection.exec_driver_sql(
                 "SET LOCAL ROLE saas_app; "

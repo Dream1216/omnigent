@@ -21,6 +21,12 @@ class EnterpriseScimDirectoryRecord(SaasBase):
         sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
     )
     display_name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    provider_type: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, default="generic"
+    )
+    attribute_mapping: Mapped[dict[str, object]] = mapped_column(
+        sa.JSON, nullable=False, default=dict
+    )
     token_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     token_prefix: Mapped[str] = mapped_column(sa.String(24), nullable=False)
     successor_token_hash: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
@@ -46,6 +52,10 @@ class EnterpriseScimDirectoryRecord(SaasBase):
 
     __table_args__ = (
         sa.CheckConstraint("length(display_name) > 0", name="ck_scim_directory_name_nonempty"),
+        sa.CheckConstraint(
+            "provider_type IN ('generic', 'microsoft_entra', 'okta', 'google_workspace')",
+            name="ck_scim_directory_provider_type",
+        ),
         sa.CheckConstraint("length(token_hash) = 64", name="ck_scim_directory_token_hash"),
         sa.CheckConstraint("length(token_prefix) > 0", name="ck_scim_directory_token_prefix"),
         sa.CheckConstraint(
@@ -91,6 +101,12 @@ class EnterpriseScimUserRecord(SaasBase):
     )
     user_name_normalized: Mapped[str] = mapped_column(sa.String(320), nullable=False)
     display_name: Mapped[str | None] = mapped_column(sa.String(256))
+    core_attributes: Mapped[dict[str, object]] = mapped_column(
+        sa.JSON, nullable=False, default=dict
+    )
+    enterprise_attributes: Mapped[dict[str, object]] = mapped_column(
+        sa.JSON, nullable=False, default=dict
+    )
     active: Mapped[bool] = mapped_column(nullable=False)
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     source_version: Mapped[int] = mapped_column(nullable=False)
