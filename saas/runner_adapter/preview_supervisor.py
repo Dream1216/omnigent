@@ -20,6 +20,7 @@ import os
 import re
 import signal
 import stat
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -716,7 +717,51 @@ def _process_group_exists(process_group_id: int) -> bool:
     except PermissionError:
         return True
     else:
+        if sys.platform == "linux":
+            live_members = _linux_process_group_has_live_members(process_group_id)
+            if live_members is not None:
+                return live_members
         return True
+
+
+def _linux_process_group_has_live_members(
+    process_group_id: int,
+    proc_root: Path = Path("/proc"),
+) -> bool | None:
+    """Return whether a Linux process group has executable members.
+
+    ``killpg(..., 0)`` also succeeds while a killed orphan is waiting to be
+    reaped. A zombie cannot execute or retain Preview resources, so it must not
+    turn successful SIGKILL cleanup into a false failure. Unknown procfs state
+    remains fail-closed by returning ``None``.
+    """
+
+    try:
+        entries = tuple(proc_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            encoded_stat = (entry / "stat").read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        command_end = encoded_stat.rfind(")")
+        if command_end < 0:
+            continue
+        fields = encoded_stat[command_end + 1 :].split()
+        if len(fields) < 3:
+            continue
+        try:
+            member_group_id = int(fields[2])
+        except ValueError:
+            continue
+        if member_group_id != process_group_id:
+            continue
+        if fields[0] not in {"X", "Z"}:
+            return True
+    return False
 
 
 async def _cleanup_target(

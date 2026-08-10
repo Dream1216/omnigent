@@ -27,6 +27,8 @@ from saas.runner_adapter.preview_supervisor import (
     PreviewProcessSpec,
     PreviewProcessSupervisorError,
     RunnerPreviewProcessSupervisor,
+    _linux_process_group_has_live_members,
+    _process_group_exists,
 )
 from tests.saas.test_preview_tunnel import (
     _dispatch_one,
@@ -408,5 +410,24 @@ async def test_supervisor_reaps_process_group_after_main_process_crash() -> None
         assert exit_state.reason == "exited"
         assert exit_state.returncode == -signal.SIGKILL
         assert exit_state.cleanup_error_code is None
-        with pytest.raises(ProcessLookupError):
-            os.killpg(snapshot.pid, 0)
+        assert not _process_group_exists(snapshot.pid)
+
+
+def test_linux_process_group_scan_treats_only_dead_members_as_cleaned(tmp_path: Path) -> None:
+    process_group_id = 4242
+    zombie = tmp_path / "1001"
+    zombie.mkdir()
+    (zombie / "stat").write_text(
+        f"1001 (preview child) Z 1 {process_group_id} {process_group_id}\n",
+        encoding="utf-8",
+    )
+    assert _linux_process_group_has_live_members(process_group_id, tmp_path) is False
+
+    live = tmp_path / "1002"
+    live.mkdir()
+    (live / "stat").write_text(
+        f"1002 (preview worker) S 1 {process_group_id} {process_group_id}\n",
+        encoding="utf-8",
+    )
+    assert _linux_process_group_has_live_members(process_group_id, tmp_path) is True
+    assert _linux_process_group_has_live_members(process_group_id + 1, tmp_path) is False
