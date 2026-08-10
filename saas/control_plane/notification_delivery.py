@@ -25,17 +25,13 @@ from saas.control_plane.notification_models import (
 )
 
 NotificationChannel = Literal["in_app", "email"]
-DeliveryDisposition = Literal[
-    "succeeded", "retry", "dead_letter", "lease_lost", "suppressed"
-]
+DeliveryDisposition = Literal["succeeded", "retry", "dead_letter", "lease_lost", "suppressed"]
 
 MAX_DELIVERY_ATTEMPTS = 8
 RECIPIENT_RESOLUTION_PURPOSE = "notification_delivery"
 PLATFORM_NOTIFICATION_READ_PERMISSION = "platform.notification.read"
 PLATFORM_NOTIFICATION_REPLAY_PERMISSION = "platform.notification.replay"
-PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION = (
-    "platform.notification_template.manage"
-)
+PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION = "platform.notification_template.manage"
 _LOGGER = logging.getLogger("omnigent-saas-notification")
 _LOCALE_FALLBACKS = {"en": "en-US", "zh": "zh-CN"}
 _HEX_DIGITS = frozenset("0123456789abcdef")
@@ -422,9 +418,7 @@ class NotificationDeliveryWorker:
     def deliver_once(self, *, now: datetime | None = None) -> DeliverySettlement | None:
         delivered_at = _aware(now or datetime.now(timezone.utc))
         phase_clock = (
-            self._clock
-            if self._clock_was_supplied or now is None
-            else lambda: delivered_at
+            self._clock if self._clock_was_supplied or now is None else lambda: delivered_at
         )
         identity = self._identity_provider.identity(now=delivered_at)
         _validate_workload_identity(identity, delivered_at)
@@ -456,9 +450,7 @@ class NotificationDeliveryWorker:
                 template_version=claim.template_version,
                 artifact_handle=claim.template_artifact_handle,
                 expected_content_sha256=claim.template_content_sha256,
-                expected_variables_schema_sha256=(
-                    claim.template_variables_schema_sha256
-                ),
+                expected_variables_schema_sha256=(claim.template_variables_schema_sha256),
             )
             recipient_at = _aware(phase_clock())
             recipient = self._resolver.resolve(
@@ -473,9 +465,7 @@ class NotificationDeliveryWorker:
                 raise NotificationDeliveryError("notification_recipient_resolution_expired")
             if not recipient.address or len(recipient.address) > 2048:
                 raise NotificationDeliveryError("notification_recipient_address_invalid")
-            suppressed = self._authority.ensure_sendable(
-                claim, now=_aware(phase_clock())
-            )
+            suppressed = self._authority.ensure_sendable(claim, now=_aware(phase_clock()))
             if suppressed is not None:
                 return suppressed
             receipt = self._provider.send(
@@ -504,13 +494,9 @@ class NotificationDeliveryWorker:
                 code, retryable = classify_provider_status(status)
             else:
                 code, retryable = "notification_provider_unavailable", True
-            return self._settle_failure(
-                claim, code, status, retryable, _aware(phase_clock())
-            )
+            return self._settle_failure(claim, code, status, retryable, _aware(phase_clock()))
         try:
-            return self._authority.complete(
-                claim, receipt=receipt, now=_aware(phase_clock())
-            )
+            return self._authority.complete(claim, receipt=receipt, now=_aware(phase_clock()))
         except NotificationDeliveryError as error:
             if error.code != "notification_delivery_lease_lost":
                 raise
@@ -820,9 +806,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             candidates = tuple(
                 (
                     value,
-                    value.digest_values(
-                        domain="notification-deduplication", values=dedupe_values
-                    ),
+                    value.digest_values(domain="notification-deduplication", values=dedupe_values),
                 )
                 for value in self._digesters
             )
@@ -851,9 +835,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 candidate_record = db.get(NotificationDeliveryRecord, candidate_id)
                 if candidate_record is not None:
                     if candidate_record.hmac_key_id != candidate_digester.key_id:
-                        raise NotificationDeliveryError(
-                            "notification_deduplication_key_mismatch"
-                        )
+                        raise NotificationDeliveryError("notification_deduplication_key_mismatch")
                     existing = candidate_record
                     break
             if existing is not None:
@@ -926,9 +908,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 id=delivery_id,
                 realm=command.realm,
                 tenant_id=command.tenant_id,
-                recipient_user_id=(
-                    command.recipient_id if command.realm == "tenant" else None
-                ),
+                recipient_user_id=(command.recipient_id if command.realm == "tenant" else None),
                 recipient_principal_id=(
                     command.recipient_id if command.realm == "staff" else None
                 ),
@@ -987,8 +967,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             actor.realm == "staff"
             and actor.tenant_id is None
             and status == "dead_letter"
-            and PLATFORM_NOTIFICATION_READ_PERMISSION
-            in getattr(actor, "permissions", frozenset())
+            and PLATFORM_NOTIFICATION_READ_PERMISSION in getattr(actor, "permissions", frozenset())
         )
         with self._sessions.begin() as db:
             _apply_notification_delivery_rls(
@@ -1008,12 +987,8 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                     NotificationDeliveryRecord.realm == actor.realm,
                     recipient,
                 )
-            if not platform_dlq and (
-                actor.realm == "tenant" or actor.tenant_id is not None
-            ):
-                query = query.where(
-                    NotificationDeliveryRecord.tenant_id == actor.tenant_id
-                )
+            if not platform_dlq and (actor.realm == "tenant" or actor.tenant_id is not None):
+                query = query.where(NotificationDeliveryRecord.tenant_id == actor.tenant_id)
             if status is not None:
                 query = query.where(NotificationDeliveryRecord.status == status)
             if cursor is not None:
@@ -1063,9 +1038,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             if candidate is None:
                 raise NotificationDeliveryError("notification_delivery_not_found")
             cross_recipient = not _delivery_visible(candidate, actor)
-            if cross_recipient and (
-                not platform_replay or candidate.status != "dead_letter"
-            ):
+            if cross_recipient and (not platform_replay or candidate.status != "dead_letter"):
                 raise NotificationDeliveryError("notification_delivery_not_found")
             _apply_notification_delivery_rls(
                 db,
@@ -1083,9 +1056,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 .where(NotificationDeliveryRecord.id == delivery_id)
                 .with_for_update()
             ).scalar_one_or_none()
-            if record is None or (
-                not _delivery_visible(record, actor) and not platform_replay
-            ):
+            if record is None or (not _delivery_visible(record, actor) and not platform_replay):
                 raise NotificationDeliveryError("notification_delivery_not_found")
             digester = self._digester_for_key(record.hmac_key_id)
             key_hmac = digester.digest_values(
@@ -1098,17 +1069,11 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             )
             if record.replay_idempotency_hmac is not None:
                 if hmac.compare_digest(record.replay_idempotency_hmac, key_hmac):
-                    if not hmac.compare_digest(
-                        record.replay_request_hmac or "", request_hmac
-                    ):
-                        raise NotificationDeliveryError(
-                            "notification_replay_payload_conflict"
-                        )
+                    if not hmac.compare_digest(record.replay_request_hmac or "", request_hmac):
+                        raise NotificationDeliveryError("notification_replay_payload_conflict")
                     return _delivery_view(record)
                 if record.status != "dead_letter":
-                    raise NotificationDeliveryError(
-                        "notification_replay_idempotency_conflict"
-                    )
+                    raise NotificationDeliveryError("notification_replay_idempotency_conflict")
             if record.status != "dead_letter" or record.version != expected_version:
                 raise NotificationDeliveryError("notification_replay_conflict")
             record.status = "pending"
@@ -1205,9 +1170,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 recipient,
             )
             if actor.realm == "tenant" or actor.tenant_id is not None:
-                query = query.where(
-                    NotificationPreferenceRecord.tenant_id == actor.tenant_id
-                )
+                query = query.where(NotificationPreferenceRecord.tenant_id == actor.tenant_id)
             values = tuple(
                 db.execute(
                     query.order_by(
@@ -1264,9 +1227,8 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                             str(expected_version),
                         ),
                     )
-                    if (
-                        candidate.key_id != record.hmac_key_id
-                        or not hmac.compare_digest(record.request_hmac, candidate_request)
+                    if candidate.key_id != record.hmac_key_id or not hmac.compare_digest(
+                        record.request_hmac, candidate_request
                     ):
                         raise NotificationDeliveryError(
                             "notification_preference_idempotency_conflict"
@@ -1321,9 +1283,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             )
             if actor.realm == "tenant":
                 query = query.where(
-                    _tenant_or_global(
-                        NotificationTemplateRecord.tenant_id, actor.tenant_id
-                    ),
+                    _tenant_or_global(NotificationTemplateRecord.tenant_id, actor.tenant_id),
                     NotificationTemplateRecord.status == "active",
                 )
             values = tuple(
@@ -1355,9 +1315,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         now: datetime | None = None,
     ) -> NotificationTemplateView:
         created_at = _aware(now or datetime.now(timezone.utc))
-        _require_platform_permission(
-            actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION
-        )
+        _require_platform_permission(actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION)
         key = _bounded(template_key, "template_key", 128)
         normalized_locale = normalize_locale(locale)
         if channel not in {"in_app", "email"} or type(version) is not int or version < 1:
@@ -1419,13 +1377,10 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 existing = db.get(NotificationTemplateRecord, candidate_id)
                 if existing is None:
                     continue
-                if (
-                    existing.hmac_key_id != candidate.key_id
-                    or not hmac.compare_digest(existing.create_request_hmac, request_hmac)
+                if existing.hmac_key_id != candidate.key_id or not hmac.compare_digest(
+                    existing.create_request_hmac, request_hmac
                 ):
-                    raise NotificationDeliveryError(
-                        "notification_template_idempotency_conflict"
-                    )
+                    raise NotificationDeliveryError("notification_template_idempotency_conflict")
                 return _template_view(existing, replayed=True)
             existing_version = db.execute(
                 sa.select(NotificationTemplateRecord.id).where(
@@ -1486,9 +1441,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         now: datetime | None = None,
     ) -> NotificationTemplateView:
         retired_at = _aware(now or datetime.now(timezone.utc))
-        _require_platform_permission(
-            actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION
-        )
+        _require_platform_permission(actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION)
         key = _bounded(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
             _apply_notification_delivery_rls(
@@ -1535,9 +1488,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                     raise NotificationDeliveryError(
                         "notification_template_retire_idempotency_conflict"
                     )
-                if not hmac.compare_digest(
-                    record.retire_request_hmac or "", request_hmac
-                ):
+                if not hmac.compare_digest(record.retire_request_hmac or "", request_hmac):
                     raise NotificationDeliveryError(
                         "notification_template_retire_payload_conflict"
                     )
@@ -1755,14 +1706,11 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
             )
             retry = normalized_retryable and record.attempt_count < record.max_attempts
             next_available = (
-                failed_at
-                + timedelta(seconds=min(900, 2 ** min(record.attempt_count, 9)))
+                failed_at + timedelta(seconds=min(900, 2 ** min(record.attempt_count, 9)))
                 if retry
                 else None
             )
-            outcome: Literal["retry", "dead_letter"] = (
-                "retry" if retry else "dead_letter"
-            )
+            outcome: Literal["retry", "dead_letter"] = "retry" if retry else "dead_letter"
             self._attempt(
                 db,
                 record,
@@ -1926,9 +1874,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         return status is None or status != "pending"
 
     @staticmethod
-    def _suppress(
-        record: NotificationDeliveryRecord, code: str, at: datetime
-    ) -> None:
+    def _suppress(record: NotificationDeliveryRecord, code: str, at: datetime) -> None:
         record.status = "suppressed"
         record.suppression_code = code
         record.provider_message_hmac = None
@@ -1966,9 +1912,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 sa.select(NotificationPreferenceRecord).where(
                     NotificationPreferenceRecord.realm == realm,
                     (
-                        _tenant_or_global(
-                            NotificationPreferenceRecord.tenant_id, tenant_id
-                        )
+                        _tenant_or_global(NotificationPreferenceRecord.tenant_id, tenant_id)
                         if realm == "staff"
                         else NotificationPreferenceRecord.tenant_id == tenant_id
                     ),
@@ -2036,9 +1980,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
                 .where(
                     NotificationTemplateRecord.id == template_id,
                     NotificationTemplateRecord.realm == "staff",
-                    _tenant_or_global(
-                        NotificationTemplateRecord.tenant_id, tenant_id
-                    ),
+                    _tenant_or_global(NotificationTemplateRecord.tenant_id, tenant_id),
                     NotificationTemplateRecord.template_key == template_key,
                     NotificationTemplateRecord.channel == channel,
                     NotificationTemplateRecord.locale.in_((locale, "en-US")),
@@ -2070,9 +2012,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         raise NotificationDeliveryError("notification_hmac_key_unavailable")
 
 
-def _validate_workload_identity(
-    identity: NotificationWorkloadIdentity, at: datetime
-) -> None:
+def _validate_workload_identity(identity: NotificationWorkloadIdentity, at: datetime) -> None:
     authenticated_at = _aware(identity.authenticated_at)
     expires_at = _aware(identity.expires_at)
     if (
@@ -2198,9 +2138,7 @@ def _delivery_visible(value: NotificationDeliveryRecord, actor: NotificationActo
     )
 
 
-def _preference_visible(
-    value: NotificationPreferenceRecord, actor: NotificationActor
-) -> bool:
+def _preference_visible(value: NotificationPreferenceRecord, actor: NotificationActor) -> bool:
     recipient = value.recipient_user_id or value.recipient_principal_id
     return (
         value.realm == actor.realm
@@ -2226,10 +2164,7 @@ def _notification_scope(realm: str, tenant_id: UUID | None) -> None:
 
 
 def _require_platform_permission(actor: NotificationActor, permission: str) -> None:
-    if (
-        actor.realm != "staff"
-        or permission not in getattr(actor, "permissions", frozenset())
-    ):
+    if actor.realm != "staff" or permission not in getattr(actor, "permissions", frozenset()):
         raise NotificationDeliveryError("notification_platform_permission_forbidden")
 
 

@@ -1299,6 +1299,7 @@ def create_saas_http_integration(
                 "template_management": "unavailable",
                 "content_access": "none",
             }
+
     public_api_router = None
     if public_api_execution is not None and api_credentials is None:
         raise ValueError("Public API execution requires API credentials")

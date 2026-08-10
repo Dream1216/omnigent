@@ -21,9 +21,7 @@ class EnterpriseScimDirectoryRecord(SaasBase):
         sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
     )
     display_name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
-    provider_type: Mapped[str] = mapped_column(
-        sa.String(32), nullable=False, default="generic"
-    )
+    provider_type: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="generic")
     attribute_mapping: Mapped[dict[str, object]] = mapped_column(
         sa.JSON, nullable=False, default=dict
     )

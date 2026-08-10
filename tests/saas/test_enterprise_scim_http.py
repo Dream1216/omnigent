@@ -183,9 +183,7 @@ def test_scim_http_etag_deprovision_and_late_group_convergence() -> None:
     assert schemas.json()["totalResults"] == 5
     enterprise_schema = client.get(f"/saas/scim/v2/Schemas/{_ENTERPRISE_USER_SCHEMA}")
     assert enterprise_schema.status_code == 200
-    assert [
-        attribute["name"] for attribute in enterprise_schema.json()["attributes"]
-    ] == [
+    assert [attribute["name"] for attribute in enterprise_schema.json()["attributes"]] == [
         "employeeNumber",
         "costCenter",
         "organization",
@@ -1437,9 +1435,7 @@ def test_scim_idp_configuration_profile_list_get_update_and_replay() -> None:
     body = {
         "expected_version": 1,
         "providerType": "microsoft_entra",
-        "attributeMapping": {
-            "extensionAttribute1": f"{_ENTERPRISE_USER_SCHEMA}:costCenter"
-        },
+        "attributeMapping": {"extensionAttribute1": f"{_ENTERPRISE_USER_SCHEMA}:costCenter"},
     }
     configured = client.put(
         configuration_path,
@@ -1449,9 +1445,10 @@ def test_scim_idp_configuration_profile_list_get_update_and_replay() -> None:
     assert configured.status_code == 200
     assert configured.json()["version"] == 2
     assert configured.json()["provider_type"] == "microsoft_entra"
-    assert configured.json()["idp_profile"]["attributeMappings"][
-        "extensionAttribute1"
-    ] == f"{_ENTERPRISE_USER_SCHEMA}:costCenter"
+    assert (
+        configured.json()["idp_profile"]["attributeMappings"]["extensionAttribute1"]
+        == f"{_ENTERPRISE_USER_SCHEMA}:costCenter"
+    )
 
     replay = client.put(
         configuration_path,
@@ -1544,11 +1541,7 @@ def test_scim_enterprise_user_optional_attributes_filters_patch_and_replace() ->
     by_department = client.get(
         "/saas/scim/v2/Users",
         headers=headers,
-        params={
-            "filter": (
-                f'{_ENTERPRISE_USER_SCHEMA}:department eq "engineering"'
-            )
-        },
+        params={"filter": (f'{_ENTERPRISE_USER_SCHEMA}:department eq "engineering"')},
     )
     assert by_department.status_code == 200
     assert by_department.json()["totalResults"] == 1
@@ -1556,11 +1549,7 @@ def test_scim_enterprise_user_optional_attributes_filters_patch_and_replace() ->
     by_work_email = client.get(
         "/saas/scim/v2/Users",
         headers=headers,
-        params={
-            "filter": (
-                'emails[type eq "work" and value co "enterprise.user"]'
-            )
-        },
+        params={"filter": ('emails[type eq "work" and value co "enterprise.user"]')},
     )
     assert by_work_email.status_code == 200
     assert by_work_email.json()["totalResults"] == 1
@@ -1591,8 +1580,7 @@ def test_scim_enterprise_user_optional_attributes_filters_patch_and_replace() ->
         headers=headers,
         params={
             "attributes": (
-                "userName,name.givenName,emails.value,"
-                f"{_ENTERPRISE_USER_SCHEMA}:department"
+                f"userName,name.givenName,emails.value,{_ENTERPRISE_USER_SCHEMA}:department"
             )
         },
     )
@@ -1612,18 +1600,13 @@ def test_scim_enterprise_user_optional_attributes_filters_patch_and_replace() ->
         {"value": "enterprise.user@example.test"},
         {"value": "ada@example.test"},
     ]
-    assert projected_payload[_ENTERPRISE_USER_SCHEMA] == {
-        "department": "Engineering"
-    }
+    assert projected_payload[_ENTERPRISE_USER_SCHEMA] == {"department": "Engineering"}
 
     excluded = client.get(
         "/saas/scim/v2/Users",
         headers=headers,
         params={
-            "excludedAttributes": (
-                "displayName,emails.type,"
-                f"{_ENTERPRISE_USER_SCHEMA}:manager"
-            )
+            "excludedAttributes": (f"displayName,emails.type,{_ENTERPRISE_USER_SCHEMA}:manager")
         },
     )
     assert excluded.status_code == 200

@@ -94,9 +94,7 @@ def main() -> int:
     )
     database_url = _required_env("OMNIGENT_NOTIFICATION_BOOTSTRAP_DATABASE_URL")
     try:
-        principal_id = UUID(
-            _required_env("OMNIGENT_NOTIFICATION_BOOTSTRAP_PRINCIPAL_ID")
-        )
+        principal_id = UUID(_required_env("OMNIGENT_NOTIFICATION_BOOTSTRAP_PRINCIPAL_ID"))
     except ValueError as error:
         raise RuntimeError(
             "OMNIGENT_NOTIFICATION_BOOTSTRAP_PRINCIPAL_ID must be a UUID"
@@ -110,9 +108,7 @@ def main() -> int:
         current, previous = notification_digesters(
             {
                 "hmac_key_id": _required_env("OMNIGENT_NOTIFICATION_HMAC_KEY_ID"),
-                "hmac_secret_b64": _required_env(
-                    "OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"
-                ),
+                "hmac_secret_b64": _required_env("OMNIGENT_NOTIFICATION_HMAC_SECRET_B64"),
                 "previous_hmac_keys_json": os.environ.get(
                     "OMNIGENT_NOTIFICATION_PREVIOUS_HMAC_KEYS_JSON", "[]"
                 ),

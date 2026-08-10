@@ -59,8 +59,7 @@ def test_scim_compliance_matrix_covers_every_idp_profile_without_false_e2e_claim
 
     assert {str(profile["provider"]) for profile in profiles} == set(IDP_PROVIDER_TYPES)
     assert all(
-        profile["configuration_status"] == "implemented_tested_locally"
-        for profile in profiles
+        profile["configuration_status"] == "implemented_tested_locally" for profile in profiles
     )
     assert by_provider["microsoft_entra"]["external_conformance_status"] == (
         "pending_external_evidence"

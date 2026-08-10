@@ -87,8 +87,7 @@ def test_source_factory_path_is_fail_closed(value: str) -> None:
 
 def test_built_in_production_source_factory_is_loadable() -> None:
     factory = load_approval_scheduler_source_factory(
-        "saas.control_plane.approval_source_adapters:"
-        "production_approval_scheduler_source_factory"
+        "saas.control_plane.approval_source_adapters:production_approval_scheduler_source_factory"
     )
     assert callable(factory)
 

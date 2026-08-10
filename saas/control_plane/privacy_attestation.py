@@ -136,9 +136,7 @@ def _utc(value: datetime) -> datetime:
 
 def _parse_time(value: object, field: str) -> datetime:
     if not isinstance(value, str):
-        raise PlatformSecurityError(
-            "platform_privacy_attestation_invalid", f"{field} is invalid"
-        )
+        raise PlatformSecurityError("platform_privacy_attestation_invalid", f"{field} is invalid")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
@@ -154,9 +152,7 @@ def _sha256(value: object, field: str) -> str:
         or len(value) != 64
         or any(character not in "0123456789abcdef" for character in value)
     ):
-        raise PlatformSecurityError(
-            "platform_privacy_attestation_invalid", f"{field} is invalid"
-        )
+        raise PlatformSecurityError("platform_privacy_attestation_invalid", f"{field} is invalid")
     return value
 
 
@@ -166,9 +162,7 @@ def _revision(value: object, field: str) -> str:
         or len(value) != 40
         or any(character not in "0123456789abcdef" for character in value)
     ):
-        raise PlatformSecurityError(
-            "platform_privacy_attestation_invalid", f"{field} is invalid"
-        )
+        raise PlatformSecurityError("platform_privacy_attestation_invalid", f"{field} is invalid")
     return value
 
 

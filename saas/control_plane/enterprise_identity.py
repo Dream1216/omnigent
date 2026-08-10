@@ -434,8 +434,7 @@ class EnterpriseScimService:
         }
         request_hash = _hash(request_payload)
         receipt_key = (
-            f"scim-directory-configure:{request.tenant_id}:"
-            f"{_digest(f'{directory_id}:{key}')[:48]}"
+            f"scim-directory-configure:{request.tenant_id}:{_digest(f'{directory_id}:{key}')[:48]}"
         )
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
@@ -1865,9 +1864,7 @@ class EnterpriseScimService:
                 "displayname": "displayName",
             }.get(raw_sub_attribute.casefold())
             if manager_sub_attribute is None:
-                raise LifecycleError(
-                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
-                )
+                raise LifecycleError("invalidFilter", "SCIM filter sub-attribute is unsupported")
             return f"{attribute}.{manager_sub_attribute}", None
         attribute_map = {
             "User": {
@@ -1913,9 +1910,7 @@ class EnterpriseScimService:
                 "honorificsuffix": "honorificSuffix",
             }.get(raw_sub_attribute.casefold())
             if name_sub_attribute is None:
-                raise LifecycleError(
-                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
-                )
+                raise LifecycleError("invalidFilter", "SCIM filter sub-attribute is unsupported")
             return f"{attribute}.{name_sub_attribute}", None
         if attribute in {"core.emails", "core.phoneNumbers", "core.addresses"}:
             if raw_sub_attribute is None:
@@ -1946,9 +1941,7 @@ class EnterpriseScimService:
             }[attribute.removeprefix("core.")]
             sub_attribute = allowed_sub_attributes.get(raw_sub_attribute.casefold())
             if sub_attribute is None:
-                raise LifecycleError(
-                    "invalidFilter", "SCIM filter sub-attribute is unsupported"
-                )
+                raise LifecycleError("invalidFilter", "SCIM filter sub-attribute is unsupported")
             return attribute, sub_attribute
         if raw_sub_attribute is None:
             return attribute, None
@@ -2260,10 +2253,7 @@ class EnterpriseScimService:
             )
         )
         return sa.exists(
-            sa.select(1)
-            .select_from(values)
-            .where(predicate)
-            .correlate(EnterpriseScimUserRecord)
+            sa.select(1).select_from(values).where(predicate).correlate(EnterpriseScimUserRecord)
         )
 
     @classmethod
@@ -2330,11 +2320,7 @@ class EnterpriseScimService:
         if expression.operator == "pr":
             return column.is_not(None)
         if expression.value is None:
-            return (
-                column.is_(None)
-                if expression.operator == "eq"
-                else column.is_not(None)
-            )
+            return column.is_(None) if expression.operator == "eq" else column.is_not(None)
         if canonical_attribute == "primary":
             predicate = column == cast(bool, expression.value)
         else:
@@ -2822,10 +2808,7 @@ class EnterpriseScimService:
             display_name=str(payload["display_name"]),
             provider_type=str(payload.get("provider_type", "generic")),
             attribute_mapping=(
-                {
-                    str(source): str(target)
-                    for source, target in raw_mapping.items()
-                }
+                {str(source): str(target) for source, target in raw_mapping.items()}
                 if isinstance((raw_mapping := payload.get("attribute_mapping")), dict)
                 else {}
             ),

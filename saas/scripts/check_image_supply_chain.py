@@ -482,9 +482,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "artifact-metadata: write",
         "packages: write",
         "subject-path: dist/*.whl",
-        "--signer-workflow \"$SIGNER_WORKFLOW\"",
+        '--signer-workflow "$SIGNER_WORKFLOW"',
         "--source-ref refs/heads/main",
-        "--source-digest \"$PRODUCT_REVISION\"",
+        '--source-digest "$PRODUCT_REVISION"',
         "production_deployment_receipt: null",
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
@@ -648,9 +648,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
                 "https://github.com/Dream1216/omnigent/.github/workflows/"
                 "saas-image-candidate.yml@refs/heads/main"
             ),
-            "trusted_oidc_subject": (
-                "repo:Dream1216/omnigent:environment:production-image"
-            ),
+            "trusted_oidc_subject": ("repo:Dream1216/omnigent:environment:production-image"),
             "trusted_builder_id": "https://github.com/actions/runner",
             "trusted_environment": "production-image",
         }

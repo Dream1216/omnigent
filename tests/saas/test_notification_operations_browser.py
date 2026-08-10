@@ -128,9 +128,7 @@ def _write_certificate(directory: Path) -> tuple[Path, Path]:
             x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
             critical=False,
         )
-        .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True
-        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True)
         .sign(key, hashes.SHA256())
     )
     certificate_path = directory / "notification-operations-browser.crt"
@@ -228,9 +226,7 @@ def _context(browser: Browser, origin: str, *, realm: str) -> BrowserContext:
         csrf = "staff-csrf"
         storage_key = "omnigent.platform.csrf"
     context.add_cookies([{**cookie, "url": origin, "secure": True, "sameSite": "Lax"}])
-    context.add_init_script(
-        f"sessionStorage.setItem({storage_key!r}, {csrf!r});"
-    )
+    context.add_init_script(f"sessionStorage.setItem({storage_key!r}, {csrf!r});")
     return context
 
 

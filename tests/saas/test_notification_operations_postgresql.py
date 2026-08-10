@@ -17,9 +17,7 @@ from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 def _postgres_url() -> str:
     url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
     if not url:
-        pytest.skip(
-            "OMNIGENT_SAAS_TEST_POSTGRES_URL is required for notification RLS acceptance"
-        )
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required for notification RLS acceptance")
     return url
 
 
@@ -79,9 +77,7 @@ def _scope(
     )
 
 
-def _tenant_identity(
-    connection: sa.Connection, *, user_id: UUID, tenant_id: UUID
-) -> None:
+def _tenant_identity(connection: sa.Connection, *, user_id: UUID, tenant_id: UUID) -> None:
     connection.execute(
         sa.text(
             "SELECT set_config('app.actor_id', :user_id, true), "
@@ -222,9 +218,7 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
 
     with engine.begin() as connection:
         _migrate(connection, root)
-        authority = (root / "saas/control_plane/postgresql_roles.sql").read_text(
-            encoding="utf-8"
-        )
+        authority = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         connection.exec_driver_sql(authority)
         connection.exec_driver_sql(authority)
 
@@ -481,9 +475,11 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
 
     with engine.begin() as connection:
         protected = connection.execute(
-            sa.select(sa.literal_column("relname")).select_from(
+            sa.select(sa.literal_column("relname"))
+            .select_from(
                 sa.text("pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace")
-            ).where(
+            )
+            .where(
                 sa.literal_column("nspname") == "public",
                 sa.literal_column("relname").in_(CONTROL_PLANE_RLS_TABLES),
                 sa.literal_column("relrowsecurity"),
@@ -530,17 +526,23 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=work_delegated,
             operation_id=operation_delegated,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": work_delegated},
-        ).scalar_one() == 1
-        assert connection.execute(
-            sa.text(
-                "UPDATE saas_approval_work_items SET priority = 'high', version = version + 1, "
-                "updated_at = :now WHERE id = :id"
-            ),
-            {"id": work_delegated, "now": now + timedelta(seconds=1)},
-        ).rowcount == 1
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": work_delegated},
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_approval_work_items SET priority = 'high', "
+                    "version = version + 1, updated_at = :now WHERE id = :id"
+                ),
+                {"id": work_delegated, "now": now + timedelta(seconds=1)},
+            ).rowcount
+            == 1
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_governance")
@@ -554,16 +556,20 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=work_delegated,
             operation_id=operation_delegated,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": work_delegated},
-        ).scalar_one() == 0
-        assert connection.execute(
-            sa.text(
-                "UPDATE saas_approval_work_items SET updated_at = :now WHERE id = :id"
-            ),
-            {"id": work_delegated, "now": now + timedelta(seconds=2)},
-        ).rowcount == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": work_delegated},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                sa.text("UPDATE saas_approval_work_items SET updated_at = :now WHERE id = :id"),
+                {"id": work_delegated, "now": now + timedelta(seconds=2)},
+            ).rowcount
+            == 0
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform_governance")
@@ -577,10 +583,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=staff_work,
             operation_id=staff_operation,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": staff_work},
-        ).scalar_one() == 1
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": staff_work},
+            ).scalar_one()
+            == 1
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform_governance")
@@ -594,10 +603,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=staff_work,
             operation_id=staff_operation,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": staff_work},
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": staff_work},
+            ).scalar_one()
+            == 0
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform_governance")
@@ -611,10 +623,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=staff_work,
             operation_id=staff_operation,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": staff_work},
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": staff_work},
+            ).scalar_one()
+            == 0
+        )
 
     with pytest.raises(DBAPIError) as enterprise_wrong_tenant:
         with engine.begin() as connection:
@@ -633,8 +648,7 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             )
             connection.execute(
                 sa.text(
-                    "SELECT set_config('app.notification_source_authority', "
-                    "'enterprise', true)"
+                    "SELECT set_config('app.notification_source_authority', 'enterprise', true)"
                 )
             )
             _insert_work(
@@ -685,18 +699,21 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             operation_id=enterprise_operation,
             mutation="terminal",
         )
-        assert connection.execute(
-            sa.text(
-                "UPDATE saas_approval_work_items SET status = 'approved', "
-                "decided_by_user_id = :approver, decision_code = 'enterprise_approved', "
-                "decided_at = :now, version = version + 1, updated_at = :now WHERE id = :id"
-            ),
-            {
-                "approver": approver,
-                "now": now + timedelta(seconds=3),
-                "id": enterprise_work,
-            },
-        ).rowcount == 1
+        assert (
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_approval_work_items SET status = 'approved', "
+                    "decided_by_user_id = :approver, decision_code = 'enterprise_approved', "
+                    "decided_at = :now, version = version + 1, updated_at = :now WHERE id = :id"
+                ),
+                {
+                    "approver": approver,
+                    "now": now + timedelta(seconds=3),
+                    "id": enterprise_work,
+                },
+            ).rowcount
+            == 1
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
@@ -712,9 +729,12 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_notification_scheduler")
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE status = 'pending'")
-        ).scalar_one() >= 3
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE status = 'pending'")
+            ).scalar_one()
+            >= 3
+        )
         _scope(
             connection,
             realm="tenant",
@@ -725,18 +745,21 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             operation_id=operation_send,
             mutation="scheduler",
         )
-        assert connection.execute(
-            sa.text(
-                "UPDATE saas_approval_work_items SET priority = 'high', "
-                "escalation_at = :escalation, escalation_count = 1, version = 2, "
-                "updated_at = :updated WHERE id = :id"
-            ),
-            {
-                "escalation": now + timedelta(minutes=20),
-                "updated": now + timedelta(minutes=5),
-                "id": work_send,
-            },
-        ).rowcount == 1
+        assert (
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_approval_work_items SET priority = 'high', "
+                    "escalation_at = :escalation, escalation_count = 1, version = 2, "
+                    "updated_at = :updated WHERE id = :id"
+                ),
+                {
+                    "escalation": now + timedelta(minutes=20),
+                    "updated": now + timedelta(minutes=5),
+                    "id": work_send,
+                },
+            ).rowcount
+            == 1
+        )
 
     with pytest.raises(DBAPIError) as source_binding:
         with engine.begin() as connection:
@@ -759,12 +782,15 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_notification_dispatcher")
-        assert connection.execute(
-            sa.text(
-                "SELECT count(*) FROM saas_notification_deliveries "
-                "WHERE status IN ('pending', 'retry')"
-            )
-        ).scalar_one() >= 2
+        assert (
+            connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM saas_notification_deliveries "
+                    "WHERE status IN ('pending', 'retry')"
+                )
+            ).scalar_one()
+            >= 2
+        )
         _scope(
             connection,
             realm="tenant",
@@ -776,10 +802,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             template_id=template_global,
             mutation="dispatch",
         )
-        assert connection.execute(
-            sa.text("SELECT status FROM saas_approval_work_items WHERE id = :id"),
-            {"id": work_send},
-        ).scalar_one() == "pending"
+        assert (
+            connection.execute(
+                sa.text("SELECT status FROM saas_approval_work_items WHERE id = :id"),
+                {"id": work_send},
+            ).scalar_one()
+            == "pending"
+        )
         connection.execute(
             sa.text(
                 "UPDATE saas_notification_deliveries SET status = 'leased', "
@@ -795,10 +824,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
                 "id": delivery_send,
             },
         )
-        assert connection.execute(
-            sa.text("SELECT status FROM saas_notification_deliveries WHERE id = :id"),
-            {"id": delivery_send},
-        ).scalar_one() == "leased"
+        assert (
+            connection.execute(
+                sa.text("SELECT status FROM saas_notification_deliveries WHERE id = :id"),
+                {"id": delivery_send},
+            ).scalar_one()
+            == "leased"
+        )
         attempt_id = uuid4()
         connection.execute(
             sa.text(
@@ -874,9 +906,12 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             template_id=template_global,
             mutation="ack",
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_notification_deliveries")
-        ).scalar_one() == 3
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_notification_deliveries")
+            ).scalar_one()
+            == 3
+        )
         connection.execute(
             sa.text(
                 "UPDATE saas_notification_deliveries SET recipient_read_at = :read_at, "
@@ -904,10 +939,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             template_id=template_global,
             mutation="dispatch",
         )
-        assert connection.execute(
-            sa.text("SELECT status FROM saas_approval_work_items WHERE id = :id"),
-            {"id": enterprise_work},
-        ).scalar_one() == "approved"
+        assert (
+            connection.execute(
+                sa.text("SELECT status FROM saas_approval_work_items WHERE id = :id"),
+                {"id": enterprise_work},
+            ).scalar_one()
+            == "approved"
+        )
         connection.execute(
             sa.text(
                 "UPDATE saas_notification_deliveries SET status = 'suppressed', "
@@ -932,10 +970,7 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
         )
         assert delivery_dlq in set(
             connection.execute(
-                sa.text(
-                    "SELECT id FROM saas_notification_deliveries "
-                    "WHERE status = 'dead_letter'"
-                )
+                sa.text("SELECT id FROM saas_notification_deliveries WHERE status = 'dead_letter'")
             ).scalars()
         )
         connection.execute(
@@ -1046,10 +1081,13 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             work_item_id=work_delegated,
             operation_id=operation_delegated,
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
-            {"id": work_delegated},
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_approval_work_items WHERE id = :id"),
+                {"id": work_delegated},
+            ).scalar_one()
+            == 0
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
@@ -1079,9 +1117,12 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             principal_id=operator,
             mutation="template_list",
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_notification_templates")
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_notification_templates")
+            ).scalar_one()
+            == 0
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_governance")
@@ -1094,8 +1135,11 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts() -
             user_id=requester,
             mutation="template_list",
         )
-        assert connection.execute(
-            sa.text("SELECT count(*) FROM saas_notification_templates")
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_notification_templates")
+            ).scalar_one()
+            == 0
+        )
 
     engine.dispose()

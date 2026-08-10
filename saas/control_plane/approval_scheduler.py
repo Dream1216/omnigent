@@ -164,9 +164,7 @@ class ApprovalScheduler:
                 failed += 1
                 continue
             try:
-                generation = self._advance_escalation_and_notify(
-                    work, recipients, at
-                )
+                generation = self._advance_escalation_and_notify(work, recipients, at)
             except (
                 ApprovalOperationsError,
                 NotificationDeliveryError,
@@ -215,9 +213,7 @@ class ApprovalScheduler:
             record.version += 1
             record.updated_at = at
             event_type = (
-                "approval.reminder"
-                if record.escalation_count == 1
-                else "approval.escalated"
+                "approval.reminder" if record.escalation_count == 1 else "approval.escalated"
             )
             self._enqueue_notifications(
                 db,
@@ -313,9 +309,7 @@ class ApprovalScheduler:
                     recipient_id=recipient_id,
                     event_type=event_type,
                     channels=("in_app", "email"),
-                    deduplication_token=(
-                        f"{work.id}:{event_type}:{generation}:{recipient_id}"
-                    ),
+                    deduplication_token=(f"{work.id}:{event_type}:{generation}:{recipient_id}"),
                     render_context_values=(
                         str(work.id),
                         work.action,

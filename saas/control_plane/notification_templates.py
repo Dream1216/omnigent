@@ -89,9 +89,7 @@ class PackagedNotificationTemplateCatalog:
                 or artifact.channel != entry.channel
                 or artifact.locale != entry.locale
                 or artifact.version != entry.version
-                or not hmac.compare_digest(
-                    artifact.content_sha256, entry.content_sha256
-                )
+                or not hmac.compare_digest(artifact.content_sha256, entry.content_sha256)
                 or not hmac.compare_digest(
                     artifact.variables_schema_sha256,
                     entry.variables_schema_sha256,
@@ -131,9 +129,7 @@ class PackagedNotificationTemplateCatalog:
         artifact = max(candidates, key=lambda value: value.version)
         if (
             expected_content_sha256 is not None
-            and not hmac.compare_digest(
-                artifact.content_sha256, expected_content_sha256
-            )
+            and not hmac.compare_digest(artifact.content_sha256, expected_content_sha256)
         ) or (
             expected_variables_schema_sha256 is not None
             and not hmac.compare_digest(
@@ -222,8 +218,7 @@ def load_notification_template_manifest() -> NotificationTemplateManifest:
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise NotificationDeliveryError("notification_template_manifest_invalid") from error
     identities = {
-        (value.template_key, value.channel, value.locale, value.version)
-        for value in entries
+        (value.template_key, value.channel, value.locale, value.version) for value in entries
     }
     handles = {value.content_artifact_handle for value in entries}
     coverage = {(value.template_key, value.channel) for value in entries}

@@ -293,9 +293,7 @@ def test_scheduler_does_not_advance_when_dynamic_audience_is_revoked() -> None:
 
 def test_expiry_remains_committed_when_terminal_notification_fails() -> None:
     harness = _harness()
-    work = harness.project(
-        due_at=NOW + timedelta(minutes=1), escalation_at=NOW
-    )
+    work = harness.project(due_at=NOW + timedelta(minutes=1), escalation_at=NOW)
     harness.notifications.blocked_work_items.add(work.id)
     result = ApprovalScheduler(
         harness.factory,

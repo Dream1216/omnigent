@@ -136,9 +136,7 @@ class FakeEnterpriseAuthority:
                     required_permission=work.required_permission,
                     expected_snapshot_hash=command.expected_snapshot_hash,
                     expected_projection_version=command.expected_projection_version,
-                    status=(
-                        "approved" if command.decision == "approve" else "rejected"
-                    ),
+                    status=("approved" if command.decision == "approve" else "rejected"),
                     decision_code=command.decision_code,
                     decided_by_id=actor.actor_id,
                     decided_at=now,
@@ -212,9 +210,7 @@ def approvals() -> ApprovalHarness:
     )
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    tenant_id, requester_id, assignee_id, delegate_id, outsider_id = (
-        uuid4() for _ in range(5)
-    )
+    tenant_id, requester_id, assignee_id, delegate_id, outsider_id = (uuid4() for _ in range(5))
     with factory.begin() as db:
         db.add(
             Tenant(
@@ -240,9 +236,7 @@ def approvals() -> ApprovalHarness:
             for value in (requester_id, assignee_id, delegate_id, outsider_id)
         )
     projection = ApprovalProjectionService()
-    authority = FakeEnterpriseAuthority(
-        factory, {assignee_id, delegate_id, outsider_id}
-    )
+    authority = FakeEnterpriseAuthority(factory, {assignee_id, delegate_id, outsider_id})
     service = ApprovalOperationsService(
         factory,
         projection=projection,

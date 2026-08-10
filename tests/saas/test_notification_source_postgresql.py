@@ -227,9 +227,7 @@ def _insert_delivery(
 def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
     root = Path(__file__).resolve().parents[2]
     base_url = make_url(_postgres_url())
-    role_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(
-        encoding="utf-8"
-    )
+    role_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
     login_suffix = uuid4().hex[:10]
     database_name = f"omnigent_notification_source_{login_suffix}"
     database_url = base_url.set(database=database_name)
@@ -251,9 +249,12 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
         with engine.begin() as connection:
             config = _config(root, connection)
             command.upgrade(config, "pc5c00000001")
-            assert connection.execute(
-                sa.text("SELECT version_num FROM saas_alembic_version")
-            ).scalar_one() == "pc5c00000001"
+            assert (
+                connection.execute(
+                    sa.text("SELECT version_num FROM saas_alembic_version")
+                ).scalar_one()
+                == "pc5c00000001"
+            )
             command.upgrade(config, "pc5c00000002")
             connection.exec_driver_sql(role_sql)
 
@@ -479,12 +480,18 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                 },
             )
 
-            assert connection.execute(
-                sa.text("SELECT count(id) FROM saas_platform_staff_principals")
-            ).scalar_one() == 2
-            assert connection.execute(
-                sa.text("SELECT count(user_id) FROM saas_tenant_memberships")
-            ).scalar_one() == 1
+            assert (
+                connection.execute(
+                    sa.text("SELECT count(id) FROM saas_platform_staff_principals")
+                ).scalar_one()
+                == 2
+            )
+            assert (
+                connection.execute(
+                    sa.text("SELECT count(user_id) FROM saas_tenant_memberships")
+                ).scalar_one()
+                == 1
+            )
 
         # Planning-only column grants must not turn into directory reads. The
         # source audience policies require the explicit ``audience`` mutation;
@@ -499,12 +506,18 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                     realm=realm,
                     tenant_id=tenant_id if realm == "tenant" else None,
                 )
-                assert connection.execute(
-                    sa.text("SELECT count(id) FROM saas_platform_staff_principals")
-                ).scalar_one() == 0
-                assert connection.execute(
-                    sa.text("SELECT count(user_id) FROM saas_tenant_memberships")
-                ).scalar_one() == 0
+                assert (
+                    connection.execute(
+                        sa.text("SELECT count(id) FROM saas_platform_staff_principals")
+                    ).scalar_one()
+                    == 0
+                )
+                assert (
+                    connection.execute(
+                        sa.text("SELECT count(user_id) FROM saas_tenant_memberships")
+                    ).scalar_one()
+                    == 0
+                )
 
         customer_engine = login_engines["support.customer"]
         with customer_engine.begin() as connection:
@@ -538,19 +551,23 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                 delivery_id=customer_delivery,
                 template_id=template_id,
             )
-            assert connection.execute(
-                sa.text(
-                    "SELECT count(id) FROM saas_approval_work_items WHERE id = :work"
-                ),
-                {"work": customer_work},
-            ).scalar_one() == 1
-            assert connection.execute(
-                sa.text(
-                    "SELECT count(user_id) FROM saas_tenant_memberships "
-                    "WHERE tenant_id = :tenant AND user_id = :user"
-                ),
-                {"tenant": tenant_id, "user": customer_id},
-            ).scalar_one() == 1
+            assert (
+                connection.execute(
+                    sa.text("SELECT count(id) FROM saas_approval_work_items WHERE id = :work"),
+                    {"work": customer_work},
+                ).scalar_one()
+                == 1
+            )
+            assert (
+                connection.execute(
+                    sa.text(
+                        "SELECT count(user_id) FROM saas_tenant_memberships "
+                        "WHERE tenant_id = :tenant AND user_id = :user"
+                    ),
+                    {"tenant": tenant_id, "user": customer_id},
+                ).scalar_one()
+                == 1
+            )
             assert connection.execute(
                 sa.text(
                     "SELECT approval_notification_binding_is_valid("
@@ -569,10 +586,13 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                 work_item_id=customer_work,
                 now=now,
             )
-            assert connection.execute(
-                sa.text("SELECT count(id) FROM saas_notification_deliveries WHERE id = :id"),
-                {"id": customer_delivery},
-            ).scalar_one() == 1
+            assert (
+                connection.execute(
+                    sa.text("SELECT count(id) FROM saas_notification_deliveries WHERE id = :id"),
+                    {"id": customer_delivery},
+                ).scalar_one()
+                == 1
+            )
 
         with pytest.raises(DBAPIError) as forged_terminal:
             with customer_engine.begin() as connection:
@@ -656,24 +676,29 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                 work_item_id=staff_work,
                 now=now,
             )
-            assert connection.execute(
-                sa.text("SELECT count(id) FROM saas_notification_deliveries WHERE id = :id"),
-                {"id": staff_delivery},
-            ).scalar_one() == 1
+            assert (
+                connection.execute(
+                    sa.text("SELECT count(id) FROM saas_notification_deliveries WHERE id = :id"),
+                    {"id": staff_delivery},
+                ).scalar_one()
+                == 1
+            )
 
         for login_engine in login_engines.values():
             login_engine.dispose()
 
         with engine.begin() as connection:
             command.downgrade(_config(root, connection), "pc5c00000001")
-            assert connection.execute(
-                sa.text("SELECT version_num FROM saas_alembic_version")
-            ).scalar_one() == "pc5c00000001"
+            assert (
+                connection.execute(
+                    sa.text("SELECT version_num FROM saas_alembic_version")
+                ).scalar_one()
+                == "pc5c00000001"
+            )
             for source_role in SOURCE_ROLES.values():
                 assert not connection.execute(
                     sa.text(
-                        "SELECT has_table_privilege(:role, "
-                        "'saas_approval_work_items', 'SELECT')"
+                        "SELECT has_table_privilege(:role, 'saas_approval_work_items', 'SELECT')"
                     ),
                     {"role": source_role},
                 ).scalar_one()
@@ -686,9 +711,12 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
                 ).scalar_one()
             command.upgrade(_config(root, connection), "pc5c00000002")
             connection.exec_driver_sql(role_sql)
-            assert connection.execute(
-                sa.text("SELECT version_num FROM saas_alembic_version")
-            ).scalar_one() == "pc5c00000002"
+            assert (
+                connection.execute(
+                    sa.text("SELECT version_num FROM saas_alembic_version")
+                ).scalar_one()
+                == "pc5c00000002"
+            )
     finally:
         for login_engine in login_engines.values():
             login_engine.dispose()

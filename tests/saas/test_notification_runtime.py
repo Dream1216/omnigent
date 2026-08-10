@@ -109,9 +109,7 @@ def test_https_email_provider_classifies_status_without_response_leak(
 ) -> None:
     client = httpx.Client(
         transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                status, content=b"raw-provider-secret", request=request
-            )
+            lambda request: httpx.Response(status, content=b"raw-provider-secret", request=request)
         ),
         trust_env=False,
         follow_redirects=False,

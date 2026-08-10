@@ -200,12 +200,10 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
         command.upgrade(config, "head")
         inspector = sa.inspect(connection)
         assert {"provider_type", "attribute_mapping"} <= {
-            column["name"]
-            for column in inspector.get_columns("saas_enterprise_scim_directories")
+            column["name"] for column in inspector.get_columns("saas_enterprise_scim_directories")
         }
         assert {"core_attributes", "enterprise_attributes"} <= {
-            column["name"]
-            for column in inspector.get_columns("saas_enterprise_scim_users")
+            column["name"] for column in inspector.get_columns("saas_enterprise_scim_users")
         }
 
         now = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
@@ -259,7 +257,6 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
         command.downgrade(config, "pc6a00000001")
         downgraded = sa.inspect(connection)
         assert "provider_type" not in {
-            column["name"]
-            for column in downgraded.get_columns("saas_enterprise_scim_directories")
+            column["name"] for column in downgraded.get_columns("saas_enterprise_scim_directories")
         }
     engine.dispose()

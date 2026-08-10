@@ -49,15 +49,11 @@ class PublicApiMutationReceiptRecord(SaasBase):
             ondelete="RESTRICT",
         ),
         sa.CheckConstraint("length(operation) > 0", name="ck_public_api_receipt_operation"),
-        sa.CheckConstraint(
-            "length(idempotency_key_id) > 0", name="ck_public_api_receipt_key_id"
-        ),
+        sa.CheckConstraint("length(idempotency_key_id) > 0", name="ck_public_api_receipt_key_id"),
         sa.CheckConstraint(
             "length(idempotency_hmac) = 64", name="ck_public_api_receipt_idempotency"
         ),
-        sa.CheckConstraint(
-            "length(request_hash) = 64", name="ck_public_api_receipt_request_hash"
-        ),
+        sa.CheckConstraint("length(request_hash) = 64", name="ck_public_api_receipt_request_hash"),
         sa.CheckConstraint(
             "length(resource_type) > 0", name="ck_public_api_receipt_resource_type"
         ),
@@ -89,9 +85,7 @@ class PublicApiRateLimitRecord(SaasBase):
         sa.ForeignKey("saas_api_credentials.id", ondelete="CASCADE"), primary_key=True
     )
     route_class: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
-    window_started_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), nullable=False
-    )
+    window_started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     request_count: Mapped[int] = mapped_column(nullable=False)
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(

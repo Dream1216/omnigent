@@ -8,15 +8,9 @@ from typing import Literal, cast
 
 SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
-SCIM_ENTERPRISE_USER_SCHEMA = (
-    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
-)
-SCIM_GOVERNANCE_USER_SCHEMA = (
-    "urn:omnigent:params:scim:schemas:extension:governance:1.0:User"
-)
-SCIM_GOVERNANCE_GROUP_SCHEMA = (
-    "urn:omnigent:params:scim:schemas:extension:governance:1.0:Group"
-)
+SCIM_ENTERPRISE_USER_SCHEMA = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+SCIM_GOVERNANCE_USER_SCHEMA = "urn:omnigent:params:scim:schemas:extension:governance:1.0:User"
+SCIM_GOVERNANCE_GROUP_SCHEMA = "urn:omnigent:params:scim:schemas:extension:governance:1.0:Group"
 SCIM_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 SCIM_CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
@@ -231,16 +225,12 @@ _RESOURCE_TYPES = MappingProxyType(
             "endpoint": "/Groups",
             "description": "Tenant Directory Group",
             "schema": SCIM_GROUP_SCHEMA,
-            "schemaExtensions": [
-                {"schema": SCIM_GOVERNANCE_GROUP_SCHEMA, "required": False}
-            ],
+            "schemaExtensions": [{"schema": SCIM_GOVERNANCE_GROUP_SCHEMA, "required": False}],
         },
     }
 )
 
-IDP_PROVIDER_TYPES = frozenset(
-    {"generic", "microsoft_entra", "okta", "google_workspace"}
-)
+IDP_PROVIDER_TYPES = frozenset({"generic", "microsoft_entra", "okta", "google_workspace"})
 SUPPORTED_IDP_ATTRIBUTE_PATHS = frozenset(
     {
         "userName",
@@ -325,9 +315,7 @@ def schema_resource(schema_id: str) -> dict[str, object] | None:
 
 
 def resource_type_resources() -> tuple[dict[str, object], ...]:
-    return tuple(
-        cast(dict[str, object], deepcopy(value)) for value in _RESOURCE_TYPES.values()
-    )
+    return tuple(cast(dict[str, object], deepcopy(value)) for value in _RESOURCE_TYPES.values())
 
 
 def resource_type_resource(resource_id: str) -> dict[str, object] | None:
