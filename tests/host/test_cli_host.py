@@ -172,6 +172,19 @@ def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
     assert secret not in result.output
     assert output.read_text().strip() == secret
     assert output.stat().st_mode & 0o777 == 0o600
+    metadata_path = cli_mod._host_credential_metadata_path(output)
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata_path.stat().st_mode & 0o777 == 0o600
+    assert metadata == {
+        "schema_version": "omnigent.host-credential/v2",
+        "server": "https://next.example.com",
+        "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+        "generation": 1,
+        "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+        "operation_id": operation_id,
+        "expires_at": 2_000_000_000,
+    }
+    assert secret not in metadata_path.read_text()
     remaining_auth = json.loads(auth_file.read_text())
     assert "https://next.example.com" not in remaining_auth
     assert "https://unrelated.example.com" in remaining_auth
@@ -179,19 +192,19 @@ def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
         {
             "base_url": "https://next.example.com",
             "method": "GET",
-            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials",
+            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials/v2",
         },
         {
             "base_url": "https://next.example.com",
             "method": "POST",
-            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials",
+            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials/v2",
             "json_body": {
                 "ttl_seconds": 30 * 24 * 3600,
                 "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
                 "expected_generation": 0,
                 "operation_id": operation_id,
             },
-        }
+        },
     ]
 
 
@@ -211,7 +224,10 @@ def test_host_credential_issue_refuses_unsafe_parent_and_revokes_server_token(
         if method == "GET":
             return cli_mod._HostHttpResult(status_code=200, body={"generation": 0})
         if method == "DELETE":
-            assert kwargs["params"] == {"expected_generation": 1}
+            assert kwargs["params"] == {
+                "expected_generation": 1,
+                "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            }
             # A concurrent writer already installed generation 2. The failed
             # local writer must not revoke that newer generation.
             return cli_mod._HostHttpResult(status_code=409, body={"detail": "CAS lost"})
@@ -256,6 +272,70 @@ def test_host_credential_issue_refuses_unsafe_parent_and_revokes_server_token(
     assert calls == ["GET", "POST", "DELETE"]
 
 
+def test_host_credential_issue_removes_matching_raw_file_when_sidecar_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confirmed cleanup does not leave an unbound raw credential on disk."""
+    import omnigent.cli as cli_mod
+
+    secret = "sidecar-failure-secret"
+    operation_id = "c" * 32
+    calls: list[str] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        method = str(kwargs["method"])
+        calls.append(method)
+        if method == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 0})
+        if method == "DELETE":
+            assert kwargs["params"] == {
+                "expected_generation": 1,
+                "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+            }
+            return cli_mod._HostHttpResult(status_code=204, body="")
+        return cli_mod._HostHttpResult(
+            status_code=200,
+            body={
+                "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+                "token_type": "host_tunnel",
+                "generation": 1,
+                "operation_id": operation_id,
+                "expires_at": 2_000_000_000,
+            },
+        )
+
+    def _fail_binding(*_args: object, **_kwargs: object) -> None:
+        raise OSError("sidecar fsync failed")
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    monkeypatch.setattr(cli_mod.secrets, "token_urlsafe", lambda _size: secret)
+    monkeypatch.setattr(cli_mod.secrets, "token_hex", lambda _size: operation_id)
+    monkeypatch.setattr(cli_mod, "_write_host_credential_binding", _fail_binding)
+    output = tmp_path / "host-token"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "issue",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "issued generation was conditionally revoked" in result.output
+    assert secret not in result.output
+    assert not output.exists()
+    assert not cli_mod._host_credential_metadata_path(output).exists()
+    assert calls == ["GET", "POST", "DELETE"]
+
+
 def test_host_credential_revoke_deletes_file_only_after_server_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -265,12 +345,20 @@ def test_host_credential_revoke_deletes_file_only_after_server_success(
     credential_file = tmp_path / "host-token"
     credential_file.write_text("opaque-token\n")
     os.chmod(credential_file, 0o600)
+    cli_mod._write_host_credential_binding(
+        credential_file,
+        server="https://next.example.com",
+        host_id="9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+        generation=7,
+        token_sha256=hashlib.sha256(b"opaque-token").hexdigest(),
+        operation_id="7" * 32,
+        expires_at=2_000_000_000,
+    )
+    metadata_file = cli_mod._host_credential_metadata_path(credential_file)
     calls: list[dict[str, object]] = []
 
     def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
         calls.append(kwargs)
-        if kwargs["method"] == "GET":
-            return cli_mod._HostHttpResult(status_code=200, body={"generation": 7})
         return cli_mod._HostHttpResult(status_code=204, body="")
 
     monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
@@ -292,8 +380,13 @@ def test_host_credential_revoke_deletes_file_only_after_server_success(
 
     assert result.exit_code == 0, result.output
     assert not credential_file.exists()
+    assert not metadata_file.exists()
     assert "opaque-token" not in result.output
-    assert calls[-1]["params"] == {"expected_generation": 7}
+    assert [call["method"] for call in calls] == ["DELETE"]
+    assert calls[-1]["params"] == {
+        "expected_generation": 7,
+        "token_sha256": hashlib.sha256(b"opaque-token").hexdigest(),
+    }
 
 
 @pytest.mark.parametrize("status_code", [200, 302])
@@ -308,10 +401,18 @@ def test_host_credential_revoke_preserves_file_without_exact_204(
     credential_file = tmp_path / "host-token"
     credential_file.write_text("preserve-this-token\n")
     os.chmod(credential_file, 0o600)
+    cli_mod._write_host_credential_binding(
+        credential_file,
+        server="https://next.example.com",
+        host_id="9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+        generation=3,
+        token_sha256=hashlib.sha256(b"preserve-this-token").hexdigest(),
+        operation_id="3" * 32,
+        expires_at=2_000_000_000,
+    )
+    metadata_file = cli_mod._host_credential_metadata_path(credential_file)
 
     def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
-        if kwargs["method"] == "GET":
-            return cli_mod._HostHttpResult(status_code=200, body={"generation": 3})
         return cli_mod._HostHttpResult(status_code=status_code, body="not the revoke endpoint")
 
     monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
@@ -333,6 +434,132 @@ def test_host_credential_revoke_preserves_file_without_exact_204(
     assert result.exit_code != 0
     assert "local credential was preserved" in result.output
     assert credential_file.read_text() == "preserve-this-token\n"
+    assert metadata_file.exists()
+
+
+def test_host_credential_revoke_stale_file_cannot_revoke_current_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generation-one file never turns a fresh GET into revocation of generation two."""
+    import omnigent.cli as cli_mod
+
+    credential_file = tmp_path / "host-token"
+    credential_file.write_text("generation-one\n")
+    os.chmod(credential_file, 0o600)
+    digest = hashlib.sha256(b"generation-one").hexdigest()
+    cli_mod._write_host_credential_binding(
+        credential_file,
+        server="https://next.example.com",
+        host_id="9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+        generation=1,
+        token_sha256=digest,
+        operation_id="1" * 32,
+        expires_at=2_000_000_000,
+    )
+    calls: list[dict[str, object]] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        calls.append(kwargs)
+        return cli_mod._HostHttpResult(
+            status_code=409,
+            body={"detail": "external host credential generation changed"},
+        )
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "revoke",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--credential-file",
+            str(credential_file),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert credential_file.read_text() == "generation-one\n"
+    assert cli_mod._host_credential_metadata_path(credential_file).exists()
+    assert [call["method"] for call in calls] == ["DELETE"]
+    assert calls[0]["params"] == {
+        "expected_generation": 1,
+        "token_sha256": digest,
+    }
+
+
+def test_host_credential_revoke_current_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current-generation revoke remains available only behind --current."""
+    import omnigent.cli as cli_mod
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        calls.append(kwargs)
+        if kwargs["method"] == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 8})
+        return cli_mod._HostHttpResult(status_code=204, body="")
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "revoke",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--current",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [call["method"] for call in calls] == ["GET", "DELETE"]
+    assert calls[-1]["params"] == {"expected_generation": 8}
+
+
+def test_host_credential_revoke_file_requires_matching_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy raw files fail safe unless the operator explicitly selects --current."""
+    import omnigent.cli as cli_mod
+
+    credential_file = tmp_path / "legacy-host-token"
+    credential_file.write_text("legacy-token\n")
+    os.chmod(credential_file, 0o600)
+    monkeypatch.setattr(
+        cli_mod,
+        "_host_http_json",
+        lambda **_kwargs: pytest.fail("no management request is allowed without metadata"),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "revoke",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--credential-file",
+            str(credential_file),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "metadata is missing" in result.output
+    assert credential_file.exists()
 
 
 def test_host_credential_issue_retries_response_loss_and_preserves_databricks_routing(

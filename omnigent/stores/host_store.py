@@ -401,6 +401,8 @@ class HostStore:
         name = row.name
         token_hash = row.token_hash
         token_expires_at = row.token_expires_at
+        credential_generation = row.credential_generation
+        credential_operation_id = row.credential_operation_id
         sandbox_provider = row.sandbox_provider
         sandbox_id = row.sandbox_id
 
@@ -442,6 +444,8 @@ class HostStore:
             updated_at=now,
             token_hash=token_hash,
             token_expires_at=token_expires_at,
+            credential_generation=credential_generation,
+            credential_operation_id=credential_operation_id,
             sandbox_provider=sandbox_provider,
             sandbox_id=sandbox_id,
             configured_harnesses=harnesses_json,
@@ -888,11 +892,14 @@ class HostStore:
             # Another transaction may have committed after the first read.
             # Recognize only the exact same operation+digest as an idempotent
             # response-loss retry; every other winner is a real conflict.
+            session.expire_all()
             current = session.execute(
-                select(SqlHost).where(
+                select(SqlHost)
+                .where(
                     SqlHost.workspace_id == workspace_id,
                     SqlHost.host_id == host_id,
                 )
+                .execution_options(populate_existing=True)
             ).scalar_one_or_none()
             if current is None or current.user_id != user_id:
                 return None
@@ -932,18 +939,24 @@ class HostStore:
         host_id: str,
         user_id: str,
         expected_generation: int,
+        token_sha256: str | None = None,
     ) -> ExternalHostCredentialState | None:
         """Revoke an external host credential without deleting the host row.
 
         :param host_id: Existing external host identifier.
         :param user_id: Authenticated owner requesting revocation.
         :param expected_generation: Generation the caller intends to revoke.
+        :param token_sha256: Optional lowercase SHA-256 digest that must match
+            the active generation. Credential-file revocation supplies this
+            fence so a stale local file cannot revoke a newer credential.
         :returns: Revoked state when owned, ``None`` when absent/not owned.
         :raises HostCredentialConflictError: If a newer generation exists.
         :raises ValueError: If *host_id* identifies a managed sandbox host.
         """
         if expected_generation < 0:
             raise ValueError("external host credential generation must be non-negative")
+        if token_sha256 is not None and not _is_lower_hex(token_sha256, lengths={64}):
+            raise ValueError("external host credential digest must be lowercase SHA-256")
         workspace_id = current_workspace_id()
         with self._credential_session("revoke_external_host_credential") as session:
             row = session.execute(
@@ -966,16 +979,25 @@ class HostStore:
                 raise HostCredentialConflictError(
                     "external host credential generation changed; refresh before revoking"
                 )
+            if token_sha256 is not None and (
+                row.token_hash is None or not hmac.compare_digest(row.token_hash, token_sha256)
+            ):
+                raise HostCredentialConflictError(
+                    "external host credential digest changed; refusing stale-file revoke"
+                )
 
+            conditions = [
+                SqlHost.workspace_id == workspace_id,
+                SqlHost.host_id == host_id,
+                SqlHost.user_id == user_id,
+                SqlHost.sandbox_provider.is_(None),
+                SqlHost.credential_generation == expected_generation,
+            ]
+            if token_sha256 is not None:
+                conditions.append(SqlHost.token_hash == token_sha256)
             result = session.execute(
                 update(SqlHost)
-                .where(
-                    SqlHost.workspace_id == workspace_id,
-                    SqlHost.host_id == host_id,
-                    SqlHost.user_id == user_id,
-                    SqlHost.sandbox_provider.is_(None),
-                    SqlHost.credential_generation == expected_generation,
-                )
+                .where(*conditions)
                 .values(
                     token_hash=None,
                     token_expires_at=None,
@@ -992,11 +1014,14 @@ class HostStore:
                     expires_at=None,
                     active=False,
                 )
+            session.expire_all()
             current = session.execute(
-                select(SqlHost).where(
+                select(SqlHost)
+                .where(
                     SqlHost.workspace_id == workspace_id,
                     SqlHost.host_id == host_id,
                 )
+                .execution_options(populate_existing=True)
             ).scalar_one_or_none()
             if current is None or current.user_id != user_id:
                 return None

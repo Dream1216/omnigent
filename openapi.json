@@ -1851,6 +1851,47 @@
         "title": "ErrorEvent",
         "type": "object"
       },
+      "ExternalHostCredentialV2Request": {
+        "additionalProperties": false,
+        "description": "V2 request body for issuing/rotating an external-host credential.",
+        "properties": {
+          "expected_generation": {
+            "description": "Generation returned by the owner-only status endpoint immediately before issuing.",
+            "format": "int64",
+            "minimum": 0.0,
+            "title": "Expected Generation",
+            "type": "integer"
+          },
+          "operation_id": {
+            "description": "Random id stable across retries of this exact issue.",
+            "pattern": "^[0-9a-f]{32,64}$",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "token_sha256": {
+            "description": "Lowercase SHA-256 digest of a client-generated token. The raw capability never enters the API or server process.",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Token Sha256",
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "default": 7776000,
+            "description": "Finite credential lifetime. The bounded range keeps machine credentials useful across restarts without allowing a never-expiring capability.",
+            "format": "int64",
+            "maximum": 31536000.0,
+            "minimum": 3600.0,
+            "title": "Ttl Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "token_sha256",
+          "expected_generation",
+          "operation_id"
+        ],
+        "title": "ExternalHostCredentialV2Request",
+        "type": "object"
+      },
       "FailedEvent": {
         "description": "Terminal event for a turn that ended with an error.\n\nCarries a `omnigent.server.schemas.FailedResponseObject`\nwhose `error` field describes the failure. Response metadata may\nbe absent when the failure occurs before response allocation.",
         "properties": {
@@ -2508,6 +2549,22 @@
           "workspace"
         ],
         "title": "LaunchRunnerRequest",
+        "type": "object"
+      },
+      "LegacyExternalHostCredentialRequest": {
+        "additionalProperties": false,
+        "description": "Legacy request body for server-generated external-host credentials.",
+        "properties": {
+          "ttl_seconds": {
+            "default": 7776000,
+            "format": "int64",
+            "maximum": 31536000.0,
+            "minimum": 3600.0,
+            "title": "Ttl Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "LegacyExternalHostCredentialRequest",
         "type": "object"
       },
       "LocalImportRequest": {
@@ -8444,6 +8501,95 @@
         ]
       }
     },
+    "/v1/hosts/{host_id}/credentials": {
+      "delete": {
+        "description": "Preserve legacy current-generation revocation semantics.",
+        "operationId": "revoke_legacy_external_host_credential_v1_hosts__host_id__credentials_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Legacy External Host Credential",
+        "tags": [
+          "hosts"
+        ]
+      },
+      "post": {
+        "description": "Preserve the legacy server-generated credential contract.\n\nNew clients use `credentials/v2`. Keeping this route's original\nrequest and response shapes prevents a mixed-version rollout from\ninterpreting a V2 request as a successful legacy rotation.",
+        "operationId": "issue_legacy_external_host_credential_v1_hosts__host_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyExternalHostCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue Legacy External Host Credential V1 Hosts  Host Id  Credentials Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Legacy External Host Credential",
+        "tags": [
+          "hosts"
+        ]
+      }
+    },
     "/v1/hosts/{host_id}/credentials/detected": {
       "get": {
         "description": "List adoptable credentials already present on a connected host.\n\nBacks the setup dialog's \"adopt an existing credential\" affordance: the\nhost reports which UI-auth-family credentials it already has as\nNON-secret descriptors (family + source label + env var name), so the UI\ncan offer a one-click \"Use it\". Owner-scoped and flag-gated like the\ncredential-write route (404 when disabled). Never returns a secret value.\n\n**Returns:** `{\"object\": \"detected_credentials\", \"credentials\": [...]}`.\n\n**Raises**\n\n- `HTTPException` \u2014 404 when disabled or host unknown, 403 when not the owner, 409 when offline, 502/504 on host failure/timeout.",
@@ -8485,6 +8631,165 @@
           }
         },
         "summary": "Detect Host Credentials",
+        "tags": [
+          "hosts"
+        ]
+      }
+    },
+    "/v1/hosts/{host_id}/credentials/v2": {
+      "delete": {
+        "description": "Revoke an external-host credential while preserving the host row.",
+        "operationId": "revoke_external_host_credential_v1_hosts__host_id__credentials_v2_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_generation",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Expected Generation",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token_sha256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token Sha256"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke External Host Credential",
+        "tags": [
+          "hosts"
+        ]
+      },
+      "get": {
+        "description": "Return owner-scoped credential metadata without secret material.",
+        "operationId": "get_external_host_credential_state_v1_hosts__host_id__credentials_v2_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get External Host Credential State V1 Hosts  Host Id  Credentials V2 Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get External Host Credential State",
+        "tags": [
+          "hosts"
+        ]
+      },
+      "post": {
+        "description": "Issue or rotate one owner-scoped external-host tunnel credential.\n\nThe client creates the raw credential and submits only its digest.\nThe database stores that digest behind a generation CAS fence. The\noperation id makes a retry after response loss idempotent. The target\nmust be an existing external host owned by the authenticated caller;\nmanaged sandbox hosts remain under their provider lifecycle.",
+        "operationId": "issue_external_host_credential_v1_hosts__host_id__credentials_v2_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalHostCredentialV2Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue External Host Credential V1 Hosts  Host Id  Credentials V2 Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue External Host Credential",
         "tags": [
           "hosts"
         ]

@@ -8,7 +8,7 @@ credential that is accepted only by the Host WebSocket tunnel.
 
 - The host must first register through normal user authentication. This binds
   its stable `host_id` to the authenticated `user_id` and workspace.
-- `GET /v1/hosts/{host_id}/credentials` returns owner-only, non-secret CAS
+- `GET /v1/hosts/{host_id}/credentials/v2` returns owner-only, non-secret CAS
   metadata (`generation`, active state, expiry) with `Cache-Control: no-store`.
   `POST` accepts only the SHA-256 digest of a client-generated raw token plus
   the observed generation and a retry-stable operation id. The raw token never
@@ -29,6 +29,11 @@ credential that is accepted only by the Host WebSocket tunnel.
 - `sandbox_provider` remains `NULL`, so this Host stays visible in the user's
   external Host picker. Managed sandbox tokens remain under the provider
   lifecycle and cannot be overwritten through this endpoint.
+- The original `/credentials` POST/DELETE contract remains available for old
+  CLIs during a rolling upgrade. V2 uses the distinct `/credentials/v2` path,
+  so a V2 request that lands on an old App replica fails without rotating the
+  credential. Deploy the new CLI only after at least one V2-capable replica is
+  reachable.
 
 ## Issue and install without printing the token
 
@@ -45,10 +50,15 @@ omnigent host credential issue \
 ```
 
 The command generates the raw token locally, sends only its digest, and writes
-the token directly into an atomic `0600` file without printing it. If the
+the token directly into an atomic `0600` file without printing it. It also
+writes an owner-only `<credential>.omnigent-meta.json` sidecar binding the
+file's digest to its server, host id, and generation. If the
 issue response is lost it retries the same operation/digest idempotently. By
 default it also removes the stored short-lived Accounts/OIDC JWT (including an
 expired record) after the destination file and directory entry are fsynced.
+If the host crashes between the raw-file and sidecar commits, log in again and
+use `revoke --current` (or reissue) to recover; file-bound revoke deliberately
+fails closed when the sidecar is absent.
 Databricks workspace/org routing pointers are retained. Use
 `--keep-user-token` only for an intentional interactive operator profile.
 The destination's immediate parent must be owned by the invoking user and must
@@ -112,6 +122,12 @@ omnigent host credential revoke \
   --host-id 0123456789abcdef0123456789abcdef \
   --credential-file /etc/omnigent/host/host-token
 ```
+
+Log in again as the owner before using the management endpoint. With
+`--credential-file`, the CLI sends that file's bound generation and digest;
+a stale file receives `409` and cannot revoke a newer generation. Use
+`--current` without `--credential-file` only when intentionally revoking
+whatever generation is active on the server.
 
 Only the endpoint's exact `204` response is accepted as proof of revocation;
 redirects, `200` pages, conflicts, and transport errors preserve the local

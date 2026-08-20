@@ -859,7 +859,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         initial = await client.get(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             headers={"x-test-user": "alice@test.com"},
         )
         assert initial.status_code == 200
@@ -871,7 +871,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
             "expires_at": None,
         }
         issued = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 3600,
                 "token_sha256": hash_host_launch_token(generation_one),
@@ -889,7 +889,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
         assert host_store.resolve_launch_token(host_id, generation_one) is not None
 
         rotated = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 7200,
                 "token_sha256": hash_host_launch_token(generation_two),
@@ -904,7 +904,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
         assert host_store.resolve_launch_token(host_id, generation_two) is not None
 
         stale = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 7200,
                 "token_sha256": hash_host_launch_token("stale-token"),
@@ -918,7 +918,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
 
         # A different user learns nothing and cannot rotate Alice's token.
         refused = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 7200,
                 "token_sha256": hash_host_launch_token("bob-token"),
@@ -936,9 +936,23 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
         assert host["host_id"] == host_id
         assert host["sandbox_provider"] is None
 
+        stale_file_revoke = await client.delete(
+            f"/v1/hosts/{host_id}/credentials/v2",
+            params={
+                "expected_generation": 2,
+                "token_sha256": hash_host_launch_token(generation_one),
+            },
+            headers={"x-test-user": "alice@test.com"},
+        )
+        assert stale_file_revoke.status_code == 409
+        assert host_store.resolve_launch_token(host_id, generation_two) is not None
+
         revoked = await client.delete(
-            f"/v1/hosts/{host_id}/credentials",
-            params={"expected_generation": 2},
+            f"/v1/hosts/{host_id}/credentials/v2",
+            params={
+                "expected_generation": 2,
+                "token_sha256": hash_host_launch_token(generation_two),
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert revoked.status_code == 204
@@ -953,6 +967,53 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
     assert "external host credential revoked" in caplog.text
     assert generation_one not in caplog.text
     assert generation_two not in caplog.text
+
+
+async def test_external_host_credential_legacy_and_v2_paths_do_not_cross_interpret(
+    multi_user_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
+) -> None:
+    """The V2 CLI path is absent on old replicas and V2 bodies never hit legacy mutation."""
+    app, _registry, host_store, _conv_store = multi_user_app
+    host_id = "ee5bb4272002938a3a934bfcb6bb228a"
+    host_store.upsert_on_connect(host_id, "legacy-exec", "alice@test.com")
+    headers = {"x-test-user": "alice@test.com"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        legacy_get = await client.get(f"/v1/hosts/{host_id}/credentials", headers=headers)
+        assert legacy_get.status_code == 405
+
+        v2_body_on_legacy = await client.post(
+            f"/v1/hosts/{host_id}/credentials",
+            json={
+                "ttl_seconds": 3600,
+                "token_sha256": hash_host_launch_token("must-not-arm"),
+                "expected_generation": 0,
+                "operation_id": "d" * 32,
+            },
+            headers=headers,
+        )
+        assert v2_body_on_legacy.status_code == 422
+        state = host_store.get_external_host_credential_state(
+            host_id=host_id,
+            user_id="alice@test.com",
+        )
+        assert state is not None and state.generation == 0 and not state.active
+
+        legacy_issue = await client.post(
+            f"/v1/hosts/{host_id}/credentials",
+            json={"ttl_seconds": 3600},
+            headers=headers,
+        )
+        assert legacy_issue.status_code == 200
+        legacy_token = legacy_issue.json()["token"]
+        assert host_store.resolve_launch_token(host_id, legacy_token) is not None
+
+        legacy_revoke = await client.delete(
+            f"/v1/hosts/{host_id}/credentials",
+            headers=headers,
+        )
+        assert legacy_revoke.status_code == 204
+        assert host_store.resolve_launch_token(host_id, legacy_token) is None
 
 
 async def test_external_host_credential_api_rejects_managed_and_unbounded_tokens(
@@ -972,7 +1033,7 @@ async def test_external_host_credential_api_rejects_managed_and_unbounded_tokens
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         managed = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 3600,
                 "token_sha256": hash_host_launch_token("external-must-not-overwrite"),
@@ -983,7 +1044,7 @@ async def test_external_host_credential_api_rejects_managed_and_unbounded_tokens
         )
         assert managed.status_code == 409
         too_long = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 366 * 24 * 3600,
                 "token_sha256": hash_host_launch_token("too-long"),
@@ -994,7 +1055,7 @@ async def test_external_host_credential_api_rejects_managed_and_unbounded_tokens
         )
         assert too_long.status_code == 422
         too_short = await client.post(
-            f"/v1/hosts/{host_id}/credentials",
+            f"/v1/hosts/{host_id}/credentials/v2",
             json={
                 "ttl_seconds": 3599,
                 "token_sha256": hash_host_launch_token("too-short"),

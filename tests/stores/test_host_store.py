@@ -6,13 +6,14 @@ import concurrent.futures
 import threading
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.db_models import SqlHost
 from omnigent.db.utils import get_or_create_engine, now_epoch
 from omnigent.stores.host_store import (
     HOST_LIVENESS_TTL_S,
+    ExternalHostCredentialState,
     Host,
     HostCredentialConflictError,
     HostStore,
@@ -274,6 +275,15 @@ def test_reconnect_with_rotated_host_id_repoints_bound_conversations(
         name="dev-laptop",
         user_id="dana@example.com",
     )
+    armed = host_store.arm_external_host_credential(
+        host_id="a1ed1ab71de2311e20488a989e61701c",
+        user_id="dana@example.com",
+        token_sha256=hash_host_launch_token("identity-rotation-token"),
+        token_expires_at=now_epoch() + 3600,
+        expected_generation=0,
+        operation_id="e" * 32,
+    )
+    assert armed is not None and armed.generation == 1
     # Bind a conversation to the old host_id (workspace is required by
     # the ck_conversations_workspace_required_for_host check constraint).
     conv = conversations.create_conversation(
@@ -290,6 +300,20 @@ def test_reconnect_with_rotated_host_id_repoints_bound_conversations(
 
     assert updated.host_id == "b1b5efd7dfc33b5a6241f1866ffb00e6"
     assert updated.status == "online"
+    credential_state = host_store.get_external_host_credential_state(
+        host_id="b1b5efd7dfc33b5a6241f1866ffb00e6",
+        user_id="dana@example.com",
+    )
+    assert credential_state is not None
+    assert credential_state.generation == 1
+    assert credential_state.active
+    assert (
+        host_store.resolve_launch_token(
+            "b1b5efd7dfc33b5a6241f1866ffb00e6",
+            "identity-rotation-token",
+        )
+        is not None
+    )
     # The binding followed the rotation — the conversation now points at
     # the new host_id, not the old (dangling) one or NULL.
     rebound = conversations.get_conversation(conv.id)
@@ -768,10 +792,20 @@ def test_external_host_credential_roundtrip_rotation_and_revoke(db_uri: str) -> 
     assert store.resolve_launch_token(host_id, "external-generation-1") is None
     assert store.resolve_launch_token(host_id, "external-generation-2") is not None
 
+    with pytest.raises(HostCredentialConflictError, match="digest changed"):
+        store.revoke_external_host_credential(
+            host_id=host_id,
+            user_id="alice@example.com",
+            expected_generation=2,
+            token_sha256=hash_host_launch_token("external-generation-1"),
+        )
+    assert store.resolve_launch_token(host_id, "external-generation-2") is not None
+
     revoked = store.revoke_external_host_credential(
         host_id=host_id,
         user_id="alice@example.com",
         expected_generation=2,
+        token_sha256=hash_host_launch_token("external-generation-2"),
     )
     assert revoked is not None
     assert revoked.generation == 3
@@ -801,11 +835,14 @@ def test_external_host_credential_refuses_cross_owner_and_managed_host(db_uri: s
         )
         is None
     )
-    assert store.revoke_external_host_credential(
-        host_id=external_id,
-        user_id="bob@example.com",
-        expected_generation=0,
-    ) is None
+    assert (
+        store.revoke_external_host_credential(
+            host_id=external_id,
+            user_id="bob@example.com",
+            expected_generation=0,
+        )
+        is None
+    )
 
     managed_id = "288e4f0a022f47a6934b49d17b145b20"
     store.register_managed_host(
@@ -934,6 +971,67 @@ def test_external_host_credential_cas_is_concurrent_idempotent_and_liveness_neut
     assert unchanged is not None
     assert unchanged.updated_at == stale_updated_at
     assert not host_is_live(unchanged)
+
+
+def test_external_host_credential_same_operation_is_concurrently_idempotent(
+    db_uri: str,
+) -> None:
+    """Overlapping response-loss retries both observe the same committed generation."""
+    first_store = HostStore(db_uri)
+    second_store = HostStore(db_uri)
+    host_id = "a66f36aca3614a2091375c28b0c868ae"
+    first_store.upsert_on_connect(host_id, "same-operation", "alice@example.com")
+    barrier = threading.Barrier(2)
+    update_barrier = threading.Barrier(2)
+    synchronized_updates: list[None] = []
+    digest = hash_host_launch_token("same-operation-token")
+    operation_id = "f" * 32
+
+    def _synchronize_postgres_cas(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        # PostgreSQL permits both transactions to read generation zero before
+        # the conditional UPDATE serializes them. Force that interleaving so
+        # this test deterministically covers the losing transaction's refresh
+        # and same-operation recognition path. SQLite's BEGIN IMMEDIATE
+        # serializes before SELECT, so its correctness is covered without this
+        # hook.
+        if statement.startswith("UPDATE hosts SET token_hash="):
+            synchronized_updates.append(None)
+            update_barrier.wait(timeout=5)
+
+    synchronize_postgres = first_store._engine.dialect.name == "postgresql"
+    if synchronize_postgres:
+        event.listen(first_store._engine, "before_cursor_execute", _synchronize_postgres_cas)
+
+    def _issue(store: HostStore) -> ExternalHostCredentialState | None:
+        barrier.wait()
+        return store.arm_external_host_credential(
+            host_id=host_id,
+            user_id="alice@example.com",
+            token_sha256=digest,
+            token_expires_at=now_epoch() + 3600,
+            expected_generation=0,
+            operation_id=operation_id,
+        )
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(_issue, [first_store, second_store]))
+    finally:
+        if synchronize_postgres:
+            event.remove(first_store._engine, "before_cursor_execute", _synchronize_postgres_cas)
+
+    assert all(result is not None for result in results)
+    assert {result.generation for result in results if result is not None} == {1}
+    if synchronize_postgres:
+        assert len(synchronized_updates) == 2
+    assert first_store.resolve_launch_token(host_id, "same-operation-token") is not None
 
 
 def test_resolve_launch_token_rejects_unknown_and_expired(db_uri: str) -> None:

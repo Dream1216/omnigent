@@ -20,7 +20,7 @@ def test_host_credential_generation_migrates_existing_rows_and_downgrades(
 
     with engine.begin() as connection:
         config.attributes["connection"] = connection
-        command.upgrade(config, "g8b9c0d1e2f3")
+        command.upgrade(config, "ga1b2c3d4e5f")
         connection.execute(
             sa.text(
                 """
@@ -42,7 +42,7 @@ def test_host_credential_generation_migrates_existing_rows_and_downgrades(
         ).one()
         assert migrated == (0, None)
 
-        command.downgrade(config, "g8b9c0d1e2f3")
+        command.downgrade(config, "ga1b2c3d4e5f")
 
     columns = {column["name"] for column in sa.inspect(engine).get_columns("hosts")}
     assert "credential_generation" not in columns

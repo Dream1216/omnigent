@@ -22,7 +22,7 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from omnigent.db.utils import now_epoch
 from omnigent.debug_logging import add_audit_attrs
@@ -58,7 +58,7 @@ from omnigent.server.routes._workspace_validation import (
 )
 from omnigent.server.schemas import SessionGitOptions
 from omnigent.stores import AgentStore, ConversationStore
-from omnigent.stores.host_store import Host, HostStore, host_is_live
+from omnigent.stores.host_store import Host, HostStore, hash_host_launch_token, host_is_live
 from omnigent.stores.permission_store import PermissionStore
 
 _logger = logging.getLogger(__name__)
@@ -436,8 +436,20 @@ async def _proxy_detect_credentials(
         host_conn.pending_credential_detects.pop(request_id, None)
 
 
-class ExternalHostCredentialRequest(BaseModel):
-    """Request body for issuing/rotating an external-host credential.
+class LegacyExternalHostCredentialRequest(BaseModel):
+    """Legacy request body for server-generated external-host credentials."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ttl_seconds: int = Field(
+        default=_EXTERNAL_HOST_CREDENTIAL_DEFAULT_TTL_S,
+        ge=_EXTERNAL_HOST_CREDENTIAL_MIN_TTL_S,
+        le=_EXTERNAL_HOST_CREDENTIAL_MAX_TTL_S,
+    )
+
+
+class ExternalHostCredentialV2Request(BaseModel):
+    """V2 request body for issuing/rotating an external-host credential.
 
     :param token_sha256: Lowercase SHA-256 digest of a client-generated token.
         The raw capability never enters the API or server process.
@@ -448,6 +460,8 @@ class ExternalHostCredentialRequest(BaseModel):
         machine credentials useful across restarts without allowing a
         never-expiring capability.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_generation: int = Field(ge=0)
@@ -713,7 +727,106 @@ def create_hosts_router(
             "runners": [],
         }
 
-    @router.get("/hosts/{host_id}/credentials")
+    @router.post("/hosts/{host_id}/credentials")
+    async def issue_legacy_external_host_credential(
+        request: Request,
+        response: Response,
+        host_id: str,
+        body: LegacyExternalHostCredentialRequest,
+    ) -> dict[str, Any]:
+        """Preserve the legacy server-generated credential contract.
+
+        New clients use ``credentials/v2``. Keeping this route's original
+        request and response shapes prevents a mixed-version rollout from
+        interpreting a V2 request as a successful legacy rotation.
+        """
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+
+        authenticated = require_user(request, auth_provider)
+        owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
+        try:
+            current = await asyncio.to_thread(
+                host_store.get_external_host_credential_state,
+                host_id=host_id,
+                user_id=owner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if current is None:
+            raise HTTPException(status_code=404, detail="host not found")
+
+        token = secrets.token_urlsafe(48)
+        operation_id = secrets.token_hex(16)
+        expires_at = now_epoch() + body.ttl_seconds
+        try:
+            armed = await asyncio.to_thread(
+                host_store.arm_external_host_credential,
+                host_id=host_id,
+                user_id=owner,
+                token_sha256=hash_host_launch_token(token),
+                token_expires_at=expires_at,
+                expected_generation=current.generation,
+                operation_id=operation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if armed is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        _logger.info(
+            "legacy external host credential issued host=%s owner=%s generation=%d expires_at=%d",
+            armed.host_id,
+            owner,
+            armed.generation,
+            expires_at,
+        )
+        return {
+            "host_id": armed.host_id,
+            "token_type": "host_tunnel",
+            "token": token,
+            "expires_at": expires_at,
+        }
+
+    @router.delete("/hosts/{host_id}/credentials", status_code=204)
+    async def revoke_legacy_external_host_credential(
+        request: Request,
+        host_id: str,
+    ) -> Response:
+        """Preserve legacy current-generation revocation semantics."""
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+
+        authenticated = require_user(request, auth_provider)
+        owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
+        try:
+            current = await asyncio.to_thread(
+                host_store.get_external_host_credential_state,
+                host_id=host_id,
+                user_id=owner,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="host not found")
+            revoked = await asyncio.to_thread(
+                host_store.revoke_external_host_credential,
+                host_id=host_id,
+                user_id=owner,
+                expected_generation=current.generation,
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if revoked is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        _logger.info(
+            "legacy external host credential revoked host=%s owner=%s generation=%d",
+            host_id,
+            owner,
+            revoked.generation,
+        )
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+    @router.get("/hosts/{host_id}/credentials/v2")
     async def get_external_host_credential_state(
         request: Request,
         response: Response,
@@ -743,12 +856,12 @@ def create_hosts_router(
             "expires_at": state.expires_at,
         }
 
-    @router.post("/hosts/{host_id}/credentials")
+    @router.post("/hosts/{host_id}/credentials/v2")
     async def issue_external_host_credential(
         request: Request,
         response: Response,
         host_id: str,
-        body: ExternalHostCredentialRequest,
+        body: ExternalHostCredentialV2Request,
     ) -> dict[str, Any]:
         """Issue or rotate one owner-scoped external-host tunnel credential.
 
@@ -803,11 +916,12 @@ def create_hosts_router(
             "expires_at": armed.expires_at,
         }
 
-    @router.delete("/hosts/{host_id}/credentials", status_code=204)
+    @router.delete("/hosts/{host_id}/credentials/v2", status_code=204)
     async def revoke_external_host_credential(
         request: Request,
         host_id: str,
         expected_generation: int = Query(ge=0),
+        token_sha256: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
     ) -> Response:
         """Revoke an external-host credential while preserving the host row."""
         from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -820,6 +934,7 @@ def create_hosts_router(
                 host_id=host_id,
                 user_id=owner,
                 expected_generation=expected_generation,
+                token_sha256=token_sha256,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

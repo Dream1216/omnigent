@@ -1,7 +1,7 @@
 """Add CAS metadata for external-host machine credentials.
 
 Revision ID: h8c0d1e2f3a4
-Revises: g8b9c0d1e2f3
+Revises: ga1b2c3d4e5f
 Create Date: 2026-08-21
 
 ``credential_generation`` is a monotonic compare-and-swap fence shared by
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "h8c0d1e2f3a4"
-down_revision: str = "g8b9c0d1e2f3"
+down_revision: str = "ga1b2c3d4e5f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

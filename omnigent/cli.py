@@ -8738,8 +8738,31 @@ def _host_error_text(body: _HostJsonObject | str) -> str:
     return json.dumps(body)[:400]
 
 
-def _write_host_credential_file(path: Path, token: str) -> None:
-    """Atomically install a host-tunnel credential with owner-only mode.
+_HOST_CREDENTIAL_METADATA_SUFFIX = ".omnigent-meta.json"
+_HOST_CREDENTIAL_METADATA_VERSION = "omnigent.host-credential/v2"
+_MAX_HOST_CREDENTIAL_FILE_BYTES = 8192
+
+
+@dataclass(frozen=True)
+class _HostCredentialBinding:
+    """Non-secret metadata binding one local file to one server generation."""
+
+    server: str
+    host_id: str
+    generation: int
+    token_sha256: str
+    operation_id: str
+    expires_at: int
+
+
+def _host_credential_metadata_path(path: Path) -> Path:
+    """Return the metadata sidecar for a raw host credential file."""
+    path = path.expanduser()
+    return path.with_name(f"{path.name}{_HOST_CREDENTIAL_METADATA_SUFFIX}")
+
+
+def _write_owner_only_file(path: Path, contents: str) -> None:
+    """Atomically install sensitive text with owner-only mode.
 
     The temporary file is created in the destination directory so
     :func:`os.replace` is atomic.  No token is printed or written to a shell
@@ -8747,7 +8770,7 @@ def _write_host_credential_file(path: Path, token: str) -> None:
     credential) at the resulting path.
 
     :param path: Destination credential file.
-    :param token: Raw host-tunnel credential returned once by the server.
+    :param contents: Sensitive text to store without printing.
     """
     import stat
 
@@ -8782,7 +8805,7 @@ def _write_host_credential_file(path: Path, token: str) -> None:
             delete=False,
         ) as handle:
             tmp_path = Path(handle.name)
-            handle.write(token)
+            handle.write(contents)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -8808,6 +8831,138 @@ def _write_host_credential_file(path: Path, token: str) -> None:
         if tmp_path is not None:
             with contextlib.suppress(FileNotFoundError):
                 tmp_path.unlink()
+
+
+def _read_owner_only_file(path: Path) -> str:
+    """Read a small owner-only regular file without following symlinks."""
+    import stat
+
+    path = path.expanduser()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        effective_uid = os.geteuid() if hasattr(os, "geteuid") else None
+        if not stat.S_ISREG(info.st_mode):
+            raise PermissionError(f"credential path is not a regular file: {path}")
+        if effective_uid is not None and info.st_uid != effective_uid:
+            raise PermissionError(f"credential path is not owned by the current user: {path}")
+        if os.name != "nt" and info.st_mode & 0o077:
+            raise PermissionError(f"credential path must have owner-only mode: {path}")
+        if info.st_size > _MAX_HOST_CREDENTIAL_FILE_BYTES:
+            raise ValueError(f"credential path exceeds size limit: {path}")
+        raw = os.read(fd, _MAX_HOST_CREDENTIAL_FILE_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > _MAX_HOST_CREDENTIAL_FILE_BYTES:
+        raise ValueError(f"credential path exceeds size limit: {path}")
+    return raw.decode("utf-8").strip()
+
+
+def _write_host_credential_binding(
+    path: Path,
+    *,
+    server: str,
+    host_id: str,
+    generation: int,
+    token_sha256: str,
+    operation_id: str,
+    expires_at: int,
+) -> None:
+    """Durably bind a raw credential file to its exact server generation."""
+    metadata = {
+        "schema_version": _HOST_CREDENTIAL_METADATA_VERSION,
+        "server": server.rstrip("/"),
+        "host_id": host_id,
+        "generation": generation,
+        "token_sha256": token_sha256,
+        "operation_id": operation_id,
+        "expires_at": expires_at,
+    }
+    _write_owner_only_file(
+        _host_credential_metadata_path(path),
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _remove_host_credential_files_if_matching(path: Path, *, token_sha256: str) -> bool:
+    """Remove a failed install only when its raw file is still this operation's token."""
+    path = path.expanduser()
+    try:
+        token = _read_owner_only_file(path)
+    except FileNotFoundError:
+        return True
+    except (OSError, UnicodeError, ValueError):
+        return False
+    observed_sha256 = hashlib.sha256(token.encode()).hexdigest()
+    if not secrets.compare_digest(observed_sha256, token_sha256):
+        return False
+    try:
+        path.unlink()
+        with contextlib.suppress(FileNotFoundError):
+            _host_credential_metadata_path(path).unlink()
+    except OSError:
+        return False
+    return True
+
+
+def _load_host_credential_binding(
+    path: Path,
+    *,
+    server: str,
+    host_id: str,
+) -> _HostCredentialBinding:
+    """Load and verify the sidecar that makes file-bound revoke safe."""
+    token = _read_owner_only_file(path)
+    if not token:
+        raise ValueError("credential file is empty")
+    metadata_path = _host_credential_metadata_path(path)
+    try:
+        raw_metadata = json.loads(_read_owner_only_file(metadata_path))
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"credential metadata is missing: {metadata_path}; use --current only for an "
+            "intentional current-generation revoke"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"credential metadata is malformed: {metadata_path}") from exc
+    if not isinstance(raw_metadata, dict):
+        raise ValueError(f"credential metadata is malformed: {metadata_path}")
+    schema_version = raw_metadata.get("schema_version")
+    metadata_server = raw_metadata.get("server")
+    metadata_host_id = raw_metadata.get("host_id")
+    metadata_token_sha256 = raw_metadata.get("token_sha256")
+    operation_id = raw_metadata.get("operation_id")
+    generation = raw_metadata.get("generation")
+    expires_at = raw_metadata.get("expires_at")
+    if (
+        schema_version != _HOST_CREDENTIAL_METADATA_VERSION
+        or not isinstance(metadata_server, str)
+        or not isinstance(metadata_host_id, str)
+        or not isinstance(metadata_token_sha256, str)
+        or not isinstance(operation_id, str)
+        or isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+        or isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+    ):
+        raise ValueError(f"credential metadata is malformed: {metadata_path}")
+    if metadata_server.rstrip("/") != server.rstrip("/"):
+        raise ValueError("credential metadata belongs to a different server")
+    if metadata_host_id != host_id:
+        raise ValueError("credential metadata belongs to a different host")
+    token_sha256 = hashlib.sha256(token.encode()).hexdigest()
+    if not secrets.compare_digest(metadata_token_sha256, token_sha256):
+        raise ValueError("credential file no longer matches its generation metadata")
+    return _HostCredentialBinding(
+        server=metadata_server,
+        host_id=metadata_host_id,
+        generation=generation,
+        token_sha256=token_sha256,
+        operation_id=operation_id,
+        expires_at=expires_at,
+    )
 
 
 def _daemon_session_request_params(
@@ -9948,7 +10103,7 @@ def host_credential_issue(
 
     from omnigent.claude_native_bridge import url_component
 
-    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials"
+    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials/v2"
     state = _host_http_json(
         base_url=resolved_server,
         method="GET",
@@ -9971,9 +10126,10 @@ def host_credential_issue(
     # Only its high-entropy SHA-256 digest is sent to the server.
     token = secrets.token_urlsafe(48)
     operation_id = secrets.token_hex(16)
+    token_sha256 = hashlib.sha256(token.encode()).hexdigest()
     issue_body: _HostJsonObject = {
         "ttl_seconds": ttl_days * 24 * 3600,
-        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+        "token_sha256": token_sha256,
         "expected_generation": expected_generation,
         "operation_id": operation_id,
     }
@@ -9996,9 +10152,7 @@ def host_credential_issue(
             if result.status_code == 0
             else f"{result.status_code}: {_host_error_text(result.body)}"
         )
-        raise click.ClickException(
-            f"Credential issue failed ({suffix})"
-        )
+        raise click.ClickException(f"Credential issue failed ({suffix})")
     if not isinstance(result.body, dict):
         raise click.ClickException("Credential issue returned a non-object response.")
     generation = result.body.get("generation")
@@ -10016,7 +10170,16 @@ def host_credential_issue(
         raise click.ClickException("Credential issue returned a malformed response.")
 
     try:
-        _write_host_credential_file(output, token)
+        _write_owner_only_file(output, token)
+        _write_host_credential_binding(
+            output,
+            server=resolved_server,
+            host_id=resolved_host_id,
+            generation=generation,
+            token_sha256=token_sha256,
+            operation_id=operation_id,
+            expires_at=expires_at,
+        )
     except OSError as exc:
         # Revoke only the generation this client installed. If another client
         # already rotated the host, the CAS returns 409 and the newer token is
@@ -10025,13 +10188,28 @@ def host_credential_issue(
             base_url=resolved_server,
             method="DELETE",
             path=credential_path,
-            params={"expected_generation": generation},
+            params={
+                "expected_generation": generation,
+                "token_sha256": token_sha256,
+            },
         )
         cleanup_text = (
             "issued generation was conditionally revoked"
             if cleanup.status_code == 204
             else f"conditional revoke returned {cleanup.status_code}; inspect server state"
         )
+        # A 204 proves our exact generation+digest was revoked. A 404 means
+        # the host no longer exists, and a 409 means another generation or
+        # digest already replaced this one. In all three cases this operation's
+        # raw token cannot authenticate. Remove it only if the on-disk digest
+        # still matches, so a concurrent writer's credential is never deleted.
+        if cleanup.status_code in {204, 404, 409}:
+            removed = _remove_host_credential_files_if_matching(
+                output,
+                token_sha256=token_sha256,
+            )
+            if not removed:
+                cleanup_text = f"{cleanup_text}; local credential cleanup was incomplete"
         raise click.ClickException(
             f"Could not install credential file: {exc}; {cleanup_text}"
         ) from exc
@@ -10056,7 +10234,12 @@ def host_credential_issue(
     "--credential-file",
     type=click.Path(path_type=Path, dir_okay=False),
     default=None,
-    help="Delete this local credential file after server-side revocation.",
+    help="Revoke exactly the generation bound to this credential file, then delete it.",
+)
+@click.option(
+    "--current",
+    is_flag=True,
+    help="Explicitly revoke the server's current generation without a credential file.",
 )
 @click.pass_context
 def host_credential_revoke(
@@ -10064,6 +10247,7 @@ def host_credential_revoke(
     server: str | None,
     host_id: str | None,
     credential_file: Path | None,
+    current: bool,
 ) -> None:
     """Revoke an external-host credential and optionally delete its file."""
     if server is None:
@@ -10081,30 +10265,49 @@ def host_credential_revoke(
 
     from omnigent.claude_native_bridge import url_component
 
-    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials"
-    state = _host_http_json(
-        base_url=resolved_server,
-        method="GET",
-        path=credential_path,
-    )
-    if state.status_code != 200:
-        suffix = (
-            _host_error_text(state.body)
-            if state.status_code == 0
-            else f"{state.status_code}: {_host_error_text(state.body)}"
+    if current == (credential_file is not None):
+        raise click.UsageError("Use exactly one of --credential-file or --current.")
+
+    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials/v2"
+    revoke_params: dict[str, str | int]
+    if credential_file is not None:
+        try:
+            binding = _load_host_credential_binding(
+                credential_file,
+                server=resolved_server,
+                host_id=resolved_host_id,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise click.ClickException(f"Credential file cannot be safely revoked: {exc}") from exc
+        revoke_params = {
+            "expected_generation": binding.generation,
+            "token_sha256": binding.token_sha256,
+        }
+    else:
+        state = _host_http_json(
+            base_url=resolved_server,
+            method="GET",
+            path=credential_path,
         )
-        raise click.ClickException(f"Credential status failed ({suffix})")
-    if not isinstance(state.body, dict):
-        raise click.ClickException("Credential status returned a non-object response.")
-    generation = state.body.get("generation")
-    if isinstance(generation, bool) or not isinstance(generation, int):
-        raise click.ClickException("Credential status returned a malformed generation.")
+        if state.status_code != 200:
+            suffix = (
+                _host_error_text(state.body)
+                if state.status_code == 0
+                else f"{state.status_code}: {_host_error_text(state.body)}"
+            )
+            raise click.ClickException(f"Credential status failed ({suffix})")
+        if not isinstance(state.body, dict):
+            raise click.ClickException("Credential status returned a non-object response.")
+        generation = state.body.get("generation")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise click.ClickException("Credential status returned a malformed generation.")
+        revoke_params = {"expected_generation": generation}
 
     result = _host_http_json(
         base_url=resolved_server,
         method="DELETE",
         path=credential_path,
-        params={"expected_generation": generation},
+        params=revoke_params,
     )
     # DELETE is deliberately exact: a login redirect (302) or an HTML/API
     # success page (200) does not prove the credential was revoked. Preserve
@@ -10121,6 +10324,8 @@ def host_credential_revoke(
     if credential_file is not None:
         with contextlib.suppress(FileNotFoundError):
             credential_file.expanduser().unlink()
+        with contextlib.suppress(FileNotFoundError):
+            _host_credential_metadata_path(credential_file).unlink()
     click.echo("Revoked host credential.")
 
 
