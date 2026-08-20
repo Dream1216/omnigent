@@ -862,6 +862,8 @@ class TestSqlHost:
             assert loaded.host_id == "4f64b6ee625f4e8259185c35c6e63f3d"
             assert loaded.status == encode_host_status("online")
             assert loaded.token_hash is None
+            assert loaded.credential_generation == 0
+            assert loaded.credential_operation_id is None
             assert loaded.sandbox_provider is None
 
     def test_check_constraint_rejects_invalid_status(self, db_uri: str) -> None:

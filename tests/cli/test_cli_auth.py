@@ -116,6 +116,29 @@ def test_clear_token(token_dir) -> None:
     assert load_token("http://localhost:8000") is None
 
 
+def test_clear_token_preserves_databricks_workspace_routing(token_dir) -> None:
+    """Bearer cleanup never deletes the Databricks org/workspace pointer."""
+    from omnigent.cli_auth import (
+        clear_token,
+        databricks_request_headers,
+        load_databricks_workspace_host,
+        store_databricks_auth,
+    )
+
+    server = "https://acme.databricks.com/api/2.0/omnigent"
+    store_databricks_auth(
+        server_url=server,
+        workspace_host="https://workspace.databricks.com",
+        org_id="2850744067564480",
+    )
+    clear_token(server)
+
+    assert load_databricks_workspace_host(server) == "https://workspace.databricks.com"
+    assert databricks_request_headers(server) == {
+        "X-Databricks-Org-Id": "2850744067564480"
+    }
+
+
 def test_trailing_slash_normalization(token_dir) -> None:
     """Server URLs are normalized (trailing slash stripped).
 

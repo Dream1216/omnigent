@@ -23,7 +23,7 @@ from omnigent.host.frames import (
 from omnigent.server.auth import AuthProvider
 from omnigent.server.host_registry import HostRegistry
 from omnigent.server.routes.host_tunnel import create_host_tunnel_router
-from omnigent.stores.host_store import HostStore
+from omnigent.stores.host_store import HostStore, hash_host_launch_token
 
 pytestmark = pytest.mark.asyncio
 
@@ -819,8 +819,10 @@ async def test_revoked_external_machine_credential_closes_live_tunnel(
     armed = store.arm_external_host_credential(
         host_id=_HOST_ID,
         user_id="alice@example.com",
-        token=token,
+        token_sha256=hash_host_launch_token(token),
         token_expires_at=now_epoch() + 3600,
+        expected_generation=0,
+        operation_id="a" * 32,
     )
     assert armed is not None
 
@@ -833,6 +835,7 @@ async def test_revoked_external_machine_credential_closes_live_tunnel(
     assert store.revoke_external_host_credential(
         host_id=_HOST_ID,
         user_id="alice@example.com",
+        expected_generation=1,
     )
     while True:
         output = await communicator.receive_output(timeout=1.0)

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import Engine, select, update
 from sqlalchemy import delete as sql_delete
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -86,6 +87,26 @@ class Host:
     sandbox_provider: str | None = None
     sandbox_id: str | None = None
     configured_harnesses: dict[str, HarnessAvailability] | None = None
+
+
+@dataclass(frozen=True)
+class ExternalHostCredentialState:
+    """Non-secret state for one external-host credential generation.
+
+    :param host_id: Stable external host id.
+    :param generation: Monotonic compare-and-swap generation.
+    :param expires_at: Active credential expiry, or ``None`` when revoked.
+    :param active: Whether a credential digest is armed and unexpired.
+    """
+
+    host_id: str
+    generation: int
+    expires_at: int | None
+    active: bool
+
+
+class HostCredentialConflictError(ValueError):
+    """A stale external-host credential generation lost its CAS race."""
 
 
 def host_is_live(host: Host, now: int | None = None) -> bool:
@@ -173,6 +194,22 @@ def hash_host_launch_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _is_lower_hex(value: str, *, lengths: set[int]) -> bool:
+    """Return whether *value* is lowercase hexadecimal with an allowed length."""
+    return len(value) in lengths and all(char in "0123456789abcdef" for char in value)
+
+
+def _credential_state(row: SqlHost) -> ExternalHostCredentialState:
+    """Return the non-secret external credential state for *row*."""
+    expires_at = row.token_expires_at
+    return ExternalHostCredentialState(
+        host_id=row.host_id,
+        generation=row.credential_generation,
+        expires_at=expires_at,
+        active=row.token_hash is not None and expires_at is not None and expires_at > now_epoch(),
+    )
+
+
 class HostStore:
     """
     Persistent store for host registrations backed by SQLAlchemy.
@@ -192,6 +229,15 @@ class HostStore:
         self._session = make_named_managed_session_maker(
             self._engine,
             query_name_prefix="omnigent.host_store",
+        )
+        # SQLite needs a write lock before the read half of credential CAS;
+        # otherwise two deferred transactions can both observe generation N
+        # and later overwrite one another. This is a no-op on PostgreSQL,
+        # where the conditional UPDATE itself provides the cross-replica CAS.
+        self._credential_session = make_named_managed_session_maker(
+            self._engine,
+            query_name_prefix="omnigent.host_store",
+            immediate=True,
         )
 
     def upsert_on_connect(
@@ -746,18 +792,21 @@ class HostStore:
         *,
         host_id: str,
         user_id: str,
-        token: str,
+        token_sha256: str,
         token_expires_at: int,
-    ) -> Host | None:
+        expected_generation: int,
+        operation_id: str,
+    ) -> ExternalHostCredentialState | None:
         """Issue or rotate a narrow tunnel credential for an external host.
 
         The host must already exist and belong to *user_id*: its first
         registration still uses the normal interactive user-auth path, which
         proves both ownership and the stable machine identity.  This method
-        then stores only the token digest on that row.  Re-arming the same host
-        atomically invalidates the prior credential while preserving its
-        identity, session bindings, display name, and external-host
-        discriminator (``sandbox_provider is None``).
+        then stores only the client-generated token digest on that row.
+        ``credential_generation`` is an atomic compare-and-swap fence shared
+        by every App replica: two clients cannot both replace the same
+        generation.  ``operation_id`` makes an identical retry idempotent, so
+        a lost HTTP response does not force a second rotation.
 
         Managed sandbox rows are deliberately rejected.  Their token lifetime
         and rotation are owned by the sandbox orchestrator; allowing this API
@@ -766,19 +815,29 @@ class HostStore:
 
         :param host_id: Existing external host identifier.
         :param user_id: Authenticated owner requesting the credential.
-        :param token: Raw credential; hashed here and never persisted.
+        :param token_sha256: Lowercase SHA-256 digest of the client-generated
+            raw credential.  The raw credential never crosses this boundary.
         :param token_expires_at: Absolute Unix expiry, strictly in the future.
-        :returns: Updated host, or ``None`` when the host is absent/not owned.
-        :raises ValueError: If the target is managed or the expiry is invalid.
+        :param expected_generation: Generation observed before this issue.
+        :param operation_id: Random lowercase-hex id stable across retries.
+        :returns: Updated non-secret state, or ``None`` when absent/not owned.
+        :raises HostCredentialConflictError: If a newer generation won.
+        :raises ValueError: If the target is managed or inputs are invalid.
         """
         now = now_epoch()
         if token_expires_at <= now:
             raise ValueError("external host credential expiry must be in the future")
-        token_hash = hash_host_launch_token(token)
-        with self._session("arm_external_host_credential") as session:
+        if expected_generation < 0:
+            raise ValueError("external host credential generation must be non-negative")
+        if not _is_lower_hex(token_sha256, lengths={64}):
+            raise ValueError("external host credential digest must be lowercase SHA-256")
+        if not _is_lower_hex(operation_id, lengths=set(range(32, 65))):
+            raise ValueError("external host credential operation id must be lowercase hex")
+        workspace_id = current_workspace_id()
+        with self._credential_session("arm_external_host_credential") as session:
             row = session.execute(
                 select(SqlHost).where(
-                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.workspace_id == workspace_id,
                     SqlHost.host_id == host_id,
                 )
             ).scalar_one_or_none()
@@ -788,21 +847,73 @@ class HostStore:
                 return None
             if row.sandbox_provider is not None:
                 raise ValueError("managed host credentials are controlled by the sandbox provider")
-            row.token_hash = token_hash
-            row.token_expires_at = token_expires_at
-            row.updated_at = now
-            return _row_to_host(row)
+            if (
+                row.credential_operation_id == operation_id
+                and row.credential_generation == expected_generation + 1
+                and row.token_hash is not None
+                and hmac.compare_digest(row.token_hash, token_sha256)
+            ):
+                return _credential_state(row)
+            if row.credential_generation != expected_generation:
+                raise HostCredentialConflictError(
+                    "external host credential generation changed; refresh and retry"
+                )
 
-    def revoke_external_host_credential(self, *, host_id: str, user_id: str) -> bool:
-        """Revoke an external host credential without deleting the host row.
+            result = session.execute(
+                update(SqlHost)
+                .where(
+                    SqlHost.workspace_id == workspace_id,
+                    SqlHost.host_id == host_id,
+                    SqlHost.user_id == user_id,
+                    SqlHost.sandbox_provider.is_(None),
+                    SqlHost.credential_generation == expected_generation,
+                )
+                .values(
+                    token_hash=token_sha256,
+                    token_expires_at=token_expires_at,
+                    credential_generation=expected_generation + 1,
+                    credential_operation_id=operation_id,
+                )
+            )
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("credential CAS update did not return a cursor result")
+            if result.rowcount == 1:
+                return ExternalHostCredentialState(
+                    host_id=host_id,
+                    generation=expected_generation + 1,
+                    expires_at=token_expires_at,
+                    active=True,
+                )
 
-        :param host_id: Existing external host identifier.
-        :param user_id: Authenticated owner requesting revocation.
-        :returns: ``True`` when an owned external host was updated; ``False``
-            when the host is absent/not owned.
-        :raises ValueError: If *host_id* identifies a managed sandbox host.
-        """
-        with self._session("revoke_external_host_credential") as session:
+            # Another transaction may have committed after the first read.
+            # Recognize only the exact same operation+digest as an idempotent
+            # response-loss retry; every other winner is a real conflict.
+            current = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == workspace_id,
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if current is None or current.user_id != user_id:
+                return None
+            if current.sandbox_provider is not None:
+                raise ValueError("managed host credentials are controlled by the sandbox provider")
+            if (
+                current.credential_operation_id == operation_id
+                and current.credential_generation == expected_generation + 1
+                and current.token_hash is not None
+                and hmac.compare_digest(current.token_hash, token_sha256)
+            ):
+                return _credential_state(current)
+            raise HostCredentialConflictError(
+                "external host credential generation changed; refresh and retry"
+            )
+
+    def get_external_host_credential_state(
+        self, *, host_id: str, user_id: str
+    ) -> ExternalHostCredentialState | None:
+        """Return owner-scoped, non-secret external credential state."""
+        with self._session("get_external_host_credential_state") as session:
             row = session.execute(
                 select(SqlHost).where(
                     SqlHost.workspace_id == current_workspace_id(),
@@ -810,13 +921,96 @@ class HostStore:
                 )
             ).scalar_one_or_none()
             if row is None or row.user_id != user_id:
-                return False
+                return None
             if row.sandbox_provider is not None:
                 raise ValueError("managed host credentials are controlled by the sandbox provider")
-            row.token_hash = None
-            row.token_expires_at = None
-            row.updated_at = now_epoch()
-            return True
+            return _credential_state(row)
+
+    def revoke_external_host_credential(
+        self,
+        *,
+        host_id: str,
+        user_id: str,
+        expected_generation: int,
+    ) -> ExternalHostCredentialState | None:
+        """Revoke an external host credential without deleting the host row.
+
+        :param host_id: Existing external host identifier.
+        :param user_id: Authenticated owner requesting revocation.
+        :param expected_generation: Generation the caller intends to revoke.
+        :returns: Revoked state when owned, ``None`` when absent/not owned.
+        :raises HostCredentialConflictError: If a newer generation exists.
+        :raises ValueError: If *host_id* identifies a managed sandbox host.
+        """
+        if expected_generation < 0:
+            raise ValueError("external host credential generation must be non-negative")
+        workspace_id = current_workspace_id()
+        with self._credential_session("revoke_external_host_credential") as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == workspace_id,
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if row is None or row.user_id != user_id:
+                return None
+            if row.sandbox_provider is not None:
+                raise ValueError("managed host credentials are controlled by the sandbox provider")
+            if (
+                row.credential_generation == expected_generation + 1
+                and row.token_hash is None
+                and row.token_expires_at is None
+            ):
+                return _credential_state(row)
+            if row.credential_generation != expected_generation:
+                raise HostCredentialConflictError(
+                    "external host credential generation changed; refresh before revoking"
+                )
+
+            result = session.execute(
+                update(SqlHost)
+                .where(
+                    SqlHost.workspace_id == workspace_id,
+                    SqlHost.host_id == host_id,
+                    SqlHost.user_id == user_id,
+                    SqlHost.sandbox_provider.is_(None),
+                    SqlHost.credential_generation == expected_generation,
+                )
+                .values(
+                    token_hash=None,
+                    token_expires_at=None,
+                    credential_generation=expected_generation + 1,
+                    credential_operation_id=None,
+                )
+            )
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("credential revoke did not return a cursor result")
+            if result.rowcount == 1:
+                return ExternalHostCredentialState(
+                    host_id=host_id,
+                    generation=expected_generation + 1,
+                    expires_at=None,
+                    active=False,
+                )
+            current = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == workspace_id,
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if current is None or current.user_id != user_id:
+                return None
+            if current.sandbox_provider is not None:
+                raise ValueError("managed host credentials are controlled by the sandbox provider")
+            if (
+                current.credential_generation == expected_generation + 1
+                and current.token_hash is None
+                and current.token_expires_at is None
+            ):
+                return _credential_state(current)
+            raise HostCredentialConflictError(
+                "external host credential generation changed; refresh before revoking"
+            )
 
     def resolve_launch_token(self, host_id: str, token: str) -> Host | None:
         """

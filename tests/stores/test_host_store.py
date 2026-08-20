@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import threading
+
 import pytest
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -11,6 +14,7 @@ from omnigent.db.utils import get_or_create_engine, now_epoch
 from omnigent.stores.host_store import (
     HOST_LIVENESS_TTL_S,
     Host,
+    HostCredentialConflictError,
     HostStore,
     hash_host_launch_token,
     host_is_live,
@@ -731,11 +735,14 @@ def test_external_host_credential_roundtrip_rotation_and_revoke(db_uri: str) -> 
     armed = store.arm_external_host_credential(
         host_id=host_id,
         user_id="alice@example.com",
-        token="external-generation-1",
+        token_sha256=hash_host_launch_token("external-generation-1"),
         token_expires_at=now_epoch() + 3600,
+        expected_generation=0,
+        operation_id="1" * 32,
     )
     assert armed is not None
-    assert armed.sandbox_provider is None
+    assert armed.generation == 1
+    assert armed.active
     resolved = store.resolve_launch_token(host_id, "external-generation-1")
     assert resolved is not None
     assert resolved.user_id == "alice@example.com"
@@ -751,14 +758,24 @@ def test_external_host_credential_roundtrip_rotation_and_revoke(db_uri: str) -> 
     rotated = store.arm_external_host_credential(
         host_id=host_id,
         user_id="alice@example.com",
-        token="external-generation-2",
+        token_sha256=hash_host_launch_token("external-generation-2"),
         token_expires_at=now_epoch() + 7200,
+        expected_generation=1,
+        operation_id="2" * 32,
     )
     assert rotated is not None
+    assert rotated.generation == 2
     assert store.resolve_launch_token(host_id, "external-generation-1") is None
     assert store.resolve_launch_token(host_id, "external-generation-2") is not None
 
-    assert store.revoke_external_host_credential(host_id=host_id, user_id="alice@example.com")
+    revoked = store.revoke_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        expected_generation=2,
+    )
+    assert revoked is not None
+    assert revoked.generation == 3
+    assert not revoked.active
     assert store.resolve_launch_token(host_id, "external-generation-2") is None
     # Revocation preserves the visible external host row and its ownership.
     still = store.get_host(host_id)
@@ -777,14 +794,18 @@ def test_external_host_credential_refuses_cross_owner_and_managed_host(db_uri: s
         store.arm_external_host_credential(
             host_id=external_id,
             user_id="bob@example.com",
-            token="bob-must-not-arm",
+            token_sha256=hash_host_launch_token("bob-must-not-arm"),
             token_expires_at=now_epoch() + 3600,
+            expected_generation=0,
+            operation_id="b" * 32,
         )
         is None
     )
-    assert not store.revoke_external_host_credential(
-        host_id=external_id, user_id="bob@example.com"
-    )
+    assert store.revoke_external_host_credential(
+        host_id=external_id,
+        user_id="bob@example.com",
+        expected_generation=0,
+    ) is None
 
     managed_id = "288e4f0a022f47a6934b49d17b145b20"
     store.register_managed_host(
@@ -800,13 +821,119 @@ def test_external_host_credential_refuses_cross_owner_and_managed_host(db_uri: s
         store.arm_external_host_credential(
             host_id=managed_id,
             user_id="alice@example.com",
-            token="external-must-not-overwrite",
+            token_sha256=hash_host_launch_token("external-must-not-overwrite"),
             token_expires_at=now_epoch() + 7200,
+            expected_generation=0,
+            operation_id="c" * 32,
         )
     with pytest.raises(ValueError, match="sandbox provider"):
-        store.revoke_external_host_credential(host_id=managed_id, user_id="alice@example.com")
+        store.revoke_external_host_credential(
+            host_id=managed_id,
+            user_id="alice@example.com",
+            expected_generation=0,
+        )
     # Provider token remains authoritative.
     assert store.resolve_launch_token(managed_id, "provider-token") is not None
+
+
+def test_external_host_credential_cas_is_concurrent_idempotent_and_liveness_neutral(
+    db_uri: str,
+) -> None:
+    """CAS has one winner; stale cleanup cannot revoke it or refresh liveness.
+
+    This test is backend-neutral and is also executed against a real
+    PostgreSQL database by setting ``OMNIGENT_TEST_DB_URI`` in the focused
+    acceptance command.
+    """
+    first_store = HostStore(db_uri)
+    second_store = HostStore(db_uri)
+    host_id = "b44f36aca3614a2091375c28b0c868ae"
+    first_store.upsert_on_connect(host_id, "cas-exec", "alice@example.com")
+    stale_updated_at = now_epoch() - HOST_LIVENESS_TTL_S - 30
+    _set_updated_at(db_uri, host_id, stale_updated_at)
+
+    barrier = threading.Barrier(2)
+
+    def _issue(store: HostStore, token: str, operation_id: str) -> object:
+        barrier.wait()
+        try:
+            return store.arm_external_host_credential(
+                host_id=host_id,
+                user_id="alice@example.com",
+                token_sha256=hash_host_launch_token(token),
+                token_expires_at=now_epoch() + 3600,
+                expected_generation=0,
+                operation_id=operation_id,
+            )
+        except HostCredentialConflictError:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda args: _issue(*args),
+                [
+                    (first_store, "concurrent-token-a", "a" * 32),
+                    (second_store, "concurrent-token-b", "b" * 32),
+                ],
+            )
+        )
+    assert sum(result is not None for result in results) == 1
+
+    with Session(get_or_create_engine(db_uri)) as session:
+        row = session.execute(select(SqlHost).where(SqlHost.host_id == host_id)).scalar_one()
+        winning_hash = row.token_hash
+        winning_operation = row.credential_operation_id
+        assert row.credential_generation == 1
+        assert row.updated_at == stale_updated_at
+    assert winning_hash is not None
+    assert winning_operation is not None
+
+    # Retrying the exact committed operation after a lost response is
+    # idempotent and returns the same expiry/generation.
+    original = first_store.get_external_host_credential_state(
+        host_id=host_id,
+        user_id="alice@example.com",
+    )
+    assert original is not None
+    retried = second_store.arm_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        token_sha256=winning_hash,
+        token_expires_at=now_epoch() + 7200,
+        expected_generation=0,
+        operation_id=winning_operation,
+    )
+    assert retried == original
+
+    newer_token = "newer-generation"
+    newer = first_store.arm_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        token_sha256=hash_host_launch_token(newer_token),
+        token_expires_at=now_epoch() + 7200,
+        expected_generation=1,
+        operation_id="c" * 32,
+    )
+    assert newer is not None and newer.generation == 2
+    with pytest.raises(HostCredentialConflictError, match="generation changed"):
+        second_store.revoke_external_host_credential(
+            host_id=host_id,
+            user_id="alice@example.com",
+            expected_generation=1,
+        )
+    assert first_store.resolve_launch_token(host_id, newer_token) is not None
+
+    revoked = first_store.revoke_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        expected_generation=2,
+    )
+    assert revoked is not None and revoked.generation == 3
+    unchanged = first_store.get_host(host_id)
+    assert unchanged is not None
+    assert unchanged.updated_at == stale_updated_at
+    assert not host_is_live(unchanged)
 
 
 def test_resolve_launch_token_rejects_unknown_and_expired(db_uri: str) -> None:

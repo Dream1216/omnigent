@@ -103,25 +103,34 @@ def test_host_command_registered() -> None:
 def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The CLI consumes the one-time token directly into a 0600 file."""
+    """The CLI installs its locally generated raw token into a 0600 file."""
     import omnigent.cli as cli_mod
 
     secret = "must-never-appear-in-terminal"
+    operation_id = "a" * 32
     calls: list[dict[str, object]] = []
 
     def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
         calls.append(kwargs)
+        if kwargs["method"] == "GET":
+            return cli_mod._HostHttpResult(
+                status_code=200,
+                body={"host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19", "generation": 0},
+            )
         return cli_mod._HostHttpResult(
             status_code=200,
             body={
                 "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
                 "token_type": "host_tunnel",
-                "token": secret,
+                "generation": 1,
+                "operation_id": operation_id,
                 "expires_at": 2_000_000_000,
             },
         )
 
     monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    monkeypatch.setattr(cli_mod.secrets, "token_urlsafe", lambda _size: secret)
+    monkeypatch.setattr(cli_mod.secrets, "token_hex", lambda _size: operation_id)
     output = tmp_path / "credentials" / "next-host-token"
     auth_file = tmp_path / "auth_tokens.json"
     auth_file.write_text(
@@ -169,9 +178,19 @@ def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
     assert calls == [
         {
             "base_url": "https://next.example.com",
+            "method": "GET",
+            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials",
+        },
+        {
+            "base_url": "https://next.example.com",
             "method": "POST",
             "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials",
-            "json_body": {"ttl_seconds": 30 * 24 * 3600},
+            "json_body": {
+                "ttl_seconds": 30 * 24 * 3600,
+                "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
+                "expected_generation": 0,
+                "operation_id": operation_id,
+            },
         }
     ]
 
@@ -183,24 +202,33 @@ def test_host_credential_issue_refuses_unsafe_parent_and_revokes_server_token(
     import omnigent.cli as cli_mod
 
     secret = "unsafe-parent-secret"
+    operation_id = "b" * 32
     calls: list[str] = []
 
     def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
         method = str(kwargs["method"])
         calls.append(method)
+        if method == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 0})
         if method == "DELETE":
-            return cli_mod._HostHttpResult(status_code=204, body="")
+            assert kwargs["params"] == {"expected_generation": 1}
+            # A concurrent writer already installed generation 2. The failed
+            # local writer must not revoke that newer generation.
+            return cli_mod._HostHttpResult(status_code=409, body={"detail": "CAS lost"})
         return cli_mod._HostHttpResult(
             status_code=200,
             body={
                 "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
                 "token_type": "host_tunnel",
-                "token": secret,
+                "generation": 1,
+                "operation_id": operation_id,
                 "expires_at": 2_000_000_000,
             },
         )
 
     monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    monkeypatch.setattr(cli_mod.secrets, "token_urlsafe", lambda _size: secret)
+    monkeypatch.setattr(cli_mod.secrets, "token_hex", lambda _size: operation_id)
     unsafe_parent = tmp_path / "unsafe"
     unsafe_parent.mkdir()
     unsafe_parent.chmod(0o777)
@@ -224,7 +252,8 @@ def test_host_credential_issue_refuses_unsafe_parent_and_revokes_server_token(
     assert "writable by group/other" in result.output
     assert secret not in result.output
     assert not output.exists()
-    assert calls == ["POST", "DELETE"]
+    assert "conditional revoke returned 409" in result.output
+    assert calls == ["GET", "POST", "DELETE"]
 
 
 def test_host_credential_revoke_deletes_file_only_after_server_success(
@@ -236,11 +265,15 @@ def test_host_credential_revoke_deletes_file_only_after_server_success(
     credential_file = tmp_path / "host-token"
     credential_file.write_text("opaque-token\n")
     os.chmod(credential_file, 0o600)
-    monkeypatch.setattr(
-        cli_mod,
-        "_host_http_json",
-        lambda **_kw: cli_mod._HostHttpResult(status_code=204, body=""),
-    )
+    calls: list[dict[str, object]] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        calls.append(kwargs)
+        if kwargs["method"] == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 7})
+        return cli_mod._HostHttpResult(status_code=204, body="")
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
 
     result = CliRunner().invoke(
         cli,
@@ -260,6 +293,114 @@ def test_host_credential_revoke_deletes_file_only_after_server_success(
     assert result.exit_code == 0, result.output
     assert not credential_file.exists()
     assert "opaque-token" not in result.output
+    assert calls[-1]["params"] == {"expected_generation": 7}
+
+
+@pytest.mark.parametrize("status_code", [200, 302])
+def test_host_credential_revoke_preserves_file_without_exact_204(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    """A 200 body or login redirect is not proof of server-side revocation."""
+    import omnigent.cli as cli_mod
+
+    credential_file = tmp_path / "host-token"
+    credential_file.write_text("preserve-this-token\n")
+    os.chmod(credential_file, 0o600)
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        if kwargs["method"] == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 3})
+        return cli_mod._HostHttpResult(status_code=status_code, body="not the revoke endpoint")
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "revoke",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--credential-file",
+            str(credential_file),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "local credential was preserved" in result.output
+    assert credential_file.read_text() == "preserve-this-token\n"
+
+
+def test_host_credential_issue_retries_response_loss_and_preserves_databricks_routing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same CAS operation is retried and Databricks routing survives JWT cleanup."""
+    import omnigent.cli as cli_mod
+    from omnigent.cli_auth import databricks_request_headers
+
+    secret = "response-loss-secret"
+    operation_id = "c" * 32
+    post_bodies: list[object] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        if kwargs["method"] == "GET":
+            return cli_mod._HostHttpResult(status_code=200, body={"generation": 4})
+        post_bodies.append(kwargs["json_body"])
+        if len(post_bodies) == 1:
+            return cli_mod._HostHttpResult(status_code=0, body="response lost")
+        return cli_mod._HostHttpResult(
+            status_code=200,
+            body={
+                "generation": 5,
+                "operation_id": operation_id,
+                "expires_at": 2_000_000_000,
+            },
+        )
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    monkeypatch.setattr(cli_mod.secrets, "token_urlsafe", lambda _size: secret)
+    monkeypatch.setattr(cli_mod.secrets, "token_hex", lambda _size: operation_id)
+    auth_file = tmp_path / "auth_tokens.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "https://next.example.com": {
+                    "auth_type": "databricks",
+                    "workspace_host": "https://workspace.example.com",
+                    "org_id": "123456789",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr("omnigent.cli_auth._token_file_path", lambda: auth_file)
+    output = tmp_path / "credentials" / "host-token"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "issue",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(post_bodies) == 2
+    assert post_bodies[0] == post_bodies[1]
+    assert output.read_text().strip() == secret
+    assert databricks_request_headers("https://next.example.com") == {
+        "X-Databricks-Org-Id": "123456789"
+    }
 
 
 def test_host_no_server_starts_local_backend(

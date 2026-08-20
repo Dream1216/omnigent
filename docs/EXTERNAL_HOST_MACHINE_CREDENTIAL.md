@@ -8,13 +8,19 @@ credential that is accepted only by the Host WebSocket tunnel.
 
 - The host must first register through normal user authentication. This binds
   its stable `host_id` to the authenticated `user_id` and workspace.
-- `POST /v1/hosts/{host_id}/credentials` is owner-only. It returns the raw token
-  once with `Cache-Control: no-store`; PostgreSQL stores only its SHA-256
-  digest and expiry.
+- `GET /v1/hosts/{host_id}/credentials` returns owner-only, non-secret CAS
+  metadata (`generation`, active state, expiry) with `Cache-Control: no-store`.
+  `POST` accepts only the SHA-256 digest of a client-generated raw token plus
+  the observed generation and a retry-stable operation id. The raw token never
+  enters the API/server; PostgreSQL stores only its digest and expiry.
 - The token is scoped to that exact host path. It is not an HTTP/API bearer and
   cannot list sessions, read files, administer users, or issue another token.
-- Rotating overwrites the digest atomically. Revoking clears it without deleting
-  the Host row or its session bindings. A live token-authenticated tunnel
+- Rotating increments `credential_generation` with an atomic compare-and-swap.
+  A repeated operation id is idempotent after response loss; concurrent stale
+  writers receive `409`. Revoking also requires the expected generation, so a
+  failed client's cleanup cannot revoke a newer token. Revocation clears the
+  digest without deleting the Host row or its session bindings and does not
+  advance Host liveness (`updated_at`). A live token-authenticated tunnel
   revalidates against PostgreSQL every heartbeat and closes within 30 seconds
   after revocation/expiry, even across App replicas.
 - External credentials are finite: 1 hour minimum, 365 days maximum; the CLI
@@ -38,15 +44,18 @@ omnigent host credential issue \
   --ttl-days 90
 ```
 
-The command consumes the one-time response directly into an atomic `0600`
-file and never prints the token. By default it also removes the stored
-short-lived Accounts/OIDC JWT (including an expired record) after successful
-installation. Use
+The command generates the raw token locally, sends only its digest, and writes
+the token directly into an atomic `0600` file without printing it. If the
+issue response is lost it retries the same operation/digest idempotently. By
+default it also removes the stored short-lived Accounts/OIDC JWT (including an
+expired record) after the destination file and directory entry are fsynced.
+Databricks workspace/org routing pointers are retained. Use
 `--keep-user-token` only for an intentional interactive operator profile.
 The destination's immediate parent must be owned by the invoking user and must
 not be group/other-writable; an existing destination must be a regular file
 owned by that user. If these checks or the atomic write fail, the CLI requests
-server-side revocation so an untracked capability is not left active.
+a generation-conditional server-side revocation. A newer concurrent
+generation is preserved.
 
 For systemd, install and adapt
 `deploy/systemd/omnigent-external-host.service.example`. The unit uses
@@ -104,7 +113,9 @@ omnigent host credential revoke \
   --credential-file /etc/omnigent/host/host-token
 ```
 
-Revocation preserves the Host row but disconnects the token-authenticated
-tunnel within one heartbeat. Roll back the deployment by restoring the prior
+Only the endpoint's exact `204` response is accepted as proof of revocation;
+redirects, `200` pages, conflicts, and transport errors preserve the local
+credential file. Revocation preserves the Host row but disconnects the
+token-authenticated tunnel within one heartbeat. Roll back the deployment by restoring the prior
 App image and systemd unit, logging in once with the owner account, and running
 the legacy user-bearer Host flow. Never restore an already-revoked token.

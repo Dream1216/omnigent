@@ -1308,6 +1308,15 @@ class SqlHost(OmnigentBase):
         longer authenticates. Scoped to the TOKEN, not the durable host row.
         Managed-launch expiry follows the provider lifetime; external-host
         expiry follows the owner-selected bounded credential lifetime.
+    :param credential_generation: Monotonic external-host credential version.
+        Issue and revoke operations compare-and-swap this value so stale or
+        failed clients cannot overwrite/revoke a newer credential generation.
+        Managed hosts leave it at zero because their credential lifecycle is
+        owned by the sandbox provider.
+    :param credential_operation_id: Last successful external-host issue
+        operation id.  It lets a client safely retry the same digest after a
+        response is lost without rotating the credential a second time.  The
+        id is non-secret and cleared by revocation.
     :param sandbox_provider: Sandbox provider backing a managed host,
         e.g. ``"modal"``. ``NULL`` for external hosts — non-NULL is the
         "this host is server-managed" discriminator.
@@ -1345,6 +1354,13 @@ class SqlHost(OmnigentBase):
     updated_at: Mapped[int] = mapped_column(Integer)
     token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     token_expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    credential_generation: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default="0",
+        default=0,
+    )
+    credential_operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sandbox_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     sandbox_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Opaque; never SQL-filtered — stored compressed (CompressedText).

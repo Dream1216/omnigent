@@ -439,10 +439,19 @@ async def _proxy_detect_credentials(
 class ExternalHostCredentialRequest(BaseModel):
     """Request body for issuing/rotating an external-host credential.
 
+    :param token_sha256: Lowercase SHA-256 digest of a client-generated token.
+        The raw capability never enters the API or server process.
+    :param expected_generation: Generation returned by the owner-only status
+        endpoint immediately before issuing.
+    :param operation_id: Random id stable across retries of this exact issue.
     :param ttl_seconds: Finite credential lifetime.  The bounded range keeps
         machine credentials useful across restarts without allowing a
         never-expiring capability.
     """
+
+    token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_generation: int = Field(ge=0)
+    operation_id: str = Field(pattern=r"^[0-9a-f]{32,64}$")
 
     ttl_seconds: int = Field(
         default=_EXTERNAL_HOST_CREDENTIAL_DEFAULT_TTL_S,
@@ -704,6 +713,36 @@ def create_hosts_router(
             "runners": [],
         }
 
+    @router.get("/hosts/{host_id}/credentials")
+    async def get_external_host_credential_state(
+        request: Request,
+        response: Response,
+        host_id: str,
+    ) -> dict[str, Any]:
+        """Return owner-scoped credential metadata without secret material."""
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+
+        authenticated = require_user(request, auth_provider)
+        owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
+        try:
+            state = await asyncio.to_thread(
+                host_store.get_external_host_credential_state,
+                host_id=host_id,
+                user_id=owner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if state is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return {
+            "host_id": state.host_id,
+            "generation": state.generation,
+            "active": state.active,
+            "expires_at": state.expires_at,
+        }
+
     @router.post("/hosts/{host_id}/credentials")
     async def issue_external_host_credential(
         request: Request,
@@ -713,24 +752,26 @@ def create_hosts_router(
     ) -> dict[str, Any]:
         """Issue or rotate one owner-scoped external-host tunnel credential.
 
-        The raw credential is returned exactly once and is never persisted by
-        the server.  The database stores only its digest.  The target must be
-        an existing external host owned by the authenticated caller; managed
-        sandbox hosts remain under their provider lifecycle.
+        The client creates the raw credential and submits only its digest.
+        The database stores that digest behind a generation CAS fence. The
+        operation id makes a retry after response loss idempotent. The target
+        must be an existing external host owned by the authenticated caller;
+        managed sandbox hosts remain under their provider lifecycle.
         """
         from omnigent.server.auth import RESERVED_USER_LOCAL
 
         authenticated = require_user(request, auth_provider)
         owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
-        token = secrets.token_urlsafe(48)
         expires_at = now_epoch() + body.ttl_seconds
         try:
             armed = await asyncio.to_thread(
                 host_store.arm_external_host_credential,
                 host_id=host_id,
                 user_id=owner,
-                token=token,
+                token_sha256=body.token_sha256,
                 token_expires_at=expires_at,
+                expected_generation=body.expected_generation,
+                operation_id=body.operation_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -738,25 +779,35 @@ def create_hosts_router(
             # Same response for absent and different-owner hosts: this
             # capability endpoint is not a cross-user host-id oracle.
             raise HTTPException(status_code=404, detail="host not found")
+        if armed.expires_at is None or armed.expires_at <= now_epoch():
+            # A successful issue must always return the active expiry. Treat
+            # inconsistent persisted state as a conflict, never as a token
+            # that the client should install.
+            raise HTTPException(status_code=409, detail="credential state is not active")
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         _logger.info(
-            "external host credential issued host=%s owner=%s expires_at=%d",
+            "external host credential issued host=%s owner=%s generation=%d "
+            "operation_id=%s expires_at=%d",
             armed.host_id,
             owner,
-            expires_at,
+            armed.generation,
+            body.operation_id,
+            armed.expires_at,
         )
         return {
             "host_id": armed.host_id,
             "token_type": "host_tunnel",
-            "token": token,
-            "expires_at": expires_at,
+            "generation": armed.generation,
+            "operation_id": body.operation_id,
+            "expires_at": armed.expires_at,
         }
 
     @router.delete("/hosts/{host_id}/credentials", status_code=204)
     async def revoke_external_host_credential(
         request: Request,
         host_id: str,
+        expected_generation: int = Query(ge=0),
     ) -> Response:
         """Revoke an external-host credential while preserving the host row."""
         from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -768,12 +819,18 @@ def create_hosts_router(
                 host_store.revoke_external_host_credential,
                 host_id=host_id,
                 user_id=owner,
+                expected_generation=expected_generation,
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not revoked:
             raise HTTPException(status_code=404, detail="host not found")
-        _logger.info("external host credential revoked host=%s owner=%s", host_id, owner)
+        _logger.info(
+            "external host credential revoked host=%s owner=%s generation=%d",
+            host_id,
+            owner,
+            revoked.generation,
+        )
         # A tunnel authenticated before revocation revalidates the credential
         # from the shared DB in its ping loop and closes within one interval,
         # including when this DELETE lands on a different App replica.

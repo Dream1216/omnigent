@@ -8789,6 +8789,16 @@ def _write_host_credential_file(path: Path, token: str) -> None:
         os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
         os.replace(tmp_path, path)
         tmp_path = None
+        # Persist the directory entry as well as the file contents. Clearing
+        # the user's broader login token is safe only after the new machine
+        # credential name is durable across a power loss.
+        if os.name != "nt":
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         installed_info = os.lstat(path)
         if not stat.S_ISREG(installed_info.st_mode) or installed_info.st_mode & 0o077:
             with contextlib.suppress(FileNotFoundError):
@@ -9938,44 +9948,101 @@ def host_credential_issue(
 
     from omnigent.claude_native_bridge import url_component
 
-    result = _host_http_json(
+    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials"
+    state = _host_http_json(
         base_url=resolved_server,
-        method="POST",
-        path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
-        json_body={"ttl_seconds": ttl_days * 24 * 3600},
+        method="GET",
+        path=credential_path,
     )
-    if result.status_code == 0:
-        raise click.ClickException(f"Credential issue failed: {_host_error_text(result.body)}")
-    if result.status_code >= 400:
+    if state.status_code != 200:
+        suffix = (
+            _host_error_text(state.body)
+            if state.status_code == 0
+            else f"{state.status_code}: {_host_error_text(state.body)}"
+        )
+        raise click.ClickException(f"Credential status failed ({suffix})")
+    if not isinstance(state.body, dict):
+        raise click.ClickException("Credential status returned a non-object response.")
+    expected_generation = state.body.get("generation")
+    if isinstance(expected_generation, bool) or not isinstance(expected_generation, int):
+        raise click.ClickException("Credential status returned a malformed generation.")
+
+    # The raw token is born on the host and never crosses the management API.
+    # Only its high-entropy SHA-256 digest is sent to the server.
+    token = secrets.token_urlsafe(48)
+    operation_id = secrets.token_hex(16)
+    issue_body: _HostJsonObject = {
+        "ttl_seconds": ttl_days * 24 * 3600,
+        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+        "expected_generation": expected_generation,
+        "operation_id": operation_id,
+    }
+    result = _HostHttpResult(status_code=0, body="request not attempted")
+    # A status of zero means no HTTP response was observed. Retry the exact
+    # same operation id and digest: the server recognizes a committed first
+    # attempt and returns the original generation/expiry idempotently.
+    for _attempt in range(3):
+        result = _host_http_json(
+            base_url=resolved_server,
+            method="POST",
+            path=credential_path,
+            json_body=issue_body,
+        )
+        if result.status_code != 0:
+            break
+    if result.status_code != 200:
+        suffix = (
+            _host_error_text(result.body)
+            if result.status_code == 0
+            else f"{result.status_code}: {_host_error_text(result.body)}"
+        )
         raise click.ClickException(
-            f"Credential issue failed ({result.status_code}): {_host_error_text(result.body)}"
+            f"Credential issue failed ({suffix})"
         )
     if not isinstance(result.body, dict):
         raise click.ClickException("Credential issue returned a non-object response.")
-    token = result.body.get("token")
+    generation = result.body.get("generation")
+    returned_operation_id = result.body.get("operation_id")
     expires_at = result.body.get("expires_at")
-    if not isinstance(token, str) or not token or not isinstance(expires_at, int):
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation != expected_generation + 1
+        or returned_operation_id != operation_id
+        or isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+        or expires_at <= int(time.time())
+    ):
         raise click.ClickException("Credential issue returned a malformed response.")
 
     try:
         _write_host_credential_file(output, token)
     except OSError as exc:
-        # The server already rotated the credential.  Revoke best-effort so a
-        # local disk failure does not leave an untracked capability active.
-        _host_http_json(
+        # Revoke only the generation this client installed. If another client
+        # already rotated the host, the CAS returns 409 and the newer token is
+        # never destroyed by this failed writer's cleanup.
+        cleanup = _host_http_json(
             base_url=resolved_server,
             method="DELETE",
-            path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
+            path=credential_path,
+            params={"expected_generation": generation},
         )
-        raise click.ClickException(f"Could not install credential file: {exc}") from exc
+        cleanup_text = (
+            "issued generation was conditionally revoked"
+            if cleanup.status_code == 204
+            else f"conditional revoke returned {cleanup.status_code}; inspect server state"
+        )
+        raise click.ClickException(
+            f"Could not install credential file: {exc}; {cleanup_text}"
+        ) from exc
 
     if clear_user_token:
         from omnigent.cli_auth import clear_token
 
-        # Clear unconditionally: an expired Accounts/OIDC JWT is no longer
-        # usable, but it is still unnecessary secret material at rest.  The
-        # one-time operator login has completed its only purpose once the
-        # narrow machine credential is durably installed.
+        # An expired Accounts/OIDC JWT is no longer usable, but it is still
+        # unnecessary secret material at rest. Databricks routing pointer
+        # records contain no bearer and clear_token deliberately preserves
+        # their workspace/org metadata.
         clear_token(resolved_server)
     click.echo(f"Installed host credential at {_display_path(output.expanduser())}.")
     click.echo(f"Expires at Unix time {expires_at}; rotate before expiry.")
@@ -10014,16 +10081,42 @@ def host_credential_revoke(
 
     from omnigent.claude_native_bridge import url_component
 
+    credential_path = f"/v1/hosts/{url_component(resolved_host_id)}/credentials"
+    state = _host_http_json(
+        base_url=resolved_server,
+        method="GET",
+        path=credential_path,
+    )
+    if state.status_code != 200:
+        suffix = (
+            _host_error_text(state.body)
+            if state.status_code == 0
+            else f"{state.status_code}: {_host_error_text(state.body)}"
+        )
+        raise click.ClickException(f"Credential status failed ({suffix})")
+    if not isinstance(state.body, dict):
+        raise click.ClickException("Credential status returned a non-object response.")
+    generation = state.body.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        raise click.ClickException("Credential status returned a malformed generation.")
+
     result = _host_http_json(
         base_url=resolved_server,
         method="DELETE",
-        path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
+        path=credential_path,
+        params={"expected_generation": generation},
     )
-    if result.status_code == 0:
-        raise click.ClickException(f"Credential revoke failed: {_host_error_text(result.body)}")
-    if result.status_code >= 400:
+    # DELETE is deliberately exact: a login redirect (302) or an HTML/API
+    # success page (200) does not prove the credential was revoked. Preserve
+    # the local file for every status except the endpoint's contractual 204.
+    if result.status_code != 204:
+        suffix = (
+            _host_error_text(result.body)
+            if result.status_code == 0
+            else f"{result.status_code}: {_host_error_text(result.body)}"
+        )
         raise click.ClickException(
-            f"Credential revoke failed ({result.status_code}): {_host_error_text(result.body)}"
+            f"Credential revoke failed ({suffix}); local credential was preserved"
         )
     if credential_file is not None:
         with contextlib.suppress(FileNotFoundError):

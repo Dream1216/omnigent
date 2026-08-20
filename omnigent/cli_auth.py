@@ -748,9 +748,17 @@ def open_server_client(
 
 
 def clear_token(server_url: str) -> None:
-    """Remove a stored token for a server.
+    """Remove a stored bearer while preserving Databricks routing metadata.
 
-    No-op if no token is stored or the file doesn't exist.
+    Accounts/OIDC records are bearer records, so their entire server entry is
+    removed. Databricks Apps records are different: they contain a non-secret
+    ``workspace_host`` / ``org_id`` routing pointer and normally no bearer at
+    all. Deleting that pointer after machine-credential installation would
+    silently drop ``X-Databricks-Org-Id`` from later host requests. Therefore
+    Databricks records are retained, with any unexpected legacy ``token`` and
+    ``expires_at`` fields stripped fail-safe.
+
+    No-op if no entry is stored or the file doesn't exist.
 
     :param server_url: The server URL, e.g.
         ``"http://localhost:6767"``.
@@ -765,6 +773,14 @@ def clear_token(server_url: str) -> None:
         return
 
     key = _normalize_server_url(server_url)
-    if key in data:
-        del data[key]
-        _write_tokens_file(path, data)
+    entry = data.get(key)
+    if not isinstance(entry, dict):
+        return
+    if entry.get("auth_type") == "databricks":
+        cleaned = {k: v for k, v in entry.items() if k not in {"token", "expires_at"}}
+        if cleaned != entry:
+            data[key] = cleaned
+            _write_tokens_file(path, data)
+        return
+    del data[key]
+    _write_tokens_file(path, data)

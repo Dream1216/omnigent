@@ -27,7 +27,7 @@ from omnigent.server.routes.hosts import create_hosts_router
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
-from omnigent.stores.host_store import HostStore
+from omnigent.stores.host_store import HostStore, hash_host_launch_token
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 
 pytestmark = pytest.mark.asyncio
@@ -849,46 +849,82 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
     multi_user_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The owner gets a one-time token while the host remains an external picker target."""
+    """The owner controls digest-only CAS state while the host remains visible."""
     app, _registry, host_store, _conv_store = multi_user_app
     host_id = "c6765856217840db970e38aef3b5e10c"
     host_store.upsert_on_connect(host_id, "exec-b", "alice@test.com")
     caplog.set_level("INFO", logger="omnigent.server.routes.hosts")
+    generation_one = "api-generation-one"
+    generation_two = "api-generation-two"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        initial = await client.get(
+            f"/v1/hosts/{host_id}/credentials",
+            headers={"x-test-user": "alice@test.com"},
+        )
+        assert initial.status_code == 200
+        assert initial.headers["cache-control"] == "no-store"
+        assert initial.json() == {
+            "host_id": host_id,
+            "generation": 0,
+            "active": False,
+            "expires_at": None,
+        }
         issued = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 3600},
+            json={
+                "ttl_seconds": 3600,
+                "token_sha256": hash_host_launch_token(generation_one),
+                "expected_generation": 0,
+                "operation_id": "1" * 32,
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert issued.status_code == 200
         assert issued.headers["cache-control"] == "no-store"
-        generation_one = issued.json()["token"]
         assert issued.json()["token_type"] == "host_tunnel"
+        assert issued.json()["generation"] == 1
+        assert issued.json()["operation_id"] == "1" * 32
+        assert "token" not in issued.json()
         assert host_store.resolve_launch_token(host_id, generation_one) is not None
 
-        # There is no read-back endpoint. A second POST is a rotation: it
-        # returns a fresh token once and immediately invalidates generation 1.
-        no_readback = await client.get(
-            f"/v1/hosts/{host_id}/credentials",
-            headers={"x-test-user": "alice@test.com"},
-        )
-        assert no_readback.status_code == 405
         rotated = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 7200},
+            json={
+                "ttl_seconds": 7200,
+                "token_sha256": hash_host_launch_token(generation_two),
+                "expected_generation": 1,
+                "operation_id": "2" * 32,
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert rotated.status_code == 200
-        generation_two = rotated.json()["token"]
-        assert generation_two != generation_one
+        assert rotated.json()["generation"] == 2
         assert host_store.resolve_launch_token(host_id, generation_one) is None
+        assert host_store.resolve_launch_token(host_id, generation_two) is not None
+
+        stale = await client.post(
+            f"/v1/hosts/{host_id}/credentials",
+            json={
+                "ttl_seconds": 7200,
+                "token_sha256": hash_host_launch_token("stale-token"),
+                "expected_generation": 1,
+                "operation_id": "3" * 32,
+            },
+            headers={"x-test-user": "alice@test.com"},
+        )
+        assert stale.status_code == 409
         assert host_store.resolve_launch_token(host_id, generation_two) is not None
 
         # A different user learns nothing and cannot rotate Alice's token.
         refused = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 7200},
+            json={
+                "ttl_seconds": 7200,
+                "token_sha256": hash_host_launch_token("bob-token"),
+                "expected_generation": 2,
+                "operation_id": "4" * 32,
+            },
             headers={"x-test-user": "bob@test.com"},
         )
         assert refused.status_code == 404
@@ -902,6 +938,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
 
         revoked = await client.delete(
             f"/v1/hosts/{host_id}/credentials",
+            params={"expected_generation": 2},
             headers={"x-test-user": "alice@test.com"},
         )
         assert revoked.status_code == 204
@@ -910,8 +947,8 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
         assert host_store.get_host(host_id) is not None
 
     # Audit metadata is useful without turning the log stream into a secret
-    # store. Both issued generations and the revoke are recorded, but neither
-    # raw capability is present.
+    # store. Both generations and the revoke are recorded, but no raw
+    # capability or digest is present.
     assert caplog.text.count("external host credential issued") == 2
     assert "external host credential revoked" in caplog.text
     assert generation_one not in caplog.text
@@ -936,19 +973,34 @@ async def test_external_host_credential_api_rejects_managed_and_unbounded_tokens
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         managed = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 3600},
+            json={
+                "ttl_seconds": 3600,
+                "token_sha256": hash_host_launch_token("external-must-not-overwrite"),
+                "expected_generation": 0,
+                "operation_id": "a" * 32,
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert managed.status_code == 409
         too_long = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 366 * 24 * 3600},
+            json={
+                "ttl_seconds": 366 * 24 * 3600,
+                "token_sha256": hash_host_launch_token("too-long"),
+                "expected_generation": 0,
+                "operation_id": "b" * 32,
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert too_long.status_code == 422
         too_short = await client.post(
             f"/v1/hosts/{host_id}/credentials",
-            json={"ttl_seconds": 3599},
+            json={
+                "ttl_seconds": 3599,
+                "token_sha256": hash_host_launch_token("too-short"),
+                "expected_generation": 0,
+                "operation_id": "c" * 32,
+            },
             headers={"x-test-user": "alice@test.com"},
         )
         assert too_short.status_code == 422
