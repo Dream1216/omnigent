@@ -100,6 +100,168 @@ def test_host_command_registered() -> None:
     assert "server" in result.output.lower(), "Help text should mention the --server option"
 
 
+def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI consumes the one-time token directly into a 0600 file."""
+    import omnigent.cli as cli_mod
+
+    secret = "must-never-appear-in-terminal"
+    calls: list[dict[str, object]] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        calls.append(kwargs)
+        return cli_mod._HostHttpResult(
+            status_code=200,
+            body={
+                "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+                "token_type": "host_tunnel",
+                "token": secret,
+                "expires_at": 2_000_000_000,
+            },
+        )
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    output = tmp_path / "credentials" / "next-host-token"
+    auth_file = tmp_path / "auth_tokens.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                # An expired record is deliberately used: the migration must
+                # remove unnecessary secret material even when load_token()
+                # would no longer return it.
+                "https://next.example.com": {
+                    "token": "expired-accounts-jwt",
+                    "expires_at": 1,
+                },
+                "https://unrelated.example.com": {
+                    "token": "keep-unrelated-server-token",
+                    "expires_at": 2_000_000_000,
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("omnigent.cli_auth._token_file_path", lambda: auth_file)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "issue",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--output",
+            str(output),
+            "--ttl-days",
+            "30",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert secret not in result.output
+    assert output.read_text().strip() == secret
+    assert output.stat().st_mode & 0o777 == 0o600
+    remaining_auth = json.loads(auth_file.read_text())
+    assert "https://next.example.com" not in remaining_auth
+    assert "https://unrelated.example.com" in remaining_auth
+    assert calls == [
+        {
+            "base_url": "https://next.example.com",
+            "method": "POST",
+            "path": "/v1/hosts/9a3a42ed8ceb45ab96f3f4eb1e86bc19/credentials",
+            "json_body": {"ttl_seconds": 30 * 24 * 3600},
+        }
+    ]
+
+
+def test_host_credential_issue_refuses_unsafe_parent_and_revokes_server_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group-writable destination fails closed without orphaning the token."""
+    import omnigent.cli as cli_mod
+
+    secret = "unsafe-parent-secret"
+    calls: list[str] = []
+
+    def _fake_http(**kwargs: object) -> cli_mod._HostHttpResult:
+        method = str(kwargs["method"])
+        calls.append(method)
+        if method == "DELETE":
+            return cli_mod._HostHttpResult(status_code=204, body="")
+        return cli_mod._HostHttpResult(
+            status_code=200,
+            body={
+                "host_id": "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+                "token_type": "host_tunnel",
+                "token": secret,
+                "expires_at": 2_000_000_000,
+            },
+        )
+
+    monkeypatch.setattr(cli_mod, "_host_http_json", _fake_http)
+    unsafe_parent = tmp_path / "unsafe"
+    unsafe_parent.mkdir()
+    unsafe_parent.chmod(0o777)
+    output = unsafe_parent / "host-token"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "issue",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "writable by group/other" in result.output
+    assert secret not in result.output
+    assert not output.exists()
+    assert calls == ["POST", "DELETE"]
+
+
+def test_host_credential_revoke_deletes_file_only_after_server_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local deletion follows confirmed server-side revocation."""
+    import omnigent.cli as cli_mod
+
+    credential_file = tmp_path / "host-token"
+    credential_file.write_text("opaque-token\n")
+    os.chmod(credential_file, 0o600)
+    monkeypatch.setattr(
+        cli_mod,
+        "_host_http_json",
+        lambda **_kw: cli_mod._HostHttpResult(status_code=204, body=""),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "host",
+            "credential",
+            "revoke",
+            "--server",
+            "https://next.example.com",
+            "--host-id",
+            "9a3a42ed8ceb45ab96f3f4eb1e86bc19",
+            "--credential-file",
+            str(credential_file),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not credential_file.exists()
+    assert "opaque-token" not in result.output
+
+
 def test_host_no_server_starts_local_backend(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -316,7 +316,13 @@ def create_host_tunnel_router(
                 name=f"host-sender:{host_id}",
             )
             ping_task = asyncio.create_task(
-                _ping_loop(ws, conn, host_id, host_store),
+                _ping_loop(
+                    ws,
+                    conn,
+                    host_id,
+                    host_store,
+                    presented_host_token=managed_token,
+                ),
                 name=f"host-ping:{host_id}",
             )
             receive_task = asyncio.create_task(
@@ -806,6 +812,8 @@ async def _ping_loop(
     conn: HostConnection,
     host_id: str,
     host_store: HostStore,
+    *,
+    presented_host_token: str | None = None,
 ) -> None:
     """Send pings every PING_INTERVAL_S; declare dead after misses.
 
@@ -821,9 +829,24 @@ async def _ping_loop(
     :param conn: Host connection for timing checks.
     :param host_id: Host id for logging.
     :param host_store: Persistent host store the heartbeat is written to.
+    :param presented_host_token: Narrow token used for this connection, when
+        it authenticated through ``X-Omnigent-Host-Token``. Revalidated every
+        interval so revocation/expiry closes a live connection even when the
+        revoking request lands on another App replica.
     """
     while True:
         await asyncio.sleep(PING_INTERVAL_S)
+        if presented_host_token is not None:
+            still_valid = await asyncio.to_thread(
+                host_store.resolve_launch_token,
+                host_id,
+                presented_host_token,
+            )
+            if still_valid is None:
+                _logger.warning("Host %s credential was revoked or expired", host_id)
+                with contextlib.suppress(RuntimeError):
+                    await ws.close(code=4004, reason="credential revoked or expired")
+                return
         elapsed = time.time() - conn.last_frame_at
         if elapsed > PING_INTERVAL_S * PING_MISS_THRESHOLD:
             _logger.warning(

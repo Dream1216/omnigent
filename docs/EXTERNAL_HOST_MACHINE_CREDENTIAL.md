@@ -1,0 +1,110 @@
+# External Host machine credential
+
+Long-running external hosts should not keep an Accounts/OIDC session JWT or a
+user password. Omnigent can instead issue a finite, host-bound machine
+credential that is accepted only by the Host WebSocket tunnel.
+
+## Security and ownership model
+
+- The host must first register through normal user authentication. This binds
+  its stable `host_id` to the authenticated `user_id` and workspace.
+- `POST /v1/hosts/{host_id}/credentials` is owner-only. It returns the raw token
+  once with `Cache-Control: no-store`; PostgreSQL stores only its SHA-256
+  digest and expiry.
+- The token is scoped to that exact host path. It is not an HTTP/API bearer and
+  cannot list sessions, read files, administer users, or issue another token.
+- Rotating overwrites the digest atomically. Revoking clears it without deleting
+  the Host row or its session bindings. A live token-authenticated tunnel
+  revalidates against PostgreSQL every heartbeat and closes within 30 seconds
+  after revocation/expiry, even across App replicas.
+- External credentials are finite: 1 hour minimum, 365 days maximum; the CLI
+  defaults to 90 days. Rotate before expiry rather than using a never-expiring
+  secret.
+- `sandbox_provider` remains `NULL`, so this Host stays visible in the user's
+  external Host picker. Managed sandbox tokens remain under the provider
+  lifecycle and cannot be overwritten through this endpoint.
+
+## Issue and install without printing the token
+
+Log in once as the Host owner, then run the issue command as the service user
+or an operator that can safely install the destination file:
+
+```bash
+omnigent login https://next.example.com
+omnigent host credential issue \
+  --server https://next.example.com \
+  --host-id 0123456789abcdef0123456789abcdef \
+  --output /etc/omnigent/host/host-token \
+  --ttl-days 90
+```
+
+The command consumes the one-time response directly into an atomic `0600`
+file and never prints the token. By default it also removes the stored
+short-lived Accounts/OIDC JWT (including an expired record) after successful
+installation. Use
+`--keep-user-token` only for an intentional interactive operator profile.
+The destination's immediate parent must be owned by the invoking user and must
+not be group/other-writable; an existing destination must be a regular file
+owned by that user. If these checks or the atomic write fail, the CLI requests
+server-side revocation so an untracked capability is not left active.
+
+For systemd, install and adapt
+`deploy/systemd/omnigent-external-host.service.example`. The unit uses
+`LoadCredential=` and points `OMNIGENT_HOST_TOKEN_FILE` at `%d/host-token`.
+The Host rereads its configured file on every reconnect. With systemd
+`LoadCredential=`, restart the unit after replacing the source so systemd
+refreshes its private credential copy. A direct file configuration (without
+`LoadCredential=`) can pick up an atomic replacement on the next reconnect.
+
+Required non-secret entries in `/etc/omnigent/host/identity.env` are:
+
+```text
+OMNIGENT_SERVER_URL=https://next.example.com
+OMNIGENT_HOST_ID=0123456789abcdef0123456789abcdef
+OMNIGENT_HOST_NAME=exec-b
+```
+
+Validate before enabling:
+
+```bash
+systemd-analyze verify /etc/systemd/system/omnigent-external-host.service
+systemctl daemon-reload
+systemctl restart omnigent-external-host.service
+systemctl show omnigent-external-host.service \
+  -p ActiveState -p SubState -p MainPID -p NRestarts
+```
+
+Do not print `/proc/$pid/environ`, the systemd credential, the API response, or
+the source credential file into an evidence log. Evidence should contain only
+the Host id, owner, expiry, file mode, service state, reconnect count, and API
+health.
+
+## Rotation acceptance
+
+1. Issue generation N+1 to a temporary `0600` path.
+2. Atomically replace the systemd credential source, then restart the Host unit
+   (or force one controlled tunnel reconnect).
+3. Confirm the same Host id and owner are online and can launch a real Runner.
+4. Restart the Host service once; confirm reconnect, Host visibility, and a
+   real conversation round-trip.
+5. Restart the App service, then restart the Host service a second time;
+   confirm the same Host id/owner, `sandbox_provider=NULL`, reconnect, and a
+   second conversation round-trip. This is the restart-recovery gate; a single
+   warm reconnect is not sufficient evidence.
+6. Confirm generation N no longer authenticates. Retain redacted audit
+   metadata only; verify the Accounts/OIDC token record was removed and
+   destroy any temporary operator login state.
+
+## Revoke and rollback
+
+```bash
+omnigent host credential revoke \
+  --server https://next.example.com \
+  --host-id 0123456789abcdef0123456789abcdef \
+  --credential-file /etc/omnigent/host/host-token
+```
+
+Revocation preserves the Host row but disconnects the token-authenticated
+tunnel within one heartbeat. Roll back the deployment by restoring the prior
+App image and systemd unit, logging in once with the owner account, and running
+the legacy user-bearer Host flow. Never restore an already-revoked token.

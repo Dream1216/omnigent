@@ -3522,7 +3522,7 @@ class HostProcess:
             managed-host token header or — only when a token could be
             minted — ``{"Authorization": "Bearer <token>"}``.
         """
-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
+        from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER, load_host_tunnel_token
         from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 
         # Identify as a first-party client so the server's WebSocket origin
@@ -3541,7 +3541,10 @@ class HostProcess:
             databricks_request_headers(self._server_url, host_id=self._identity.host_id)
         )
 
-        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
+        # Read the file-backed form on every reconnect.  That makes an atomic
+        # external-host credential rotation effective without keeping an
+        # Accounts/OIDC JWT at rest or restarting this process.
+        managed_token = load_host_tunnel_token()
         if managed_token:
             headers[MANAGED_HOST_TOKEN_HEADER] = managed_token
             return headers
@@ -3563,9 +3566,9 @@ class HostProcess:
         :returns: Current bearer token, or ``None`` when credentials are not
             available or this is a managed host authenticated by launch token.
         """
-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
+        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
 
-        if os.environ.get(HOST_TOKEN_ENV_VAR):
+        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
             return None
         try:
             if not self._auth_token_factory_resolved:

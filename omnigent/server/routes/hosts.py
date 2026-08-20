@@ -21,8 +21,8 @@ import logging
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
 
 from omnigent.db.utils import now_epoch
 from omnigent.debug_logging import add_audit_attrs
@@ -109,6 +109,14 @@ def _host_absent_error(host: Host) -> OmnigentError:
     if host_is_live(host):
         return OmnigentError("host is on another replica", code=ErrorCode.WRONG_REPLICA)
     return OmnigentError("host is offline", code=ErrorCode.CONFLICT)
+
+# External-host machine credentials are deliberately finite.  One hour is the
+# minimum useful reconnect window; one year is the hard ceiling so a forgotten
+# credential can never become permanent.  The CLI defaults to 90 days and can
+# rotate atomically at any time.
+_EXTERNAL_HOST_CREDENTIAL_MIN_TTL_S = 3600
+_EXTERNAL_HOST_CREDENTIAL_MAX_TTL_S = 365 * 24 * 3600
+_EXTERNAL_HOST_CREDENTIAL_DEFAULT_TTL_S = 90 * 24 * 3600
 
 
 async def _proxy_model_options(
@@ -428,6 +436,21 @@ async def _proxy_detect_credentials(
         host_conn.pending_credential_detects.pop(request_id, None)
 
 
+class ExternalHostCredentialRequest(BaseModel):
+    """Request body for issuing/rotating an external-host credential.
+
+    :param ttl_seconds: Finite credential lifetime.  The bounded range keeps
+        machine credentials useful across restarts without allowing a
+        never-expiring capability.
+    """
+
+    ttl_seconds: int = Field(
+        default=_EXTERNAL_HOST_CREDENTIAL_DEFAULT_TTL_S,
+        ge=_EXTERNAL_HOST_CREDENTIAL_MIN_TTL_S,
+        le=_EXTERNAL_HOST_CREDENTIAL_MAX_TTL_S,
+    )
+
+
 class CreateDirectoryRequest(BaseModel):
     """Request body for ``POST /v1/hosts/{host_id}/directories``.
 
@@ -680,6 +703,81 @@ def create_hosts_router(
             "gateway_inference": host_registry.gateway_inference(host.host_id),
             "runners": [],
         }
+
+    @router.post("/hosts/{host_id}/credentials")
+    async def issue_external_host_credential(
+        request: Request,
+        response: Response,
+        host_id: str,
+        body: ExternalHostCredentialRequest,
+    ) -> dict[str, Any]:
+        """Issue or rotate one owner-scoped external-host tunnel credential.
+
+        The raw credential is returned exactly once and is never persisted by
+        the server.  The database stores only its digest.  The target must be
+        an existing external host owned by the authenticated caller; managed
+        sandbox hosts remain under their provider lifecycle.
+        """
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+
+        authenticated = require_user(request, auth_provider)
+        owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
+        token = secrets.token_urlsafe(48)
+        expires_at = now_epoch() + body.ttl_seconds
+        try:
+            armed = await asyncio.to_thread(
+                host_store.arm_external_host_credential,
+                host_id=host_id,
+                user_id=owner,
+                token=token,
+                token_expires_at=expires_at,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if armed is None:
+            # Same response for absent and different-owner hosts: this
+            # capability endpoint is not a cross-user host-id oracle.
+            raise HTTPException(status_code=404, detail="host not found")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        _logger.info(
+            "external host credential issued host=%s owner=%s expires_at=%d",
+            armed.host_id,
+            owner,
+            expires_at,
+        )
+        return {
+            "host_id": armed.host_id,
+            "token_type": "host_tunnel",
+            "token": token,
+            "expires_at": expires_at,
+        }
+
+    @router.delete("/hosts/{host_id}/credentials", status_code=204)
+    async def revoke_external_host_credential(
+        request: Request,
+        host_id: str,
+    ) -> Response:
+        """Revoke an external-host credential while preserving the host row."""
+        from omnigent.server.auth import RESERVED_USER_LOCAL
+
+        authenticated = require_user(request, auth_provider)
+        owner = authenticated if authenticated is not None else RESERVED_USER_LOCAL
+        try:
+            revoked = await asyncio.to_thread(
+                host_store.revoke_external_host_credential,
+                host_id=host_id,
+                user_id=owner,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not revoked:
+            raise HTTPException(status_code=404, detail="host not found")
+        _logger.info("external host credential revoked host=%s owner=%s", host_id, owner)
+        # A tunnel authenticated before revocation revalidates the credential
+        # from the shared DB in its ping loop and closes within one interval,
+        # including when this DELETE lands on a different App replica.
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     @router.get("/hosts/{host_id}/harnesses/{harness}/model-options")
     async def get_host_model_options(

@@ -741,11 +741,88 @@ class HostStore:
             session.add(row)
             return _row_to_host(row)
 
+    def arm_external_host_credential(
+        self,
+        *,
+        host_id: str,
+        user_id: str,
+        token: str,
+        token_expires_at: int,
+    ) -> Host | None:
+        """Issue or rotate a narrow tunnel credential for an external host.
+
+        The host must already exist and belong to *user_id*: its first
+        registration still uses the normal interactive user-auth path, which
+        proves both ownership and the stable machine identity.  This method
+        then stores only the token digest on that row.  Re-arming the same host
+        atomically invalidates the prior credential while preserving its
+        identity, session bindings, display name, and external-host
+        discriminator (``sandbox_provider is None``).
+
+        Managed sandbox rows are deliberately rejected.  Their token lifetime
+        and rotation are owned by the sandbox orchestrator; allowing this API
+        to overwrite one would split credential authority and could outlive a
+        terminated sandbox.
+
+        :param host_id: Existing external host identifier.
+        :param user_id: Authenticated owner requesting the credential.
+        :param token: Raw credential; hashed here and never persisted.
+        :param token_expires_at: Absolute Unix expiry, strictly in the future.
+        :returns: Updated host, or ``None`` when the host is absent/not owned.
+        :raises ValueError: If the target is managed or the expiry is invalid.
+        """
+        now = now_epoch()
+        if token_expires_at <= now:
+            raise ValueError("external host credential expiry must be in the future")
+        token_hash = hash_host_launch_token(token)
+        with self._session("arm_external_host_credential") as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            # Return the same result for absent and different-owner rows so a
+            # caller cannot use this capability endpoint as a host-id oracle.
+            if row is None or row.user_id != user_id:
+                return None
+            if row.sandbox_provider is not None:
+                raise ValueError("managed host credentials are controlled by the sandbox provider")
+            row.token_hash = token_hash
+            row.token_expires_at = token_expires_at
+            row.updated_at = now
+            return _row_to_host(row)
+
+    def revoke_external_host_credential(self, *, host_id: str, user_id: str) -> bool:
+        """Revoke an external host credential without deleting the host row.
+
+        :param host_id: Existing external host identifier.
+        :param user_id: Authenticated owner requesting revocation.
+        :returns: ``True`` when an owned external host was updated; ``False``
+            when the host is absent/not owned.
+        :raises ValueError: If *host_id* identifies a managed sandbox host.
+        """
+        with self._session("revoke_external_host_credential") as session:
+            row = session.execute(
+                select(SqlHost).where(
+                    SqlHost.workspace_id == current_workspace_id(),
+                    SqlHost.host_id == host_id,
+                )
+            ).scalar_one_or_none()
+            if row is None or row.user_id != user_id:
+                return False
+            if row.sandbox_provider is not None:
+                raise ValueError("managed host credentials are controlled by the sandbox provider")
+            row.token_hash = None
+            row.token_expires_at = None
+            row.updated_at = now_epoch()
+            return True
+
     def resolve_launch_token(self, host_id: str, token: str) -> Host | None:
         """
-        Resolve a launch token presented for *host_id* to its managed host.
+        Resolve a narrow tunnel token presented for *host_id*.
 
-        The host tunnel's auth path for managed hosts, whose endpoint is
+        The host tunnel's token-auth path, whose endpoint is
         ``/hosts/{host_id}/tunnel`` — so the connecting peer names the
         host it claims to be, and the token proves the claim. The row is
         fetched by its ``(workspace_id, host_id)`` primary key and the
@@ -777,7 +854,7 @@ class HostStore:
                 return None
             if not hmac.compare_digest(row.token_hash, hash_host_launch_token(token)):
                 return None
-            if row.token_expires_at < now_epoch():
+            if row.token_expires_at <= now_epoch():
                 return None
             return _row_to_host(row)
 

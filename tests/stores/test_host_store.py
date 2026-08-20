@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.db_models import SqlHost
@@ -12,6 +12,7 @@ from omnigent.stores.host_store import (
     HOST_LIVENESS_TTL_S,
     Host,
     HostStore,
+    hash_host_launch_token,
     host_is_live,
 )
 
@@ -719,6 +720,93 @@ def test_register_managed_host_and_resolve_token_roundtrip(db_uri: str) -> None:
     assert resolved.sandbox_id == "sb-m1"
     # Pre-registered, not yet connected.
     assert resolved.status == "offline"
+
+
+def test_external_host_credential_roundtrip_rotation_and_revoke(db_uri: str) -> None:
+    """An external host gets a narrow, rotatable token without becoming managed."""
+    store = HostStore(db_uri)
+    host_id = "126d8cfcf30b4d0c9a759ec85be4ba06"
+    store.upsert_on_connect(host_id, "exec-b", "alice@example.com")
+
+    armed = store.arm_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        token="external-generation-1",
+        token_expires_at=now_epoch() + 3600,
+    )
+    assert armed is not None
+    assert armed.sandbox_provider is None
+    resolved = store.resolve_launch_token(host_id, "external-generation-1")
+    assert resolved is not None
+    assert resolved.user_id == "alice@example.com"
+    assert resolved.sandbox_provider is None
+    # The durable row contains only the digest, never the usable capability.
+    engine = get_or_create_engine(db_uri)
+    with Session(engine) as session:
+        row = session.execute(select(SqlHost).where(SqlHost.host_id == host_id)).scalar_one()
+        assert row is not None
+        assert row.token_hash == hash_host_launch_token("external-generation-1")
+        assert row.token_hash != "external-generation-1"
+
+    rotated = store.arm_external_host_credential(
+        host_id=host_id,
+        user_id="alice@example.com",
+        token="external-generation-2",
+        token_expires_at=now_epoch() + 7200,
+    )
+    assert rotated is not None
+    assert store.resolve_launch_token(host_id, "external-generation-1") is None
+    assert store.resolve_launch_token(host_id, "external-generation-2") is not None
+
+    assert store.revoke_external_host_credential(host_id=host_id, user_id="alice@example.com")
+    assert store.resolve_launch_token(host_id, "external-generation-2") is None
+    # Revocation preserves the visible external host row and its ownership.
+    still = store.get_host(host_id)
+    assert still is not None
+    assert still.user_id == "alice@example.com"
+    assert still.sandbox_provider is None
+
+
+def test_external_host_credential_refuses_cross_owner_and_managed_host(db_uri: str) -> None:
+    """Machine credentials cannot re-own a host or overwrite provider authority."""
+    store = HostStore(db_uri)
+    external_id = "fe85128a38524a538c2a8ce9d8e699dc"
+    store.upsert_on_connect(external_id, "alice-exec", "alice@example.com")
+
+    assert (
+        store.arm_external_host_credential(
+            host_id=external_id,
+            user_id="bob@example.com",
+            token="bob-must-not-arm",
+            token_expires_at=now_epoch() + 3600,
+        )
+        is None
+    )
+    assert not store.revoke_external_host_credential(
+        host_id=external_id, user_id="bob@example.com"
+    )
+
+    managed_id = "288e4f0a022f47a6934b49d17b145b20"
+    store.register_managed_host(
+        host_id=managed_id,
+        name="managed-provider-owned",
+        user_id="alice@example.com",
+        token="provider-token",
+        provider="kubernetes",
+        sandbox_id="pod-1",
+        token_expires_at=now_epoch() + 3600,
+    )
+    with pytest.raises(ValueError, match="sandbox provider"):
+        store.arm_external_host_credential(
+            host_id=managed_id,
+            user_id="alice@example.com",
+            token="external-must-not-overwrite",
+            token_expires_at=now_epoch() + 7200,
+        )
+    with pytest.raises(ValueError, match="sandbox provider"):
+        store.revoke_external_host_credential(host_id=managed_id, user_id="alice@example.com")
+    # Provider token remains authoritative.
+    assert store.resolve_launch_token(managed_id, "provider-token") is not None
 
 
 def test_resolve_launch_token_rejects_unknown_and_expired(db_uri: str) -> None:

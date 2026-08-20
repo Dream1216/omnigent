@@ -8738,6 +8738,68 @@ def _host_error_text(body: _HostJsonObject | str) -> str:
     return json.dumps(body)[:400]
 
 
+def _write_host_credential_file(path: Path, token: str) -> None:
+    """Atomically install a host-tunnel credential with owner-only mode.
+
+    The temporary file is created in the destination directory so
+    :func:`os.replace` is atomic.  No token is printed or written to a shell
+    environment; callers can point ``OMNIGENT_HOST_TOKEN_FILE`` (or a systemd
+    credential) at the resulting path.
+
+    :param path: Destination credential file.
+    :param token: Raw host-tunnel credential returned once by the server.
+    """
+    import stat
+
+    path = path.expanduser()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent_info = os.lstat(path.parent)
+    if not stat.S_ISDIR(parent_info.st_mode):
+        raise NotADirectoryError(f"credential parent is not a directory: {path.parent}")
+    effective_uid = os.geteuid() if hasattr(os, "geteuid") else None
+    if effective_uid is not None and parent_info.st_uid != effective_uid:
+        raise PermissionError(f"credential parent is not owned by the current user: {path.parent}")
+    if os.name != "nt" and parent_info.st_mode & 0o022:
+        raise PermissionError(
+            f"credential parent must not be writable by group/other: {path.parent}"
+        )
+    if path.exists() or path.is_symlink():
+        destination_info = os.lstat(path)
+        if not stat.S_ISREG(destination_info.st_mode):
+            raise PermissionError(f"credential destination must be a regular file: {path}")
+        if effective_uid is not None and destination_info.st_uid != effective_uid:
+            raise PermissionError(
+                f"credential destination is not owned by the current user: {path}"
+            )
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(token)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(tmp_path, path)
+        tmp_path = None
+        installed_info = os.lstat(path)
+        if not stat.S_ISREG(installed_info.st_mode) or installed_info.st_mode & 0o077:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+            raise PermissionError("installed credential did not retain owner-only file mode")
+    finally:
+        if tmp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                tmp_path.unlink()
+
+
 def _daemon_session_request_params(
     *,
     connected_only: bool,
@@ -9820,6 +9882,153 @@ def host_stop_session(
             click.echo(f"Failed to stop session {session_id!r}.", err=True)
             continue
         click.echo(f"Stopped session {session_id}.")
+
+
+@host.group("credential")
+def host_credential() -> None:
+    """Issue, rotate, or revoke a narrow external-host credential."""
+
+
+@host_credential.command("issue")
+@click.option("--server", default=None, help="Server that owns the host.")
+@click.option("--host-id", default=None, help="Host id; defaults to this machine's id.")
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path, dir_okay=False),
+    required=True,
+    help="Owner-only file that receives the credential (the token is never printed).",
+)
+@click.option(
+    "--ttl-days",
+    type=click.IntRange(1, 365),
+    default=90,
+    show_default=True,
+    help="Finite credential lifetime before rotation is required.",
+)
+@click.option(
+    "--clear-user-token/--keep-user-token",
+    default=True,
+    show_default=True,
+    help="Remove the short-lived stored Accounts/OIDC JWT after successful installation.",
+)
+@click.pass_context
+def host_credential_issue(
+    ctx: click.Context,
+    server: str | None,
+    host_id: str | None,
+    output: Path,
+    ttl_days: int,
+    clear_user_token: bool,
+) -> None:
+    """Issue/rotate a credential and atomically install it without echoing it."""
+    if server is None:
+        server = _host_group_option(ctx, "server")
+    resolved_server = _resolve_host_server(server)
+    if resolved_server is None:
+        resolved_server = local_server_url_if_healthy()
+    if resolved_server is None:
+        raise click.ClickException(
+            "No server was supplied and no local Omnigent server is reachable."
+        )
+    resolved_host_id = host_id or _load_existing_host_id()
+    if not resolved_host_id:
+        raise click.ClickException(
+            "No host id is available; run `omnigent host` once or pass --host-id."
+        )
+
+    from omnigent.claude_native_bridge import url_component
+
+    result = _host_http_json(
+        base_url=resolved_server,
+        method="POST",
+        path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
+        json_body={"ttl_seconds": ttl_days * 24 * 3600},
+    )
+    if result.status_code == 0:
+        raise click.ClickException(f"Credential issue failed: {_host_error_text(result.body)}")
+    if result.status_code >= 400:
+        raise click.ClickException(
+            f"Credential issue failed ({result.status_code}): {_host_error_text(result.body)}"
+        )
+    if not isinstance(result.body, dict):
+        raise click.ClickException("Credential issue returned a non-object response.")
+    token = result.body.get("token")
+    expires_at = result.body.get("expires_at")
+    if not isinstance(token, str) or not token or not isinstance(expires_at, int):
+        raise click.ClickException("Credential issue returned a malformed response.")
+
+    try:
+        _write_host_credential_file(output, token)
+    except OSError as exc:
+        # The server already rotated the credential.  Revoke best-effort so a
+        # local disk failure does not leave an untracked capability active.
+        _host_http_json(
+            base_url=resolved_server,
+            method="DELETE",
+            path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
+        )
+        raise click.ClickException(f"Could not install credential file: {exc}") from exc
+
+    if clear_user_token:
+        from omnigent.cli_auth import clear_token
+
+        # Clear unconditionally: an expired Accounts/OIDC JWT is no longer
+        # usable, but it is still unnecessary secret material at rest.  The
+        # one-time operator login has completed its only purpose once the
+        # narrow machine credential is durably installed.
+        clear_token(resolved_server)
+    click.echo(f"Installed host credential at {_display_path(output.expanduser())}.")
+    click.echo(f"Expires at Unix time {expires_at}; rotate before expiry.")
+    click.echo(f"Set OMNIGENT_HOST_TOKEN_FILE={output.expanduser()} for the host service.")
+
+
+@host_credential.command("revoke")
+@click.option("--server", default=None, help="Server that owns the host.")
+@click.option("--host-id", default=None, help="Host id; defaults to this machine's id.")
+@click.option(
+    "--credential-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Delete this local credential file after server-side revocation.",
+)
+@click.pass_context
+def host_credential_revoke(
+    ctx: click.Context,
+    server: str | None,
+    host_id: str | None,
+    credential_file: Path | None,
+) -> None:
+    """Revoke an external-host credential and optionally delete its file."""
+    if server is None:
+        server = _host_group_option(ctx, "server")
+    resolved_server = _resolve_host_server(server)
+    if resolved_server is None:
+        resolved_server = local_server_url_if_healthy()
+    if resolved_server is None:
+        raise click.ClickException(
+            "No server was supplied and no local Omnigent server is reachable."
+        )
+    resolved_host_id = host_id or _load_existing_host_id()
+    if not resolved_host_id:
+        raise click.ClickException("No host id is available; pass --host-id.")
+
+    from omnigent.claude_native_bridge import url_component
+
+    result = _host_http_json(
+        base_url=resolved_server,
+        method="DELETE",
+        path=f"/v1/hosts/{url_component(resolved_host_id)}/credentials",
+    )
+    if result.status_code == 0:
+        raise click.ClickException(f"Credential revoke failed: {_host_error_text(result.body)}")
+    if result.status_code >= 400:
+        raise click.ClickException(
+            f"Credential revoke failed ({result.status_code}): {_host_error_text(result.body)}"
+        )
+    if credential_file is not None:
+        with contextlib.suppress(FileNotFoundError):
+            credential_file.expanduser().unlink()
+    click.echo("Revoked host credential.")
 
 
 @cli.command(hidden=True)

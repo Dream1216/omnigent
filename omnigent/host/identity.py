@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import socket
+import stat
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
 # credential (see MANAGED_HOST_TOKEN_HEADER); HOST_ID / HOST_NAME
 # override the identity file and must be set together.
 HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
+HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
 HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
 HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 
@@ -34,6 +36,73 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 # confused with a user Bearer token by intermediate proxies or the
 # auth provider.
 MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
+
+_MAX_HOST_TOKEN_FILE_BYTES = 4096
+
+
+def load_host_tunnel_token() -> str | None:
+    """Load the narrow host-tunnel credential, if one is configured.
+
+    Server-managed sandboxes keep using :data:`HOST_TOKEN_ENV_VAR` for
+    backwards compatibility.  Durable external hosts should instead set
+    :data:`HOST_TOKEN_FILE_ENV_VAR` to a root/service-owned ``0600`` file (or
+    a systemd ``LoadCredential=`` path).  The file is read on every reconnect,
+    so an atomic credential rotation takes effect without storing a user JWT
+    or restarting the host process.
+
+    Exactly one source may be configured.  The file must be a small regular
+    file with no group/other permission bits; symlinks are refused where the
+    platform exposes ``O_NOFOLLOW``.  The raw token is returned to the caller
+    but is never logged here.
+
+    :returns: The configured token, or ``None`` when neither source is set.
+    :raises ValueError: If the sources conflict or a token file is unsafe.
+    :raises OSError: If the configured file cannot be opened/read.
+    """
+    inline = os.environ.get(HOST_TOKEN_ENV_VAR)
+    file_value = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
+    if inline and file_value:
+        raise ValueError(f"set only one of {HOST_TOKEN_ENV_VAR} or {HOST_TOKEN_FILE_ENV_VAR}")
+    if inline:
+        token = inline.strip()
+        if not token:
+            raise ValueError(f"{HOST_TOKEN_ENV_VAR} must not be blank")
+        return token
+    if not file_value:
+        return None
+
+    path = Path(file_value).expanduser()
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must name a regular file")
+        if info.st_mode & 0o077:
+            raise ValueError(
+                f"{HOST_TOKEN_FILE_ENV_VAR} must not be readable or writable by group/other"
+            )
+        if info.st_size > _MAX_HOST_TOKEN_FILE_BYTES:
+            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} exceeds the credential size limit")
+        chunks: list[bytes] = []
+        remaining = _MAX_HOST_TOKEN_FILE_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+    finally:
+        os.close(fd)
+    if len(raw) > _MAX_HOST_TOKEN_FILE_BYTES:
+        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} exceeds the credential size limit")
+    token = raw.decode("utf-8").strip()
+    if not token:
+        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must not be blank")
+    return token
 
 
 @dataclass

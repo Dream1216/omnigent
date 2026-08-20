@@ -1298,18 +1298,16 @@ class SqlHost(OmnigentBase):
         as the host's last-seen for the liveness freshness gate, so a
         host that crashed without a graceful disconnect ages out of the
         "online" set once this stops advancing.
-    :param token_hash: Hex SHA-256 digest of the launch token that
-        authenticates a SERVER-MANAGED sandbox host's tunnel connection
-        (``host_type="managed"`` sessions) — never the raw token.
-        ``NULL`` for external (user-connected) hosts. Overwritten when
-        the sandbox is relaunched, which atomically revokes the
-        previous generation's token.
-    :param token_expires_at: Unix epoch seconds after which the launch
-        token no longer authenticates. Scoped to the TOKEN, not the
-        host — the host row is durable across sandbox generations; the
-        expiry is set past the provider's maximum sandbox lifetime so a
-        live sandbox can always reconnect while a token leaked from a
-        dead one cannot. ``NULL`` for external hosts.
+    :param token_hash: Hex SHA-256 digest of the narrow token that
+        authenticates this host's tunnel connection — never the raw token.
+        Used both for SERVER-MANAGED sandbox launch tokens and explicitly
+        issued external-host machine credentials; ``NULL`` for an external
+        host that still authenticates with a user bearer. Overwriting the
+        digest atomically revokes the previous credential generation.
+    :param token_expires_at: Unix epoch seconds after which the token no
+        longer authenticates. Scoped to the TOKEN, not the durable host row.
+        Managed-launch expiry follows the provider lifetime; external-host
+        expiry follows the owner-selected bounded credential lifetime.
     :param sandbox_provider: Sandbox provider backing a managed host,
         e.g. ``"modal"``. ``NULL`` for external hosts — non-NULL is the
         "this host is server-managed" discriminator.

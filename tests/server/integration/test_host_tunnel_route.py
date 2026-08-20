@@ -803,6 +803,46 @@ async def test_managed_token_authenticates_as_record_owner(
     assert host.sandbox_id == "sb-tunnel-1"
 
 
+async def test_revoked_external_machine_credential_closes_live_tunnel(
+    host_app: tuple[FastAPI, HostRegistry, HostStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DB revocation reaches the owning replica within one ping interval."""
+    import omnigent.server.routes.host_tunnel as tunnel_mod
+
+    monkeypatch.setattr(tunnel_mod, "PING_INTERVAL_S", 0.02)
+    monkeypatch.setattr(tunnel_mod, "PING_MISS_THRESHOLD", 100_000)
+    app, registry, store = host_app
+    token = "external-machine-token"
+    store.upsert_on_connect(_HOST_ID, "exec-b", "alice@example.com")
+    store.set_offline(_HOST_ID)
+    armed = store.arm_external_host_credential(
+        host_id=_HOST_ID,
+        user_id="alice@example.com",
+        token=token,
+        token_expires_at=now_epoch() + 3600,
+    )
+    assert armed is not None
+
+    communicator = ApplicationCommunicator(app, _managed_scope(_TUNNEL_PATH, token))
+    await communicator.send_input({"type": "websocket.connect"})
+    accepted = await communicator.receive_output(timeout=1.0)
+    assert accepted["type"] == "websocket.accept"
+    await _send_hello_and_wait(communicator, registry, name="exec-b")
+
+    assert store.revoke_external_host_credential(
+        host_id=_HOST_ID,
+        user_id="alice@example.com",
+    )
+    while True:
+        output = await communicator.receive_output(timeout=1.0)
+        if output["type"] == "websocket.close":
+            assert output["code"] == 4004
+            assert output["reason"] == "credential revoked or expired"
+            break
+    await _wait_offline(store, _HOST_ID)
+
+
 @pytest.mark.parametrize(
     ("record_host_id", "token", "presented_token", "expires_in_s"),
     [

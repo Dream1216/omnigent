@@ -3275,6 +3275,38 @@ def test_build_connect_headers_adds_org_header(monkeypatch: pytest.MonkeyPatch) 
     assert headers["X-Databricks-Org-Id"] == "2850744067564480"
 
 
+def test_build_connect_headers_rereads_file_backed_machine_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconnects pick up an atomic file rotation and skip user bearer auth."""
+    import os
+
+    import omnigent.runner._entry as entry_mod
+
+    token_file = tmp_path / "host-token"
+    token_file.write_text("generation-one\n")
+    os.chmod(token_file, 0o600)
+    monkeypatch.delenv("OMNIGENT_HOST_TOKEN", raising=False)
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(
+        entry_mod,
+        "_make_auth_token_factory",
+        lambda **_kw: pytest.fail("machine credentials must skip the user auth factory"),
+    )
+
+    host = _host("https://app.example.com")
+    first = host._build_connect_headers()
+    token_file.write_text("generation-two\n")
+    os.chmod(token_file, 0o600)
+    second = host._build_connect_headers()
+
+    assert first["X-Omnigent-Host-Token"] == "generation-one"
+    assert second["X-Omnigent-Host-Token"] == "generation-two"
+    assert "Authorization" not in first
+    assert "Authorization" not in second
+    assert host._current_auth_token() is None
+
+
 def test_build_connect_headers_retains_auth_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

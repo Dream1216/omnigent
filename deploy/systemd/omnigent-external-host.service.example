@@ -1,0 +1,38 @@
+[Unit]
+Description=Omnigent external host (machine credential)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnigent-host-runner
+Group=omnigent-host-runner
+UMask=0077
+
+# Root-owned source: chmod 0600 /etc/omnigent/host/host-token
+# systemd copies it into the unit-private credential directory.  Only the path,
+# never the raw credential, enters the process environment.
+LoadCredential=host-token:/etc/omnigent/host/host-token
+Environment=OMNIGENT_HOST_TOKEN_FILE=%d/host-token
+
+# Non-secret identity/routing and model-provider settings remain separate.
+EnvironmentFile=/etc/omnigent/host/identity.env
+EnvironmentFile=-/etc/omnigent/host/model.env
+Environment=PYTHONUNBUFFERED=1
+
+ExecStartPre=/usr/bin/test -r %d/host-token
+ExecStart=/opt/omnigent/bin/omnigent host --server ${OMNIGENT_SERVER_URL} --non-interactive
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

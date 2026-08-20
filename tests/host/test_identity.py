@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import yaml
 
 from omnigent.host.identity import (
     load_host_identity_if_present,
+    load_host_tunnel_token,
     load_or_create_host_identity,
 )
 
@@ -289,3 +291,37 @@ def test_if_present_config_non_uuid_host_id_returns_none(tmp_path: Path) -> None
     )
 
     assert load_host_identity_if_present(config_path) is None
+
+
+def test_file_backed_host_token_is_secure_and_reread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rotated 0600 token file is read fresh without putting it in env."""
+    token_file = tmp_path / "host-token"
+    token_file.write_text("generation-one\n")
+    os.chmod(token_file, 0o600)
+    monkeypatch.delenv("OMNIGENT_HOST_TOKEN", raising=False)
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
+
+    assert load_host_tunnel_token() == "generation-one"
+    token_file.write_text("generation-two\n")
+    os.chmod(token_file, 0o600)
+    assert load_host_tunnel_token() == "generation-two"
+
+
+def test_file_backed_host_token_refuses_ambiguous_or_unsafe_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No fallback occurs when two sources or broad file permissions exist."""
+    token_file = tmp_path / "host-token"
+    token_file.write_text("secret\n")
+    os.chmod(token_file, 0o600)
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN", "inline-secret")
+    with pytest.raises(ValueError, match="set only one"):
+        load_host_tunnel_token()
+
+    monkeypatch.delenv("OMNIGENT_HOST_TOKEN")
+    os.chmod(token_file, 0o644)
+    with pytest.raises(ValueError, match="group/other"):
+        load_host_tunnel_token()
