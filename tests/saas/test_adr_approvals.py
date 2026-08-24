@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from saas.scripts.check_adr_approvals import (
+    _validate_append_only_history,
     compute_decision_bundle,
     validate_approval_contract,
 )
 from saas.scripts.finalize_adr_approval import _assign_distinct_signers, build_record
+from tests.saas._approval_history import require_current_approval_history
 
 
 def _repo() -> Path:
@@ -45,6 +47,16 @@ def _refresh_candidate_digest(repo: Path) -> None:
 
 
 def _commit_decision_tree(repo: Path) -> tuple[str, str]:
+    baseline_path = repo / "saas/production/baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    approval = baseline["approval"]
+    active_record = approval.pop("record", None)
+    approval["state"] = "review_required"
+    for adr in baseline["adrs"]:
+        adr["status"] = "proposed"
+    baseline_path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    if isinstance(active_record, str):
+        (repo / active_record).unlink(missing_ok=True)
     _refresh_candidate_digest(repo)
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "adr-test@example.test")
@@ -111,6 +123,7 @@ def _approved_baseline_with_record(
 
 
 def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
+    require_current_approval_history(_repo())
     baseline = _baseline()
     report = validate_approval_contract(_repo(), baseline)
     approved = baseline["approval"]["state"] == "approved"  # type: ignore[index]
@@ -132,6 +145,7 @@ def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
 
 
 def test_approved_architecture_schema_matches_current_implementation_head() -> None:
+    require_current_approval_history(_repo())
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "pc5a00000005"  # type: ignore[index]
@@ -148,6 +162,66 @@ def test_decision_bundle_detects_document_tampering(tmp_path: Path) -> None:
     adr.write_text(adr.read_text(encoding="utf-8") + "\nmaterial change\n", encoding="utf-8")
 
     assert compute_decision_bundle(tmp_path, candidate) != before
+
+
+def test_append_only_history_distinguishes_a_similar_new_record_from_a_rewrite(
+    tmp_path: Path,
+) -> None:
+    record_directory = "saas/production/adr-approvals"
+    records = tmp_path / record_directory
+    records.mkdir(parents=True)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "adr-test@example.test")
+    _git(tmp_path, "config", "user.name", "ADR Test")
+    first = records / "candidate-a-1111111111111111.json"
+    first.write_text(
+        json.dumps({"candidate": "a", "state": "approved", "facts": list(range(24))}),
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "first immutable record")
+
+    second = records / "candidate-b-2222222222222222.json"
+    second.write_text(
+        json.dumps({"candidate": "b", "state": "approved", "facts": list(range(24))}),
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "second immutable record")
+
+    violations: list[str] = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+    assert violations == []
+
+    first.write_text(first.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    _git(tmp_path, "add", str(first.relative_to(tmp_path)))
+    _git(tmp_path, "commit", "-m", "tamper with first record")
+    violations = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+    assert (
+        f"approval record was changed after creation: {first.relative_to(tmp_path)}" in violations
+    )
+
+
+def test_append_only_history_rejects_a_pure_record_rename(tmp_path: Path) -> None:
+    record_directory = "saas/production/adr-approvals"
+    records = tmp_path / record_directory
+    records.mkdir(parents=True)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "adr-test@example.test")
+    _git(tmp_path, "config", "user.name", "ADR Test")
+    original = records / "candidate-a-1111111111111111.json"
+    renamed = records / "candidate-a-renamed-1111111111111111.json"
+    original.write_text(json.dumps({"candidate": "a", "state": "approved"}), encoding="utf-8")
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "immutable record")
+    _git(tmp_path, "mv", str(original.relative_to(tmp_path)), str(renamed.relative_to(tmp_path)))
+    _git(tmp_path, "commit", "-m", "rename immutable record")
+
+    violations: list[str] = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+
+    assert "an immutable approval record was deleted from Git history" in violations
 
 
 def test_distinct_signer_assignment_rejects_one_human_for_four_roles() -> None:

@@ -4,7 +4,10 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from saas.scripts.check_production_baseline import validate_baseline
+from tests.saas._approval_history import require_current_approval_history
 
 
 def _repo() -> Path:
@@ -13,6 +16,11 @@ def _repo() -> Path:
 
 def _baseline() -> dict[str, object]:
     return json.loads((_repo() / "saas/production/baseline.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(autouse=True)
+def _full_approval_history() -> None:
+    require_current_approval_history(_repo())
 
 
 def test_production_baseline_is_complete_content_but_not_falsely_ready() -> None:
