@@ -1364,7 +1364,7 @@ database owned by the URL's user:
 ```bash
 export OMNIGENT_SAAS_TEST_POSTGRES_URL=\
 postgresql+psycopg://postgres:postgres@localhost:5432/postgres
-uv sync --frozen --extra dev --extra saas
+uv sync --frozen --extra all --group dev --extra saas
 uv run pytest \
   tests/saas/test_postgresql_rls.py \
   tests/saas/test_platform_security_postgresql.py \
@@ -2042,3 +2042,34 @@ production Provider/KMS/HSM account, immutable evidence bucket, real backup esta
 cross-region restore drill, or protected exact-SHA CI/image admission for this slice.
 Consequently it closes neither the production Deletion gate nor P1 as a whole, and the
 release decision remains `NO-GO`.
+
+## Official upstream synchronization candidate: `9303cc1c`
+
+The 2026-08-24 synchronization candidate merges official
+`9303cc1cd12e2e5788f4e2b9dcde9308b474017a` into downstream implementation merge
+`8fada23f5fc0f50ccef10f2a3b03197ce61607e0`. The textual merge conflicts were limited
+to `omnigent/host/connect.py`, `pyproject.toml`, and `uv.lock`. The resolved Host command
+retains the official isolated-path `-P` flag while selecting the managed Runner entry
+module through the existing Runtime Partition environment seam. The dependency metadata
+keeps official PEP 735 dependency groups and the downstream `saas` extra.
+
+A separate semantic audit found that the new official shared read session could bypass
+the managed Store session initializer even though Git reported no conflict. Managed
+execution now bypasses that shared session whenever an initializer is installed; local
+single-user execution continues to use the official shared-read optimization. Focused
+SQLite and PostgreSQL tests cover the initializer boundary and cross-workspace denial.
+
+The regenerated two-entry Patch Replay covers exactly `omnigent/db/utils.py`,
+`omnigent/host/connect.py`, and `omnigent/llms/_usage_observer.py` and applies cleanly to
+the pinned official revision. The local Upstream Delta report passes with seven direct
+official files, 106 net-added official lines, two active patches, no forbidden file or
+reverse dependency, and a 0.9993 isolated-code ratio.
+
+Advancing the upstream revision invalidates the previous candidate approval binding. The
+new candidate is therefore deliberately `review_required`: all eleven ADRs remain
+`proposed` until the exact synchronization PR passes protected CI, merges, and produces
+a new append-only sole-Owner risk-waiver record. This is governance degradation made
+explicit, not an inherited approval. Local Patch Replay, delta, migration, RLS, restore,
+SDK, Wheel, regression, or image checks are candidate evidence only. Production N-1,
+dual-architecture signed-image admission, Canary, and release `GO` require their own
+protected exact-revision evidence.

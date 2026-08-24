@@ -1173,6 +1173,24 @@ release remains `NO-GO`. After the matching Playwright Chromium was installed, t
 complete local SaaS shard passed 438 tests with 32 environment-conditioned skips and
 three existing dependency warnings in 247.21 seconds.
 
+The 2026-08-24 official synchronization candidate pins upstream
+`9303cc1cd12e2e5788f4e2b9dcde9308b474017a` and implementation merge
+`8fada23f5fc0f50ccef10f2a3b03197ce61607e0`. Patch Replay passes 2/2 against the exact
+official tree and Upstream Delta passes at seven direct official files, 106 net-added
+official lines, two active patches, and a 0.9993 isolated-code ratio. The compatibility
+audit also covers a semantic non-conflict: an installed managed session initializer must
+bypass the new official shared read session so Workspace and PostgreSQL RLS context
+cannot be lost.
+
+These facts are local candidate evidence. The upstream revision change intentionally
+sets the ADR bundle to `review_required`, leaves all eleven decisions `proposed`, and
+removes the obsolete immutable-record reference. A successor append-only sole-Owner
+risk-waiver record may be generated only from the merged exact-head synchronization PR
+and its successful compatibility check. Until that flow, protected PostgreSQL/Alembic,
+official regression, SaaS, SDK, Wheel, signed dual-architecture image, Canary, and N-1
+evidence complete, the synchronization and aggregate production decisions remain
+`NO-GO`.
+
 The next PC5 privacy/deletion candidate advances the schema to `pc5b00000001` and the
 control-plane forced-RLS inventory to 88 tables. It introduces released/active Legal
 Hold facts, a CAS/idempotency-bound User or Tenant deletion Manifest, 15 signed surface

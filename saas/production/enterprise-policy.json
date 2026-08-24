@@ -2,9 +2,9 @@
   "schema_version": 1,
   "policy_id": "omnigent-saas-enterprise-readiness-v1",
   "evidence_kind": "production_enterprise_acceptance",
-  "reviewed_at": "2026-08-09",
+  "reviewed_at": "2026-08-24",
   "revision_contract": {
-    "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+    "upstream_revision": "9303cc1cd12e2e5788f4e2b9dcde9308b474017a",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "pc5a00000005"
   },

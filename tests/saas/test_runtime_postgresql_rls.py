@@ -90,8 +90,12 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context() -> None:
     workspace_a = 1_000_000 + uuid4().int % 1_000_000_000
     workspace_b = workspace_a + 1
 
-    with engine.begin() as connection:
+    # Official PostgreSQL migrations include concurrent index creation, so
+    # Alembic must control its own transaction and autocommit boundary.
+    with engine.connect() as connection:
         _migrate_official(connection, root)
+
+    with engine.begin() as connection:
         connection.execute(
             sa.text(
                 "INSERT INTO users (workspace_id, id) VALUES "

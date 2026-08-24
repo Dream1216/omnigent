@@ -199,7 +199,9 @@ def _alembic_upgrade(connection: sa.Connection, config_path: Path, script_path: 
 def _migrate_source(repo: Path, endpoint: PostgreSqlEndpoint, database: str) -> None:
     engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
     try:
-        with engine.begin() as connection:
+        # Alembic owns this boundary because official migrations may enter an
+        # autocommit block for PostgreSQL concurrent index creation.
+        with engine.connect() as connection:
             _alembic_upgrade(
                 connection,
                 repo / "omnigent/db/alembic.ini",
@@ -210,6 +212,8 @@ def _migrate_source(repo: Path, endpoint: PostgreSqlEndpoint, database: str) -> 
                 repo / "saas/control_plane/alembic.ini",
                 repo / "saas/control_plane/migrations",
             )
+
+        with engine.begin() as connection:
             install_runtime_rls(connection)
             connection.exec_driver_sql(
                 (repo / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")

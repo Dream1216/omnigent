@@ -20,21 +20,25 @@ def _baseline() -> dict[str, object]:
     return json.loads((_repo() / "saas/production/baseline.json").read_text(encoding="utf-8"))
 
 
-def test_current_adr_contract_is_approved_by_explicit_degraded_waiver() -> None:
-    report = validate_approval_contract(_repo(), _baseline())
+def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
+    baseline = _baseline()
+    report = validate_approval_contract(_repo(), baseline)
+    approved = baseline["approval"]["state"] == "approved"  # type: ignore[index]
 
     assert report["status"] == "pass"
-    assert report["approval_readiness"] == "approved"
+    assert report["approval_readiness"] == ("approved" if approved else "blocked")
     assert report["metrics"] == {
         "approval_mode": "sole-owner-risk-waiver",
         "governance_classification": "degraded",
         "decision_file_count": 11,
         "required_signing_role_count": 4,
         "configured_authority_role_count": 8,
-        "signature_count": 1,
-        "technical_owner_confirmation_count": 11,
+        "signature_count": 1 if approved else 0,
+        "technical_owner_confirmation_count": 11 if approved else 0,
     }
-    assert report["blockers"] == []
+    assert report["blockers"] == (
+        [] if approved else ["no immutable ADR approval record is referenced"]
+    )
 
 
 def test_approved_architecture_schema_is_separate_from_current_implementation_head() -> None:

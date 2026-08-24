@@ -3237,6 +3237,9 @@ s3 = [
     { name = "boto3" },
     { name = "botocore" },
 ]
+saas = [
+    { name = "psycopg", extra = ["binary"] },
+]
 slack = [
     { name = "omnigent-slack" },
 ]
