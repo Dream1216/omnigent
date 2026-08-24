@@ -485,7 +485,7 @@ def _validate_append_only_history(
         return
     for value in tracked.stdout.splitlines():
         history = subprocess.run(
-            ["git", "log", "--format=%H", "--follow", "--", value],
+            ["git", "log", "--no-renames", "--format=%H", "--", value],
             cwd=repo,
             text=True,
             capture_output=True,

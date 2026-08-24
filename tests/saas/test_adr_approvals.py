@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from saas.scripts.check_adr_approvals import (
+    _validate_append_only_history,
     compute_decision_bundle,
     validate_approval_contract,
 )
@@ -158,6 +159,45 @@ def test_decision_bundle_detects_document_tampering(tmp_path: Path) -> None:
     adr.write_text(adr.read_text(encoding="utf-8") + "\nmaterial change\n", encoding="utf-8")
 
     assert compute_decision_bundle(tmp_path, candidate) != before
+
+
+def test_append_only_history_distinguishes_a_similar_new_record_from_a_rewrite(
+    tmp_path: Path,
+) -> None:
+    record_directory = "saas/production/adr-approvals"
+    records = tmp_path / record_directory
+    records.mkdir(parents=True)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "adr-test@example.test")
+    _git(tmp_path, "config", "user.name", "ADR Test")
+    first = records / "candidate-a-1111111111111111.json"
+    first.write_text(
+        json.dumps({"candidate": "a", "state": "approved", "facts": list(range(24))}),
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "first immutable record")
+
+    second = records / "candidate-b-2222222222222222.json"
+    second.write_text(
+        json.dumps({"candidate": "b", "state": "approved", "facts": list(range(24))}),
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "second immutable record")
+
+    violations: list[str] = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+    assert violations == []
+
+    first.write_text(first.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    _git(tmp_path, "add", str(first.relative_to(tmp_path)))
+    _git(tmp_path, "commit", "-m", "tamper with first record")
+    violations = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+    assert (
+        f"approval record was changed after creation: {first.relative_to(tmp_path)}" in violations
+    )
 
 
 def test_distinct_signer_assignment_rejects_one_human_for_four_roles() -> None:
