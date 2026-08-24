@@ -58,8 +58,8 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
         )
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_three_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 103
+def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_seven_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 107
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
@@ -102,3 +102,7 @@ def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_three_tab
     assert "saas_approval_work_items" in CONTROL_PLANE_RLS_TABLES
     assert "saas_notification_deliveries" in CONTROL_PLANE_RLS_TABLES
     assert "saas_operation_batch_items" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_self_service_registrations" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_email_verification_challenges" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_tenant_onboardings" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_self_service_events" in CONTROL_PLANE_RLS_TABLES

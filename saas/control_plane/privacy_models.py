@@ -13,7 +13,7 @@ from saas.control_plane.db_models import SaasBase, _values
 PRIVACY_TARGET_TYPES = ("global_user", "tenant")
 LEGAL_HOLD_STATUSES = ("active", "released")
 DELETION_MANIFEST_STATUSES = ("executing", "ready_to_finalize", "completed")
-IDENTITY_TOMBSTONE_KINDS = ("oidc_subject", "scim_user")
+IDENTITY_TOMBSTONE_KINDS = ("oidc_subject", "scim_user", "password_email")
 PRIVACY_APPROVAL_PHASES = (
     "deletion_start",
     "deletion_finalize",
@@ -270,7 +270,7 @@ class PrivacyDeletionManifestRecord(SaasBase):
 
 
 class PrivacyIdentityTombstoneRecord(SaasBase):
-    """Opaque locator that prevents OIDC or SCIM replay from recreating a deleted subject."""
+    """Opaque locator that prevents a deleted login identifier from being recreated."""
 
     __tablename__ = "saas_privacy_identity_tombstones"
 

@@ -39,6 +39,7 @@ _SELECTED_HASH_TABLES = (
     "users",
     "saas_global_users",
     "saas_identity_connections",
+    "saas_password_credentials",
     "saas_auth_sessions",
     "saas_platform_staff_principals",
     "saas_platform_role_assignments",
@@ -48,6 +49,8 @@ _SELECTED_HASH_TABLES = (
     "saas_tenants",
     "saas_spaces",
     "saas_runtime_placements",
+    "saas_runtime_partitions",
+    "saas_runtime_identity_aliases",
     "saas_tenant_memberships",
     "saas_space_memberships",
     "saas_projects",
@@ -87,6 +90,10 @@ _SELECTED_HASH_TABLES = (
     "saas_notification_delivery_attempts",
     "saas_operation_batches",
     "saas_operation_batch_items",
+    "saas_self_service_registrations",
+    "saas_email_verification_challenges",
+    "saas_tenant_onboardings",
+    "saas_self_service_events",
     "saas_billing_subscriptions",
     "saas_pricing_snapshots",
     "saas_billing_entitlements",
@@ -238,6 +245,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "project_a": "90000000-0000-4000-8000-000000000001",
         "project_b": "90000000-0000-4000-8000-000000000002",
         "runtime_placement": "95000000-0000-4000-8000-000000000001",
+        "runtime_partition_a": "95100000-0000-4000-8000-000000000001",
+        "runtime_partition_b": "95100000-0000-4000-8000-000000000002",
         "runner_pool": "96000000-0000-4000-8000-000000000001",
         "runner_a": "97000000-0000-4000-8000-000000000001",
         "runner_b": "97000000-0000-4000-8000-000000000002",
@@ -273,6 +282,15 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "privacy_tombstone": "bd300000-0000-4000-8000-000000000001",
         "privacy_scim_event": "bd400000-0000-4000-8000-000000000001",
         "privacy_locator_hash": "d" * 64,
+        "registration_a": "be000000-0000-4000-8000-000000000001",
+        "registration_b": "be000000-0000-4000-8000-000000000002",
+        "challenge_a": "be100000-0000-4000-8000-000000000001",
+        "challenge_b": "be100000-0000-4000-8000-000000000002",
+        "onboarding_a": "be200000-0000-4000-8000-000000000001",
+        "onboarding_b": "be200000-0000-4000-8000-000000000002",
+        "onboarding_event_a": "be300000-0000-4000-8000-000000000001",
+        "onboarding_event_b": "be300000-0000-4000-8000-000000000002",
+        "onboarding_replay_event": "be300000-0000-4000-8000-000000000003",
         "scim_token_hash_a": "1" * 64,
         "scim_token_hash_b": "2" * 64,
         "scim_successor_token_hash_a": "3" * 64,
@@ -522,6 +540,30 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_runtime_partitions "
+                    "(id, tenant_id, space_id, placement_id, runtime_type, runtime_version, "
+                    "physical_partition_key, placement_generation, source_revision, "
+                    "adapter_contract_version, status) VALUES "
+                    "(:runtime_partition_a, :tenant_a, :space_a, :runtime_placement, "
+                    "'omnigent', 'recovery-runtime-v1', CAST(:workspace_a AS text), 1, "
+                    "'recovery-upstream', '0.2.0', 'active'), "
+                    "(:runtime_partition_b, :tenant_b, :space_b, :runtime_placement, "
+                    "'omnigent', 'recovery-runtime-v1', CAST(:workspace_b AS text), 1, "
+                    "'recovery-upstream', '0.2.0', 'active')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runtime_identity_aliases "
+                    "(runtime_partition_id, user_id, runtime_user_key, status) VALUES "
+                    "(:runtime_partition_a, :actor_a, 'runtime-a', 'active'), "
+                    "(:runtime_partition_b, :actor_b, 'runtime-b', 'active')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_tenant_memberships "
                     "(tenant_id, user_id, role, status, version, joined_at) VALUES "
                     "(:tenant_a, :actor_a, 'owner', 'active', 1, now()), "
@@ -576,12 +618,12 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'p0s000000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
                     "(:run_b, :tenant_b, :space_b, :project_b, :task_b, :actor_b, 'running', 1, "
                     "0, 'interactive', 0, 'recovery-run-b', :run_hash_b, "
                     "CAST(:run_input AS jsonb), "
-                    "'recovery-product', 'recovery-upstream', 'pc5c00000002', '0.2.0', "
+                    "'recovery-product', 'recovery-upstream', 'p0s000000001', '0.2.0', "
                     ":runner_b, :run_lease_b, 1, now() + interval '1 hour', now())"
                 ),
                 {
@@ -901,6 +943,16 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_password_credentials "
+                    "(user_id, login_email_normalized, password_hash, password_version, "
+                    "failed_attempts) VALUES "
+                    "(:actor_a, 'a@example.test', 'recovery-hash-a', 1, 0), "
+                    "(:actor_b, 'b@example.test', 'recovery-hash-b', 1, 0)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_service_accounts "
                     "(id, tenant_id, space_id, name, steward_user_id, created_by, status, "
                     "security_version) VALUES "
@@ -1137,6 +1189,105 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_self_service_registrations "
+                    "(id, email_normalized, email_hash, display_name, tenant_name, tenant_slug, "
+                    "default_space_name, default_space_slug, plan_key, plan_policy_revision, "
+                    "home_region, status, challenge_generation, expires_at, verified_at, "
+                    "terminal_at, user_id, tenant_id, space_id, subscription_id, "
+                    "runtime_partition_id, onboarding_id, idempotency_key, request_hash, version) "
+                    "VALUES "
+                    "(:registration_a, 'a@example.test', :email_hash_a, 'Recovery A', "
+                    "'Recovery A', 'recovery-a', 'Main A', 'main', 'test', 'recovery-plan-v1', "
+                    "'region-a', 'verified', 1, now() + interval '1 day', now(), now(), "
+                    ":actor_a, :tenant_a, :space_a, :billing_subscription_a, "
+                    ":runtime_partition_a, :onboarding_a, :registration_key_a, "
+                    ":registration_hash_a, 2), "
+                    "(:registration_b, 'b@example.test', :email_hash_b, 'Recovery B', "
+                    "'Recovery B', 'recovery-b', 'Main B', 'main', 'test', 'recovery-plan-v1', "
+                    "'region-a', 'verified', 1, now() + interval '1 day', now(), now(), "
+                    ":actor_b, :tenant_b, :space_b, :billing_subscription_b, "
+                    ":runtime_partition_b, :onboarding_b, :registration_key_b, "
+                    ":registration_hash_b, 2)"
+                ),
+                {
+                    **identifiers,
+                    "email_hash_a": "1" * 64,
+                    "email_hash_b": "2" * 64,
+                    "registration_key_a": "3" * 64,
+                    "registration_key_b": "4" * 64,
+                    "registration_hash_a": "5" * 64,
+                    "registration_hash_b": "6" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_email_verification_challenges "
+                    "(id, registration_id, generation, token_hash, status, delivery_status, "
+                    "delivery_attempts, delivery_idempotency_key, expires_at, delivered_at, "
+                    "consumed_at) VALUES "
+                    "(:challenge_a, :registration_a, 1, :challenge_hash_a, 'consumed', 'sent', "
+                    "1, :delivery_key_a, now() + interval '1 day', now(), now()), "
+                    "(:challenge_b, :registration_b, 1, :challenge_hash_b, 'consumed', 'sent', "
+                    "1, :delivery_key_b, now() + interval '1 day', now(), now())"
+                ),
+                {
+                    **identifiers,
+                    "challenge_hash_a": "7" * 64,
+                    "challenge_hash_b": "8" * 64,
+                    "delivery_key_a": "9" * 64,
+                    "delivery_key_b": "a" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_tenant_onboardings "
+                    "(id, registration_id, user_id, tenant_id, space_id, subscription_id, "
+                    "runtime_partition_id, plan_key, plan_policy_revision, home_region, "
+                    "trial_days, trial_started_at, trial_ends_at, status, idempotency_key, "
+                    "request_hash, version, attempt_count, available_at, billing_ready_at, "
+                    "runtime_ready_at, activated_at, last_transition_at) VALUES "
+                    "(:onboarding_a, :registration_a, :actor_a, :tenant_a, :space_a, "
+                    ":billing_subscription_a, :runtime_partition_a, 'test', 'recovery-plan-v1', "
+                    "'region-a', 14, now(), now() + interval '14 days', 'active', "
+                    ":onboarding_key_a, :onboarding_hash_a, 4, 3, now(), now(), now(), now(), "
+                    "now()), "
+                    "(:onboarding_b, :registration_b, :actor_b, :tenant_b, :space_b, "
+                    ":billing_subscription_b, :runtime_partition_b, 'test', 'recovery-plan-v1', "
+                    "'region-a', 14, now(), now() + interval '14 days', 'billing_ready', "
+                    ":onboarding_key_b, :onboarding_hash_b, 2, 1, now(), now(), NULL, NULL, now())"
+                ),
+                {
+                    **identifiers,
+                    "onboarding_key_a": "b" * 64,
+                    "onboarding_key_b": "c" * 64,
+                    "onboarding_hash_a": "d" * 64,
+                    "onboarding_hash_b": "e" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_self_service_events "
+                    "(id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, "
+                    "event_type, facts, facts_hash, previous_hash, event_hash, occurred_at) "
+                    "VALUES "
+                    "(:onboarding_event_a, 'tenant_onboarding', :onboarding_a, :tenant_a, "
+                    ":actor_a, 1, 'tenant_onboarding.created', CAST(:facts AS jsonb), "
+                    ":facts_hash, :previous_hash, :event_hash_a, now()), "
+                    "(:onboarding_event_b, 'tenant_onboarding', :onboarding_b, :tenant_b, "
+                    ":actor_b, 1, 'tenant_onboarding.created', CAST(:facts AS jsonb), "
+                    ":facts_hash, :previous_hash, :event_hash_b, now())"
+                ),
+                {
+                    **identifiers,
+                    "facts": json.dumps({"plan_policy_revision": "recovery-plan-v1"}),
+                    "facts_hash": "f" * 64,
+                    "previous_hash": "0" * 64,
+                    "event_hash_a": "a" * 63 + "1",
+                    "event_hash_b": "a" * 63 + "2",
+                },
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_control_plane_outbox "
                     "(id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
                     "idempotency_key, request_hash, attempt_count, available_at) VALUES "
@@ -1205,6 +1356,34 @@ def _apply_post_backup_replay(
                     "updated_at = :replay_at WHERE id = :billing_subscription_b"
                 ),
                 replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_tenant_onboardings SET status = 'runtime_ready', "
+                    "runtime_ready_at = :replay_at, version = 3, "
+                    "last_transition_at = :replay_at, updated_at = :replay_at "
+                    "WHERE id = :onboarding_b AND status = 'billing_ready'"
+                ),
+                replay_parameters,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_self_service_events "
+                    "(id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, "
+                    "event_type, from_status, to_status, facts, facts_hash, previous_hash, "
+                    "event_hash, occurred_at) VALUES "
+                    "(:onboarding_replay_event, 'tenant_onboarding', :onboarding_b, "
+                    ":tenant_b, :actor_b, 2, 'tenant_onboarding.runtime_ready', "
+                    "'billing_ready', 'runtime_ready', CAST(:facts AS jsonb), :facts_hash, "
+                    ":previous_hash, :event_hash, :replay_at)"
+                ),
+                {
+                    **replay_parameters,
+                    "facts": json.dumps({"replayed_after_restore": True}),
+                    "facts_hash": "7" * 64,
+                    "previous_hash": "a" * 63 + "2",
+                    "event_hash": "a" * 63 + "3",
+                },
             )
             connection.execute(
                 sa.text(

@@ -471,7 +471,7 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
                 ),
                 {"manifest": manifest.manifest_id},
             ).scalar_one()
-            == 2
+            == 3
         )
 
     with engine.begin() as connection:

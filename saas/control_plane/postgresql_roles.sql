@@ -86,6 +86,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_support_staff') THEN
         CREATE ROLE saas_approval_scheduler_support_staff NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_registration') THEN
+        CREATE ROLE saas_registration NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_onboarding') THEN
+        CREATE ROLE saas_onboarding NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 
@@ -117,6 +123,8 @@ ALTER ROLE saas_approval_scheduler_privacy NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_approval_scheduler_audit NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_approval_scheduler_support_customer NOLOGIN NOSUPERUSER NOBYPASSRLS;
 ALTER ROLE saas_approval_scheduler_support_staff NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_registration NOLOGIN NOSUPERUSER NOBYPASSRLS;
+ALTER ROLE saas_onboarding NOLOGIN NOSUPERUSER NOBYPASSRLS;
 
 -- The deletion worker is a one-purpose backend identity. It inherits the
 -- content-blind governance policies, while its additional PII privileges are
@@ -212,7 +220,7 @@ GRANT USAGE ON SCHEMA public TO
     saas_notification_directory, saas_approval_scheduler_enterprise,
     saas_approval_scheduler_privacy, saas_approval_scheduler_audit,
     saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff;
+    saas_approval_scheduler_support_staff, saas_registration, saas_onboarding;
 
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
@@ -245,14 +253,19 @@ REVOKE ALL PRIVILEGES ON
     saas_notification_deliveries,
     saas_notification_delivery_attempts,
     saas_operation_batches,
-    saas_operation_batch_items
+    saas_operation_batch_items,
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
     saas_platform_authenticator, saas_platform_app, saas_platform_governance,
     saas_platform_projector, saas_platform_support, saas_privacy_executor,
     saas_privacy_dispatcher, saas_privacy_verifier, saas_notification_scheduler,
-    saas_notification_dispatcher, saas_notification_directory, saas_platform;
+    saas_notification_dispatcher, saas_notification_directory, saas_platform,
+    saas_registration, saas_onboarding;
 
 GRANT SELECT ON
     saas_platform_staff_principals,
@@ -354,7 +367,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_notification_deliveries,
     saas_notification_delivery_attempts,
     saas_operation_batches,
-    saas_operation_batch_items
+    saas_operation_batch_items,
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events
 TO saas_platform;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
@@ -862,6 +879,143 @@ GRANT UPDATE (
 ) ON saas_notification_deliveries TO saas_notification_dispatcher;
 GRANT INSERT ON saas_notification_deliveries TO saas_notification_dispatcher;
 GRANT INSERT ON saas_notification_delivery_attempts TO saas_notification_dispatcher;
+
+-- Public registration and background Tenant onboarding are separate database
+-- identities. FORCE RLS additionally binds every row to server-generated GUCs.
+-- Revoke first so rerunning this file also removes any historical table-level
+-- grants. Every write below is constrained to the columns emitted by the two
+-- onboarding services; state transitions cannot rewrite identity or scope.
+REVOKE ALL PRIVILEGES ON
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events,
+    saas_global_users,
+    saas_identity_connections,
+    saas_password_credentials,
+    saas_privacy_identity_tombstones,
+    saas_tenants,
+    saas_spaces,
+    saas_tenant_memberships,
+    saas_space_memberships,
+    saas_control_plane_outbox
+FROM saas_registration, saas_onboarding;
+
+-- Existing Staff/Support policies contain subqueries against these two tables.
+-- PostgreSQL validates their referenced columns even when a separate onboarding
+-- policy admits the target row. These are planning-only grants: neither role is
+-- a Platform role member, so FORCE RLS exposes zero Staff or Support rows.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_registration, saas_onboarding;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_registration, saas_onboarding;
+-- Existing Global User and Tenant SELECT policies plan ownership subqueries
+-- even when a dedicated onboarding policy admits the exact row. Cleared or
+-- exact customer GUCs keep this planning grant row-invisible under FORCE RLS.
+GRANT SELECT (tenant_id, user_id)
+ON saas_tenant_memberships TO saas_registration;
+GRANT SELECT (tenant_id, user_id, status)
+ON saas_tenant_memberships TO saas_onboarding;
+GRANT SELECT (tenant_id, space_id, user_id, status)
+ON saas_space_memberships TO saas_onboarding;
+
+GRANT SELECT ON
+    saas_self_service_registrations,
+    saas_email_verification_challenges
+TO saas_registration;
+GRANT INSERT (
+    id, email_normalized, email_hash, display_name, tenant_name, tenant_slug,
+    default_space_name, default_space_slug, plan_key, plan_policy_revision,
+    home_region, status, challenge_generation, expires_at, verified_at,
+    terminal_at, user_id, tenant_id, space_id, subscription_id,
+    runtime_partition_id, onboarding_id, idempotency_key, request_hash,
+    version, created_at, updated_at
+) ON saas_self_service_registrations TO saas_registration;
+GRANT UPDATE (
+    status, challenge_generation, expires_at, verified_at, terminal_at,
+    version, updated_at
+) ON saas_self_service_registrations TO saas_registration;
+GRANT INSERT (
+    id, registration_id, generation, token_hash, status, delivery_status,
+    delivery_attempts, delivery_idempotency_key, last_delivery_error_code,
+    expires_at, delivered_at, consumed_at, expired_at, revoked_at, created_at,
+    updated_at
+) ON saas_email_verification_challenges TO saas_registration;
+GRANT UPDATE (
+    status, delivery_status, delivery_attempts, last_delivery_error_code,
+    delivered_at, consumed_at, expired_at, revoked_at, updated_at
+) ON saas_email_verification_challenges TO saas_registration;
+GRANT SELECT ON saas_self_service_events TO saas_registration;
+GRANT INSERT (
+    id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, event_type,
+    from_status, to_status, facts, facts_hash, previous_hash, event_hash,
+    occurred_at
+) ON saas_self_service_events TO saas_registration;
+GRANT SELECT ON
+    saas_identity_connections,
+    saas_password_credentials,
+    saas_privacy_identity_tombstones
+TO saas_registration;
+GRANT INSERT (
+    id, status, display_name, primary_email_normalized, security_version
+) ON saas_global_users TO saas_registration;
+GRANT SELECT (created_at, updated_at)
+ON saas_global_users TO saas_registration;
+GRANT INSERT (
+    id, user_id, provider, issuer, subject, email_normalized, email_verified,
+    status
+) ON saas_identity_connections TO saas_registration;
+GRANT INSERT (
+    user_id, login_email_normalized, password_hash, password_version,
+    failed_attempts, locked_until
+) ON saas_password_credentials TO saas_registration;
+GRANT INSERT (
+    id, tenant_id, aggregate_type, aggregate_key, event_type, payload,
+    idempotency_key, request_hash, attempt_count, available_at, claimed_at,
+    claim_token, last_error, published_at
+) ON saas_control_plane_outbox TO saas_registration;
+GRANT SELECT (created_at)
+ON saas_control_plane_outbox TO saas_registration;
+
+GRANT SELECT ON
+    saas_self_service_registrations,
+    saas_global_users
+TO saas_onboarding;
+GRANT SELECT ON saas_tenant_onboardings TO saas_onboarding;
+GRANT INSERT (
+    id, registration_id, user_id, tenant_id, space_id, subscription_id,
+    runtime_partition_id, plan_key, plan_policy_revision, home_region,
+    trial_days, trial_started_at, trial_ends_at, status, idempotency_key,
+    request_hash, version, attempt_count, available_at, claimed_at, claim_token,
+    lease_expires_at, last_error_code, last_error_detail, billing_ready_at,
+    runtime_ready_at, activated_at, compensated_at, last_transition_at,
+    created_at, updated_at
+) ON saas_tenant_onboardings TO saas_onboarding;
+GRANT SELECT ON saas_self_service_events TO saas_onboarding;
+GRANT INSERT (
+    id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, event_type,
+    from_status, to_status, facts, facts_hash, previous_hash, event_hash,
+    occurred_at
+) ON saas_self_service_events TO saas_onboarding;
+GRANT SELECT (created_at, updated_at), INSERT (
+    id, slug, name, status, plan, home_region, lifecycle_version
+) ON saas_tenants TO saas_onboarding;
+GRANT SELECT (created_at, updated_at), INSERT (
+    id, tenant_id, slug, name, status
+) ON saas_spaces TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, user_id, role, status, version, joined_at
+) ON saas_tenant_memberships TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, space_id, user_id, role, status, version, joined_at
+) ON saas_space_memberships TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, aggregate_type, aggregate_key, event_type, payload,
+    idempotency_key, request_hash, attempt_count, available_at, claimed_at,
+    claim_token, last_error, published_at
+) ON saas_control_plane_outbox TO saas_onboarding;
+GRANT SELECT (created_at)
+ON saas_control_plane_outbox TO saas_onboarding;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;

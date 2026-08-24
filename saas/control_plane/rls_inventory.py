@@ -107,8 +107,12 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_notification_delivery_attempts",
         "saas_operation_batches",
         "saas_operation_batch_items",
+        "saas_self_service_registrations",
+        "saas_email_verification_challenges",
+        "saas_tenant_onboardings",
+        "saas_self_service_events",
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 103:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 103 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 107:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 107 tables")

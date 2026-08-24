@@ -10,7 +10,14 @@ import sqlalchemy as sa
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 USER_STATUSES = ("active", "suspended", "deleted")
-TENANT_STATUSES = ("trial", "active", "suspended", "pending_deletion", "deleted")
+TENANT_STATUSES = (
+    "provisioning",
+    "trial",
+    "active",
+    "suspended",
+    "pending_deletion",
+    "deleted",
+)
 SPACE_STATUSES = ("active", "suspended", "archived")
 MEMBERSHIP_STATUSES = ("invited", "active", "suspended", "removed")
 TENANT_ROLES = (

@@ -632,7 +632,7 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
         assert all(value.email_normalized.startswith("deleted-") for value in invitations)
         assert all(value.accepted_by is None for value in invitations)
         assert all(value.deletion_manifest_id == started.manifest_id for value in invitations)
-        assert db.query(PrivacyIdentityTombstoneRecord).count() == 2
+        assert db.query(PrivacyIdentityTombstoneRecord).count() == 3
         receipt = db.scalar(sa.select(EnterpriseScimEventRecord))
         assert receipt.redaction_manifest_id == started.manifest_id
         assert receipt.result["redacted"] is True

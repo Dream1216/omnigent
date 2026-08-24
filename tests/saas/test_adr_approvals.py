@@ -149,7 +149,7 @@ def test_approved_architecture_schema_matches_current_implementation_head() -> N
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "pc5a00000005"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "pc5a00000005"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000001"  # type: ignore[index]
     assert validate_approval_contract(_repo(), baseline)["status"] == "pass"
 
 

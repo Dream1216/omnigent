@@ -214,6 +214,12 @@ def scim_user_locator_hash(directory_id: UUID, external_id: str) -> str:
     )
 
 
+def password_email_locator_hash(email_normalized: str) -> str:
+    """Hash one normalized password-login email for deletion replay prevention."""
+
+    return _digest({"kind": "password_email", "email": email_normalized})
+
+
 def sign_surface_evidence(
     evidence: DeletionSurfaceEvidence,
     key: DeletionEvidenceKey,
@@ -1284,6 +1290,16 @@ class PrivacyLifecycleService:
             scim_user.deprovisioned_at = changed_at
             scim_user.updated_at = changed_at
 
+        if primary_email:
+            self._add_tombstone(
+                db,
+                manifest=manifest,
+                target_user_id=user.id,
+                tenant_id=None,
+                locator_kind="password_email",
+                locator_hash=password_email_locator_hash(primary_email),
+                created_at=changed_at,
+            )
         db.execute(sa.delete(PasswordCredential).where(PasswordCredential.user_id == user.id))
         invitation_predicates = [MembershipInvitation.accepted_by == user.id]
         if primary_email:

@@ -35,6 +35,41 @@ P0 establishes executable controls that stay independent of feature claims:
    builds twice without publishing; it cannot be mistaken for signed production
    evidence.
 
+The active P0 product slice on `codex/saas-p0-self-service-onboarding` adds the
+first self-service onboarding authority without treating resource allocation as
+complete:
+
+- anonymous registration validates a deployment-owned plan/region catalog,
+  normalizes the requested Tenant and default Space, applies an injected
+  fail-closed rate limiter, and persists preallocated product identifiers behind
+  dedicated `saas_registration` RLS policies;
+- verification secrets are high-entropy, hash-only, expiring, single-generation
+  credentials. Email address and raw token leave the transaction only inside an
+  AES-GCM Outbox envelope bound to the immutable event ID; stale generations are
+  suppressed before delivery;
+- public registration and resend responses deliberately omit replay, expiry,
+  identity-conflict, and internal lifecycle facts. Verification performs the
+  expensive password KDF only after the challenge is found and locked, and only
+  the original receipt may replay a consumed challenge;
+- successful verification atomically creates the Global User, password Identity
+  Connection and Password Credential, then emits durable Tenant-provisioning
+  intent. The coordinator creates only a `provisioning` Tenant, `suspended`
+  default Space and Owner memberships under the separate `saas_onboarding` role;
+- a hash-linked, PII-rejecting event stream and a staged onboarding Saga preserve
+  the audit and recovery boundary. Candidate schema revision `p0s000000001`
+  raises the forced-RLS inventory from 88 to 92 tables.
+
+This is a development candidate, not P0 completion or production `GO`. Activation
+must remain closed until Billing entitlement, Runtime Partition/Placement,
+physical workspace allocation, Identity Alias and binding are all durable. P0
+also still requires a single Tenant-slug reservation authority; terminal-record
+retention/GC and privacy erasure (including encrypted Outbox payloads and a
+versioned HMAC blind index); bounded retry, DLQ, reconciliation, compensation and
+a customer-visible status path; plus production KMS, mail-provider, shared rate
+limiter and worker composition. Enterprise SAML/OIDC/domain/JIT and MFA/recovery,
+the full Staff administration product, and Operations Center remain separate P0
+tracks.
+
 The first P1 slice adds an independent control-plane schema and migration for
 Global User, Tenant, Space, versioned Membership, Runtime Placement, Runtime
 Partition, Identity Alias, and Resource Binding records. Its server-side

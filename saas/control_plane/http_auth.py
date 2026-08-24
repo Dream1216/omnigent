@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
     )
+    from saas.control_plane.onboarding import SelfServiceOnboardingService
     from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
     from saas.control_plane.public_api import PublicApiExecutionService
@@ -516,6 +517,17 @@ class SaasAuthContextMiddleware:
     def _is_public_request(self, path: str, method: str) -> bool:
         if path in self._public_paths:
             return True
+        if method == "POST":
+            if path == "/saas/onboarding/registrations":
+                return True
+            onboarding_parts = path.split("/")
+            if (
+                len(onboarding_parts) == 6
+                and onboarding_parts[1:4] == ["saas", "onboarding", "registrations"]
+                and bool(onboarding_parts[4])
+                and onboarding_parts[5] in {"resend", "verify"}
+            ):
+                return True
         scim_resources = (
             "/saas/scim/v2/Users",
             "/saas/scim/v2/Groups",
@@ -1176,6 +1188,7 @@ def create_saas_http_integration(
     approval_operations: ApprovalOperationsProtocol | None = None,
     notification_operations: NotificationOperationsProtocol | None = None,
     notification_origin: str | None = None,
+    onboarding: SelfServiceOnboardingService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1191,6 +1204,10 @@ def create_saas_http_integration(
         oidc=oidc,
         context_snapshots=context_snapshots,
     )
+    if onboarding is not None:
+        from saas.control_plane.onboarding_http import create_onboarding_router
+
+        router.include_router(create_onboarding_router(onboarding=onboarding))
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
     if project_admin is not None and project_authorizer is not None:
