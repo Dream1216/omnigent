@@ -45,6 +45,16 @@ def _refresh_candidate_digest(repo: Path) -> None:
 
 
 def _commit_decision_tree(repo: Path) -> tuple[str, str]:
+    baseline_path = repo / "saas/production/baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    approval = baseline["approval"]
+    active_record = approval.pop("record", None)
+    approval["state"] = "review_required"
+    for adr in baseline["adrs"]:
+        adr["status"] = "proposed"
+    baseline_path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    if isinstance(active_record, str):
+        (repo / active_record).unlink(missing_ok=True)
     _refresh_candidate_digest(repo)
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "adr-test@example.test")
