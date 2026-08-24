@@ -76,6 +76,13 @@ jobs:
           fetch-depth: 0
           sparse-checkout: .github/scripts/ci
           persist-credentials: false
+      - name: Fetch official release tags for downstream forks
+        if: github.repository != 'omnigent-ai/omnigent'
+        shell: bash
+        run: |
+          git fetch --force --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            '+refs/tags/*:refs/tags/*'
       - name: Resolve latest final tag
         id: tag
         shell: bash
@@ -181,6 +188,13 @@ jobs:
           # Full history so `git tag` sees every release tag for the matrix.
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch official release tags for downstream forks
+        if: github.repository != 'omnigent-ai/omnigent'
+        shell: bash
+        run: |
+          git fetch --force --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            '+refs/tags/*:refs/tags/*'
       - name: Compute pairwise matrices
         id: matrix
         env:
@@ -272,6 +286,13 @@ jobs:
           sparse-checkout: .github/scripts/ci
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch official release tags for downstream forks
+        if: github.repository != 'omnigent-ai/omnigent'
+        shell: bash
+        run: |
+          git fetch --force --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            '+refs/tags/*:refs/tags/*'
       - name: Compute UI matrix
         id: matrix
         env:
