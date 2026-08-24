@@ -4,21 +4,20 @@
   "reviewed_at": "2026-08-24",
   "revision_contract": {
     "upstream_manifest": "saas/upstream-baseline.json",
-    "upstream_revision": "9303cc1cd12e2e5788f4e2b9dcde9308b474017a",
+    "upstream_revision": "14df304a8e958da36b8a606a2c825e3a6642247e",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p0s000000001",
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {
-    "state": "approved",
+    "state": "review_required",
     "mode": "sole-owner-risk-waiver",
     "governance_classification": "degraded",
     "scope": "p0-architectural-decision-bundle",
-    "approved_control_plane_schema_revision": "pc5a00000005",
+    "approved_control_plane_schema_revision": "p0s000000001",
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",
-    "record": "saas/production/adr-approvals/omnigent-saas-upstream-sync-9303cc1c-2026-08-24-b1a4cf30e76f2728.json",
     "required_roles": [
       "product-owner",
       "platform-architecture",
@@ -32,7 +31,7 @@
       "id": "ADR-001",
       "title": "PostgreSQL topology and transaction boundary",
       "owner": "platform-architecture",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Use one multi-AZ PostgreSQL cluster per data region, separate official and SaaS ownership roles, official migrations before SaaS migrations, local transactions within one Placement, and Saga plus Outbox across Placements.",
       "verification_gate": "Dual forced-RLS tests, migration drift checks, local transaction fault injection, and cross-Placement Saga compensation must pass."
     },
@@ -40,7 +39,7 @@
       "id": "ADR-002",
       "title": "Runtime Placement and migration protocol",
       "owner": "runtime-compatibility",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "The server selects Placement from residency, plan, capacity, runtime lineage, and Project affinity; active bindings never reroute from client input; migration uses snapshot, catch-up, generation fencing, atomic cutover, and retained rollback material.",
       "verification_gate": "Same physical workspace number in two Placements, stale generation, partial cutover, and N-1 rollback tests must fail closed or recover."
     },
@@ -48,7 +47,7 @@
       "id": "ADR-003",
       "title": "Authorization snapshot and degradation",
       "owner": "control-plane",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Use an opaque session-bound Context Snapshot with a maximum 60-second lifetime, shared rotatable keys, live healthy-path revalidation, Outbox invalidation, and an exact low-risk GET or HEAD degradation allowlist.",
       "verification_gate": "Two-replica PostgreSQL tests must prove immediate healthy-path revocation and fail-closed sensitive operations during dependency failure."
     },
@@ -56,7 +55,7 @@
       "id": "ADR-004",
       "title": "Runner isolation and responsibility modes",
       "owner": "execution-platform",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Support Managed Shared, Managed Dedicated, and Customer-managed Runner modes behind one capability and lease contract; dedicated and customer-managed modes change placement and responsibility, not authorization semantics. Managed modes disable the upstream copy-on-write Runner zygote and reject ambient provider credentials until a fork-safety review proves post-fork credential, descriptor, native-state, telemetry, and tenant-context reset.",
       "verification_gate": "Two failure domains, certificate rotation, quarantine, lease expiry, stale fencing, tenant-pool isolation, canonical managed process policy, and negative ambient-credential inheritance must pass."
     },
@@ -64,7 +63,7 @@
       "id": "ADR-005",
       "title": "Sandbox, tool, network, secret, and supply-chain policy",
       "owner": "security",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Treat repositories and prompts as hostile; use non-privileged per-Run isolation, no host socket, default-deny internal and metadata networks, server-side tool policy, short-lived secret brokering, immutable digests, SBOM, signed provenance, and release vulnerability gates.",
       "verification_gate": "Host escape, SSRF, DNS rebinding, secret exfiltration, cache poisoning, unsigned image, and critical vulnerability probes must be blocking."
     },
@@ -72,7 +71,7 @@
       "id": "ADR-006",
       "title": "SLO, data class, RPO, RTO, and recovery",
       "owner": "site-reliability",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Adopt the SLOs and T0-T2 recovery objectives in this baseline; encrypted protected backups are cross-failure-domain and restore into isolation before traffic; conduct quarterly tenant and regional drills.",
       "verification_gate": "Business approval plus measured tenant and regional recovery evidence at the exact schema, source, adapter, and key revisions is required."
     },
@@ -80,7 +79,7 @@
       "id": "ADR-007",
       "title": "Metering, pricing, ledgers, reconciliation, and quota",
       "owner": "billing-platform",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Keep immutable Usage, versioned Pricing Snapshot, append-only Customer and Provider ledgers, and daily reconciliation separate; use fixed-point amounts and correction entries; reserve quota before provider work.",
       "verification_gate": "Duplicate, late, unknown-result, refund, plan-change, and provider-invoice reconciliation cases must preserve ledger invariants."
     },
@@ -88,7 +87,7 @@
       "id": "ADR-008",
       "title": "API, webhook, connector, and SSRF baseline",
       "owner": "control-plane",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Expose versioned public contracts with idempotency and deprecation windows; keep Service Accounts non-interactive; store only peppered API Key digests; bind machine permissions, network policy, expiry, and project scope explicitly; sign and deduplicate webhooks; bind connector identities to authorized resources; resolve and filter every outbound target against metadata, loopback, link-local, private, and control-plane networks.",
       "verification_gate": "One-time Key disclosure, rotate/revoke, no privilege inheritance or escalation, network and scope denial, signature rotation, replay, reordering, redirect, DNS rebinding, repository transfer, and app-uninstall tests must pass."
     },
@@ -96,7 +95,7 @@
       "id": "ADR-009",
       "title": "Single-region production boundary",
       "owner": "product-owner",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "The first production offer is single-region multi-AZ; it makes no active-active multi-region, sovereign-region, or cross-border failover promise. Dedicated Placement is separately contracted and multi-region requires a new ADR and gate.",
       "verification_gate": "Product terms, deployment manifests, routing, backup location, and tenant-facing region disclosures must agree."
     },
@@ -104,7 +103,7 @@
       "id": "ADR-010",
       "title": "Identity and management-web security",
       "owner": "security",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Use strict OIDC Code plus S256 PKCE, explicit identity linking, server-side revocable cookies, CSRF and Origin enforcement, distinct human and machine token namespaces, rejection of Cookie plus Bearer ambiguity, independent Platform Console origin and identity source, MFA for privileged production roles, and fail-closed recovery.",
       "verification_gate": "Session fixation, CSRF, CORS, redirect, cache, history, logout replay, machine-token interactive-login denial, account recovery, and privileged MFA browser tests must pass."
     },
@@ -112,7 +111,7 @@
       "id": "ADR-011",
       "title": "Feature flag and configuration governance",
       "owner": "platform-architecture",
-      "status": "accepted",
+      "status": "proposed",
       "decision": "Every flag has an owner, scope, safe default, expiry, audit event, and revision snapshot; tenant settings cannot weaken platform security; expired or unknown security flags fail closed.",
       "verification_gate": "Configuration schema, expiry lint, audit, rollback, stale replica, and tenant override negative tests must pass."
     }
