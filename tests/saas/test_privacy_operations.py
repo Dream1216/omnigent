@@ -968,9 +968,8 @@ def test_governed_start_binds_user_state_and_tombstone_blocks_restore(
         assert target is not None and target.status == "suspended"
         assert target.security_version == 2
         assert manifest is not None and manifest.expected_target_version == 2
-        assert (
-            db.scalar(sa.select(sa.func.count()).select_from(PrivacyIdentityTombstoneRecord)) == 1
-        )
+        tombstone_kinds = set(db.scalars(sa.select(PrivacyIdentityTombstoneRecord.locator_kind)))
+        assert tombstone_kinds == {"oidc_subject", "password_email"}
 
     with pytest.raises(PlatformSecurityError) as blocked:
         PlatformLifecycleService(factory).restore_user(
