@@ -307,7 +307,8 @@ def test_platform_planning_columns_remain_force_rls_invisible() -> None:
         "ON saas_platform_support_sessions TO saas_registration, saas_onboarding;"
     ) in normalized
     assert (
-        "GRANT SELECT (tenant_id, user_id) ON saas_tenant_memberships TO saas_registration;"
+        "GRANT SELECT (tenant_id, user_id, status) ON saas_tenant_memberships "
+        "TO saas_registration;"
     ) in normalized
     assert (
         "GRANT SELECT (tenant_id, user_id, status) ON saas_tenant_memberships TO saas_onboarding;"

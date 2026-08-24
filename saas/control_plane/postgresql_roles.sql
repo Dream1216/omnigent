@@ -912,7 +912,7 @@ ON saas_platform_support_sessions TO saas_registration, saas_onboarding;
 -- Existing Global User and Tenant SELECT policies plan ownership subqueries
 -- even when a dedicated onboarding policy admits the exact row. Cleared or
 -- exact customer GUCs keep this planning grant row-invisible under FORCE RLS.
-GRANT SELECT (tenant_id, user_id)
+GRANT SELECT (tenant_id, user_id, status)
 ON saas_tenant_memberships TO saas_registration;
 GRANT SELECT (tenant_id, user_id, status)
 ON saas_tenant_memberships TO saas_onboarding;

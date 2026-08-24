@@ -57,7 +57,7 @@ complete:
   default Space and Owner memberships under the separate `saas_onboarding` role;
 - a hash-linked, PII-rejecting event stream and a staged onboarding Saga preserve
   the audit and recovery boundary. Candidate schema revision `p0s000000001`
-  raises the forced-RLS inventory from 88 to 92 tables.
+  raises the forced-RLS inventory from 103 to 107 tables.
 
 This is a development candidate, not P0 completion or production `GO`. Activation
 must remain closed until Billing entitlement, Runtime Partition/Placement,
