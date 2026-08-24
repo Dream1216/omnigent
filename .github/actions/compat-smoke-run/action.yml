@@ -44,6 +44,25 @@ runs:
           echo "CLAUDE_CODE="
         } >> "$GITHUB_ENV"
 
+    - name: Fetch pinned official release tag for downstream forks
+      if: ${{ inputs.server_version != '' || inputs.runner_version != '' }}
+      shell: bash
+      env:
+        SERVER_VERSION_INPUT: ${{ inputs.server_version }}
+        RUNNER_VERSION_INPUT: ${{ inputs.runner_version }}
+      run: |
+        for tag in "$SERVER_VERSION_INPUT" "$RUNNER_VERSION_INPUT"; do
+          [ -z "$tag" ] && continue
+          if ! [[ "$tag" =~ ^v?[0-9]+\.[0-9]+(\.[0-9]+)?([a-z0-9.]*)?$ ]]; then
+            echo "Invalid release tag: '$tag'" >&2; exit 1
+          fi
+          if ! git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            git fetch --force --no-recurse-submodules \
+              https://github.com/omnigent-ai/omnigent.git \
+              "refs/tags/$tag:refs/tags/$tag"
+          fi
+        done
+
     - name: Set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
       with:
