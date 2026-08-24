@@ -20,6 +20,7 @@ _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _STANDARD_MODE = "four-party-github-reviews"
 _WAIVER_MODE = "sole-owner-risk-waiver"
 _DEGRADED = "degraded"
+_DEFAULT_BASELINE_PATH = "saas/production/baseline.json"
 _CANDIDATE_REVISION_FIELDS = (
     "upstream_revision",
     "adapter_contract_version",
@@ -111,8 +112,132 @@ def decision_registry_sha256(baseline: dict[str, Any]) -> str:
     return _canonical_sha256(snapshot)
 
 
-def compute_decision_bundle(repo: Path, candidate: dict[str, Any]) -> str:
-    """Hash candidate lineage and the byte-exact ordered ADR documents."""
+def _git_object_bytes(repo: Path, commit_sha: str, value: object) -> bytes:
+    """Read one repository file exactly as stored in a reviewed Git commit."""
+
+    if _SHA1.fullmatch(commit_sha) is None:
+        raise ValueError("reviewed_commit_sha must be a full Git SHA")
+    path = _repo_file(repo, value)
+    if path is None:
+        raise ValueError(f"invalid reviewed repository path: {value}")
+    relative = path.relative_to(repo.resolve()).as_posix()
+    result = subprocess.run(
+        ["git", "cat-file", "blob", f"{commit_sha}:{relative}"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"reviewed Git object is missing: {commit_sha}:{relative}")
+    return result.stdout
+
+
+def _require_git_ancestor(
+    repo: Path,
+    ancestor: str,
+    descendant: str,
+    *,
+    message: str,
+) -> None:
+    if _SHA1.fullmatch(ancestor) is None:
+        raise ValueError("Git ancestry requires a full ancestor SHA")
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 1:
+        raise ValueError(message)
+    if result.returncode != 0:
+        raise ValueError(f"cannot verify Git ancestry for {ancestor} and {descendant}")
+
+
+def _git_commit_parents(repo: Path, commit_sha: str) -> list[str]:
+    if _SHA1.fullmatch(commit_sha) is None:
+        raise ValueError("merge_commit_sha must be a full Git SHA")
+    result = subprocess.run(
+        ["git", "rev-list", "--parents", "-n", "1", commit_sha],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    values = result.stdout.strip().split()
+    if result.returncode != 0 or not values or values[0] != commit_sha:
+        raise ValueError(f"merge commit is missing from Git history: {commit_sha}")
+    return values[1:]
+
+
+def validate_pull_target_and_ancestry(
+    repo: Path,
+    pull: dict[str, Any],
+    policy: dict[str, Any],
+) -> tuple[str, str]:
+    """Bind a merged decision PR to its approved repository, branch, and topology."""
+
+    repository = policy.get("repository")
+    target_branch = policy.get("target_branch")
+    merge_strategy = policy.get("merge_strategy")
+    if not isinstance(repository, str) or not repository:
+        raise ValueError("approval policy repository is required")
+    if target_branch != "main":
+        raise ValueError("approval policy target_branch must be main")
+    if merge_strategy != "merge-commit":
+        raise ValueError("approval policy merge_strategy must be merge-commit")
+
+    base = pull.get("base")
+    base_repo = base.get("repo") if isinstance(base, dict) else None
+    if not isinstance(base, dict) or not isinstance(base_repo, dict):
+        raise ValueError("decision PR base repository metadata is missing")
+    if base_repo.get("full_name") != repository:
+        raise ValueError("decision PR base repository does not match approval policy")
+    if base.get("ref") != target_branch:
+        raise ValueError("decision PR base branch does not match approval policy")
+
+    head = pull.get("head")
+    reviewed_commit = head.get("sha") if isinstance(head, dict) else None
+    merge_commit = pull.get("merge_commit_sha")
+    if not isinstance(reviewed_commit, str) or _SHA1.fullmatch(reviewed_commit) is None:
+        raise ValueError("decision PR reviewed head must be a full Git SHA")
+    if not isinstance(merge_commit, str) or _SHA1.fullmatch(merge_commit) is None:
+        raise ValueError("decision PR merge_commit_sha must be a full Git SHA")
+
+    _require_git_ancestor(
+        repo,
+        merge_commit,
+        "HEAD",
+        message="decision PR merge commit is not an ancestor of current HEAD",
+    )
+    parents = _git_commit_parents(repo, merge_commit)
+    if len(parents) < 2:
+        raise ValueError("decision PR merge_commit_sha is not a merge commit")
+    _require_git_ancestor(
+        repo,
+        reviewed_commit,
+        merge_commit,
+        message="reviewed decision PR head is not an ancestor of its merge commit",
+    )
+    return reviewed_commit, merge_commit
+
+
+def _json_object(payload: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"reviewed {label} must contain valid JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"reviewed {label} must contain a JSON object")
+    return value
+
+
+def compute_decision_bundle(
+    repo: Path,
+    candidate: dict[str, Any],
+    *,
+    commit_sha: str | None = None,
+) -> str:
+    """Hash candidate lineage and byte-exact ADRs from the tree or a Git commit."""
 
     lineage = {
         "schema_version": candidate.get("schema_version"),
@@ -129,13 +254,88 @@ def compute_decision_bundle(repo: Path, candidate: dict[str, Any]) -> str:
         raise ValueError("candidate.decision_files must be a list")
     for value in files:
         path = _repo_file(repo, value)
-        if path is None or not path.is_file():
+        if path is None or (commit_sha is None and not path.is_file()):
             raise ValueError(f"invalid or missing decision file: {value}")
         encoded = str(value).encode()
-        payload = path.read_bytes()
+        payload = (
+            path.read_bytes() if commit_sha is None else _git_object_bytes(repo, commit_sha, value)
+        )
         digest.update(b"\0" + len(encoded).to_bytes(4, "big") + encoded)
         digest.update(len(payload).to_bytes(8, "big") + payload)
     return digest.hexdigest()
+
+
+def _baseline_decision_material(baseline: dict[str, Any]) -> dict[str, Any]:
+    """Return baseline material while excluding only post-review approval results."""
+
+    material = json.loads(json.dumps(baseline))
+    approval = material.get("approval")
+    if isinstance(approval, dict):
+        approval.pop("state", None)
+        approval.pop("record", None)
+    adrs = material.get("adrs")
+    if isinstance(adrs, list):
+        for adr in adrs:
+            if isinstance(adr, dict):
+                adr.pop("status", None)
+    return material
+
+
+def reviewed_decision_sources(
+    repo: Path,
+    baseline: dict[str, Any],
+    reviewed_commit_sha: str,
+    *,
+    baseline_path: str = _DEFAULT_BASELINE_PATH,
+) -> dict[str, Any]:
+    """Load and bind every mutable decision source to the reviewed Git tree."""
+
+    reviewed_baseline = _json_object(
+        _git_object_bytes(repo, reviewed_commit_sha, baseline_path),
+        label="baseline",
+    )
+    if _baseline_decision_material(baseline) != _baseline_decision_material(reviewed_baseline):
+        raise ValueError(
+            f"baseline decision material differs from reviewed commit {reviewed_commit_sha}"
+        )
+
+    reviewed_approval = reviewed_baseline.get("approval")
+    if not isinstance(reviewed_approval, dict):
+        raise ValueError("baseline.approval must be an object")
+
+    reviewed: dict[str, Any] = {"baseline": reviewed_baseline}
+    for name in ("policy", "authorities", "candidate"):
+        value = reviewed_approval.get(name)
+        path = _repo_file(repo, value)
+        if path is None or not path.is_file():
+            raise ValueError(f"approval.{name} must reference a repository file")
+        reviewed_payload = _git_object_bytes(repo, reviewed_commit_sha, value)
+        if path.read_bytes() != reviewed_payload:
+            raise ValueError(
+                f"approval.{name} bytes differ from reviewed commit {reviewed_commit_sha}"
+            )
+        reviewed[name] = _json_object(reviewed_payload, label=f"approval.{name}")
+
+    candidate = reviewed["candidate"]
+    files = candidate.get("decision_files")
+    if not isinstance(files, list):
+        raise ValueError("reviewed candidate.decision_files must be a list")
+    for value in files:
+        path = _repo_file(repo, value)
+        if path is None or not path.is_file():
+            raise ValueError(f"invalid or missing decision file: {value}")
+        reviewed_payload = _git_object_bytes(repo, reviewed_commit_sha, value)
+        if path.read_bytes() != reviewed_payload:
+            raise ValueError(
+                f"decision file {value} bytes differ from reviewed commit {reviewed_commit_sha}"
+            )
+
+    reviewed["decision_bundle_sha256"] = compute_decision_bundle(
+        repo,
+        candidate,
+        commit_sha=reviewed_commit_sha,
+    )
+    return reviewed
 
 
 def fetch_github_evidence(
@@ -314,6 +514,7 @@ def validate_approval_contract(
     *,
     github_evidence: dict[str, Any] | None = None,
     base_ref: str | None = None,
+    baseline_path: str = _DEFAULT_BASELINE_PATH,
 ) -> dict[str, Any]:
     """Return structural violations and explicit ADR-approval blockers."""
 
@@ -351,6 +552,10 @@ def validate_approval_contract(
         violations.append("approval candidate schema_version must be 1")
     if policy.get("repository") != "Dream1216/omnigent":
         violations.append("approval policy must bind the Dream1216/omnigent repository")
+    if policy.get("target_branch") != "main":
+        violations.append("approval policy target_branch must be main")
+    if policy.get("merge_strategy") != "merge-commit":
+        violations.append("approval policy merge_strategy must be merge-commit")
     if policy.get("candidate_path") != approval.get("candidate"):
         violations.append("approval policy candidate_path does not match baseline")
     if policy.get("authority_path") != approval.get("authorities"):
@@ -620,6 +825,12 @@ def validate_approval_contract(
                 violations.append(f"approval record {field} does not match candidate")
         if record.get("repository") != policy.get("repository"):
             violations.append("approval record repository does not match policy")
+        if record.get("target_repository") != policy.get("repository"):
+            violations.append("approval record target_repository does not match policy")
+        if record.get("target_branch") != policy.get("target_branch"):
+            violations.append("approval record target_branch does not match policy")
+        if record.get("merge_strategy") != policy.get("merge_strategy"):
+            violations.append("approval record merge_strategy does not match policy")
         if not isinstance(record.get("pull_request"), int) or record["pull_request"] <= 0:
             violations.append("approval record pull_request must be positive")
         expected_url = (
@@ -636,6 +847,38 @@ def validate_approval_contract(
         reviewed_commit = record.get("reviewed_commit_sha")
         if not isinstance(reviewed_commit, str) or _SHA1.fullmatch(reviewed_commit) is None:
             violations.append("approval record reviewed_commit_sha must be a full Git SHA")
+        else:
+            try:
+                reviewed_sources = reviewed_decision_sources(
+                    repo,
+                    baseline,
+                    reviewed_commit,
+                    baseline_path=baseline_path,
+                )
+            except (OSError, ValueError) as error:
+                violations.append(str(error))
+            else:
+                reviewed_digest = reviewed_sources["decision_bundle_sha256"]
+                if reviewed_digest != computed_digest:
+                    violations.append(
+                        "current decision bundle differs from the reviewed Git commit"
+                    )
+                if record.get("decision_bundle_sha256") != reviewed_digest:
+                    violations.append(
+                        "approval record decision digest does not match the reviewed Git commit"
+                    )
+        record_pull = {
+            "base": {
+                "repo": {"full_name": record.get("target_repository")},
+                "ref": record.get("target_branch"),
+            },
+            "head": {"sha": reviewed_commit},
+            "merge_commit_sha": merge_commit,
+        }
+        try:
+            validate_pull_target_and_ancestry(repo, record_pull, policy)
+        except ValueError as error:
+            violations.append(str(error))
         author = record.get("pull_request_author")
         if not isinstance(author, str) or _GITHUB_LOGIN.fullmatch(author) is None:
             violations.append("approval record pull_request_author is invalid")
@@ -767,6 +1010,10 @@ def validate_approval_contract(
             else:
                 if pull.get("merged_at") is None:
                     violations.append("the ADR decision pull request is not merged")
+                try:
+                    validate_pull_target_and_ancestry(repo, pull, policy)
+                except ValueError as error:
+                    violations.append(str(error))
                 head = pull.get("head")
                 head_sha = head.get("sha") if isinstance(head, dict) else None
                 if head_sha != reviewed_commit:
@@ -947,6 +1194,7 @@ def main() -> int:
         baseline,
         github_evidence=github_evidence,
         base_ref=args.base_ref,
+        baseline_path=args.baseline,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

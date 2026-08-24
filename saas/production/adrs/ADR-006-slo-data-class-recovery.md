@@ -1,8 +1,8 @@
 # ADR-006: SLO, data class, RPO, RTO, and recovery
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `site-reliability`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 

@@ -1176,8 +1176,8 @@ three existing dependency warnings in 247.21 seconds.
 The 2026-08-24 official synchronization candidate pins upstream
 `9303cc1cd12e2e5788f4e2b9dcde9308b474017a` and implementation merge
 `8fada23f5fc0f50ccef10f2a3b03197ce61607e0`. Patch Replay passes 2/2 against the exact
-official tree and Upstream Delta passes at seven direct official files, 106 net-added
-official lines, two active patches, and a 0.9993 isolated-code ratio. The compatibility
+official tree and Upstream Delta passes at ten direct official files, 165 net-added
+official lines, two active patches, and a 0.999 isolated-code ratio. The compatibility
 audit also covers a semantic non-conflict: an installed managed session initializer must
 bypass the new official shared read session so Workspace and PostgreSQL RLS context
 cannot be lost.
@@ -1189,7 +1189,9 @@ risk-waiver record may be generated only from the merged exact-head synchronizat
 and its successful compatibility check. Until that flow, protected PostgreSQL/Alembic,
 official regression, SaaS, SDK, Wheel, signed dual-architecture image, Canary, and N-1
 evidence complete, the synchronization and aggregate production decisions remain
-`NO-GO`.
+`NO-GO`. The aggregate ledger is therefore back to 40/51 passed with eleven pending;
+the superseded 2026-08-09 approval record remains append-only history, not active
+evidence for this candidate.
 
 The next PC5 privacy/deletion candidate advances the schema to `pc5b00000001` and the
 control-plane forced-RLS inventory to 88 tables. It introduces released/active Legal
@@ -1218,13 +1220,15 @@ pre-commit pass, migrations round trip without drift, the Wheel contains 274 req
 artifacts, 2/2 patches replay, and the intrusion report passes at 10 official files, 498
 net lines, two patches and a 0.9962 isolated-code ratio.
 
-The approved P0 architectural schema snapshot remains `pc5a00000003` in its immutable
-waiver record; the live implementation contract is separately `pc5b00000001` and must
-remain a linear descendant. This prevents both approval-record rewriting and unrelated
-schema substitution. Restore evidence is explicitly `ci_contract_not_production_drill`;
-the exact committed-SHA compatibility and image workflows still must pass, and real
-all-media deletion, retention expiry, PITR, IdP, SLO/capacity, commercial and enterprise
-evidence remain blocked. The production result stays 0/10 and `NO-GO`.
+Historical evidence note: the superseded P0 waiver remains append-only history bound to
+its former `pc5a00000003` snapshot; it is not active approval evidence for the 2026-08-24
+synchronization candidate. At this earlier slice the implementation contract was
+`pc5b00000001` and remained a linear descendant. A fresh exact-main record is required,
+which prevents both approval-record rewriting and unrelated schema substitution. Restore
+evidence is explicitly `ci_contract_not_production_drill`; the exact committed-SHA
+compatibility and image workflows still must pass, and real all-media deletion, retention
+expiry, PITR, IdP, SLO/capacity, commercial and enterprise evidence remain blocked. The
+production result stays 0/10 and `NO-GO`.
 
 The next local Privacy execution candidate advances the schema to
 `pc5b00000003` and the control-plane forced-RLS inventory to 93 tables. It adds

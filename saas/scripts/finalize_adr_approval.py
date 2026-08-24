@@ -15,9 +15,10 @@ from saas.scripts.check_adr_approvals import (
     _WAIVER_MODE,
     _read_json,
     authority_bundle_sha256,
-    compute_decision_bundle,
     decision_registry_sha256,
     fetch_github_evidence,
+    reviewed_decision_sources,
+    validate_pull_target_and_ancestry,
 )
 
 
@@ -82,7 +83,6 @@ def _review_record(review: dict[str, Any], *, role_field: str, role: str) -> dic
 
 
 def _build_waiver_record(
-    repo: Path,
     baseline: dict[str, Any],
     evidence: dict[str, Any],
     policy: dict[str, Any],
@@ -91,6 +91,7 @@ def _build_waiver_record(
     pull: dict[str, Any],
     commit_sha: str,
     author: str,
+    decision_bundle_sha256: str,
 ) -> dict[str, Any]:
     waiver_policy = policy.get("sole_owner_risk_waiver")
     sole_owner = authorities.get("sole_owner")
@@ -143,7 +144,7 @@ def _build_waiver_record(
         "approval_mode": _WAIVER_MODE,
         "governance_classification": "degraded",
         "candidate_id": candidate["candidate_id"],
-        "decision_bundle_sha256": compute_decision_bundle(repo, candidate),
+        "decision_bundle_sha256": decision_bundle_sha256,
         "decision_registry_sha256": candidate["decision_registry_sha256"],
         "authority_bundle_sha256": authority_bundle_sha256(authorities),
         "implementation_revision": candidate["implementation_revision"],
@@ -153,6 +154,9 @@ def _build_waiver_record(
         "control_plane_schema_revision": candidate["control_plane_schema_revision"],
         "deployment_scope": candidate["deployment_scope"],
         "repository": policy["repository"],
+        "target_repository": policy["repository"],
+        "target_branch": policy["target_branch"],
+        "merge_strategy": policy["merge_strategy"],
         "pull_request": pull["number"],
         "pull_request_url": pull["html_url"],
         "pull_request_author": author,
@@ -193,15 +197,9 @@ def build_record(
     repo: Path,
     baseline: dict[str, Any],
     evidence: dict[str, Any],
+    *,
+    baseline_path: str = "saas/production/baseline.json",
 ) -> dict[str, Any]:
-    approval = baseline["approval"]
-    policy = _read_json(repo / approval["policy"])
-    authorities = _read_json(repo / approval["authorities"])
-    candidate = _read_json(repo / approval["candidate"])
-    if authorities.get("state") != "active":
-        raise ValueError("approval authorities must be active before finalization")
-    if candidate.get("decision_registry_sha256") != decision_registry_sha256(baseline):
-        raise ValueError("candidate and baseline ADR registry content do not match")
     pull = evidence.get("pull_request")
     if not isinstance(pull, dict) or pull.get("merged_at") is None:
         raise ValueError("the ADR decision pull request must be merged")
@@ -211,9 +209,27 @@ def build_record(
     author = author_value.get("login") if isinstance(author_value, dict) else None
     if not isinstance(commit_sha, str) or not isinstance(author, str):
         raise ValueError("the GitHub pull request is missing head or author metadata")
+    sources = reviewed_decision_sources(
+        repo,
+        baseline,
+        commit_sha,
+        baseline_path=baseline_path,
+    )
+    policy = sources["policy"]
+    authorities = sources["authorities"]
+    candidate = sources["candidate"]
+    decision_bundle_sha256 = sources["decision_bundle_sha256"]
+    validated_head, _ = validate_pull_target_and_ancestry(repo, pull, policy)
+    if validated_head != commit_sha:
+        raise ValueError("validated decision PR head does not match GitHub evidence")
+    if authorities.get("state") != "active":
+        raise ValueError("approval authorities must be active before finalization")
+    if candidate.get("decision_registry_sha256") != decision_registry_sha256(baseline):
+        raise ValueError("candidate and baseline ADR registry content do not match")
+    if candidate.get("decision_bundle_sha256") != decision_bundle_sha256:
+        raise ValueError("candidate decision digest does not match the reviewed Git commit")
     if policy.get("active_mode") == _WAIVER_MODE:
         return _build_waiver_record(
-            repo,
             baseline,
             evidence,
             policy,
@@ -222,6 +238,7 @@ def build_record(
             pull,
             commit_sha,
             author,
+            decision_bundle_sha256,
         )
 
     roles_value = authorities.get("roles")
@@ -261,7 +278,7 @@ def build_record(
         "state": "approved",
         "approval_mode": _STANDARD_MODE,
         "candidate_id": candidate["candidate_id"],
-        "decision_bundle_sha256": compute_decision_bundle(repo, candidate),
+        "decision_bundle_sha256": decision_bundle_sha256,
         "decision_registry_sha256": candidate["decision_registry_sha256"],
         "authority_bundle_sha256": authority_bundle_sha256(authorities),
         "implementation_revision": candidate["implementation_revision"],
@@ -271,6 +288,9 @@ def build_record(
         "control_plane_schema_revision": candidate["control_plane_schema_revision"],
         "deployment_scope": candidate["deployment_scope"],
         "repository": policy["repository"],
+        "target_repository": policy["repository"],
+        "target_branch": policy["target_branch"],
+        "merge_strategy": policy["merge_strategy"],
         "pull_request": pull["number"],
         "pull_request_url": pull["html_url"],
         "pull_request_author": author,
@@ -308,7 +328,7 @@ def main() -> int:
         token=token,
         actor_login=actor_login if isinstance(actor_login, str) else None,
     )
-    record = build_record(repo, baseline, evidence)
+    record = build_record(repo, baseline, evidence, baseline_path=args.baseline)
     candidate = _read_json(repo / baseline["approval"]["candidate"])
     digest = record["decision_bundle_sha256"]
     output = (

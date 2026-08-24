@@ -5,7 +5,7 @@
   "evidence_revision": "86c16b2725c92064a01953b75abef354569565a5",
   "upstream_revision": "9303cc1cd12e2e5788f4e2b9dcde9308b474017a",
   "adapter_contract_version": "0.2.0",
-  "control_plane_schema_revision": "pc5a00000003",
+  "control_plane_schema_revision": "pc5a00000005",
   "deployment_scope": "single-region-multi-az",
   "decision_registry_sha256": "bb0959fd5b5050c2b3cb5e017d04009c566734d5d252cd37e1efc060bf3dc093",
   "decision_files": [
@@ -21,5 +21,5 @@
     "saas/production/adrs/ADR-010-identity-and-management-web-security.md",
     "saas/production/adrs/ADR-011-feature-flag-and-configuration.md"
   ],
-  "decision_bundle_sha256": "77db7304733a6f4ac9f3ff7c968a1d48ea89a84ea433893c58fdd2e73d20e096"
+  "decision_bundle_sha256": "9c6669dab569a1bc48e2c0010975da45a3c9a89883c4598d8037b886104506bd"
 }

@@ -1,8 +1,8 @@
 # ADR-007: Metering, ledgers, reconciliation, and quota
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `billing-platform`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 

@@ -1,8 +1,8 @@
 # ADR-003: Authorization snapshot and degradation
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `control-plane`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 

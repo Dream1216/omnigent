@@ -1,8 +1,8 @@
 # ADR-004: Runner isolation and responsibility modes
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `execution-platform`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 

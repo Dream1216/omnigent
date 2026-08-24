@@ -1,8 +1,8 @@
 # ADR-009: Single-region production boundary
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `product-owner`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 

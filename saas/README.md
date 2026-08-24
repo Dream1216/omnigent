@@ -1955,14 +1955,15 @@ Wheel contains 274 required artifacts, both downstream patches replay, and sourc
 intrusion remains within budget at 10 official files, 498 net lines, two patches and a
 0.9962 isolated-code ratio.
 
-The immutable P0 ADR waiver remains bound to its approved `pc5a00000003` architecture
-snapshot; the current implementation head is tracked separately and must be a linear
-descendant, so advancing an additive migration neither rewrites approval history nor
-allows an unrelated schema branch. The derived production verifier is structurally
-valid but still reports 0/10 and `NO-GO`. This remains a development candidate until an
-exact committed SHA passes the compatibility and image workflows. Local restore and
-test evidence is not a production deletion drill, backup-expiry proof, IdP rollout or
-release `GO`.
+Historical evidence note: the superseded P0 ADR waiver remains append-only history bound
+to its former `pc5a00000003` architecture snapshot; it is not active approval evidence
+for the 2026-08-24 synchronization candidate. The current candidate must obtain a fresh
+exact-main approval record, so neither an additive migration nor old evidence can rewrite
+approval history or authorize an unrelated schema branch. The derived production verifier
+is structurally valid but still reports 0/10 and `NO-GO`. This remains a development
+candidate until an exact committed SHA passes the compatibility and image workflows.
+Local restore and test evidence is not a production deletion drill, backup-expiry proof,
+IdP rollout or release `GO`.
 
 The first Privacy administration product slice is implemented on
 `codex/saas-p1-privacy-admin-ui` without an official-runtime source change. The
@@ -2061,9 +2062,9 @@ SQLite and PostgreSQL tests cover the initializer boundary and cross-workspace d
 
 The regenerated two-entry Patch Replay covers exactly `omnigent/db/utils.py`,
 `omnigent/host/connect.py`, and `omnigent/llms/_usage_observer.py` and applies cleanly to
-the pinned official revision. The local Upstream Delta report passes with seven direct
-official files, 106 net-added official lines, two active patches, no forbidden file or
-reverse dependency, and a 0.9993 isolated-code ratio.
+the pinned official revision. The local Upstream Delta report passes with ten direct
+official files, 165 net-added official lines, two active patches, no forbidden file or
+reverse dependency, and a 0.999 isolated-code ratio.
 
 Advancing the upstream revision invalidates the previous candidate approval binding. The
 new candidate is therefore deliberately `review_required`: all eleven ADRs remain
