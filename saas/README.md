@@ -214,6 +214,24 @@ non-Outbox table access, or unsafe Outbox grants. SIGTERM/SIGINT drains the
 current bounded cycle and returns worker counters; transient infrastructure
 failures back off without losing durable leases.
 
+Self-service onboarding publishers must be built with
+`create_tenant_onboarding_composition` from `saas.onboarding_composition` and
+export the returned `TenantOnboardingComposition` as the configured
+`module:attribute`. The factory requires separate Registration, Onboarding, and
+Execution Session factories plus the reviewed Plan, envelope, rate-limit,
+email, and Runtime adapters; it always injects `TenantOnboardingWorkflow` into
+`OnboardingOutboxPublisher`. The production loader rejects a raw
+`OnboardingOutboxPublisher`, so `onboarding.billing.requested` cannot enter an
+infinite `outbox_route_unavailable` retry because Workflow wiring was omitted.
+
+The first customer Run remains a normal `ExecutionControlPlane` admission. Use
+`TenantOnboardingComposition.execution_adapter(...).admit_first_run(...)` for
+the explicit onboarding path: the adapter waits for `admit_run` to return, then
+independently verifies the committed Run, quota reservation, and `run.queued`
+event before recording onboarding completion. If that observation fails, the
+Run remains committed; retry with the same admission idempotency key to replay
+the Run and retry only the observation.
+
 Member-removal composition must use `CompositeRemovalImpactProvider` with an
 explicit required-domain set. Project ownership and grants are collected by
 `ProjectRemovalImpactProvider`; all non-terminal Runs created by the member are

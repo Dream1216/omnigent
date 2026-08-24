@@ -579,6 +579,43 @@ def test_verification_creates_login_then_outbox_starts_fail_closed_tenant_saga(
         assert db.scalar(sa.select(sa.func.count()).select_from(TenantOnboardingRecord)) == 1
 
 
+def test_onboarding_rejects_a_self_consistent_plan_snapshot_outside_reviewed_policy(
+    onboarding: _OnboardingHarness,
+) -> None:
+    registration_id = _request(onboarding, suffix="plan-drift")
+    email_event = _email_event(onboarding, registration_id)
+    message = onboarding.envelopes.open(event_id=email_event.id, payload=email_event.payload)
+    _verify(onboarding, registration_id, message)
+
+    with onboarding.sessions.begin() as db:
+        registration = db.get(SelfServiceRegistrationRecord, registration_id)
+        assert registration is not None
+        forged_snapshot = dict(registration.plan_snapshot)
+        forged_snapshot["quota_limit"] = 1_000_000
+        registration.plan_snapshot = forged_snapshot
+        registration.plan_snapshot_hash = _digest(forged_snapshot)
+        tenant_event = db.scalar(
+            sa.select(ControlPlaneOutboxEvent).where(
+                ControlPlaneOutboxEvent.event_type == TENANT_EVENT,
+                ControlPlaneOutboxEvent.aggregate_key == str(registration.onboarding_id),
+            )
+        )
+        assert tenant_event is not None
+        tenant_event_id = tenant_event.id
+
+    with pytest.raises(OnboardingError) as error:
+        onboarding.coordinator.start(
+            registration_id=registration_id,
+            idempotency_key=str(tenant_event_id),
+            now=onboarding.now + timedelta(minutes=2),
+        )
+
+    assert error.value.code == "onboarding_plan_snapshot_invalid"
+    with onboarding.sessions() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(Tenant)) == 0
+        assert db.scalar(sa.select(sa.func.count()).select_from(TenantOnboardingRecord)) == 0
+
+
 def test_existing_verified_email_is_suppressed_without_challenge_or_email_event(
     onboarding: _OnboardingHarness,
 ) -> None:

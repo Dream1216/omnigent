@@ -5,6 +5,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ROLE_SQL = (ROOT / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+VERTICAL_MIGRATION = (
+    ROOT / "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
+).read_text(encoding="utf-8")
 
 
 def _write_grants(role: str, privilege: str) -> dict[str, frozenset[str]]:
@@ -64,7 +67,13 @@ def test_registration_write_grants_are_column_scoped_and_minimal() -> None:
                 "space_id",
                 "subscription_id",
                 "runtime_partition_id",
+                "default_project_id",
+                "pricing_snapshot_id",
+                "entitlement_id",
+                "runtime_binding_id",
                 "onboarding_id",
+                "plan_snapshot",
+                "plan_snapshot_hash",
                 "idempotency_key",
                 "request_hash",
                 "version",
@@ -190,12 +199,18 @@ def test_registration_write_grants_are_column_scoped_and_minimal() -> None:
         "space_id",
         "subscription_id",
         "runtime_partition_id",
+        "default_project_id",
+        "pricing_snapshot_id",
+        "entitlement_id",
+        "runtime_binding_id",
+        "plan_snapshot",
+        "plan_snapshot_hash",
         "onboarding_id",
     }
     assert immutable_registration_columns.isdisjoint(updates["saas_self_service_registrations"])
 
 
-def test_onboarding_can_insert_initial_owner_but_cannot_update_identity_or_role() -> None:
+def test_onboarding_vertical_chain_write_grants_are_exact_and_exclude_runs() -> None:
     inserts = _write_grants("saas_onboarding", "INSERT")
     assert inserts == {
         "saas_tenant_onboardings": frozenset(
@@ -207,8 +222,14 @@ def test_onboarding_can_insert_initial_owner_but_cannot_update_identity_or_role(
                 "space_id",
                 "subscription_id",
                 "runtime_partition_id",
+                "default_project_id",
+                "pricing_snapshot_id",
+                "entitlement_id",
+                "runtime_binding_id",
                 "plan_key",
                 "plan_policy_revision",
+                "plan_snapshot",
+                "plan_snapshot_hash",
                 "home_region",
                 "trial_days",
                 "trial_started_at",
@@ -226,8 +247,16 @@ def test_onboarding_can_insert_initial_owner_but_cannot_update_identity_or_role(
                 "last_error_detail",
                 "billing_ready_at",
                 "runtime_ready_at",
+                "project_ready_at",
                 "activated_at",
+                "first_run_id",
+                "completed_at",
                 "compensated_at",
+                "failure_stage",
+                "compensation_cursor",
+                "runtime_placement_id",
+                "runtime_target_snapshot",
+                "runtime_request_hash",
                 "last_transition_at",
                 "created_at",
                 "updated_at",
@@ -279,12 +308,220 @@ def test_onboarding_can_insert_initial_owner_but_cannot_update_identity_or_role(
                 "published_at",
             }
         ),
+        "saas_billing_subscriptions": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "plan_key",
+                "provider",
+                "provider_customer_ref",
+                "provider_subscription_ref",
+                "status",
+                "current_period_start",
+                "current_period_end",
+                "trial_ends_at",
+                "cancel_at_period_end",
+                "provider_event_cursor",
+                "version",
+                "updated_by",
+            }
+        ),
+        "saas_pricing_snapshots": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "plan_key",
+                "currency",
+                "rates",
+                "version",
+                "effective_from",
+                "effective_until",
+                "created_by",
+            }
+        ),
+        "saas_billing_entitlements": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "subscription_id",
+                "scope_type",
+                "scope_key",
+                "space_id",
+                "project_id",
+                "user_id",
+                "model_key",
+                "meter",
+                "unit",
+                "limit_quantity",
+                "reserved_quantity",
+                "consumed_quantity",
+                "concurrency_limit",
+                "active_reservations",
+                "hard_limit",
+                "period",
+                "period_start",
+                "period_end",
+                "status",
+                "version",
+                "updated_by",
+            }
+        ),
+        "saas_billing_balances": frozenset(
+            {
+                "tenant_id",
+                "currency",
+                "available_minor",
+                "reserved_minor",
+                "consumed_minor",
+                "version",
+            }
+        ),
+        "saas_runtime_partitions": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "space_id",
+                "placement_id",
+                "runtime_type",
+                "runtime_version",
+                "physical_partition_key",
+                "placement_generation",
+                "source_revision",
+                "adapter_contract_version",
+                "status",
+            }
+        ),
+        "saas_runtime_identity_aliases": frozenset(
+            {"runtime_partition_id", "user_id", "runtime_user_key", "status"}
+        ),
+        "saas_projects": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "space_id",
+                "name",
+                "visibility",
+                "created_by",
+                "status",
+                "authorization_version",
+            }
+        ),
+        "saas_project_memberships": frozenset(
+            {
+                "tenant_id",
+                "space_id",
+                "project_id",
+                "subject_type",
+                "subject_id",
+                "role",
+                "status",
+                "expires_at",
+                "created_by",
+                "version",
+            }
+        ),
+        "saas_runtime_resource_bindings": frozenset(
+            {
+                "id",
+                "runtime_partition_id",
+                "tenant_id",
+                "space_id",
+                "project_id",
+                "resource_type",
+                "runtime_resource_id",
+                "saas_resource_id",
+                "partition_generation",
+                "binding_generation",
+                "status",
+            }
+        ),
+        "saas_admission_quotas": frozenset(
+            {
+                "id",
+                "tenant_id",
+                "space_id",
+                "project_id",
+                "resource",
+                "limit_units",
+                "reserved_units",
+                "consumed_units",
+                "version",
+            }
+        ),
     }
 
     updates = _write_grants("saas_onboarding", "UPDATE")
-    assert updates == {}
-    for table in ("saas_tenant_memberships", "saas_space_memberships"):
+    assert updates == {
+        "saas_tenant_onboardings": frozenset(
+            {
+                "trial_started_at",
+                "trial_ends_at",
+                "status",
+                "version",
+                "attempt_count",
+                "available_at",
+                "claimed_at",
+                "claim_token",
+                "lease_expires_at",
+                "last_error_code",
+                "last_error_detail",
+                "billing_ready_at",
+                "runtime_ready_at",
+                "project_ready_at",
+                "activated_at",
+                "first_run_id",
+                "completed_at",
+                "compensated_at",
+                "failure_stage",
+                "compensation_cursor",
+                "runtime_placement_id",
+                "runtime_target_snapshot",
+                "runtime_request_hash",
+                "last_transition_at",
+                "updated_at",
+            }
+        ),
+        "saas_tenants": frozenset({"status", "lifecycle_version", "updated_at"}),
+        "saas_spaces": frozenset({"status", "updated_at"}),
+        "saas_billing_subscriptions": frozenset(
+            {
+                "status",
+                "current_period_start",
+                "current_period_end",
+                "trial_ends_at",
+                "cancel_at_period_end",
+                "provider_event_cursor",
+                "version",
+                "updated_by",
+                "updated_at",
+            }
+        ),
+        "saas_billing_entitlements": frozenset(
+            {
+                "status",
+                "period_start",
+                "period_end",
+                "version",
+                "updated_by",
+                "updated_at",
+            }
+        ),
+        "saas_runtime_partitions": frozenset({"status", "updated_at"}),
+        "saas_runtime_identity_aliases": frozenset({"status"}),
+        "saas_projects": frozenset({"status", "authorization_version", "updated_at"}),
+        "saas_project_memberships": frozenset({"status", "version", "updated_at"}),
+        "saas_runtime_resource_bindings": frozenset({"status"}),
+    }
+    for table in (
+        "saas_tenant_memberships",
+        "saas_space_memberships",
+        "saas_pricing_snapshots",
+        "saas_billing_balances",
+        "saas_admission_quotas",
+        "saas_runs",
+    ):
         assert table not in updates
+    assert "saas_runs" not in inserts
 
 
 def test_onboarding_roles_revoke_historical_table_level_privileges_first() -> None:
@@ -294,6 +531,72 @@ def test_onboarding_roles_revoke_historical_table_level_privileges_first() -> No
         r"saas_control_plane_outbox FROM saas_registration, saas_onboarding;",
         normalized,
     )
+
+
+def test_onboarding_outbox_policy_accepts_only_vertical_chain_requests() -> None:
+    expected = {
+        "onboarding.billing.requested",
+        "onboarding.runtime.requested",
+        "onboarding.project.requested",
+        "onboarding.activation.requested",
+        "onboarding.compensation.requested",
+    }
+    declared = set(re.findall(r'"(onboarding\.[a-z]+\.requested)"', VERTICAL_MIGRATION))
+    assert declared == expected
+    for forbidden in (
+        "onboarding.billing.ready",
+        "onboarding.runtime.ready",
+        "onboarding.project.ready",
+        "onboarding.activated",
+        "onboarding.compensated",
+    ):
+        assert forbidden not in VERTICAL_MIGRATION
+    assert "AS RESTRICTIVE FOR INSERT TO saas_onboarding" in VERTICAL_MIGRATION
+
+
+def test_onboarding_vertical_reads_and_compensation_are_exactly_bounded() -> None:
+    normalized_roles = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
+    assert (
+        "GRANT SELECT ( id, slug, name, status, plan, home_region, lifecycle_version, "
+        "created_at, updated_at ), INSERT"
+    ) in normalized_roles
+    assert (
+        "GRANT SELECT ( id, tenant_id, slug, name, status, created_at, updated_at ), INSERT"
+    ) in normalized_roles
+    assert (
+        "id, runtime_type, data_region, failure_domain, official_schema_revision, "
+        "capacity_class, status"
+    ) in normalized_roles
+    normalized_migration = " ".join(VERTICAL_MIGRATION.split())
+    assert "runtime_placement_id IS NULL" in normalized_migration
+    assert "saas_runtime_placements.status = 'active'" in normalized_migration
+    assert (
+        "onboarding_scope.runtime_placement_id = saas_runtime_placements.id"
+        in normalized_migration
+    )
+    assert (
+        "saas_runtime_partitions.placement_id = onboarding_scope.runtime_placement_id"
+        in normalized_migration
+    )
+    assert "runtime_target_snapshot ->> 'placement_id'" in normalized_migration
+    assert "saas_runtime_partitions.placement_id::text" in normalized_migration
+    assert "runtime_target_snapshot ->> 'runtime_type'" in normalized_migration
+    assert "saas_runtime_partitions.runtime_type" in normalized_migration
+    assert "status = 'suspended' AND lifecycle_version = 2" in normalized_migration
+    assert "onboarding_scope.status = 'compensating'" in normalized_migration
+    for policy, roles in (
+        ("rls_billing_subscriptions_metering_exact", "saas_metering"),
+        ("rls_pricing_snapshots_metering_exact", "saas_metering"),
+        ("rls_runtime_placements_scope", "saas_platform, saas_app"),
+        ("rls_runtime_partitions_privacy_verifier_read", "saas_privacy_verifier"),
+        (
+            "rls_saas_project_memberships_privacy_target",
+            "saas_platform, saas_platform_governance",
+        ),
+    ):
+        assert policy in normalized_migration
+        assert roles in normalized_migration
+    assert 'op.execute(f"ALTER POLICY {policy} ON {table} TO {roles}")' in VERTICAL_MIGRATION
 
 
 def test_platform_planning_columns_remain_force_rls_invisible() -> None:

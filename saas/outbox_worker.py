@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
+from saas.onboarding_composition import validate_production_outbox_publisher
 
 _LOGGER = logging.getLogger("omnigent-saas-outbox")
 
@@ -245,6 +246,7 @@ def _load_publisher(reference: str) -> OutboxPublisher:
         raise TypeError("configured Outbox publisher is not an object, class, or factory")
     if not callable(getattr(publisher, "publish", None)):
         raise TypeError("configured Outbox publisher does not provide publish()")
+    validate_production_outbox_publisher(cast(OutboxPublisher, publisher))
     return cast(OutboxPublisher, publisher)
 
 

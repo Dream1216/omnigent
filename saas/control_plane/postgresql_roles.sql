@@ -898,6 +898,17 @@ REVOKE ALL PRIVILEGES ON
     saas_spaces,
     saas_tenant_memberships,
     saas_space_memberships,
+    saas_billing_subscriptions,
+    saas_pricing_snapshots,
+    saas_billing_entitlements,
+    saas_billing_balances,
+    saas_runtime_placements,
+    saas_runtime_partitions,
+    saas_runtime_identity_aliases,
+    saas_runtime_resource_bindings,
+    saas_projects,
+    saas_project_memberships,
+    saas_admission_quotas,
     saas_control_plane_outbox
 FROM saas_registration, saas_onboarding;
 
@@ -928,8 +939,10 @@ GRANT INSERT (
     default_space_name, default_space_slug, plan_key, plan_policy_revision,
     home_region, status, challenge_generation, expires_at, verified_at,
     terminal_at, user_id, tenant_id, space_id, subscription_id,
-    runtime_partition_id, onboarding_id, idempotency_key, request_hash,
-    version, created_at, updated_at
+    runtime_partition_id, default_project_id, pricing_snapshot_id,
+    entitlement_id, runtime_binding_id, onboarding_id, plan_snapshot,
+    plan_snapshot_hash, idempotency_key, request_hash, version, created_at,
+    updated_at
 ) ON saas_self_service_registrations TO saas_registration;
 GRANT UPDATE (
     status, challenge_generation, expires_at, verified_at, terminal_at,
@@ -984,12 +997,24 @@ TO saas_onboarding;
 GRANT SELECT ON saas_tenant_onboardings TO saas_onboarding;
 GRANT INSERT (
     id, registration_id, user_id, tenant_id, space_id, subscription_id,
-    runtime_partition_id, plan_key, plan_policy_revision, home_region,
-    trial_days, trial_started_at, trial_ends_at, status, idempotency_key,
-    request_hash, version, attempt_count, available_at, claimed_at, claim_token,
+    runtime_partition_id, runtime_placement_id, runtime_target_snapshot,
+    runtime_request_hash, default_project_id, pricing_snapshot_id,
+    entitlement_id, runtime_binding_id, plan_key, plan_policy_revision,
+    plan_snapshot, plan_snapshot_hash, home_region, trial_days,
+    trial_started_at, trial_ends_at, status, idempotency_key, request_hash,
+    version, attempt_count, available_at, claimed_at, claim_token,
     lease_expires_at, last_error_code, last_error_detail, billing_ready_at,
-    runtime_ready_at, activated_at, compensated_at, last_transition_at,
-    created_at, updated_at
+    runtime_ready_at, project_ready_at, activated_at, first_run_id,
+    completed_at, compensated_at, failure_stage, compensation_cursor,
+    last_transition_at, created_at, updated_at
+) ON saas_tenant_onboardings TO saas_onboarding;
+GRANT UPDATE (
+    trial_started_at, trial_ends_at, status, version, attempt_count,
+    available_at, claimed_at, claim_token, lease_expires_at, last_error_code,
+    last_error_detail, billing_ready_at, runtime_ready_at, project_ready_at,
+    activated_at, first_run_id, completed_at, compensated_at, failure_stage,
+    compensation_cursor, runtime_placement_id, runtime_target_snapshot,
+    runtime_request_hash, last_transition_at, updated_at
 ) ON saas_tenant_onboardings TO saas_onboarding;
 GRANT SELECT ON saas_self_service_events TO saas_onboarding;
 GRANT INSERT (
@@ -997,12 +1022,21 @@ GRANT INSERT (
     from_status, to_status, facts, facts_hash, previous_hash, event_hash,
     occurred_at
 ) ON saas_self_service_events TO saas_onboarding;
-GRANT SELECT (created_at, updated_at), INSERT (
+GRANT SELECT (
+    id, slug, name, status, plan, home_region, lifecycle_version, created_at,
+    updated_at
+), INSERT (
     id, slug, name, status, plan, home_region, lifecycle_version
 ) ON saas_tenants TO saas_onboarding;
-GRANT SELECT (created_at, updated_at), INSERT (
+GRANT UPDATE (status, lifecycle_version, updated_at)
+ON saas_tenants TO saas_onboarding;
+GRANT SELECT (
+    id, tenant_id, slug, name, status, created_at, updated_at
+), INSERT (
     id, tenant_id, slug, name, status
 ) ON saas_spaces TO saas_onboarding;
+GRANT UPDATE (status, updated_at)
+ON saas_spaces TO saas_onboarding;
 GRANT INSERT (
     tenant_id, user_id, role, status, version, joined_at
 ) ON saas_tenant_memberships TO saas_onboarding;
@@ -1016,6 +1050,129 @@ GRANT INSERT (
 ) ON saas_control_plane_outbox TO saas_onboarding;
 GRANT SELECT (created_at)
 ON saas_control_plane_outbox TO saas_onboarding;
+
+-- The onboarding worker can touch only the preallocated facts of its exact Saga.
+-- FORCE RLS policies in p0s000000002 additionally bind every row to the trusted
+-- registration/onboarding/actor/Tenant GUC tuple; Runtime Partition reads and
+-- writes are also bound to the frozen Saga Placement. Run writes remain excluded.
+GRANT SELECT (
+    id, tenant_id, plan_key, provider, provider_customer_ref,
+    provider_subscription_ref, status, current_period_start,
+    current_period_end, trial_ends_at, cancel_at_period_end,
+    provider_event_cursor, version, updated_by, created_at, updated_at
+) ON saas_billing_subscriptions TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, plan_key, provider, provider_customer_ref,
+    provider_subscription_ref, status, current_period_start,
+    current_period_end, trial_ends_at, cancel_at_period_end,
+    provider_event_cursor, version, updated_by
+) ON saas_billing_subscriptions TO saas_onboarding;
+GRANT UPDATE (
+    status, current_period_start, current_period_end, trial_ends_at,
+    cancel_at_period_end, provider_event_cursor, version, updated_by, updated_at
+) ON saas_billing_subscriptions TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, plan_key, currency, rates, version, effective_from,
+    effective_until, created_by, created_at
+) ON saas_pricing_snapshots TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, plan_key, currency, rates, version, effective_from,
+    effective_until, created_by
+) ON saas_pricing_snapshots TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, subscription_id, scope_type, scope_key, space_id,
+    project_id, user_id, model_key, meter, unit, limit_quantity,
+    reserved_quantity, consumed_quantity, concurrency_limit,
+    active_reservations, hard_limit, period, period_start, period_end,
+    status, version, updated_by, created_at, updated_at
+) ON saas_billing_entitlements TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, subscription_id, scope_type, scope_key, space_id,
+    project_id, user_id, model_key, meter, unit, limit_quantity,
+    reserved_quantity, consumed_quantity, concurrency_limit,
+    active_reservations, hard_limit, period, period_start, period_end,
+    status, version, updated_by
+) ON saas_billing_entitlements TO saas_onboarding;
+GRANT UPDATE (status, period_start, period_end, version, updated_by, updated_at)
+ON saas_billing_entitlements TO saas_onboarding;
+
+GRANT SELECT (
+    tenant_id, currency, available_minor, reserved_minor, consumed_minor,
+    version, updated_at
+) ON saas_billing_balances TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, currency, available_minor, reserved_minor, consumed_minor, version
+) ON saas_billing_balances TO saas_onboarding;
+
+GRANT SELECT (
+    id, runtime_type, data_region, failure_domain, official_schema_revision,
+    capacity_class, status, created_at, updated_at
+) ON saas_runtime_placements TO saas_onboarding;
+GRANT SELECT (
+    id, tenant_id, space_id, placement_id, runtime_type, runtime_version,
+    physical_partition_key, placement_generation, source_revision,
+    adapter_contract_version, status, created_at, updated_at
+) ON saas_runtime_partitions TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, placement_id, runtime_type, runtime_version,
+    physical_partition_key, placement_generation, source_revision,
+    adapter_contract_version, status
+) ON saas_runtime_partitions TO saas_onboarding;
+GRANT UPDATE (status, updated_at)
+ON saas_runtime_partitions TO saas_onboarding;
+
+GRANT SELECT (runtime_partition_id, user_id, runtime_user_key, status, created_at)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+GRANT INSERT (runtime_partition_id, user_id, runtime_user_key, status)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+GRANT UPDATE (status)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, space_id, name, visibility, created_by, status,
+    authorization_version, created_at, updated_at
+) ON saas_projects TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, name, visibility, created_by, status,
+    authorization_version
+) ON saas_projects TO saas_onboarding;
+GRANT UPDATE (status, authorization_version, updated_at)
+ON saas_projects TO saas_onboarding;
+
+GRANT SELECT (
+    tenant_id, space_id, project_id, subject_type, subject_id, role, status,
+    expires_at, created_by, version, created_at, updated_at
+) ON saas_project_memberships TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, space_id, project_id, subject_type, subject_id, role, status,
+    expires_at, created_by, version
+) ON saas_project_memberships TO saas_onboarding;
+GRANT UPDATE (status, version, updated_at)
+ON saas_project_memberships TO saas_onboarding;
+
+GRANT SELECT (
+    id, runtime_partition_id, tenant_id, space_id, project_id, resource_type,
+    runtime_resource_id, saas_resource_id, partition_generation,
+    binding_generation, status, created_at
+) ON saas_runtime_resource_bindings TO saas_onboarding;
+GRANT INSERT (
+    id, runtime_partition_id, tenant_id, space_id, project_id, resource_type,
+    runtime_resource_id, saas_resource_id, partition_generation,
+    binding_generation, status
+) ON saas_runtime_resource_bindings TO saas_onboarding;
+GRANT UPDATE (status)
+ON saas_runtime_resource_bindings TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, space_id, project_id, resource, limit_units,
+    reserved_units, consumed_units, version, created_at, updated_at
+) ON saas_admission_quotas TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, project_id, resource, limit_units,
+    reserved_units, consumed_units, version
+) ON saas_admission_quotas TO saas_onboarding;
 
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;

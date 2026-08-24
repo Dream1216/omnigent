@@ -233,6 +233,92 @@ def test_outbox_dispatcher_is_detached_safe_and_retries_with_backoff(
         assert stored.published_at is not None
 
 
+def test_outbox_lost_ack_is_an_event_failure_and_preserves_new_owner_claim(
+    sessions: sessionmaker[Session],
+) -> None:
+    first_id, second_id = uuid4(), uuid4()
+    takeover_token = uuid4()
+    takeover_at = NOW + timedelta(seconds=31)
+    with sessions.begin() as db:
+        db.add_all(
+            (
+                ControlPlaneOutboxEvent(
+                    id=first_id,
+                    tenant_id=None,
+                    aggregate_type="global_user",
+                    aggregate_key="user-1",
+                    event_type="test.first",
+                    idempotency_key=f"event-{first_id}",
+                    request_hash="b" * 64,
+                    payload={"value": 1},
+                    attempt_count=0,
+                    created_at=NOW,
+                ),
+                ControlPlaneOutboxEvent(
+                    id=second_id,
+                    tenant_id=None,
+                    aggregate_type="global_user",
+                    aggregate_key="user-2",
+                    event_type="test.second",
+                    idempotency_key=f"event-{second_id}",
+                    request_hash="c" * 64,
+                    payload={"value": 2},
+                    attempt_count=0,
+                    created_at=NOW + timedelta(microseconds=1),
+                ),
+            )
+        )
+
+    class LeaseTakingPublisher:
+        def __init__(self) -> None:
+            self.ids: list[UUID] = []
+
+        def publish(self, *, event_id: UUID, **_event: object) -> None:
+            self.ids.append(event_id)
+            if event_id != first_id:
+                return
+            # Model another worker taking over the first event after the old
+            # lease expired but before this publisher returned to acknowledge.
+            with sessions.begin() as db:
+                result = db.execute(
+                    sa.update(ControlPlaneOutboxEvent)
+                    .where(
+                        ControlPlaneOutboxEvent.id == first_id,
+                        ControlPlaneOutboxEvent.published_at.is_(None),
+                        ControlPlaneOutboxEvent.claimed_at < takeover_at - timedelta(seconds=30),
+                    )
+                    .values(
+                        claimed_at=takeover_at,
+                        claim_token=takeover_token,
+                        attempt_count=ControlPlaneOutboxEvent.attempt_count + 1,
+                        last_error=None,
+                    )
+                )
+                assert result.rowcount == 1
+
+    publisher = LeaseTakingPublisher()
+    dispatcher = OutboxDispatcher(
+        sessions,
+        publisher,
+        lease_duration=timedelta(seconds=30),
+    )
+
+    result = dispatcher.dispatch_once(batch_size=2, now=NOW)
+
+    assert (result.claimed, result.published, result.failed) == (2, 1, 1)
+    assert publisher.ids == [first_id, second_id]
+    with sessions() as db:
+        first = db.get(ControlPlaneOutboxEvent, first_id)
+        second = db.get(ControlPlaneOutboxEvent, second_id)
+        assert first is not None and second is not None
+        assert first.claim_token == takeover_token
+        assert first.claimed_at is not None
+        assert first.published_at is None
+        assert first.attempt_count == 2
+        assert second.claim_token is None
+        assert second.published_at is not None
+
+
 class _ImpactProvider:
     def __init__(self) -> None:
         self.impact = RemovalImpact(facts={"owned_resources": []}, blocking_count=0)

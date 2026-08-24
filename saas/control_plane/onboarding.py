@@ -53,6 +53,15 @@ _MAX_PASSWORD_LENGTH = 1024
 _EMAIL_EVENT = "onboarding.email_verification.requested"
 _TENANT_EVENT = "onboarding.tenant.requested"
 _BILLING_EVENT = "onboarding.billing.requested"
+_WORKFLOW_EVENTS = frozenset(
+    {
+        _BILLING_EVENT,
+        "onboarding.runtime.requested",
+        "onboarding.project.requested",
+        "onboarding.activation.requested",
+        "onboarding.compensation.requested",
+    }
+)
 _EMAIL_ISSUER = "urn:omnigent:self-service-email"
 _ZERO_HASH = "0" * 64
 _SENSITIVE_EVENT_KEYS = frozenset(
@@ -75,6 +84,15 @@ class OnboardingPlan:
     key: str
     policy_revision: str
     trial_days: int
+    currency: str = "USD"
+    trial_run_limit: int = 100
+    trial_concurrency_limit: int = 2
+    runtime_type: str = "omnigent"
+    capacity_class: str = "starter"
+    default_project_name: str = "Getting Started"
+    default_project_visibility: str = "private"
+    quota_resource: str = "interactive_runs"
+    quota_limit: int = 100
 
     def __post_init__(self) -> None:
         if not self.key.strip() or len(self.key) > 64:
@@ -83,6 +101,45 @@ class OnboardingPlan:
             raise ValueError("onboarding plan policy revision is invalid")
         if not 1 <= self.trial_days <= 90:
             raise ValueError("onboarding trial days must be between 1 and 90")
+        if len(self.currency) != 3 or self.currency != self.currency.upper():
+            raise ValueError("onboarding plan currency is invalid")
+        if self.trial_run_limit <= 0 or self.trial_concurrency_limit <= 0:
+            raise ValueError("onboarding plan trial limits must be positive")
+        for value, field, maximum in (
+            (self.runtime_type, "runtime type", 64),
+            (self.capacity_class, "capacity class", 64),
+            (self.default_project_name, "default Project name", 256),
+            (self.quota_resource, "quota resource", 64),
+        ):
+            if not value.strip() or len(value) > maximum:
+                raise ValueError(f"onboarding plan {field} is invalid")
+        if self.default_project_visibility not in {"private", "space", "restricted"}:
+            raise ValueError("onboarding default Project visibility is invalid")
+        if self.quota_limit <= 0:
+            raise ValueError("onboarding plan quota limit must be positive")
+
+    def snapshot(self) -> dict[str, object]:
+        """Return the canonical immutable commercial and runtime plan facts."""
+
+        return {
+            "capacity_class": self.capacity_class,
+            "currency": self.currency,
+            "default_project_name": self.default_project_name,
+            "default_project_visibility": self.default_project_visibility,
+            "key": self.key,
+            "policy_revision": self.policy_revision,
+            "quota_limit": self.quota_limit,
+            "quota_resource": self.quota_resource,
+            "runtime_type": self.runtime_type,
+            "trial_concurrency_limit": self.trial_concurrency_limit,
+            "trial_days": self.trial_days,
+            "trial_run_limit": self.trial_run_limit,
+        }
+
+    def snapshot_hash(self) -> str:
+        """Bind retries to exactly one canonical plan snapshot."""
+
+        return _digest(self.snapshot())
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +192,12 @@ class EmailVerificationSender(Protocol):
     def send_verification(self, *, event_id: UUID, message: EmailVerificationMessage) -> None: ...
 
 
+class TenantOnboardingEventHandler(Protocol):
+    """One-stage Saga consumer injected by the production composition root."""
+
+    def handle_event(self, *, event_type: str, payload: dict[str, object]) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RegistrationAccepted:
     registration_id: UUID
@@ -151,6 +214,7 @@ class OnboardingRequested:
     space_id: UUID
     subscription_id: UUID
     runtime_partition_id: UUID
+    default_project_id: UUID
     replayed: bool
 
 
@@ -161,6 +225,7 @@ class TenantOnboardingStarted:
     user_id: UUID
     tenant_id: UUID
     space_id: UUID
+    default_project_id: UUID
     status: str
     replayed: bool
 
@@ -353,6 +418,8 @@ class SelfServiceOnboardingService:
             default_space_slug, "default_space_slug", self._policy.reserved_slugs
         )
         plan = self._policy.require_plan(plan_key)
+        plan_snapshot = plan.snapshot()
+        plan_snapshot_hash = plan.snapshot_hash()
         if home_region not in self._policy.home_regions:
             raise OnboardingError("region_unavailable", "selected home region is unavailable")
         scoped_key = _idempotency_key("registration-request", email_hash, idempotency_key)
@@ -365,6 +432,7 @@ class SelfServiceOnboardingService:
             "default_space_slug": cleaned_space_slug,
             "plan_key": plan.key,
             "plan_policy_revision": plan.policy_revision,
+            "plan_snapshot_hash": plan_snapshot_hash,
             "home_region": home_region,
         }
         request_hash = _digest(request_payload)
@@ -398,7 +466,13 @@ class SelfServiceOnboardingService:
             tenant_id=uuid4(),
             space_id=uuid4(),
             subscription_id=uuid4(),
+            pricing_snapshot_id=uuid4(),
+            entitlement_id=uuid4(),
             runtime_partition_id=uuid4(),
+            default_project_id=uuid4(),
+            runtime_binding_id=uuid4(),
+            plan_snapshot=plan_snapshot,
+            plan_snapshot_hash=plan_snapshot_hash,
             onboarding_id=uuid4(),
             idempotency_key=scoped_key,
             request_hash=request_hash,
@@ -488,6 +562,7 @@ class SelfServiceOnboardingService:
                         facts={
                             "challenge_generation": 1,
                             "plan_policy_revision": plan.policy_revision,
+                            "plan_snapshot_hash": plan_snapshot_hash,
                             "home_region": home_region,
                         },
                         occurred_at=requested_at,
@@ -953,6 +1028,7 @@ class SelfServiceOnboardingService:
             space_id=record.space_id,
             subscription_id=record.subscription_id,
             runtime_partition_id=record.runtime_partition_id,
+            default_project_id=record.default_project_id,
             replayed=replayed,
         )
 
@@ -1150,6 +1226,19 @@ class TenantOnboardingCoordinator:
             plan = self._policy.require_plan(
                 registration.plan_key, revision=registration.plan_policy_revision
             )
+            expected_plan_snapshot = plan.snapshot()
+            expected_plan_hash = plan.snapshot_hash()
+            if (
+                registration.plan_snapshot != expected_plan_snapshot
+                or not hmac.compare_digest(
+                    _digest(registration.plan_snapshot), registration.plan_snapshot_hash
+                )
+                or not hmac.compare_digest(registration.plan_snapshot_hash, expected_plan_hash)
+            ):
+                raise OnboardingError(
+                    "onboarding_plan_snapshot_invalid",
+                    "registration plan snapshot no longer matches the reviewed policy",
+                )
             db.add(
                 Tenant(
                     id=registration.tenant_id,
@@ -1196,8 +1285,21 @@ class TenantOnboardingCoordinator:
             request_payload: dict[str, object] = {
                 "onboarding_id": str(registration.onboarding_id),
                 "registration_id": str(registration.id),
+                "user_id": str(registration.user_id),
                 "tenant_id": str(registration.tenant_id),
+                "space_id": str(registration.space_id),
+                "subscription_id": str(registration.subscription_id),
+                "pricing_snapshot_id": str(registration.pricing_snapshot_id),
+                "entitlement_id": str(registration.entitlement_id),
+                "runtime_partition_id": str(registration.runtime_partition_id),
+                "default_project_id": str(registration.default_project_id),
+                "runtime_binding_id": str(registration.runtime_binding_id),
+                "plan_key": registration.plan_key,
                 "plan_policy_revision": registration.plan_policy_revision,
+                "plan_snapshot": registration.plan_snapshot,
+                "plan_snapshot_hash": registration.plan_snapshot_hash,
+                "expected_status": "tenant_created",
+                "version": 1,
             }
             saga = TenantOnboardingRecord(
                 id=registration.onboarding_id,
@@ -1206,11 +1308,17 @@ class TenantOnboardingCoordinator:
                 tenant_id=registration.tenant_id,
                 space_id=registration.space_id,
                 subscription_id=registration.subscription_id,
+                pricing_snapshot_id=registration.pricing_snapshot_id,
+                entitlement_id=registration.entitlement_id,
                 runtime_partition_id=registration.runtime_partition_id,
+                default_project_id=registration.default_project_id,
+                runtime_binding_id=registration.runtime_binding_id,
                 plan_key=plan.key,
                 plan_policy_revision=plan.policy_revision,
+                plan_snapshot=registration.plan_snapshot,
+                plan_snapshot_hash=registration.plan_snapshot_hash,
                 home_region=registration.home_region,
-                trial_days=plan.trial_days,
+                trial_days=int(registration.plan_snapshot["trial_days"]),
                 trial_started_at=None,
                 trial_ends_at=None,
                 status="tenant_created",
@@ -1254,6 +1362,7 @@ class TenantOnboardingCoordinator:
                 to_status=None,
                 facts={
                     "plan_policy_revision": saga.plan_policy_revision,
+                    "plan_snapshot_hash": saga.plan_snapshot_hash,
                     "home_region": saga.home_region,
                 },
                 occurred_at=started_at,
@@ -1269,6 +1378,7 @@ class TenantOnboardingCoordinator:
             user_id=saga.user_id,
             tenant_id=saga.tenant_id,
             space_id=saga.space_id,
+            default_project_id=saga.default_project_id,
             status=saga.status,
             replayed=replayed,
         )
@@ -1284,12 +1394,14 @@ class OnboardingOutboxPublisher:
         coordinator: TenantOnboardingCoordinator,
         envelopes: VerificationEnvelopeKeyring,
         email_sender: EmailVerificationSender,
+        workflow: TenantOnboardingEventHandler | None = None,
         fallback: OutboxPublisher | None = None,
     ) -> None:
         self._registrations = registrations
         self._coordinator = coordinator
         self._envelopes = envelopes
         self._email_sender = email_sender
+        self._workflow = workflow
         self._fallback = fallback
 
     def publish(
@@ -1344,6 +1456,19 @@ class OnboardingOutboxPublisher:
                 )
             except IntegrityError as error:
                 raise RuntimeError("tenant_onboarding_integrity_conflict") from error
+            return
+        if aggregate_type == "tenant_onboarding" and event_type in _WORKFLOW_EVENTS:
+            if self._workflow is None:
+                raise OnboardingError(
+                    "outbox_route_unavailable",
+                    "Tenant onboarding workflow is not configured",
+                )
+            if aggregate_key != str(payload.get("onboarding_id", "")):
+                raise OnboardingError(
+                    "onboarding_event_invalid",
+                    "Tenant onboarding event scope is invalid",
+                )
+            self._workflow.handle_event(event_type=event_type, payload=payload)
             return
         if self._fallback is None:
             raise OnboardingError(

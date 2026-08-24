@@ -28,6 +28,16 @@ def test_privacy_worker_is_a_required_wheel_artifact_and_console_entrypoint() ->
     )
 
 
+def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> None:
+    assert "saas/outbox_worker.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/onboarding_composition.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/onboarding_workflow.py" in REQUIRED_WHEEL_PATHS
+    assert (
+        "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
+        in REQUIRED_WHEEL_PATHS
+    )
+
+
 def test_notification_runtime_is_required_and_has_console_entrypoints() -> None:
     project = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")

@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -51,11 +51,16 @@ _SELECTED_HASH_TABLES = (
     "saas_runtime_placements",
     "saas_runtime_partitions",
     "saas_runtime_identity_aliases",
+    "saas_runtime_resource_bindings",
     "saas_tenant_memberships",
     "saas_space_memberships",
     "saas_projects",
+    "saas_project_memberships",
     "saas_tasks",
     "saas_runs",
+    "saas_run_events",
+    "saas_admission_quotas",
+    "saas_quota_reservations",
     "saas_runner_pools",
     "saas_runner_registrations",
     "saas_run_dispatches",
@@ -168,6 +173,121 @@ def _database_name(kind: str) -> str:
     return f"omnigent_{kind}_{uuid4().hex[:20]}"
 
 
+def _canonical_json_sha256(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _onboarding_event_hash(
+    *,
+    onboarding_id: str,
+    sequence: int,
+    event_type: str,
+    from_status: str | None,
+    to_status: str | None,
+    facts_hash: str,
+    previous_hash: str,
+    occurred_at: datetime,
+) -> str:
+    return _canonical_json_sha256(
+        {
+            "aggregate_type": "tenant_onboarding",
+            "aggregate_id": onboarding_id,
+            "sequence": sequence,
+            "event_type": event_type,
+            "from_status": from_status,
+            "to_status": to_status,
+            "facts_hash": facts_hash,
+            "previous_hash": previous_hash,
+            "occurred_at": occurred_at.astimezone(UTC).isoformat(),
+        }
+    )
+
+
+def _insert_onboarding_event(
+    connection: sa.Connection,
+    *,
+    event_id: str,
+    onboarding_id: str,
+    tenant_id: str,
+    user_id: str,
+    sequence: int,
+    event_type: str,
+    from_status: str | None,
+    to_status: str | None,
+    facts: Mapping[str, object],
+    previous_hash: str,
+    occurred_at: datetime,
+) -> str:
+    facts_hash = _canonical_json_sha256(facts)
+    event_hash = _onboarding_event_hash(
+        onboarding_id=onboarding_id,
+        sequence=sequence,
+        event_type=event_type,
+        from_status=from_status,
+        to_status=to_status,
+        facts_hash=facts_hash,
+        previous_hash=previous_hash,
+        occurred_at=occurred_at,
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO saas_self_service_events "
+            "(id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, "
+            "event_type, from_status, to_status, facts, facts_hash, previous_hash, "
+            "event_hash, occurred_at, created_at) VALUES "
+            "(:event_id, 'tenant_onboarding', :onboarding_id, :tenant_id, :user_id, "
+            ":sequence, :event_type, :from_status, :to_status, CAST(:facts AS jsonb), "
+            ":facts_hash, :previous_hash, :event_hash, :occurred_at, :occurred_at)"
+        ),
+        {
+            "event_id": event_id,
+            "onboarding_id": onboarding_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "sequence": sequence,
+            "event_type": event_type,
+            "from_status": from_status,
+            "to_status": to_status,
+            "facts": json.dumps(facts, sort_keys=True, separators=(",", ":")),
+            "facts_hash": facts_hash,
+            "previous_hash": previous_hash,
+            "event_hash": event_hash,
+            "occurred_at": occurred_at,
+        },
+    )
+    return event_hash
+
+
+def _recovery_plan_snapshot() -> dict[str, object]:
+    return {
+        "capacity_class": "starter",
+        "currency": "USD",
+        "default_project_name": "Getting Started",
+        "default_project_visibility": "private",
+        "key": "test",
+        "policy_revision": "recovery-plan-v1",
+        "quota_limit": 100,
+        "quota_resource": "interactive_runs",
+        "runtime_type": "omnigent",
+        "trial_concurrency_limit": 2,
+        "trial_days": 14,
+        "trial_run_limit": 100,
+    }
+
+
+def _recovery_runtime_target(identifiers: Mapping[str, str | int]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "placement_id": str(identifiers["runtime_placement"]),
+        "runtime_type": "omnigent",
+        "data_region": "region-a",
+        "failure_domain": "region-a-1",
+        "official_schema_revision": "runtime-schema-v1",
+        "capacity_class": "starter",
+    }
+
+
 def _admin_engine(endpoint: PostgreSqlEndpoint) -> sa.Engine:
     return sa.create_engine(
         endpoint.sqlalchemy_url(endpoint.admin_database),
@@ -233,6 +353,14 @@ def _migrate_source(repo: Path, endpoint: PostgreSqlEndpoint, database: str) -> 
 
 
 def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str | int]:
+    event_started_at = datetime.now(UTC) - timedelta(minutes=10)
+    billing_ready_at = event_started_at + timedelta(minutes=1)
+    runtime_target_at = event_started_at + timedelta(minutes=2)
+    runtime_ready_at = event_started_at + timedelta(minutes=3)
+    project_ready_at = event_started_at + timedelta(minutes=4)
+    activated_at = event_started_at + timedelta(minutes=5)
+    first_run_at = datetime.now(UTC) + timedelta(seconds=1)
+    trial_ends_at = activated_at + timedelta(days=14)
     identifiers: dict[str, str | int] = {
         "actor_a": "10000000-0000-4000-8000-000000000001",
         "actor_b": "10000000-0000-4000-8000-000000000002",
@@ -244,9 +372,14 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "space_b": "30000000-0000-4000-8000-000000000002",
         "project_a": "90000000-0000-4000-8000-000000000001",
         "project_b": "90000000-0000-4000-8000-000000000002",
+        "onboarding_project_b": "90000000-0000-4000-8000-000000000003",
         "runtime_placement": "95000000-0000-4000-8000-000000000001",
         "runtime_partition_a": "95100000-0000-4000-8000-000000000001",
         "runtime_partition_b": "95100000-0000-4000-8000-000000000002",
+        "runtime_binding_a": "95200000-0000-4000-8000-000000000001",
+        "runtime_binding_b": "95200000-0000-4000-8000-000000000002",
+        "admission_quota_a": "95300000-0000-4000-8000-000000000001",
+        "quota_reservation_a": "95400000-0000-4000-8000-000000000001",
         "runner_pool": "96000000-0000-4000-8000-000000000001",
         "runner_a": "97000000-0000-4000-8000-000000000001",
         "runner_b": "97000000-0000-4000-8000-000000000002",
@@ -254,6 +387,7 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "task_b": "98000000-0000-4000-8000-000000000002",
         "run_a": "99000000-0000-4000-8000-000000000001",
         "run_b": "99000000-0000-4000-8000-000000000002",
+        "run_event_queued_a": "99100000-0000-4000-8000-000000000001",
         "run_lease_a": "9a000000-0000-4000-8000-000000000001",
         "run_lease_b": "9a000000-0000-4000-8000-000000000002",
         "capability_a": "9b000000-0000-4000-8000-000000000001",
@@ -291,6 +425,13 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "onboarding_event_a": "be300000-0000-4000-8000-000000000001",
         "onboarding_event_b": "be300000-0000-4000-8000-000000000002",
         "onboarding_replay_event": "be300000-0000-4000-8000-000000000003",
+        "onboarding_runtime_target_event": "be300000-0000-4000-8000-000000000004",
+        "onboarding_billing_event_a": "be300000-0000-4000-8000-000000000005",
+        "onboarding_runtime_target_event_a": "be300000-0000-4000-8000-000000000006",
+        "onboarding_runtime_ready_event_a": "be300000-0000-4000-8000-000000000007",
+        "onboarding_project_ready_event_a": "be300000-0000-4000-8000-000000000008",
+        "onboarding_activated_event_a": "be300000-0000-4000-8000-000000000009",
+        "onboarding_first_run_event_a": "be300000-0000-4000-8000-00000000000a",
         "scim_token_hash_a": "1" * 64,
         "scim_token_hash_b": "2" * 64,
         "scim_successor_token_hash_a": "3" * 64,
@@ -334,6 +475,7 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "outbox_replay": "60000000-0000-4000-8000-000000000002",
         "workspace_a": 11001,
         "workspace_b": 22002,
+        "onboarding_replay_at": (first_run_at + timedelta(days=1)).isoformat(),
     }
     engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
     try:
@@ -534,7 +676,7 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "object_store_ref, kms_key_ref, official_schema_revision, capacity_class, "
                     "status) VALUES (:runtime_placement, 'omnigent', 'region-a', 'region-a-1', "
                     "'recovery-db', 'recovery-objects', 'recovery-kms', 'runtime-schema-v1', "
-                    "'shared-medium', 'active')"
+                    "'starter', 'active')"
                 ),
                 identifiers,
             )
@@ -589,10 +731,42 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "INSERT INTO saas_projects "
                     "(id, tenant_id, space_id, name, visibility, created_by, status, "
                     "authorization_version) VALUES "
-                    "(:project_a, :tenant_a, :space_a, 'Recovery Project A', 'private', "
+                    "(:project_a, :tenant_a, :space_a, 'Getting Started', 'private', "
                     ":actor_a, 'active', 1), "
                     "(:project_b, :tenant_b, :space_b, 'Recovery Project B', 'private', "
                     ":actor_b, 'active', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_project_memberships "
+                    "(tenant_id, space_id, project_id, subject_type, subject_id, role, "
+                    "status, created_by, version) VALUES "
+                    "(:tenant_a, :space_a, :project_a, 'user', :actor_a, 'owner', "
+                    "'active', :actor_a, 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runtime_resource_bindings "
+                    "(id, runtime_partition_id, tenant_id, space_id, project_id, "
+                    "resource_type, runtime_resource_id, saas_resource_id, "
+                    "partition_generation, binding_generation, status) VALUES "
+                    "(:runtime_binding_a, :runtime_partition_a, :tenant_a, :space_a, "
+                    ":project_a, 'project', 'recovery-onboarding-project-a', :project_a, "
+                    "1, 1, 'active')"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_admission_quotas "
+                    "(id, tenant_id, space_id, project_id, resource, limit_units, "
+                    "reserved_units, consumed_units, version) VALUES "
+                    "(:admission_quota_a, :tenant_a, :space_a, :project_a, "
+                    "'interactive_runs', 100, 1, 0, 1)"
                 ),
                 identifiers,
             )
@@ -616,7 +790,7 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "adapter_contract_version, lease_owner, lease_token, fence_token, "
                     "lease_expires_at, heartbeat_at) VALUES "
                     "(:run_a, :tenant_a, :space_a, :project_a, :task_a, :actor_a, 'running', 1, "
-                    "0, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
+                    "1, 'interactive', 0, 'recovery-run-a', :run_hash_a, "
                     "CAST(:run_input AS jsonb), "
                     "'recovery-product', 'recovery-upstream', 'p0s000000001', '0.2.0', "
                     ":runner_a, :run_lease_a, 1, now() + interval '1 hour', now()), "
@@ -632,6 +806,26 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "run_hash_b": "6" * 64,
                     "run_input": json.dumps({"recovery": "content-blind"}),
                 },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_run_events "
+                    "(id, tenant_id, space_id, project_id, run_id, sequence, event_type, "
+                    "payload, trace_id) VALUES "
+                    "(:run_event_queued_a, :tenant_a, :space_a, :project_a, :run_a, 1, "
+                    "'run.queued', CAST(:payload AS jsonb), 'recovery-onboarding-first-run')"
+                ),
+                {**identifiers, "payload": json.dumps({"queue_class": "interactive"})},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_quota_reservations "
+                    "(id, tenant_id, space_id, project_id, quota_id, run_id, units, "
+                    "status, version) VALUES "
+                    "(:quota_reservation_a, :tenant_a, :space_a, :project_a, "
+                    ":admission_quota_a, :run_a, 1, 'reserved', 1)"
+                ),
+                identifiers,
             )
             connection.execute(
                 sa.text(
@@ -1194,19 +1388,25 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "default_space_name, default_space_slug, plan_key, plan_policy_revision, "
                     "home_region, status, challenge_generation, expires_at, verified_at, "
                     "terminal_at, user_id, tenant_id, space_id, subscription_id, "
-                    "runtime_partition_id, onboarding_id, idempotency_key, request_hash, version) "
+                    "pricing_snapshot_id, entitlement_id, runtime_partition_id, "
+                    "default_project_id, runtime_binding_id, plan_snapshot, "
+                    "plan_snapshot_hash, onboarding_id, idempotency_key, request_hash, version) "
                     "VALUES "
                     "(:registration_a, 'a@example.test', :email_hash_a, 'Recovery A', "
                     "'Recovery A', 'recovery-a', 'Main A', 'main', 'test', 'recovery-plan-v1', "
                     "'region-a', 'verified', 1, now() + interval '1 day', now(), now(), "
                     ":actor_a, :tenant_a, :space_a, :billing_subscription_a, "
-                    ":runtime_partition_a, :onboarding_a, :registration_key_a, "
+                    ":pricing_snapshot_a, :billing_entitlement_a, :runtime_partition_a, "
+                    ":project_a, :runtime_binding_a, CAST(:plan_snapshot AS jsonb), "
+                    ":plan_snapshot_hash, :onboarding_a, :registration_key_a, "
                     ":registration_hash_a, 2), "
                     "(:registration_b, 'b@example.test', :email_hash_b, 'Recovery B', "
                     "'Recovery B', 'recovery-b', 'Main B', 'main', 'test', 'recovery-plan-v1', "
                     "'region-a', 'verified', 1, now() + interval '1 day', now(), now(), "
                     ":actor_b, :tenant_b, :space_b, :billing_subscription_b, "
-                    ":runtime_partition_b, :onboarding_b, :registration_key_b, "
+                    ":pricing_snapshot_b, :billing_entitlement_b, :runtime_partition_b, "
+                    ":onboarding_project_b, :runtime_binding_b, CAST(:plan_snapshot AS jsonb), "
+                    ":plan_snapshot_hash, :onboarding_b, :registration_key_b, "
                     ":registration_hash_b, 2)"
                 ),
                 {
@@ -1217,6 +1417,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "registration_key_b": "4" * 64,
                     "registration_hash_a": "5" * 64,
                     "registration_hash_b": "6" * 64,
+                    "plan_snapshot": json.dumps(_recovery_plan_snapshot()),
+                    "plan_snapshot_hash": _canonical_json_sha256(_recovery_plan_snapshot()),
                 },
             )
             connection.execute(
@@ -1242,19 +1444,31 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                 sa.text(
                     "INSERT INTO saas_tenant_onboardings "
                     "(id, registration_id, user_id, tenant_id, space_id, subscription_id, "
-                    "runtime_partition_id, plan_key, plan_policy_revision, home_region, "
-                    "trial_days, trial_started_at, trial_ends_at, status, idempotency_key, "
-                    "request_hash, version, attempt_count, available_at, billing_ready_at, "
-                    "runtime_ready_at, activated_at, last_transition_at) VALUES "
+                    "pricing_snapshot_id, entitlement_id, runtime_partition_id, "
+                    "runtime_placement_id, runtime_target_snapshot, runtime_request_hash, "
+                    "default_project_id, runtime_binding_id, plan_key, plan_policy_revision, "
+                    "plan_snapshot, plan_snapshot_hash, home_region, trial_days, "
+                    "trial_started_at, trial_ends_at, status, idempotency_key, request_hash, "
+                    "version, attempt_count, available_at, billing_ready_at, runtime_ready_at, "
+                    "project_ready_at, activated_at, first_run_id, completed_at, "
+                    "last_transition_at) VALUES "
                     "(:onboarding_a, :registration_a, :actor_a, :tenant_a, :space_a, "
-                    ":billing_subscription_a, :runtime_partition_a, 'test', 'recovery-plan-v1', "
-                    "'region-a', 14, now(), now() + interval '14 days', 'active', "
-                    ":onboarding_key_a, :onboarding_hash_a, 4, 3, now(), now(), now(), now(), "
-                    "now()), "
+                    ":billing_subscription_a, :pricing_snapshot_a, :billing_entitlement_a, "
+                    ":runtime_partition_a, :runtime_placement, CAST(:runtime_target AS jsonb), "
+                    ":runtime_request_hash, :project_a, :runtime_binding_a, 'test', "
+                    "'recovery-plan-v1', CAST(:plan_snapshot AS jsonb), :plan_snapshot_hash, "
+                    "'region-a', 14, :activated_at, :trial_ends_at, 'completed', "
+                    ":onboarding_key_a, :onboarding_hash_a, 6, 5, :first_run_at, "
+                    ":billing_ready_at, :runtime_ready_at, :project_ready_at, :activated_at, "
+                    ":run_a, :first_run_at, :first_run_at), "
                     "(:onboarding_b, :registration_b, :actor_b, :tenant_b, :space_b, "
-                    ":billing_subscription_b, :runtime_partition_b, 'test', 'recovery-plan-v1', "
-                    "'region-a', 14, now(), now() + interval '14 days', 'billing_ready', "
-                    ":onboarding_key_b, :onboarding_hash_b, 2, 1, now(), now(), NULL, NULL, now())"
+                    ":billing_subscription_b, :pricing_snapshot_b, :billing_entitlement_b, "
+                    ":runtime_partition_b, NULL, NULL, NULL, :onboarding_project_b, "
+                    ":runtime_binding_b, 'test', 'recovery-plan-v1', "
+                    "CAST(:plan_snapshot AS jsonb), :plan_snapshot_hash, 'region-a', 14, "
+                    "NULL, NULL, 'billing_ready', :onboarding_key_b, :onboarding_hash_b, "
+                    "2, 1, :billing_ready_at, :billing_ready_at, NULL, NULL, NULL, NULL, NULL, "
+                    ":billing_ready_at)"
                 ),
                 {
                     **identifiers,
@@ -1262,29 +1476,160 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "onboarding_key_b": "c" * 64,
                     "onboarding_hash_a": "d" * 64,
                     "onboarding_hash_b": "e" * 64,
+                    "plan_snapshot": json.dumps(_recovery_plan_snapshot()),
+                    "plan_snapshot_hash": _canonical_json_sha256(_recovery_plan_snapshot()),
+                    "runtime_target": json.dumps(_recovery_runtime_target(identifiers)),
+                    "runtime_request_hash": _canonical_json_sha256(
+                        _recovery_runtime_target(identifiers)
+                    ),
+                    "billing_ready_at": billing_ready_at,
+                    "runtime_ready_at": runtime_ready_at,
+                    "project_ready_at": project_ready_at,
+                    "activated_at": activated_at,
+                    "first_run_at": first_run_at,
+                    "trial_ends_at": trial_ends_at,
                 },
             )
-            connection.execute(
-                sa.text(
-                    "INSERT INTO saas_self_service_events "
-                    "(id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, "
-                    "event_type, facts, facts_hash, previous_hash, event_hash, occurred_at) "
-                    "VALUES "
-                    "(:onboarding_event_a, 'tenant_onboarding', :onboarding_a, :tenant_a, "
-                    ":actor_a, 1, 'tenant_onboarding.created', CAST(:facts AS jsonb), "
-                    ":facts_hash, :previous_hash, :event_hash_a, now()), "
-                    "(:onboarding_event_b, 'tenant_onboarding', :onboarding_b, :tenant_b, "
-                    ":actor_b, 1, 'tenant_onboarding.created', CAST(:facts AS jsonb), "
-                    ":facts_hash, :previous_hash, :event_hash_b, now())"
-                ),
-                {
-                    **identifiers,
-                    "facts": json.dumps({"plan_policy_revision": "recovery-plan-v1"}),
-                    "facts_hash": "f" * 64,
-                    "previous_hash": "0" * 64,
-                    "event_hash_a": "a" * 63 + "1",
-                    "event_hash_b": "a" * 63 + "2",
+            plan_snapshot_hash = _canonical_json_sha256(_recovery_plan_snapshot())
+            created_facts = {
+                "plan_policy_revision": "recovery-plan-v1",
+                "plan_snapshot_hash": plan_snapshot_hash,
+                "home_region": "region-a",
+            }
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=1,
+                event_type="tenant_onboarding.created",
+                from_status=None,
+                to_status=None,
+                facts=created_facts,
+                previous_hash="0" * 64,
+                occurred_at=event_started_at,
+            )
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_billing_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=2,
+                event_type="tenant_onboarding.billing_ready",
+                from_status="tenant_created",
+                to_status="billing_ready",
+                facts={
+                    "subscription_id": str(identifiers["billing_subscription_a"]),
+                    "pricing_snapshot_id": str(identifiers["pricing_snapshot_a"]),
+                    "entitlement_id": str(identifiers["billing_entitlement_a"]),
+                    "plan_snapshot_hash": plan_snapshot_hash,
                 },
+                previous_hash=previous_hash,
+                occurred_at=billing_ready_at,
+            )
+            runtime_request_hash = _canonical_json_sha256(_recovery_runtime_target(identifiers))
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_runtime_target_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=3,
+                event_type="tenant_onboarding.runtime_target_frozen",
+                from_status="billing_ready",
+                to_status="billing_ready",
+                facts={
+                    "placement_id": str(identifiers["runtime_placement"]),
+                    "runtime_request_hash": runtime_request_hash,
+                },
+                previous_hash=previous_hash,
+                occurred_at=runtime_target_at,
+            )
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_runtime_ready_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=4,
+                event_type="tenant_onboarding.runtime_ready",
+                from_status="billing_ready",
+                to_status="runtime_ready",
+                facts={
+                    "runtime_partition_id": str(identifiers["runtime_partition_a"]),
+                    "placement_id": str(identifiers["runtime_placement"]),
+                    "external_receipt_hash": "1" * 64,
+                },
+                previous_hash=previous_hash,
+                occurred_at=runtime_ready_at,
+            )
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_project_ready_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=5,
+                event_type="tenant_onboarding.project_ready",
+                from_status="runtime_ready",
+                to_status="project_ready",
+                facts={
+                    "project_id": str(identifiers["project_a"]),
+                    "runtime_binding_id": str(identifiers["runtime_binding_a"]),
+                    "external_receipt_hash": "2" * 64,
+                },
+                previous_hash=previous_hash,
+                occurred_at=project_ready_at,
+            )
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_activated_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=6,
+                event_type="tenant_onboarding.activated",
+                from_status="project_ready",
+                to_status="active",
+                facts={
+                    "project_id": str(identifiers["project_a"]),
+                    "trial_ends_at": trial_ends_at.isoformat(),
+                },
+                previous_hash=previous_hash,
+                occurred_at=activated_at,
+            )
+            _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_first_run_event_a"]),
+                onboarding_id=str(identifiers["onboarding_a"]),
+                tenant_id=str(identifiers["tenant_a"]),
+                user_id=str(identifiers["actor_a"]),
+                sequence=7,
+                event_type="tenant_onboarding.first_run_admitted",
+                from_status="active",
+                to_status="completed",
+                facts={
+                    "project_id": str(identifiers["project_a"]),
+                    "run_id": str(identifiers["run_a"]),
+                },
+                previous_hash=previous_hash,
+                occurred_at=first_run_at,
+            )
+            _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_event_b"]),
+                onboarding_id=str(identifiers["onboarding_b"]),
+                tenant_id=str(identifiers["tenant_b"]),
+                user_id=str(identifiers["actor_b"]),
+                sequence=1,
+                event_type="tenant_onboarding.created",
+                from_status=None,
+                to_status=None,
+                facts=created_facts,
+                previous_hash="0" * 64,
+                occurred_at=event_started_at,
             )
             connection.execute(
                 sa.text(
@@ -1310,10 +1655,15 @@ def _apply_post_backup_replay(
     database: str,
     identifiers: Mapping[str, str | int],
 ) -> None:
+    runtime_target = _recovery_runtime_target(identifiers)
+    runtime_request_hash = _canonical_json_sha256(runtime_target)
+    replay_at = datetime.fromisoformat(str(identifiers["onboarding_replay_at"]))
     replay_parameters = {
         **identifiers,
-        "replay_at": datetime(2026, 8, 5, 0, 0, tzinfo=UTC),
+        "replay_at": replay_at,
         "tenant_b_key": str(identifiers["tenant_b"]),
+        "runtime_target": json.dumps(runtime_target),
+        "runtime_request_hash": runtime_request_hash,
     }
     engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
     try:
@@ -1360,30 +1710,57 @@ def _apply_post_backup_replay(
             connection.execute(
                 sa.text(
                     "UPDATE saas_tenant_onboardings SET status = 'runtime_ready', "
+                    "runtime_placement_id = :runtime_placement, "
+                    "runtime_target_snapshot = CAST(:runtime_target AS jsonb), "
+                    "runtime_request_hash = :runtime_request_hash, "
                     "runtime_ready_at = :replay_at, version = 3, "
                     "last_transition_at = :replay_at, updated_at = :replay_at "
                     "WHERE id = :onboarding_b AND status = 'billing_ready'"
                 ),
                 replay_parameters,
             )
-            connection.execute(
+            previous_hash = connection.execute(
                 sa.text(
-                    "INSERT INTO saas_self_service_events "
-                    "(id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, "
-                    "event_type, from_status, to_status, facts, facts_hash, previous_hash, "
-                    "event_hash, occurred_at) VALUES "
-                    "(:onboarding_replay_event, 'tenant_onboarding', :onboarding_b, "
-                    ":tenant_b, :actor_b, 2, 'tenant_onboarding.runtime_ready', "
-                    "'billing_ready', 'runtime_ready', CAST(:facts AS jsonb), :facts_hash, "
-                    ":previous_hash, :event_hash, :replay_at)"
+                    "SELECT event_hash FROM saas_self_service_events "
+                    "WHERE aggregate_type = 'tenant_onboarding' "
+                    "AND aggregate_id = :onboarding_b AND sequence = 1"
                 ),
-                {
-                    **replay_parameters,
-                    "facts": json.dumps({"replayed_after_restore": True}),
-                    "facts_hash": "7" * 64,
-                    "previous_hash": "a" * 63 + "2",
-                    "event_hash": "a" * 63 + "3",
+                identifiers,
+            ).scalar_one()
+            previous_hash = _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_runtime_target_event"]),
+                onboarding_id=str(identifiers["onboarding_b"]),
+                tenant_id=str(identifiers["tenant_b"]),
+                user_id=str(identifiers["actor_b"]),
+                sequence=2,
+                event_type="tenant_onboarding.runtime_target_frozen",
+                from_status="billing_ready",
+                to_status="billing_ready",
+                facts={
+                    "placement_id": str(identifiers["runtime_placement"]),
+                    "runtime_request_hash": runtime_request_hash,
                 },
+                previous_hash=str(previous_hash),
+                occurred_at=replay_at,
+            )
+            _insert_onboarding_event(
+                connection,
+                event_id=str(identifiers["onboarding_replay_event"]),
+                onboarding_id=str(identifiers["onboarding_b"]),
+                tenant_id=str(identifiers["tenant_b"]),
+                user_id=str(identifiers["actor_b"]),
+                sequence=3,
+                event_type="tenant_onboarding.runtime_ready",
+                from_status="billing_ready",
+                to_status="runtime_ready",
+                facts={
+                    "placement_id": str(identifiers["runtime_placement"]),
+                    "runtime_partition_id": str(identifiers["runtime_partition_b"]),
+                    "replayed_after_restore": True,
+                },
+                previous_hash=previous_hash,
+                occurred_at=replay_at,
             )
             connection.execute(
                 sa.text(
@@ -1560,6 +1937,51 @@ def _verify_control_plane_rls(connection: sa.Connection) -> None:
         fact != (True, True) for fact in facts.values()
     ):
         raise PostgreSqlRestoreContractError("restored control-plane forced RLS drifted")
+
+
+def _verify_onboarding_event_chain(
+    connection: sa.Connection,
+    *,
+    onboarding_id: str,
+    expected_event_types: Sequence[str],
+) -> None:
+    rows = connection.execute(
+        sa.text(
+            "SELECT sequence, event_type, from_status, to_status, facts, facts_hash, "
+            "previous_hash, event_hash, occurred_at FROM saas_self_service_events "
+            "WHERE aggregate_type = 'tenant_onboarding' AND aggregate_id = :onboarding_id "
+            "ORDER BY sequence"
+        ),
+        {"onboarding_id": onboarding_id},
+    ).mappings()
+    previous_hash = "0" * 64
+    events = list(rows)
+    if [str(row["event_type"]) for row in events] != list(expected_event_types):
+        raise PostgreSqlRestoreContractError("restored onboarding event sequence drifted")
+    for sequence, row in enumerate(events, start=1):
+        facts = row["facts"]
+        occurred_at = row["occurred_at"]
+        if not isinstance(facts, Mapping) or not isinstance(occurred_at, datetime):
+            raise PostgreSqlRestoreContractError("restored onboarding event shape drifted")
+        facts_hash = _canonical_json_sha256(facts)
+        event_hash = _onboarding_event_hash(
+            onboarding_id=onboarding_id,
+            sequence=sequence,
+            event_type=str(row["event_type"]),
+            from_status=(None if row["from_status"] is None else str(row["from_status"])),
+            to_status=None if row["to_status"] is None else str(row["to_status"]),
+            facts_hash=facts_hash,
+            previous_hash=previous_hash,
+            occurred_at=occurred_at,
+        )
+        if (
+            int(row["sequence"]) != sequence
+            or row["facts_hash"] != facts_hash
+            or row["previous_hash"] != previous_hash
+            or row["event_hash"] != event_hash
+        ):
+            raise PostgreSqlRestoreContractError("restored onboarding event hash chain drifted")
+        previous_hash = event_hash
 
 
 def _verify_restored_database(
@@ -1974,6 +2396,30 @@ def _verify_restored_database(
                 )
         with engine.begin() as connection:
             connection.exec_driver_sql(
+                "SET LOCAL ROLE saas_onboarding; "
+                f"SET LOCAL app.registration_id = '{identifiers['registration_a']}'; "
+                f"SET LOCAL app.onboarding_id = '{identifiers['onboarding_a']}'; "
+                f"SET LOCAL app.actor_id = '{identifiers['actor_a']}'; "
+                f"SET LOCAL app.tenant_id = '{identifiers['tenant_a']}'"
+            )
+            visible_registrations = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_self_service_registrations")
+                ).scalars()
+            )
+            visible_onboardings = set(
+                connection.execute(
+                    sa.text("SELECT id::text FROM saas_tenant_onboardings")
+                ).scalars()
+            )
+            if visible_registrations != {identifiers["registration_a"]} or (
+                visible_onboardings != {identifiers["onboarding_a"]}
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored onboarding RLS exposed another registration or Tenant"
+                )
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
                 "SET LOCAL ROLE omnigent_runtime_app; "
                 f"SET LOCAL app.runtime_workspace_id = '{identifiers['workspace_a']}'"
             )
@@ -2081,6 +2527,151 @@ def _verify_restored_database(
                 raise PostgreSqlRestoreContractError(
                     "post-backup billing authority replay is incomplete"
                 )
+            expected_plan_hash = _canonical_json_sha256(_recovery_plan_snapshot())
+            expected_runtime_hash = _canonical_json_sha256(_recovery_runtime_target(identifiers))
+            completed_onboarding = connection.execute(
+                sa.text(
+                    "SELECT registration.plan_snapshot_hash, "
+                    "registration.default_project_id::text, "
+                    "registration.pricing_snapshot_id::text, "
+                    "registration.entitlement_id::text, "
+                    "registration.runtime_binding_id::text, "
+                    "onboarding.status, onboarding.plan_snapshot_hash, "
+                    "onboarding.plan_snapshot::jsonb = registration.plan_snapshot::jsonb, "
+                    "onboarding.runtime_placement_id::text, "
+                    "onboarding.runtime_request_hash, "
+                    "onboarding.trial_started_at IS NOT NULL, "
+                    "onboarding.trial_ends_at > onboarding.trial_started_at, "
+                    "onboarding.billing_ready_at IS NOT NULL, "
+                    "onboarding.runtime_ready_at IS NOT NULL, "
+                    "onboarding.project_ready_at IS NOT NULL, "
+                    "onboarding.activated_at IS NOT NULL, "
+                    "onboarding.first_run_id::text, "
+                    "onboarding.completed_at >= onboarding.activated_at, "
+                    "membership.role, membership.status, binding.status, quota.resource, "
+                    "quota.limit_units, "
+                    "EXISTS (SELECT 1 FROM saas_quota_reservations reservation "
+                    "WHERE reservation.quota_id = quota.id "
+                    "AND reservation.run_id = onboarding.first_run_id), "
+                    "EXISTS (SELECT 1 FROM saas_run_events run_event "
+                    "WHERE run_event.run_id = onboarding.first_run_id "
+                    "AND run_event.event_type = 'run.queued') "
+                    "FROM saas_self_service_registrations registration "
+                    "JOIN saas_tenant_onboardings onboarding "
+                    "ON onboarding.registration_id = registration.id "
+                    "JOIN saas_project_memberships membership "
+                    "ON membership.project_id = onboarding.default_project_id "
+                    "AND membership.subject_type = 'user' "
+                    "AND membership.subject_id = onboarding.user_id "
+                    "JOIN saas_runtime_resource_bindings binding "
+                    "ON binding.id = onboarding.runtime_binding_id "
+                    "JOIN saas_admission_quotas quota "
+                    "ON quota.tenant_id = onboarding.tenant_id "
+                    "AND quota.space_id = onboarding.space_id "
+                    "AND quota.project_id = onboarding.default_project_id "
+                    "WHERE onboarding.id = :onboarding_a"
+                ),
+                identifiers,
+            ).one()
+            if tuple(completed_onboarding) != (
+                expected_plan_hash,
+                identifiers["project_a"],
+                identifiers["pricing_snapshot_a"],
+                identifiers["billing_entitlement_a"],
+                identifiers["runtime_binding_a"],
+                "completed",
+                expected_plan_hash,
+                True,
+                identifiers["runtime_placement"],
+                expected_runtime_hash,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                identifiers["run_a"],
+                True,
+                "owner",
+                "active",
+                "active",
+                "interactive_runs",
+                100,
+                True,
+                True,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "restored completed onboarding vertical-chain evidence drifted"
+                )
+            replayed_onboarding = connection.execute(
+                sa.text(
+                    "SELECT registration.default_project_id::text, "
+                    "registration.runtime_binding_id::text, onboarding.status, "
+                    "onboarding.runtime_placement_id::text, "
+                    "onboarding.runtime_request_hash, "
+                    "onboarding.runtime_target_snapshot ->> 'placement_id', "
+                    "onboarding.runtime_target_snapshot ->> 'capacity_class', "
+                    "onboarding.trial_started_at IS NULL, "
+                    "onboarding.trial_ends_at IS NULL, "
+                    "onboarding.billing_ready_at IS NOT NULL, "
+                    "onboarding.runtime_ready_at IS NOT NULL, "
+                    "onboarding.project_ready_at IS NULL, "
+                    "onboarding.activated_at IS NULL, "
+                    "onboarding.first_run_id IS NULL, "
+                    "onboarding.completed_at IS NULL, "
+                    "(SELECT count(*) FROM saas_self_service_events event "
+                    "WHERE event.aggregate_type = 'tenant_onboarding' "
+                    "AND event.aggregate_id = onboarding.id) "
+                    "FROM saas_self_service_registrations registration "
+                    "JOIN saas_tenant_onboardings onboarding "
+                    "ON onboarding.registration_id = registration.id "
+                    "WHERE onboarding.id = :onboarding_b"
+                ),
+                identifiers,
+            ).one()
+            if tuple(replayed_onboarding) != (
+                identifiers["onboarding_project_b"],
+                identifiers["runtime_binding_b"],
+                "runtime_ready",
+                identifiers["runtime_placement"],
+                expected_runtime_hash,
+                identifiers["runtime_placement"],
+                "starter",
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                3,
+            ):
+                raise PostgreSqlRestoreContractError(
+                    "post-backup onboarding Runtime replay evidence drifted"
+                )
+            _verify_onboarding_event_chain(
+                connection,
+                onboarding_id=str(identifiers["onboarding_a"]),
+                expected_event_types=(
+                    "tenant_onboarding.created",
+                    "tenant_onboarding.billing_ready",
+                    "tenant_onboarding.runtime_target_frozen",
+                    "tenant_onboarding.runtime_ready",
+                    "tenant_onboarding.project_ready",
+                    "tenant_onboarding.activated",
+                    "tenant_onboarding.first_run_admitted",
+                ),
+            )
+            _verify_onboarding_event_chain(
+                connection,
+                onboarding_id=str(identifiers["onboarding_b"]),
+                expected_event_types=(
+                    "tenant_onboarding.created",
+                    "tenant_onboarding.runtime_target_frozen",
+                    "tenant_onboarding.runtime_ready",
+                ),
+            )
             metering_receipts = connection.execute(
                 sa.text(
                     "SELECT receipt.id::text, receipt.tenant_id::text, usage.id::text, "
@@ -2225,6 +2816,9 @@ def _verify_restored_database(
             "post_backup_enterprise_lifecycle_replay": "passed",
             "post_backup_enterprise_approval_replay": "passed",
             "post_backup_billing_authority_replay": "passed",
+            "onboarding_vertical_chain_restore": (
+                "passed with one completed first-Run Saga and one post-backup Runtime replay"
+            ),
             "machine_metering_receipt_restore": "passed",
             "billing_period_close_restore": "passed with one backed-up and one replayed fact",
             "enterprise_scim_restore": (

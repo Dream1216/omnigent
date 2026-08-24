@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
+from saas.control_plane.onboarding import OnboardingPlan
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.production.postgresql_restore import (
+    _SELECTED_HASH_TABLES,
     PostgreSqlEndpoint,
     PostgreSqlRestoreContractError,
+    _canonical_json_sha256,
+    _recovery_plan_snapshot,
+    _recovery_runtime_target,
     run_logical_restore_contract,
 )
 
@@ -56,6 +62,51 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
             "postgresql+psycopg://user:password@127.0.0.1:5432/postgres",
             product_revision="a" * 40,
         )
+
+
+def test_restore_fixture_uses_current_vertical_onboarding_plan_contract() -> None:
+    plan = OnboardingPlan(
+        key="test",
+        policy_revision="recovery-plan-v1",
+        trial_days=14,
+    )
+
+    assert _recovery_plan_snapshot() == plan.snapshot()
+    assert _canonical_json_sha256(_recovery_plan_snapshot()) == plan.snapshot_hash()
+
+
+def test_restore_fixture_freezes_a_complete_runtime_target() -> None:
+    placement_id = UUID("95000000-0000-4000-8000-000000000001")
+
+    target = _recovery_runtime_target({"runtime_placement": str(placement_id)})
+
+    assert target == {
+        "schema_version": 1,
+        "placement_id": str(placement_id),
+        "runtime_type": "omnigent",
+        "data_region": "region-a",
+        "failure_domain": "region-a-1",
+        "official_schema_revision": "runtime-schema-v1",
+        "capacity_class": "starter",
+    }
+    assert len(_canonical_json_sha256(target)) == 64
+
+
+def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
+    assert {
+        "saas_self_service_registrations",
+        "saas_tenant_onboardings",
+        "saas_self_service_events",
+        "saas_projects",
+        "saas_project_memberships",
+        "saas_runtime_placements",
+        "saas_runtime_partitions",
+        "saas_runtime_resource_bindings",
+        "saas_admission_quotas",
+        "saas_quota_reservations",
+        "saas_runs",
+        "saas_run_events",
+    }.issubset(_SELECTED_HASH_TABLES)
 
 
 def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_seven_tables() -> None:

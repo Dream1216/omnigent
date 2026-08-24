@@ -33,7 +33,9 @@ TENANT_ONBOARDING_STATUSES = (
     "tenant_created",
     "billing_ready",
     "runtime_ready",
+    "project_ready",
     "active",
+    "completed",
     "compensating",
     "compensated",
     "manual_review",
@@ -72,7 +74,13 @@ class SelfServiceRegistrationRecord(SaasBase):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
     subscription_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    pricing_snapshot_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    entitlement_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
     runtime_partition_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    default_project_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    runtime_binding_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    plan_snapshot: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    plan_snapshot_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     onboarding_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
     idempotency_key: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -118,6 +126,14 @@ class SelfServiceRegistrationRecord(SaasBase):
             name="ck_self_service_plan_policy_revision",
         ),
         sa.CheckConstraint(
+            "length(CAST(plan_snapshot AS TEXT)) > 2",
+            name="ck_self_service_plan_snapshot_nonempty",
+        ),
+        sa.CheckConstraint(
+            "length(plan_snapshot_hash) = 64",
+            name="ck_self_service_plan_snapshot_hash",
+        ),
+        sa.CheckConstraint(
             "length(home_region) BETWEEN 1 AND 64", name="ck_self_service_home_region"
         ),
         sa.CheckConstraint(
@@ -138,7 +154,15 @@ class SelfServiceRegistrationRecord(SaasBase):
         sa.UniqueConstraint("tenant_id", name="uq_self_service_registration_tenant"),
         sa.UniqueConstraint("space_id", name="uq_self_service_registration_space"),
         sa.UniqueConstraint("subscription_id", name="uq_self_service_registration_subscription"),
+        sa.UniqueConstraint(
+            "pricing_snapshot_id", name="uq_self_service_registration_pricing_snapshot"
+        ),
+        sa.UniqueConstraint("entitlement_id", name="uq_self_service_registration_entitlement"),
         sa.UniqueConstraint("runtime_partition_id", name="uq_self_service_registration_partition"),
+        sa.UniqueConstraint("default_project_id", name="uq_self_service_registration_project"),
+        sa.UniqueConstraint(
+            "runtime_binding_id", name="uq_self_service_registration_runtime_binding"
+        ),
         sa.UniqueConstraint(
             "id", "onboarding_id", name="uq_self_service_registration_onboarding_scope"
         ),
@@ -263,9 +287,18 @@ class TenantOnboardingRecord(SaasBase):
     )
     space_id: Mapped[UUID] = mapped_column(nullable=False)
     subscription_id: Mapped[UUID] = mapped_column(nullable=False)
+    pricing_snapshot_id: Mapped[UUID] = mapped_column(nullable=False)
+    entitlement_id: Mapped[UUID] = mapped_column(nullable=False)
     runtime_partition_id: Mapped[UUID] = mapped_column(nullable=False)
+    runtime_placement_id: Mapped[UUID | None] = mapped_column()
+    runtime_target_snapshot: Mapped[dict[str, object] | None] = mapped_column(sa.JSON)
+    runtime_request_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    default_project_id: Mapped[UUID] = mapped_column(nullable=False)
+    runtime_binding_id: Mapped[UUID] = mapped_column(nullable=False)
     plan_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     plan_policy_revision: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    plan_snapshot: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    plan_snapshot_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     home_region: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     trial_days: Mapped[int] = mapped_column(nullable=False)
     trial_started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -283,7 +316,12 @@ class TenantOnboardingRecord(SaasBase):
     last_error_detail: Mapped[str | None] = mapped_column(sa.String(2048))
     billing_ready_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     runtime_ready_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    project_ready_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     activated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    first_run_id: Mapped[UUID | None] = mapped_column()
+    completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    failure_stage: Mapped[str | None] = mapped_column(sa.String(64))
+    compensation_cursor: Mapped[str | None] = mapped_column(sa.String(64))
     compensated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_transition_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False
@@ -314,6 +352,23 @@ class TenantOnboardingRecord(SaasBase):
             ondelete="RESTRICT",
             name="fk_tenant_onboarding_space",
         ),
+        sa.ForeignKeyConstraint(
+            ("runtime_placement_id",),
+            ("saas_runtime_placements.id",),
+            ondelete="RESTRICT",
+            name="fk_tenant_onboarding_runtime_placement",
+        ),
+        sa.ForeignKeyConstraint(
+            ("first_run_id", "tenant_id", "space_id", "default_project_id"),
+            (
+                "saas_runs.id",
+                "saas_runs.tenant_id",
+                "saas_runs.space_id",
+                "saas_runs.project_id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_tenant_onboarding_first_run_scope",
+        ),
         sa.CheckConstraint(
             f"status IN ({_values(TENANT_ONBOARDING_STATUSES)})",
             name="ck_tenant_onboarding_status",
@@ -324,6 +379,14 @@ class TenantOnboardingRecord(SaasBase):
         sa.CheckConstraint(
             "length(plan_policy_revision) BETWEEN 1 AND 128",
             name="ck_tenant_onboarding_plan_policy_revision",
+        ),
+        sa.CheckConstraint(
+            "length(CAST(plan_snapshot AS TEXT)) > 2",
+            name="ck_tenant_onboarding_plan_snapshot_nonempty",
+        ),
+        sa.CheckConstraint(
+            "length(plan_snapshot_hash) = 64",
+            name="ck_tenant_onboarding_plan_snapshot_hash",
         ),
         sa.CheckConstraint(
             "length(home_region) BETWEEN 1 AND 64", name="ck_tenant_onboarding_region"
@@ -341,6 +404,36 @@ class TenantOnboardingRecord(SaasBase):
         sa.CheckConstraint("version > 0", name="ck_tenant_onboarding_version"),
         sa.CheckConstraint("attempt_count >= 0", name="ck_tenant_onboarding_attempts"),
         sa.CheckConstraint(
+            "(runtime_placement_id IS NULL AND runtime_target_snapshot IS NULL "
+            "AND runtime_request_hash IS NULL) OR "
+            "(runtime_placement_id IS NOT NULL "
+            "AND runtime_target_snapshot IS NOT NULL "
+            "AND runtime_request_hash IS NOT NULL "
+            "AND length(CAST(runtime_target_snapshot AS TEXT)) > 2 "
+            "AND length(runtime_request_hash) = 64)",
+            name="ck_tenant_onboarding_runtime_request",
+        ),
+        sa.CheckConstraint(
+            "status <> 'tenant_created' OR runtime_placement_id IS NULL",
+            name="ck_tenant_onboarding_initial_placement",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('runtime_ready', 'project_ready', 'active', 'completed') OR "
+            "runtime_placement_id IS NOT NULL",
+            name="ck_tenant_onboarding_ready_placement",
+        ),
+        sa.CheckConstraint(
+            "failure_stage IS NULL OR failure_stage IN "
+            "('tenant_created', 'billing_ready', 'runtime_ready', 'project_ready', "
+            "'active', 'legacy_billing_ready', 'legacy_runtime_ready', 'legacy_active')",
+            name="ck_tenant_onboarding_failure_stage",
+        ),
+        sa.CheckConstraint(
+            "compensation_cursor IS NULL OR compensation_cursor IN "
+            "('project', 'runtime', 'billing')",
+            name="ck_tenant_onboarding_compensation_cursor",
+        ),
+        sa.CheckConstraint(
             "(claim_token IS NULL AND claimed_at IS NULL AND lease_expires_at IS NULL) OR "
             "(claim_token IS NOT NULL AND claimed_at IS NOT NULL "
             "AND lease_expires_at > claimed_at)",
@@ -349,30 +442,64 @@ class TenantOnboardingRecord(SaasBase):
         sa.CheckConstraint(
             "(status = 'tenant_created' AND trial_started_at IS NULL "
             "AND trial_ends_at IS NULL AND billing_ready_at IS NULL "
-            "AND runtime_ready_at IS NULL AND activated_at IS NULL "
-            "AND compensated_at IS NULL) OR "
-            "(status = 'billing_ready' AND trial_started_at IS NOT NULL "
-            "AND trial_ends_at IS NOT NULL AND billing_ready_at IS NOT NULL "
-            "AND runtime_ready_at IS NULL AND activated_at IS NULL "
-            "AND compensated_at IS NULL) OR "
-            "(status = 'runtime_ready' AND trial_started_at IS NOT NULL "
-            "AND trial_ends_at IS NOT NULL AND billing_ready_at IS NOT NULL "
-            "AND runtime_ready_at IS NOT NULL AND activated_at IS NULL "
-            "AND compensated_at IS NULL) OR "
+            "AND runtime_ready_at IS NULL AND project_ready_at IS NULL "
+            "AND activated_at IS NULL AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
+            "(status = 'billing_ready' AND trial_started_at IS NULL "
+            "AND trial_ends_at IS NULL AND billing_ready_at IS NOT NULL "
+            "AND runtime_ready_at IS NULL AND project_ready_at IS NULL "
+            "AND activated_at IS NULL AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
+            "(status = 'runtime_ready' AND trial_started_at IS NULL "
+            "AND trial_ends_at IS NULL AND billing_ready_at IS NOT NULL "
+            "AND runtime_ready_at IS NOT NULL AND project_ready_at IS NULL "
+            "AND activated_at IS NULL AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
+            "(status = 'project_ready' AND trial_started_at IS NULL "
+            "AND trial_ends_at IS NULL AND billing_ready_at IS NOT NULL "
+            "AND runtime_ready_at IS NOT NULL AND project_ready_at IS NOT NULL "
+            "AND activated_at IS NULL AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
             "(status = 'active' AND trial_started_at IS NOT NULL "
             "AND trial_ends_at IS NOT NULL AND billing_ready_at IS NOT NULL "
-            "AND runtime_ready_at IS NOT NULL AND activated_at IS NOT NULL "
+            "AND runtime_ready_at IS NOT NULL AND project_ready_at IS NOT NULL "
+            "AND activated_at IS NOT NULL AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
+            "(status = 'completed' AND trial_started_at IS NOT NULL "
+            "AND trial_ends_at IS NOT NULL AND billing_ready_at IS NOT NULL "
+            "AND runtime_ready_at IS NOT NULL AND project_ready_at IS NOT NULL "
+            "AND activated_at IS NOT NULL AND first_run_id IS NOT NULL "
+            "AND completed_at IS NOT NULL AND completed_at >= activated_at "
             "AND compensated_at IS NULL) OR "
-            "(status IN ('compensating', 'manual_review') AND activated_at IS NULL "
+            "(status = 'compensating' AND activated_at IS NULL "
+            "AND first_run_id IS NULL AND completed_at IS NULL "
             "AND compensated_at IS NULL) OR "
+            "(status = 'manual_review' AND first_run_id IS NULL "
+            "AND completed_at IS NULL AND compensated_at IS NULL) OR "
             "(status = 'compensated' AND activated_at IS NULL "
+            "AND first_run_id IS NULL AND completed_at IS NULL "
             "AND compensated_at IS NOT NULL)",
             name="ck_tenant_onboarding_state_evidence",
+        ),
+        sa.CheckConstraint(
+            "(status IN ('tenant_created', 'billing_ready', 'runtime_ready', "
+            "'project_ready', 'active', 'completed') "
+            "AND failure_stage IS NULL AND compensation_cursor IS NULL) OR "
+            "(status IN ('compensating', 'manual_review') "
+            "AND failure_stage IS NOT NULL AND compensation_cursor IS NOT NULL) OR "
+            "(status = 'compensated' AND failure_stage IS NOT NULL "
+            "AND compensation_cursor IS NULL)",
+            name="ck_tenant_onboarding_failure_evidence",
         ),
         sa.UniqueConstraint("tenant_id", name="uq_tenant_onboarding_tenant"),
         sa.UniqueConstraint("space_id", name="uq_tenant_onboarding_space"),
         sa.UniqueConstraint("subscription_id", name="uq_tenant_onboarding_subscription"),
+        sa.UniqueConstraint("pricing_snapshot_id", name="uq_tenant_onboarding_pricing_snapshot"),
+        sa.UniqueConstraint("entitlement_id", name="uq_tenant_onboarding_entitlement"),
         sa.UniqueConstraint("runtime_partition_id", name="uq_tenant_onboarding_runtime_partition"),
+        sa.UniqueConstraint("default_project_id", name="uq_tenant_onboarding_default_project"),
+        sa.UniqueConstraint("runtime_binding_id", name="uq_tenant_onboarding_runtime_binding"),
+        sa.UniqueConstraint("first_run_id", name="uq_tenant_onboarding_first_run"),
         sa.Index("ix_tenant_onboarding_dispatch", "status", "available_at", "claimed_at"),
         sa.Index("ix_tenant_onboarding_user", "user_id", "created_at"),
     )

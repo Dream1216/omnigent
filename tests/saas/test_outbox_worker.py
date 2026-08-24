@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 
+from saas.control_plane.onboarding import OnboardingOutboxPublisher
 from saas.control_plane.outbox import DispatchResult
 from saas.outbox_worker import OutboxWorker, _load_publisher
 
@@ -21,6 +22,14 @@ class _Publisher:
         payload: dict[str, object],
     ) -> None:
         del event_id, event_type, aggregate_type, aggregate_key, payload
+
+
+class _ValidatedPublisher(_Publisher):
+    def __init__(self) -> None:
+        self.validated = False
+
+    def validate_outbox_configuration(self) -> None:
+        self.validated = True
 
 
 class _ScriptedDispatcher:
@@ -99,6 +108,32 @@ def test_publisher_loader_accepts_class_instance_and_factory(
     )
 
     assert isinstance(_load_publisher("publisher_module:candidate"), _Publisher)
+
+
+def test_publisher_loader_runs_supported_composition_startup_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _ValidatedPublisher()
+    monkeypatch.setattr(
+        "saas.outbox_worker.importlib.import_module",
+        lambda _module: SimpleNamespace(candidate=candidate),
+    )
+
+    assert _load_publisher("publisher_module:candidate") is candidate
+    assert candidate.validated
+
+
+def test_publisher_loader_rejects_raw_optional_onboarding_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = object.__new__(OnboardingOutboxPublisher)
+    monkeypatch.setattr(
+        "saas.outbox_worker.importlib.import_module",
+        lambda _module: SimpleNamespace(candidate=candidate),
+    )
+
+    with pytest.raises(RuntimeError, match="create_tenant_onboarding_composition"):
+        _load_publisher("publisher_module:candidate")
 
 
 @pytest.mark.parametrize(

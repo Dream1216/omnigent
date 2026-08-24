@@ -61,6 +61,7 @@ class OnboardingRequestedResponse(BaseModel):
     space_id: UUID
     subscription_id: UUID
     runtime_partition_id: UUID
+    default_project_id: UUID
 
 
 def create_onboarding_router(*, onboarding: SelfServiceOnboardingService) -> APIRouter:
@@ -158,6 +159,7 @@ def _completion_payload(value: OnboardingRequested) -> OnboardingRequestedRespon
         space_id=value.space_id,
         subscription_id=value.subscription_id,
         runtime_partition_id=value.runtime_partition_id,
+        default_project_id=value.default_project_id,
     )
 
 

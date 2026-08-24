@@ -102,8 +102,14 @@ class OutboxDispatcher:
                 failed += 1
                 self._release_failure(event, claim_token, error, dispatched_at)
             else:
-                published += 1
-                self._acknowledge(event.id, claim_token, dispatched_at)
+                if self._acknowledge(event.id, claim_token, dispatched_at):
+                    published += 1
+                else:
+                    # Publishing may outlive this worker's lease.  A newer
+                    # owner must retain its claim, and one stale acknowledgement
+                    # must not prevent the rest of this detached batch from
+                    # being processed.
+                    failed += 1
         return DispatchResult(claimed=len(events), published=published, failed=failed)
 
     def _claim(
@@ -178,7 +184,7 @@ class OutboxDispatcher:
                 for row in rows
             ]
 
-    def _acknowledge(self, event_id: UUID, claim_token: UUID, published_at: datetime) -> None:
+    def _acknowledge(self, event_id: UUID, claim_token: UUID, published_at: datetime) -> bool:
         with self._session_factory.begin() as db:
             result = cast(
                 CursorResult[tuple[object]],
@@ -197,8 +203,7 @@ class OutboxDispatcher:
                     )
                 ),
             )
-            if result.rowcount != 1:
-                raise RuntimeError("Outbox claim was lost before acknowledgement")
+            return result.rowcount == 1
 
     def _release_failure(
         self,
