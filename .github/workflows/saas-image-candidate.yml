@@ -72,7 +72,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
       - name: Run current-revision OSS and SaaS regressions

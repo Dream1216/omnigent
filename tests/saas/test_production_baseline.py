@@ -16,7 +16,9 @@ def _baseline() -> dict[str, object]:
 
 
 def test_production_baseline_is_complete_content_but_not_falsely_ready() -> None:
-    report = validate_baseline(_repo(), _baseline())
+    baseline = _baseline()
+    report = validate_baseline(_repo(), baseline)
+    approved = baseline["approval"]["state"] == "approved"  # type: ignore[index]
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
@@ -26,9 +28,9 @@ def test_production_baseline_is_complete_content_but_not_falsely_ready() -> None
         "slo_count": 6,
         "data_class_count": 3,
         "threat_count": 12,
-        "readiness_blocker_count": 10,
+        "readiness_blocker_count": 10 if approved else 22,
     }
-    assert "ADR-001 is not accepted" not in report["blockers"]
+    assert ("ADR-001 is not accepted" in report["blockers"]) is not approved
     assert "T0 RPO/RTO is not business-approved" in report["blockers"]
     assert (
         "no immutable tenant or regional recovery drill evidence is recorded" in report["blockers"]

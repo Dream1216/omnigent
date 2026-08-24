@@ -1,47 +1,73 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 378e2525..ec420a76 100644
+index ed248a557..d3fc3259b 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -129,3 +129,5 @@ from omnigent.version import VERSION
+@@ -134,6 +134,8 @@ from omnigent.version import VERSION
+
  _logger = logging.getLogger(__name__)
 
 +RUNNER_ENTRY_MODULE_ENV_VAR = "OMNIGENT_RUNNER_ENTRY_MODULE"
 +
 
-@@ -1372,3 +1374,7 @@ class HostProcess:
+ class _WaitidInfo(Protocol):
+     si_pid: int
+@@ -1587,10 +1589,14 @@ class HostProcess:
+
+             with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
--                    [sys.executable, "-m", "omnigent.runner._entry"],
+-                    # -P keeps cwd off sys.path: a workspace that is itself an
+-                    # omnigent checkout would otherwise shadow the installed
+-                    # package. _entry re-adds it for spec-declared local tools.
+-                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
++                    # Keep cwd off sys.path while allowing the managed runtime
++                    # to select its reviewed installed entry module.
 +                    [
 +                        sys.executable,
++                        "-P",
 +                        "-m",
 +                        os.environ.get(RUNNER_ENTRY_MODULE_ENV_VAR, "omnigent.runner._entry"),
 +                    ],
                      env=env,
-@@ -2864,2 +2870,3 @@ def run_host_process(
+                     # A daemon may outlive the checkout it started from.
+                     cwd=str(workspace),
+@@ -3408,6 +3414,7 @@ class HostProcess:
+ def run_host_process(
+     server_url: str,
      config_path: Path | None = None,
 +    host_factory: Callable[[HostIdentity, str], HostProcess] = HostProcess,
  ) -> None:
-@@ -2874,2 +2881,3 @@ def run_host_process(
+     """Entry point for ``omnigent host``.
+
+@@ -3418,6 +3425,7 @@ def run_host_process(
+         ``"https://omnigent-app.databricksapps.com"``.
+     :param config_path: Optional path to ``config.yaml``.
          Defaults to ``~/.omnigent/config.yaml``.
 +    :param host_factory: Downstream-neutral HostProcess construction seam.
      :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
-@@ -2906,4 +2914,4 @@ def run_host_process(
+         fails permanently (auth / authorization / outdated server, or a
+         loopback server that is gone). The actionable cause is printed
+@@ -3452,7 +3460,7 @@ def run_host_process(
+     if _cli_log is not None and _cli_log != host_log_path:
          print(f"CLI diagnostics: {display_log_path(_cli_log)}")
 
 -    host = HostProcess(identity, server_url)
 +    host = host_factory(identity, server_url)
      try:
+         asyncio.run(host.run())
+     except HostConnectError as exc:
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb..04cd40c0 100644
+index 970fa7eb5..04cd40c0e 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
-@@ -80,4 +80,5 @@ class _UsageBucket(_ModelUsage):
+@@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
      by_model: dict[str, _ModelUsage]
 
 
 +_REQUIRED_OBSERVERS: list[UsageObserver] = []
  _OBSERVERS: list[UsageObserver] = []
-@@ -138,4 +139,20 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
+ _RECORDS: dict[str, _UsageBucket] = {}
+ _CURRENT_NODEID: str | None = None
+@@ -138,6 +139,22 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
      return remove
 
 
@@ -62,7 +88,11 @@ index 970fa7eb..04cd40c0 100644
 +
 +
  def notify_from_dict(
-@@ -175,6 +192,3 @@ def notify(
+     *,
+     model: str | None,
+@@ -173,13 +190,17 @@ def notify(
+     output_tokens: int,
+     total_tokens: int,
  ) -> None:
 -    """Dispatch usage to observers and (if enabled) the auto-recorder.
 -
@@ -70,7 +100,7 @@ index 970fa7eb..04cd40c0 100644
 -    """
 +    """Dispatch usage to required sinks, diagnostics, and the auto-recorder."""
      if _ENV_VAR in os.environ and (input_tokens or output_tokens or total_tokens):
-@@ -182,2 +196,9 @@ def notify(
+         _record(model, input_tokens, output_tokens, total_tokens)
          _write_records()
 +    for cb in list(_REQUIRED_OBSERVERS):
 +        cb(
@@ -80,7 +110,13 @@ index 970fa7eb..04cd40c0 100644
 +            total_tokens=total_tokens,
 +        )
      for cb in list(_OBSERVERS):
-@@ -337,2 +358,3 @@ __all__ = [
+         try:
+             cb(
+@@ -335,6 +356,7 @@ def _write_records() -> None:
+ __all__ = [
+     "UsageObserver",
      "add_observer",
 +    "add_required_observer",
      "notify",
+     "notify_from_dict",
+     "set_current_test",

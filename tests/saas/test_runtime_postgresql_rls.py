@@ -10,7 +10,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 
-from omnigent.db.utils import make_managed_session_maker
+from omnigent.db.utils import make_managed_session_maker, shared_read_scope
 from saas.compatibility import OmnigentStoreAdapter, RuntimeContext
 from saas.runtime_rls import (
     RUNTIME_RLS_POLICY_NAME,
@@ -90,8 +90,12 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context() -> None:
     workspace_a = 1_000_000 + uuid4().int % 1_000_000_000
     workspace_b = workspace_a + 1
 
-    with engine.begin() as connection:
+    # Official PostgreSQL migrations include concurrent index creation, so
+    # Alembic must control its own transaction and autocommit boundary.
+    with engine.connect() as connection:
         _migrate_official(connection, root)
+
+    with engine.begin() as connection:
         connection.execute(
             sa.text(
                 "INSERT INTO users (workspace_id, id) VALUES "
@@ -190,6 +194,10 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context() -> None:
 
     assert adapter.invoke(_runtime(workspace_a), _list_users) == sorted([own_insert, user_a])
     assert adapter.invoke(_runtime(workspace_b), _list_users) == [user_b]
+
+    with shared_read_scope():
+        assert adapter.invoke(_runtime(workspace_a), _list_users) == sorted([own_insert, user_a])
+        assert adapter.invoke(_runtime(workspace_b), _list_users) == [user_b]
 
     class ExpectedFailure(RuntimeError):
         pass

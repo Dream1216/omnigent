@@ -1,6 +1,8 @@
 {
   "schema_version": 2,
   "repository": "Dream1216/omnigent",
+  "target_branch": "main",
+  "merge_strategy": "merge-commit",
   "active_mode": "sole-owner-risk-waiver",
   "governance_classification": "degraded",
   "candidate_path": "saas/production/adr-approval-candidate.json",

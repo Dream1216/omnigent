@@ -1,8 +1,8 @@
 # ADR-005: Sandbox, network, secret, and supply-chain policy
 
-- Status: Accepted under sole-owner risk waiver
+- Decision status: Accepted architecture
+- Production approval: Governed by `../baseline.json` and bound by `../adr-approval-candidate.json`
 - Technical owner: `security`
-- Candidate: `omnigent-saas-p0-2026-08-09`
 
 ## Context
 
