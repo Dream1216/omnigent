@@ -4,8 +4,14 @@ from dataclasses import dataclass, replace
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 
 from omnigent.db.db_models import current_workspace_id
+from omnigent.db.utils import (
+    bind_managed_session_initializer,
+    make_managed_session_maker,
+    shared_read_scope,
+)
 from saas.compatibility import (
     OmnigentStoreAdapter,
     RuntimeContext,
@@ -87,3 +93,19 @@ def test_store_adapter_rejects_invalid_generation() -> None:
     with pytest.raises(StoreAdapterContractError) as exc_info:
         adapter.invoke(replace(_runtime(), binding_generation=0), lambda: None)
     assert exc_info.value.code == "runtime_generation_invalid"
+
+
+def test_managed_initializer_bypasses_shared_read_session() -> None:
+    engine = sa.create_engine("sqlite://")
+    managed_session = make_managed_session_maker(engine)
+    initialized: list[sa.orm.Session] = []
+
+    with bind_managed_session_initializer(initialized.append), shared_read_scope():
+        with managed_session() as first:
+            first.execute(sa.text("SELECT 1"))
+        with managed_session() as second:
+            second.execute(sa.text("SELECT 1"))
+
+    assert initialized == [first, second]
+    assert first is not second
+    engine.dispose()
