@@ -203,6 +203,27 @@ def test_append_only_history_distinguishes_a_similar_new_record_from_a_rewrite(
     )
 
 
+def test_append_only_history_rejects_a_pure_record_rename(tmp_path: Path) -> None:
+    record_directory = "saas/production/adr-approvals"
+    records = tmp_path / record_directory
+    records.mkdir(parents=True)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "adr-test@example.test")
+    _git(tmp_path, "config", "user.name", "ADR Test")
+    original = records / "candidate-a-1111111111111111.json"
+    renamed = records / "candidate-a-renamed-1111111111111111.json"
+    original.write_text(json.dumps({"candidate": "a", "state": "approved"}), encoding="utf-8")
+    _git(tmp_path, "add", record_directory)
+    _git(tmp_path, "commit", "-m", "immutable record")
+    _git(tmp_path, "mv", str(original.relative_to(tmp_path)), str(renamed.relative_to(tmp_path)))
+    _git(tmp_path, "commit", "-m", "rename immutable record")
+
+    violations: list[str] = []
+    _validate_append_only_history(tmp_path, record_directory, violations)
+
+    assert "an immutable approval record was deleted from Git history" in violations
+
+
 def test_distinct_signer_assignment_rejects_one_human_for_four_roles() -> None:
     roles = ["product-owner", "platform-architecture", "security", "site-reliability"]
     authorities = {role: {"same-human"} for role in roles}

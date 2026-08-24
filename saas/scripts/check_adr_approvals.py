@@ -496,7 +496,16 @@ def _validate_append_only_history(
         elif len(history.stdout.splitlines()) != 1:
             violations.append(f"approval record was changed after creation: {value}")
     deleted = subprocess.run(
-        ["git", "log", "--format=", "--name-only", "--diff-filter=D", "--", pathspec],
+        [
+            "git",
+            "log",
+            "--no-renames",
+            "--format=",
+            "--name-only",
+            "--diff-filter=D",
+            "--",
+            pathspec,
+        ],
         cwd=repo,
         text=True,
         capture_output=True,
