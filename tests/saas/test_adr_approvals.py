@@ -14,6 +14,7 @@ from saas.scripts.check_adr_approvals import (
     validate_approval_contract,
 )
 from saas.scripts.finalize_adr_approval import _assign_distinct_signers, build_record
+from tests.saas._approval_history import require_current_approval_history
 
 
 def _repo() -> Path:
@@ -122,6 +123,7 @@ def _approved_baseline_with_record(
 
 
 def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
+    require_current_approval_history(_repo())
     baseline = _baseline()
     report = validate_approval_contract(_repo(), baseline)
     approved = baseline["approval"]["state"] == "approved"  # type: ignore[index]
@@ -143,6 +145,7 @@ def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
 
 
 def test_approved_architecture_schema_matches_current_implementation_head() -> None:
+    require_current_approval_history(_repo())
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "pc5a00000005"  # type: ignore[index]

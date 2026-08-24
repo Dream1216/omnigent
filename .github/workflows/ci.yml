@@ -158,10 +158,6 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          # The misc shard owns ADR governance tests, which bind reviewed Git
-          # objects and merge ancestry. Other shards retain the fast shallow checkout.
-          fetch-depth: ${{ matrix.group == 'misc' && '0' || '1' }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0

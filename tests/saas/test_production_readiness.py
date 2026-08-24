@@ -13,6 +13,7 @@ from saas.production.readiness import (
     validate_gate_ledger,
     validate_production_readiness,
 )
+from tests.saas._approval_history import require_current_approval_history
 
 
 def _repo() -> Path:
@@ -151,6 +152,7 @@ def test_manual_pass_cannot_override_a_blocked_derived_gate() -> None:
 
 
 def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
+    require_current_approval_history(_repo())
     report = validate_production_readiness(_repo())
 
     assert report["status"] == "pass"
