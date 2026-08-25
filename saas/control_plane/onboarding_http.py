@@ -238,7 +238,11 @@ def _status_payload(value: OnboardingStatusView) -> OnboardingStatusResponse:
 
 
 def _http_error(error: OnboardingError | LifecycleError) -> HTTPException:
-    if error.code in {
+    if error.code == "registration_rate_limited":
+        status = 429
+    elif error.code == "registration_rate_limit_unavailable":
+        status = 503
+    elif error.code in {
         "idempotency_conflict",
         "registration_conflict",
         "registration_unavailable",

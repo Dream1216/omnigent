@@ -144,11 +144,15 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
         "saas_quota_reservations",
         "saas_runs",
         "saas_run_events",
+        "saas_registration_rate_limit_policies",
+        "saas_registration_rate_limits",
     }.issubset(_SELECTED_HASH_TABLES)
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_nine_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 109
+def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_eleven_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 111
+    assert "saas_registration_rate_limit_policies" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_registration_rate_limits" in CONTROL_PLANE_RLS_TABLES
     assert "saas_runtime_provider_operation_journal" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES

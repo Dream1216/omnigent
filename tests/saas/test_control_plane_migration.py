@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -105,7 +105,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000004"
+        assert revision == "p0s000000005"
         first_run_scope = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_tenant_onboardings")
@@ -164,6 +164,108 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         remaining_tables = set(sa.inspect(connection).get_table_names())
         assert remaining_tables <= {"saas_alembic_version"}
     engine.dispose()
+
+
+def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000004")
+        assert "saas_registration_rate_limits" not in sa.inspect(connection).get_table_names()
+        assert (
+            "saas_registration_rate_limit_policies" not in sa.inspect(connection).get_table_names()
+        )
+
+        command.upgrade(config, "p0s000000005")
+        inspector = sa.inspect(connection)
+        assert {
+            column["name"]
+            for column in inspector.get_columns("saas_registration_rate_limit_policies")
+        } == {
+            "action",
+            "subject_kind",
+            "limit_count",
+            "window_seconds",
+            "retention_seconds",
+            "max_rows",
+            "current_rows",
+            "policy_revision",
+            "created_at",
+            "updated_at",
+        }
+        assert {
+            column["name"] for column in inspector.get_columns("saas_registration_rate_limits")
+        } == {
+            "action",
+            "subject_kind",
+            "key_id",
+            "subject_hmac",
+            "window_started_at",
+            "request_count",
+            "expires_at",
+            "policy_revision",
+            "version",
+            "created_at",
+            "updated_at",
+        }
+        assert inspector.get_pk_constraint("saas_registration_rate_limits")[
+            "constrained_columns"
+        ] == ["action", "subject_kind", "key_id", "subject_hmac"]
+        assert {
+            index["name"] for index in inspector.get_indexes("saas_registration_rate_limits")
+        } == {"ix_registration_rate_limit_expiry"}
+        assert (
+            connection.scalar(
+                sa.text("SELECT count(*) FROM saas_registration_rate_limit_policies")
+            )
+            == 3
+        )
+        now = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_registration_rate_limits "
+                "(action, subject_kind, key_id, subject_hmac, window_started_at, "
+                "request_count, expires_at, policy_revision, version) "
+                "VALUES ('registration.request', 'email', 'test-v1', :subject_hmac, "
+                ":now, 1, :expires_at, 'registration-rate-limit-v1', 1)"
+            ),
+            {
+                "subject_hmac": "a" * 64,
+                "now": now,
+                "expires_at": now + timedelta(minutes=1),
+            },
+        )
+
+        with pytest.raises(RuntimeError, match="registration rate-limit counters"):
+            command.downgrade(config, "p0s000000004")
+        connection.execute(sa.text("DELETE FROM saas_registration_rate_limits"))
+        command.downgrade(config, "p0s000000004")
+        assert "saas_registration_rate_limits" not in sa.inspect(connection).get_table_names()
+        assert (
+            "saas_registration_rate_limit_policies" not in sa.inspect(connection).get_table_names()
+        )
+        assert (
+            connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+            == "p0s000000004"
+        )
+    engine.dispose()
+
+
+def test_registration_rate_limit_migration_declares_exact_force_rls_policies() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "saas/control_plane/migrations/versions/p0s000000005_registration_rate_limits.py"
+    ).read_text(encoding="utf-8")
+
+    assert "ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY" in source
+    assert "app.registration_rate_limit_subject_hash" not in source
+    assert "CREATE POLICY rls_registration_rate_limit_policies_owner" in source
+    assert "CREATE POLICY rls_registration_rate_limits_owner" in source
+    assert "SECURITY DEFINER" in source
+    assert "saas_consume_registration_rate_limit" in source
+    assert "saas_prune_registration_rate_limits" in source
+    assert "saas_registration_rate_limit_status" in source
+    assert "REVOKE ALL ON FUNCTION public.saas_consume_registration_rate_limit" in source
 
 
 def test_outbox_quarantine_postgresql_boundary_contract_is_transactional() -> None:
@@ -289,11 +391,13 @@ def test_control_plane_principal_bootstrap_is_atomic_and_separate_from_alembic()
         root / "saas/control_plane/migrations/versions/pc6a00000001_public_api_execution.py",
         root / "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py",
         root / "saas/control_plane/migrations/versions/p0s000000004_runtime_provider_journal.py",
+        root / "saas/control_plane/migrations/versions/p0s000000005_registration_rate_limits.py",
     )
     first_schema_mutations = (
         "_replace_authority_checks(",
         'with op.batch_alter_table("saas_service_accounts")',
         '_lock_and_expose_owner_rows("saas_control_plane_outbox")',
+        "op.create_table(",
         "op.create_table(",
     )
     for migration, first_schema_mutation in zip(migrations, first_schema_mutations, strict=True):
@@ -359,7 +463,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000004"
+                == "p0s000000005"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 

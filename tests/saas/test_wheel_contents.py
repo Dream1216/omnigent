@@ -50,6 +50,10 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
         "saas/control_plane/migrations/versions/p0s000000004_runtime_provider_journal.py"
         in REQUIRED_WHEEL_PATHS
     )
+    assert (
+        "saas/control_plane/migrations/versions/p0s000000005_registration_rate_limits.py"
+        in REQUIRED_WHEEL_PATHS
+    )
 
 
 def test_notification_runtime_is_required_and_has_console_entrypoints() -> None:

@@ -12,6 +12,7 @@ from saas.scripts.check_upstream_delta import FileDelta, evaluate_delta
 def _manifest():
     return {
         "downstream_owned_prefixes": [
+            ".github/actions/compat-smoke-",
             ".github/workflows/saas-",
             "saas/",
             "sdks/saas-",

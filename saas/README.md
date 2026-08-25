@@ -40,9 +40,10 @@ self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:
 
 - anonymous registration validates a deployment-owned plan/region catalog,
-  normalizes the requested Tenant and default Space, applies an injected
-  fail-closed rate limiter, and persists preallocated product identifiers behind
-  dedicated `saas_registration` RLS policies;
+  normalizes the requested Tenant and default Space, consumes a construction-sealed
+  database-authoritative rate limit shared by every replica, and persists preallocated
+  product identifiers behind dedicated `saas_registration` RLS policies; storage
+  failure rejects registration, resend and verification before domain writes;
 - verification secrets are high-entropy, hash-only, expiring, single-generation
   credentials. Email address and raw token leave the transaction only inside an
   AES-GCM Outbox envelope bound to the immutable event ID; stale generations are
@@ -62,9 +63,9 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000004` has 109 control-plane FORCE-RLS
-  tables, including the Outbox Quarantine ledger and durable Runtime Provider
-  operation journal.
+- candidate schema revision `p0s000000005` has 111 control-plane FORCE-RLS
+  tables, including the shared public-registration abuse counters, Outbox
+  Quarantine ledger and durable Runtime Provider operation journal.
 
 The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
 the non-secret Provider type/revision/hash before any external effect, keeps old

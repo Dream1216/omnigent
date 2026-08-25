@@ -9,6 +9,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import saas.onboarding_composition as onboarding_composition
+from saas.control_plane.onboarding import (
+    RegistrationRateLimitSubjectKeyring,
+    SharedRegistrationRateLimiter,
+)
 from saas.onboarding_composition import (
     TenantOnboardingDependencies,
     verify_onboarding_database_authority,
@@ -395,6 +399,37 @@ def test_dependencies_reject_reused_postgresql_engine_before_role_checks(
 
     with pytest.raises(RuntimeError, match="separate PostgreSQL engines"):
         TenantOnboardingDependencies._require_separate_postgresql_authorities(candidate)
+
+
+def test_production_rate_limiter_is_construction_sealed_and_authority_bound() -> None:
+    sessions: sessionmaker[Session] = sessionmaker(_engine())
+    allow_all = SimpleNamespace(require=lambda **_kwargs: None)
+    candidate = SimpleNamespace(
+        registration_sessions=sessions,
+        rate_limiter=allow_all,
+    )
+
+    with pytest.raises(RuntimeError, match="construction-sealed"):
+        TenantOnboardingDependencies._require_production_rate_limiter(candidate)
+
+    candidate.rate_limiter = SharedRegistrationRateLimiter(
+        sessionmaker(_engine()),
+        subject_keyring=RegistrationRateLimitSubjectKeyring(
+            keys={"test-v1": b"r" * 32},
+            active_key_id="test-v1",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="registration authority"):
+        TenantOnboardingDependencies._require_production_rate_limiter(candidate)
+
+    candidate.rate_limiter = SharedRegistrationRateLimiter(
+        sessions,
+        subject_keyring=RegistrationRateLimitSubjectKeyring(
+            keys={"test-v1": b"r" * 32},
+            active_key_id="test-v1",
+        ),
+    )
+    TenantOnboardingDependencies._require_production_rate_limiter(candidate)
 
 
 def test_postgresql_dependencies_assert_runtime_production_readiness(

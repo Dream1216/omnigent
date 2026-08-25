@@ -29,6 +29,7 @@ from saas.control_plane.onboarding import (
     OnboardingPolicy,
     RegistrationRateLimiter,
     SelfServiceOnboardingService,
+    SharedRegistrationRateLimiter,
     TenantOnboardingCoordinator,
     VerificationEnvelopeKeyring,
 )
@@ -143,7 +144,23 @@ class TenantOnboardingDependencies:
         if self.fallback is not None and not callable(getattr(self.fallback, "publish", None)):
             raise TypeError("onboarding fallback must provide publish()")
         self._require_separate_postgresql_authorities()
+        self._require_production_rate_limiter()
         self._require_production_runtime_for_postgresql()
+
+    def _require_production_rate_limiter(self) -> None:
+        bind = _session_bind(self.registration_sessions)
+        if bind is None or bind.dialect.name != "postgresql":
+            return
+        if type(self.rate_limiter) is not SharedRegistrationRateLimiter:
+            raise RuntimeError(
+                "PostgreSQL registration rate limiter is construction-sealed; "
+                "use SharedRegistrationRateLimiter"
+            )
+        limiter = cast(SharedRegistrationRateLimiter, self.rate_limiter)
+        if not limiter.is_bound_to(self.registration_sessions):
+            raise RuntimeError(
+                "PostgreSQL registration rate limiter must use the registration authority"
+            )
 
     def _require_production_runtime_for_postgresql(self) -> None:
         binds = (

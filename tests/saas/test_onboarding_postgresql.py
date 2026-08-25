@@ -23,7 +23,9 @@ from saas.control_plane.onboarding import (
     OnboardingError,
     OnboardingPlan,
     OnboardingPolicy,
+    RegistrationRateLimitSubjectKeyring,
     SelfServiceOnboardingService,
+    SharedRegistrationRateLimiter,
     TenantOnboardingCoordinator,
     VerificationEnvelopeKeyring,
 )
@@ -57,8 +59,8 @@ _TENANT_EVENT = "onboarding.tenant.requested"
 
 
 class _AllowAllRateLimiter:
-    def require(self, *, action: str, subject_hash: str, now: datetime) -> None:
-        del action, subject_hash, now
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None:
+        del action, subject_kind, subject
 
 
 @dataclass(slots=True)
@@ -359,7 +361,7 @@ def _insert_registration_probe(
     )
 
 
-def test_onboarding_roles_and_all_109_control_plane_tables_are_force_rls(
+def test_onboarding_roles_and_all_111_control_plane_tables_are_force_rls(
     postgresql_engine: Engine,
 ) -> None:
     with postgresql_engine.begin() as connection:
@@ -387,7 +389,7 @@ def test_onboarding_roles_and_all_109_control_plane_tables_are_force_rls(
                 {"table_names": sorted(CONTROL_PLANE_RLS_TABLES)},
             ).scalars()
         )
-        assert len(CONTROL_PLANE_RLS_TABLES) == 109
+        assert len(CONTROL_PLANE_RLS_TABLES) == 111
         assert protected == CONTROL_PLANE_RLS_TABLES
 
         email_index = connection.execute(
@@ -458,6 +460,83 @@ def test_onboarding_roles_and_all_109_control_plane_tables_are_force_rls(
                 {"column": column},
             ).scalar_one()
             assert can_update is (column in allowed_dispatcher_updates)
+
+
+def test_shared_registration_rate_limiter_uses_exact_force_rls_counter(
+    postgresql_engine: Engine,
+) -> None:
+    sessions = _role_sessions(postgresql_engine, "saas_registration")
+    keyring = RegistrationRateLimitSubjectKeyring(
+        keys={"postgresql-rate-v1": b"r" * 32},
+        active_key_id="postgresql-rate-v1",
+    )
+    first = SharedRegistrationRateLimiter(sessions, subject_keyring=keyring)
+    second = SharedRegistrationRateLimiter(sessions, subject_keyring=keyring)
+    subject = f"postgresql-rate-{uuid4()}@example.test"
+    aliases = keyring.aliases(
+        action="registration.request",
+        subject_kind="email",
+        subject=subject,
+    )
+    with postgresql_engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE saas_registration_rate_limit_policies SET limit_count = 1, "
+                "window_seconds = 60, retention_seconds = 60 "
+                "WHERE action = 'registration.request' AND subject_kind = 'email'"
+            )
+        )
+
+    first.require(action="registration.request", subject_kind="email", subject=subject)
+    with pytest.raises(OnboardingError) as denied:
+        second.require(action="registration.request", subject_kind="email", subject=subject)
+    assert denied.value.code == "registration_rate_limited"
+
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_registration")
+        function_signature = (
+            "public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT has_table_privilege(current_user, "
+                    "'saas_registration_rate_limits', 'SELECT')"
+                ),
+            )
+            is False
+        )
+        assert (
+            connection.scalar(
+                sa.text("SELECT has_function_privilege(current_user, :signature, 'EXECUTE')"),
+                {"signature": function_signature},
+            )
+            is True
+        )
+
+    with postgresql_engine.begin() as connection:
+        row = (
+            connection.execute(
+                sa.text(
+                    "SELECT key_id, subject_hmac, request_count, version "
+                    "FROM saas_registration_rate_limits "
+                    "WHERE action = 'registration.request' AND subject_kind = 'email'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert (
+            row["key_id"],
+            row["subject_hmac"],
+            row["request_count"],
+            row["version"],
+        ) == (
+            "postgresql-rate-v1",
+            aliases.active_subject_hmac,
+            1,
+            2,
+        )
 
 
 @pytest.mark.parametrize("context", ["missing", "wrong"])

@@ -96,6 +96,8 @@ _SELECTED_HASH_TABLES = (
     "saas_notification_delivery_attempts",
     "saas_operation_batches",
     "saas_operation_batch_items",
+    "saas_registration_rate_limit_policies",
+    "saas_registration_rate_limits",
     "saas_self_service_registrations",
     "saas_email_verification_challenges",
     "saas_tenant_onboardings",
@@ -1963,6 +1965,71 @@ def _verify_control_plane_rls(connection: sa.Connection) -> None:
         raise PostgreSqlRestoreContractError("restored control-plane forced RLS drifted")
 
 
+def _verify_registration_rate_limit_authority(connection: sa.Connection) -> None:
+    functions = connection.execute(
+        sa.text(
+            "SELECT procedure.proname, procedure.prosecdef, procedure.proconfig, "
+            "procedure.proowner, policy_table.relowner AS policy_owner, "
+            "counter_table.relowner AS counter_owner "
+            "FROM pg_proc procedure "
+            "JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace "
+            "CROSS JOIN pg_class policy_table CROSS JOIN pg_class counter_table "
+            "WHERE namespace.nspname = 'public' "
+            "AND procedure.proname = ANY(:functions) "
+            "AND policy_table.oid = 'public.saas_registration_rate_limit_policies'::regclass "
+            "AND counter_table.oid = 'public.saas_registration_rate_limits'::regclass"
+        ),
+        {
+            "functions": [
+                "saas_consume_registration_rate_limit",
+                "saas_prune_registration_rate_limits",
+                "saas_registration_rate_limit_status",
+            ]
+        },
+    ).mappings()
+    facts = {str(row["proname"]): row for row in functions}
+    if set(facts) != {
+        "saas_consume_registration_rate_limit",
+        "saas_prune_registration_rate_limits",
+        "saas_registration_rate_limit_status",
+    } or any(
+        not bool(row["prosecdef"])
+        or int(row["proowner"]) != int(row["policy_owner"])
+        or int(row["proowner"]) != int(row["counter_owner"])
+        or "search_path=pg_catalog" not in set(row["proconfig"] or ())
+        for row in facts.values()
+    ):
+        raise PostgreSqlRestoreContractError("restored registration rate-limit authority drifted")
+    policy_names = set(
+        connection.execute(
+            sa.text(
+                "SELECT policyname FROM pg_policies WHERE schemaname = 'public' "
+                "AND policyname = ANY(:policies)"
+            ),
+            {
+                "policies": [
+                    "rls_registration_rate_limit_policies_owner",
+                    "rls_registration_rate_limits_owner",
+                    "rls_self_service_registrations_privacy_target",
+                    "rls_self_service_registrations_privacy_anonymize",
+                ]
+            },
+        ).scalars()
+    )
+    if len(policy_names) != 4:
+        raise PostgreSqlRestoreContractError("restored registration security policies drifted")
+    privacy_guard = connection.scalar(
+        sa.text(
+            "SELECT count(*) FROM pg_trigger trigger "
+            "WHERE trigger.tgrelid = 'public.saas_self_service_registrations'::regclass "
+            "AND trigger.tgname = 'trg_self_service_registration_privacy_erasure' "
+            "AND NOT trigger.tgisinternal"
+        )
+    )
+    if privacy_guard != 1:
+        raise PostgreSqlRestoreContractError("restored registration privacy guard is missing")
+
+
 def _verify_onboarding_event_chain(
     connection: sa.Connection,
     *,
@@ -2029,6 +2096,7 @@ def _verify_restored_database(
             if not official_heads:
                 raise PostgreSqlRestoreContractError("restored official migration head is missing")
             _verify_control_plane_rls(connection)
+            _verify_registration_rate_limit_authority(connection)
             verify_runtime_rls(connection)
             platform_counts = connection.execute(
                 sa.text(
@@ -2848,6 +2916,7 @@ def _verify_restored_database(
             "enterprise_scim_restore": (
                 "passed with two Tenant-isolated fact sets and one redacted receipt"
             ),
+            "registration_rate_limit_restore": "passed with owner-only function authority",
             "privacy_deletion_restore": (
                 "passed with released Legal Hold, completed 15-surface Manifest, "
                 "identity Tombstone, exact replay guard, and redacted SCIM receipt"

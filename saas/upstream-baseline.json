@@ -2,6 +2,7 @@
   "adapter_contract_version": "0.2.0",
   "audit_verified_at": "2026-08-24",
   "downstream_owned_prefixes": [
+    ".github/actions/compat-smoke-",
     ".github/workflows/saas-",
     "saas/",
     "sdks/saas-",

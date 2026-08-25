@@ -41,10 +41,23 @@ TENANT_ONBOARDING_STATUSES = (
     "manual_review",
 )
 SELF_SERVICE_EVENT_AGGREGATE_TYPES = ("registration", "tenant_onboarding")
+REGISTRATION_RATE_LIMIT_ACTIONS = (
+    "registration.request",
+    "registration.resend",
+    "registration.verify",
+)
+REGISTRATION_RATE_LIMIT_SUBJECT_KINDS = ("email", "registration")
 
 
 def _values(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
+
+
+def _lower_hex_64(column: str) -> str:
+    remainder = column
+    for value in "0123456789abcdef":
+        remainder = f"replace({remainder}, '{value}', '')"
+    return f"length({column}) = 64 AND {column} = lower({column}) AND {remainder} = ''"
 
 
 class SelfServiceRegistrationRecord(SaasBase):
@@ -84,6 +97,10 @@ class SelfServiceRegistrationRecord(SaasBase):
     onboarding_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
     idempotency_key: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    deletion_manifest_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_privacy_deletion_manifests.id", ondelete="RESTRICT"),
+        server_default=sa.text("NULL"),
+    )
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
@@ -103,6 +120,10 @@ class SelfServiceRegistrationRecord(SaasBase):
         sa.CheckConstraint("length(email_hash) = 64", name="ck_self_service_email_hash"),
         sa.CheckConstraint("length(idempotency_key) = 64", name="ck_self_service_idempotency_key"),
         sa.CheckConstraint("length(request_hash) = 64", name="ck_self_service_request_hash"),
+        sa.CheckConstraint(
+            "deletion_manifest_id IS NULL OR status = 'revoked'",
+            name="ck_self_service_registration_deletion_manifest",
+        ),
         sa.CheckConstraint(
             "length(tenant_name) BETWEEN 1 AND 256",
             name="ck_self_service_tenant_name",
@@ -183,6 +204,135 @@ class SelfServiceRegistrationRecord(SaasBase):
             postgresql_where=sa.text("status IN ('pending_verification', 'verified')"),
         ),
         sa.Index("ix_self_service_registration_expiry", "status", "expires_at"),
+    )
+
+
+class RegistrationRateLimitPolicyRecord(SaasBase):
+    """Database-owned limits, retention, and bounded counter capacity."""
+
+    __tablename__ = "saas_registration_rate_limit_policies"
+
+    action: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    subject_kind: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    limit_count: Mapped[int] = mapped_column(nullable=False)
+    window_seconds: Mapped[int] = mapped_column(nullable=False)
+    retention_seconds: Mapped[int] = mapped_column(nullable=False)
+    max_rows: Mapped[int] = mapped_column(nullable=False)
+    current_rows: Mapped[int] = mapped_column(nullable=False, default=0)
+    policy_revision: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"action IN ({_values(REGISTRATION_RATE_LIMIT_ACTIONS)})",
+            name="ck_registration_rate_limit_policy_action",
+        ),
+        sa.CheckConstraint(
+            f"subject_kind IN ({_values(REGISTRATION_RATE_LIMIT_SUBJECT_KINDS)})",
+            name="ck_registration_rate_limit_policy_subject_kind",
+        ),
+        sa.CheckConstraint(
+            "limit_count BETWEEN 1 AND 1000",
+            name="ck_registration_rate_limit_policy_limit",
+        ),
+        sa.CheckConstraint(
+            "window_seconds BETWEEN 60 AND 86400",
+            name="ck_registration_rate_limit_policy_window",
+        ),
+        sa.CheckConstraint(
+            "retention_seconds BETWEEN window_seconds AND 604800",
+            name="ck_registration_rate_limit_policy_retention",
+        ),
+        sa.CheckConstraint(
+            "max_rows BETWEEN 1 AND 10000000",
+            name="ck_registration_rate_limit_policy_max_rows",
+        ),
+        sa.CheckConstraint(
+            "current_rows BETWEEN 0 AND max_rows",
+            name="ck_registration_rate_limit_policy_current_rows",
+        ),
+        sa.CheckConstraint(
+            "length(policy_revision) BETWEEN 1 AND 128",
+            name="ck_registration_rate_limit_policy_revision",
+        ),
+    )
+
+
+class RegistrationRateLimitRecord(SaasBase):
+    """Keyed, expiring abuse counter shared by registration replicas."""
+
+    __tablename__ = "saas_registration_rate_limits"
+
+    action: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    subject_kind: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    key_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    subject_hmac: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    request_count: Mapped[int] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    policy_revision: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"action IN ({_values(REGISTRATION_RATE_LIMIT_ACTIONS)})",
+            name="ck_registration_rate_limit_action",
+        ),
+        sa.CheckConstraint(
+            f"subject_kind IN ({_values(REGISTRATION_RATE_LIMIT_SUBJECT_KINDS)})",
+            name="ck_registration_rate_limit_subject_kind",
+        ),
+        sa.CheckConstraint(
+            "length(key_id) BETWEEN 1 AND 64",
+            name="ck_registration_rate_limit_key_id",
+        ),
+        sa.CheckConstraint(
+            _lower_hex_64("subject_hmac"),
+            name="ck_registration_rate_limit_subject_hmac",
+        ),
+        sa.CheckConstraint("request_count > 0", name="ck_registration_rate_limit_count"),
+        sa.CheckConstraint(
+            "expires_at > window_started_at",
+            name="ck_registration_rate_limit_expiry",
+        ),
+        sa.CheckConstraint(
+            "length(policy_revision) BETWEEN 1 AND 128",
+            name="ck_registration_rate_limit_revision",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_registration_rate_limit_version"),
+        sa.ForeignKeyConstraint(
+            ["action", "subject_kind"],
+            [
+                "saas_registration_rate_limit_policies.action",
+                "saas_registration_rate_limit_policies.subject_kind",
+            ],
+            name="fk_registration_rate_limit_policy",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        sa.Index(
+            "ix_registration_rate_limit_expiry",
+            "action",
+            "subject_kind",
+            "expires_at",
+        ),
     )
 
 

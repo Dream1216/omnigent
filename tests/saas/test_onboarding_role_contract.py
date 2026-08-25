@@ -205,8 +205,45 @@ def test_registration_write_grants_are_column_scoped_and_minimal() -> None:
         "plan_snapshot",
         "plan_snapshot_hash",
         "onboarding_id",
+        "deletion_manifest_id",
     }
     assert immutable_registration_columns.isdisjoint(updates["saas_self_service_registrations"])
+
+
+def test_rate_limit_tables_have_zero_service_role_acl_and_exact_function_entries() -> None:
+    normalized = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
+    statements = [
+        " ".join(value.split()) for value in re.sub(r"--[^\n]*", "", ROLE_SQL).split(";")
+    ]
+    for table in (
+        "saas_registration_rate_limit_policies",
+        "saas_registration_rate_limits",
+    ):
+        for role in ("saas_registration", "saas_platform"):
+            assert any(
+                statement.startswith("REVOKE ALL PRIVILEGES ON")
+                and table in statement
+                and role in statement.split(" FROM ")[-1]
+                for statement in statements
+            )
+            assert not any(
+                statement.startswith("GRANT ")
+                and " ON " in statement
+                and table in statement.split(" ON ", 1)[1].split(" TO ", 1)[0]
+                and role in statement.split(" TO ", 1)[-1]
+                for statement in statements
+            )
+    assert (
+        "GRANT EXECUTE ON FUNCTION public.saas_consume_registration_rate_limit( "
+        "text, text, text, text, text, text, text, text ) TO saas_registration"
+    ) in normalized
+    assert (
+        "GRANT EXECUTE ON FUNCTION public.saas_prune_registration_rate_limits( "
+        "text, text, integer ) TO saas_platform"
+    ) in normalized
+    assert (
+        "GRANT EXECUTE ON FUNCTION public.saas_registration_rate_limit_status() TO saas_platform"
+    ) in normalized
 
 
 def test_onboarding_vertical_chain_write_grants_are_exact_and_exclude_runs() -> None:

@@ -47,10 +47,10 @@ ZERO_HASH = "0" * 64
 
 class _AllowAllRateLimiter:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, datetime]] = []
+        self.calls: list[tuple[str, str, str]] = []
 
-    def require(self, *, action: str, subject_hash: str, now: datetime) -> None:
-        self.calls.append((action, subject_hash, now))
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None:
+        self.calls.append((action, subject_kind, subject))
 
 
 class _RecordingEmailSender:

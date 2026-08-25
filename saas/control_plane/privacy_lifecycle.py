@@ -38,6 +38,7 @@ from saas.control_plane.enterprise_identity_models import (
 from saas.control_plane.enterprise_models import EnterpriseGroupMembershipRecord
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.onboarding_models import SelfServiceRegistrationRecord
 from saas.control_plane.platform_governed_models import (
     PlatformAdminOperationRecord,
     PlatformSupportGrantRecord,
@@ -1380,6 +1381,7 @@ class PrivacyLifecycleService:
             projection.security_version = user.security_version
             projection.source_version += 1
             projection.updated_at = changed_at
+        self._anonymize_self_service_registration(db, manifest, changed_at)
 
     def _anonymize_tenant(
         self,
@@ -1551,6 +1553,62 @@ class PrivacyLifecycleService:
         tenant.status = "pending_deletion"
         tenant.lifecycle_version += 1
         tenant.updated_at = changed_at
+        self._anonymize_self_service_registration(db, manifest, changed_at)
+
+    @staticmethod
+    def _anonymize_self_service_registration(
+        db: Session,
+        manifest: PrivacyDeletionManifestRecord,
+        changed_at: datetime,
+    ) -> None:
+        predicate = (
+            SelfServiceRegistrationRecord.user_id == manifest.target_id
+            if manifest.target_type == "global_user"
+            else SelfServiceRegistrationRecord.tenant_id == manifest.target_id
+        )
+        registration_ids = tuple(
+            db.scalars(
+                sa.select(SelfServiceRegistrationRecord.id).where(
+                    predicate,
+                    SelfServiceRegistrationRecord.deletion_manifest_id.is_(None),
+                )
+            )
+        )
+        for registration_id in registration_ids:
+            locator = sha256(f"{manifest.id}|{registration_id}|locator".encode()).hexdigest()
+            user_pseudonym = UUID(
+                hex=sha256(f"{manifest.id}|{registration_id}|user_id".encode()).hexdigest()[:32]
+            )
+            tenant_pseudonym = UUID(
+                hex=sha256(f"{manifest.id}|{registration_id}|tenant_id".encode()).hexdigest()[:32]
+            )
+            db.execute(
+                sa.update(SelfServiceRegistrationRecord)
+                .where(
+                    SelfServiceRegistrationRecord.id == registration_id,
+                    predicate,
+                    SelfServiceRegistrationRecord.deletion_manifest_id.is_(None),
+                )
+                .values(
+                    email_normalized=f"deleted-{locator}@invalid",
+                    email_hash=sha256(f"{locator}|email_hash".encode()).hexdigest(),
+                    display_name=None,
+                    tenant_name="Deleted Tenant",
+                    tenant_slug=f"deleted-{locator[:24]}",
+                    default_space_name="Deleted Space",
+                    default_space_slug=f"deleted-{locator[24:48]}",
+                    status="revoked",
+                    verified_at=None,
+                    terminal_at=changed_at,
+                    user_id=user_pseudonym,
+                    tenant_id=tenant_pseudonym,
+                    idempotency_key=sha256(f"{locator}|idempotency_key".encode()).hexdigest(),
+                    request_hash=sha256(f"{locator}|request_hash".encode()).hexdigest(),
+                    deletion_manifest_id=manifest.id,
+                    version=SelfServiceRegistrationRecord.version + 1,
+                    updated_at=changed_at,
+                )
+            )
 
     def _redact_scim_events(
         self,

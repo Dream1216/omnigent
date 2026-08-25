@@ -168,6 +168,8 @@ REVOKE ALL PRIVILEGES ON
     saas_notification_delivery_attempts,
     saas_operation_batches,
     saas_operation_batch_items,
+    saas_registration_rate_limit_policies,
+    saas_registration_rate_limits,
     saas_self_service_registrations,
     saas_email_verification_challenges,
     saas_tenant_onboardings,
@@ -627,6 +629,15 @@ GRANT UPDATE (
     email_normalized, status, accepted_by, deletion_manifest_id, version, updated_at
 )
 ON saas_membership_invitations TO saas_privacy_executor;
+GRANT SELECT (id, user_id, tenant_id, deletion_manifest_id, version)
+ON saas_self_service_registrations TO saas_privacy_executor;
+GRANT UPDATE (
+    email_normalized, email_hash, display_name, tenant_name, tenant_slug,
+    default_space_name, default_space_slug, status, verified_at, terminal_at,
+    user_id, tenant_id, idempotency_key, request_hash, deletion_manifest_id,
+    version, updated_at
+)
+ON saas_self_service_registrations TO saas_privacy_executor;
 GRANT UPDATE (name, description, status, security_version, updated_at)
 ON saas_service_accounts TO saas_privacy_executor;
 GRANT UPDATE (status, revoked_at) ON saas_api_credentials TO saas_privacy_executor;
@@ -986,6 +997,8 @@ GRANT INSERT ON saas_notification_delivery_attempts TO saas_notification_dispatc
 -- grants. Every write below is constrained to the columns emitted by the two
 -- onboarding services; state transitions cannot rewrite identity or scope.
 REVOKE ALL PRIVILEGES ON
+    saas_registration_rate_limit_policies,
+    saas_registration_rate_limits,
     saas_self_service_registrations,
     saas_email_verification_challenges,
     saas_tenant_onboardings,
@@ -1036,6 +1049,36 @@ GRANT SELECT ON
     saas_self_service_registrations,
     saas_email_verification_challenges
 TO saas_registration;
+DO $$
+BEGIN
+    IF to_regprocedure(
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.saas_consume_registration_rate_limit(
+            text, text, text, text, text, text, text, text
+        ) FROM PUBLIC, saas_registration, saas_platform;
+        GRANT EXECUTE ON FUNCTION public.saas_consume_registration_rate_limit(
+            text, text, text, text, text, text, text, text
+        ) TO saas_registration;
+    END IF;
+    IF to_regprocedure(
+        'public.saas_prune_registration_rate_limits(text,text,integer)'
+    ) IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.saas_prune_registration_rate_limits(
+            text, text, integer
+        ) FROM PUBLIC, saas_registration, saas_platform;
+        GRANT EXECUTE ON FUNCTION public.saas_prune_registration_rate_limits(
+            text, text, integer
+        ) TO saas_platform;
+    END IF;
+    IF to_regprocedure('public.saas_registration_rate_limit_status()') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.saas_registration_rate_limit_status()
+            FROM PUBLIC, saas_registration, saas_platform;
+        GRANT EXECUTE ON FUNCTION public.saas_registration_rate_limit_status()
+            TO saas_platform;
+    END IF;
+END
+$$;
 GRANT INSERT (
     id, email_normalized, email_hash, display_name, tenant_name, tenant_slug,
     default_space_name, default_space_slug, plan_key, plan_policy_revision,

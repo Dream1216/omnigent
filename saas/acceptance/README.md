@@ -1311,6 +1311,14 @@ and the actor endpoint returns `401 Requires authentication`; no PR, protected-m
 check, reviewer approval or merge exists. The comparison entry point is
 `https://github.com/Dream1216/omnigent/compare/main...codex/wave1-upstream-onboarding?expand=1`.
 
+The current uncommitted successor advances the schema contract to
+`p0s000000005` and 111 Control Plane FORCE-RLS tables by adding exact-scope,
+database-authoritative registration, resend and verification abuse counters. The
+production composition rejects AllowAll/Noop substitutes, and counter-store failure
+returns an unavailable result before onboarding domain writes. This paragraph records
+only the candidate contract and local tests; the `7441c866...` exact-SHA Push facts
+above remain historical `p0s000000004` evidence and are not promoted to this successor.
+
 The revision-bound production-admission preflight remains structurally valid but
 reports `production_readiness=blocked`, `release_decision=NO-GO`, zero of ten
 aggregate gates and zero of eight admitted evidence kinds. No real Provider/KMS,

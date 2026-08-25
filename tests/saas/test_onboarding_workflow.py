@@ -73,8 +73,8 @@ def _hash(value: str) -> str:
 
 
 class _AllowAllRateLimiter:
-    def require(self, *, action: str, subject_hash: str, now: datetime) -> None:
-        del action, subject_hash, now
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None:
+        del action, subject_kind, subject
 
 
 class _RecordingEmailSender:

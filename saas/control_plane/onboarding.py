@@ -7,6 +7,7 @@ import hmac
 import json
 import re
 import secrets
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -33,6 +34,8 @@ from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.lifecycle import normalize_email
 from saas.control_plane.onboarding_models import (
     EmailVerificationChallengeRecord,
+    RegistrationRateLimitPolicyRecord,
+    RegistrationRateLimitRecord,
     SelfServiceEventRecord,
     SelfServiceRegistrationRecord,
     TenantOnboardingRecord,
@@ -174,7 +177,418 @@ class OnboardingPolicy:
 class RegistrationRateLimiter(Protocol):
     """Shared, fail-closed rate limiter supplied by the deployment."""
 
-    def require(self, *, action: str, subject_hash: str, now: datetime) -> None: ...
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationRateLimitAliases:
+    """At most one active and one previous keyed alias for a subject."""
+
+    active_key_id: str
+    active_subject_hmac: str
+    previous_key_id: str | None
+    previous_subject_hmac: str | None
+    anchor_key_id: str
+    write_key_id: str
+
+
+class RegistrationRateLimitSubjectKeyring:
+    """Domain-separated subject HMACs with a bounded rotation overlap."""
+
+    __slots__ = (
+        "_active_key_id",
+        "_anchor_key_id",
+        "_keys",
+        "_previous_key_id",
+        "_write_key_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        keys: Mapping[str, bytes],
+        active_key_id: str,
+        previous_key_id: str | None = None,
+        anchor_key_id: str | None = None,
+        write_key_id: str | None = None,
+    ) -> None:
+        copied = dict(keys)
+        admitted_ids = {active_key_id}
+        if previous_key_id is not None:
+            admitted_ids.add(previous_key_id)
+        if (
+            not active_key_id
+            or active_key_id == previous_key_id
+            or set(copied) != admitted_ids
+            or any(
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", key_id) is None
+                for key_id in copied
+            )
+            or any(not isinstance(key, bytes) or len(key) < 32 for key in copied.values())
+        ):
+            raise ValueError("registration rate-limit subject keyring is invalid")
+        resolved_anchor = anchor_key_id or previous_key_id or active_key_id
+        resolved_write = write_key_id or resolved_anchor
+        if resolved_anchor not in admitted_ids or resolved_write not in admitted_ids:
+            raise ValueError("registration rate-limit rotation IDs are invalid")
+        self._keys = copied
+        self._active_key_id = active_key_id
+        self._previous_key_id = previous_key_id
+        self._anchor_key_id = resolved_anchor
+        self._write_key_id = resolved_write
+
+    @property
+    def active_key_id(self) -> str:
+        return self._active_key_id
+
+    @property
+    def anchor_key_id(self) -> str:
+        return self._anchor_key_id
+
+    @property
+    def write_key_id(self) -> str:
+        return self._write_key_id
+
+    def aliases(
+        self,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitAliases:
+        if not subject or len(subject) > 1024 or "\x00" in subject:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            )
+        domain = (
+            b"omnigent.registration-rate-limit.v1\x00"
+            + action.encode("utf-8")
+            + b"\x00"
+            + subject_kind.encode("utf-8")
+            + b"\x00"
+            + subject.encode("utf-8")
+        )
+
+        def digest(key_id: str) -> str:
+            return hmac.digest(self._keys[key_id], domain, "sha256").hex()
+
+        return RegistrationRateLimitAliases(
+            active_key_id=self._active_key_id,
+            active_subject_hmac=digest(self._active_key_id),
+            previous_key_id=self._previous_key_id,
+            previous_subject_hmac=(
+                digest(self._previous_key_id) if self._previous_key_id is not None else None
+            ),
+            anchor_key_id=self._anchor_key_id,
+            write_key_id=self._write_key_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationRateLimitDecision:
+    allowed: bool
+    retry_after_seconds: int
+    remaining: int
+    policy_revision: str
+
+
+_SQLITE_RATE_LIMIT_POLICIES = (
+    ("registration.request", "email", 5, 900, 86400, 1_000_000),
+    ("registration.resend", "email", 3, 900, 86400, 1_000_000),
+    ("registration.verify", "registration", 10, 900, 86400, 1_000_000),
+)
+
+
+class SharedRegistrationRateLimiter:
+    """Database-authoritative counter shared by every onboarding replica."""
+
+    __slots__ = ("_clock", "_keyring", "_sessions")
+
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        subject_keyring: RegistrationRateLimitSubjectKeyring,
+        development_clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        if not callable(session_factory) or session_factory.kw.get("bind") is None:
+            raise TypeError("registration rate limiter requires a bound Session factory")
+        if (
+            session_factory.kw["bind"].dialect.name == "postgresql"
+            and development_clock is not None
+        ):
+            raise TypeError("PostgreSQL registration rate limiter uses only the database clock")
+        self._sessions = session_factory
+        self._keyring = subject_keyring
+        self._clock = development_clock or _now
+        if session_factory.kw["bind"].dialect.name != "postgresql":
+            self._seed_sqlite_policies()
+
+    def is_bound_to(self, session_factory: sessionmaker[Session]) -> bool:
+        """Prove the limiter uses the exact registration database authority."""
+
+        return self._sessions is session_factory
+
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None:
+        """Consume one DB-owned allowance and raise only after denial commits."""
+
+        aliases = self._keyring.aliases(
+            action=action,
+            subject_kind=subject_kind,
+            subject=subject,
+        )
+        try:
+            with self._sessions.begin() as db:
+                if db.get_bind().dialect.name == "postgresql":
+                    decision = self._consume_postgresql(
+                        db,
+                        action=action,
+                        subject_kind=subject_kind,
+                        aliases=aliases,
+                    )
+                else:
+                    decision = self._consume_sqlite(
+                        db,
+                        action=action,
+                        subject_kind=subject_kind,
+                        aliases=aliases,
+                    )
+        except OnboardingError:
+            raise
+        except Exception as error:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            ) from error
+        if not decision.allowed:
+            raise OnboardingError(
+                "registration_rate_limited",
+                "registration request rate limit exceeded",
+            )
+
+    def _seed_sqlite_policies(self) -> None:
+        with self._sessions.begin() as db:
+            for (
+                action,
+                subject_kind,
+                limit_count,
+                window,
+                retention,
+                maximum,
+            ) in _SQLITE_RATE_LIMIT_POLICIES:
+                if db.get(RegistrationRateLimitPolicyRecord, (action, subject_kind)) is None:
+                    db.add(
+                        RegistrationRateLimitPolicyRecord(
+                            action=action,
+                            subject_kind=subject_kind,
+                            limit_count=limit_count,
+                            window_seconds=window,
+                            retention_seconds=retention,
+                            max_rows=maximum,
+                            current_rows=0,
+                            policy_revision="registration-rate-limit-v1",
+                        )
+                    )
+
+    @staticmethod
+    def _consume_postgresql(
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        aliases: RegistrationRateLimitAliases,
+    ) -> RegistrationRateLimitDecision:
+        row = (
+            db.execute(
+                sa.text(
+                    "SELECT allowed, retry_after_seconds, remaining, policy_revision "
+                    "FROM public.saas_consume_registration_rate_limit("
+                    ":action, :subject_kind, :active_key_id, :active_subject_hmac, "
+                    ":previous_key_id, :previous_subject_hmac, :anchor_key_id, :write_key_id)"
+                ),
+                {
+                    "action": action,
+                    "subject_kind": subject_kind,
+                    "active_key_id": aliases.active_key_id,
+                    "active_subject_hmac": aliases.active_subject_hmac,
+                    "previous_key_id": aliases.previous_key_id,
+                    "previous_subject_hmac": aliases.previous_subject_hmac,
+                    "anchor_key_id": aliases.anchor_key_id,
+                    "write_key_id": aliases.write_key_id,
+                },
+            )
+            .mappings()
+            .one()
+        )
+        return RegistrationRateLimitDecision(
+            allowed=bool(row["allowed"]),
+            retry_after_seconds=int(row["retry_after_seconds"]),
+            remaining=int(row["remaining"]),
+            policy_revision=str(row["policy_revision"]),
+        )
+
+    def _consume_sqlite(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        aliases: RegistrationRateLimitAliases,
+    ) -> RegistrationRateLimitDecision:
+        checked_at = _stored_time(self._clock())
+        policy = db.get(RegistrationRateLimitPolicyRecord, (action, subject_kind))
+        if policy is None:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            )
+        expired = list(
+            db.scalars(
+                sa.select(RegistrationRateLimitRecord)
+                .where(
+                    RegistrationRateLimitRecord.action == action,
+                    RegistrationRateLimitRecord.subject_kind == subject_kind,
+                    RegistrationRateLimitRecord.expires_at <= checked_at,
+                )
+                .order_by(RegistrationRateLimitRecord.expires_at)
+                .limit(32)
+            )
+        )
+        for record in expired:
+            db.delete(record)
+        policy.current_rows -= len(expired)
+        alias_pairs = [(aliases.active_key_id, aliases.active_subject_hmac)]
+        if aliases.previous_key_id is not None and aliases.previous_subject_hmac is not None:
+            alias_pairs.append((aliases.previous_key_id, aliases.previous_subject_hmac))
+        rows = list(
+            db.scalars(
+                sa.select(RegistrationRateLimitRecord).where(
+                    RegistrationRateLimitRecord.action == action,
+                    RegistrationRateLimitRecord.subject_kind == subject_kind,
+                    sa.tuple_(
+                        RegistrationRateLimitRecord.key_id,
+                        RegistrationRateLimitRecord.subject_hmac,
+                    ).in_(alias_pairs),
+                )
+            )
+        )
+        active_rows = [
+            row
+            for row in rows
+            if checked_at
+            < _stored_time(row.window_started_at) + timedelta(seconds=policy.window_seconds)
+        ]
+        count = sum(row.request_count for row in active_rows)
+        window_started_at = (
+            min(_stored_time(row.window_started_at) for row in active_rows)
+            if active_rows
+            else checked_at
+        )
+        allowed = count < policy.limit_count
+        saturated_count = min(policy.limit_count, count + 1)
+        write_hmac = (
+            aliases.active_subject_hmac
+            if aliases.write_key_id == aliases.active_key_id
+            else aliases.previous_subject_hmac
+        )
+        if write_hmac is None:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            )
+        write_record = next(
+            (
+                row
+                for row in rows
+                if row.key_id == aliases.write_key_id and row.subject_hmac == write_hmac
+            ),
+            None,
+        )
+        for row in rows:
+            if row is not write_record:
+                db.delete(row)
+        policy.current_rows -= len(rows) - (1 if write_record is not None else 0)
+        if write_record is None and policy.current_rows >= policy.max_rows:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            )
+        values = {
+            "window_started_at": window_started_at,
+            "request_count": saturated_count,
+            "expires_at": window_started_at + timedelta(seconds=policy.retention_seconds),
+            "policy_revision": policy.policy_revision,
+            "version": max((row.version for row in rows), default=0) + 1,
+            "updated_at": checked_at,
+        }
+        if write_record is None:
+            write_record = RegistrationRateLimitRecord(
+                action=action,
+                subject_kind=subject_kind,
+                key_id=aliases.write_key_id,
+                subject_hmac=write_hmac,
+                created_at=checked_at,
+                **values,
+            )
+            db.add(write_record)
+            policy.current_rows += 1
+        else:
+            for name, value in values.items():
+                setattr(write_record, name, value)
+        policy.updated_at = checked_at
+        retry_after = 0
+        if not allowed:
+            retry_after = max(
+                1,
+                int(
+                    (
+                        window_started_at + timedelta(seconds=policy.window_seconds) - checked_at
+                    ).total_seconds()
+                ),
+            )
+        return RegistrationRateLimitDecision(
+            allowed=allowed,
+            retry_after_seconds=retry_after,
+            remaining=max(0, policy.limit_count - saturated_count),
+            policy_revision=policy.policy_revision,
+        )
+
+
+class SharedRegistrationRateLimitJanitor:
+    """Bounded maintenance adapter for the database-owned prune function."""
+
+    __slots__ = ("_sessions",)
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        if not callable(session_factory) or session_factory.kw.get("bind") is None:
+            raise TypeError("registration rate-limit janitor requires a bound Session factory")
+        self._sessions = session_factory
+
+    def prune(self, *, action: str, subject_kind: str, batch_size: int = 256) -> int:
+        if not 1 <= batch_size <= 1000:
+            raise ValueError("registration rate-limit prune batch is invalid")
+        try:
+            with self._sessions.begin() as db:
+                return int(
+                    db.scalar(
+                        sa.text(
+                            "SELECT public.saas_prune_registration_rate_limits("
+                            ":action, :subject_kind, :batch_size)"
+                        ),
+                        {
+                            "action": action,
+                            "subject_kind": subject_kind,
+                            "batch_size": batch_size,
+                        },
+                    )
+                    or 0
+                )
+        except Exception as error:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,7 +820,9 @@ class SelfServiceOnboardingService:
         normalized_email = normalize_email(email)
         email_hash = password_email_locator_hash(normalized_email)
         self._rate_limiter.require(
-            action="registration.request", subject_hash=email_hash, now=requested_at
+            action="registration.request",
+            subject_kind="email",
+            subject=normalized_email,
         )
         cleaned_display_name = (
             _text(display_name, "display_name", 256) if display_name is not None else None
@@ -597,7 +1013,9 @@ class SelfServiceOnboardingService:
         normalized_email = normalize_email(email)
         email_hash = password_email_locator_hash(normalized_email)
         self._rate_limiter.require(
-            action="registration.resend", subject_hash=email_hash, now=attempted_at
+            action="registration.resend",
+            subject_kind="email",
+            subject=normalized_email,
         )
         scoped_key = _idempotency_key("registration-resend", registration_id, idempotency_key)
         public_expiry = attempted_at + self._policy.verification_ttl
@@ -712,8 +1130,8 @@ class SelfServiceOnboardingService:
         token_hash = _hash(_text(verification_token, "verification_token", 1024))
         self._rate_limiter.require(
             action="registration.verify",
-            subject_hash=_hash(str(registration_id)),
-            now=verified_at,
+            subject_kind="registration",
+            subject=str(registration_id),
         )
         scoped_key = _idempotency_key("registration-verify", registration_id, idempotency_key)
         failure: OnboardingError | None = None
@@ -1560,8 +1978,13 @@ __all__ = [
     "OnboardingPolicy",
     "OnboardingRequested",
     "RegistrationAccepted",
+    "RegistrationRateLimitAliases",
+    "RegistrationRateLimitDecision",
+    "RegistrationRateLimitSubjectKeyring",
     "RegistrationRateLimiter",
     "SelfServiceOnboardingService",
+    "SharedRegistrationRateLimitJanitor",
+    "SharedRegistrationRateLimiter",
     "TenantOnboardingCoordinator",
     "TenantOnboardingStarted",
     "VerificationEnvelopeKeyring",

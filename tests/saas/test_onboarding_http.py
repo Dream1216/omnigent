@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -44,8 +44,8 @@ PASSWORD = "correct-horse-battery-staple"
 
 
 class _AllowAllRateLimiter:
-    def require(self, *, action: str, subject_hash: str, now: datetime) -> None:
-        del action, subject_hash, now
+    def require(self, *, action: str, subject_kind: str, subject: str) -> None:
+        del action, subject_kind, subject
 
 
 class _RecordingEmailSender:
