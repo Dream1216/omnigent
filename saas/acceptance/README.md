@@ -1260,3 +1260,41 @@ code rollback must retain the schema, while schema reversal requires a reviewed 
 migration or approved restore. No production Provider, KMS/HSM, immutable evidence
 store, real backup estate, managed-email identity, protected image, or deletion drill was
 created. The production result therefore remains 0/10 and `NO-GO`.
+
+## 2026-08-25 Wave 1 onboarding exit-gate candidate
+
+Product candidate `66147196722e2721aa7492816d9fd279820ba967` is the pushed
+`codex/wave1-upstream-onboarding` successor of implementation commit
+`04e3a5ab43335984802f39dba5e19d36d0dfe3d7`. The successor removes only an
+outer-diff whitespace attribute that would have counted as an eleventh direct
+official path; the runtime and SaaS implementation bytes are unchanged. Exact-tree
+Upstream Delta now passes at ten direct official files, 173 net-added official
+lines, two active patches, zero forbidden files, zero reverse dependencies and a
+0.9991 isolated-code ratio. Patch Replay passes 2/2.
+
+The candidate advances the schema to `p0s000000004` and 109 Control Plane
+FORCE-RLS tables. It adds the append-only Outbox quarantine ledger, four-phase
+PostgreSQL principal/database/schema/role installation, ordinary Dispatcher and
+N-1 login catalog admission, a dedicated Runtime Provider Journal role, an
+independently committed effect fence, frozen Provider binding/region checks,
+signed receipt replay and fail-closed downgrade guards. A second PostgreSQL
+connection observes a newly acquired Journal fence before Provider execution.
+
+Local acceptance used a fresh PostgreSQL 18 suite database initialized through
+`postgresql_principals.psql` and `postgresql_database.psql`: the complete
+`tests/saas` shard passed 863 tests with 9 environment-conditioned skips and zero
+failures in 550.87 seconds. Pyrefly reported zero errors, the second full
+Pre-commit run passed, the Wheel contained 321 required SaaS artifacts, and the
+N-1 Builder suite passed 5/5. The fixed N-1 patch SHA-256 is
+`810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35` and
+its deterministic patched-tree identity is
+`git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac`.
+
+These are local code-contract facts, not protected GitHub CI or production
+evidence. The branch is pushed, but neither GitHub CLI nor the available browser
+session is authenticated, so no PR or protected-merge check exists for this
+candidate. No real Provider/KMS, anonymous deployed-browser E2E, signed OCI,
+vulnerability/license admission, one-hour Canary, N-1 production rollback,
+three-role independent approval or eight production Receipts was produced. The
+aggregate production ledger remains 0/10 ready and the release decision remains
+`NO-GO`.
