@@ -313,6 +313,23 @@ def _create_database(endpoint: PostgreSqlEndpoint, database: str) -> None:
         engine.dispose()
 
 
+def _apply_database_authority(
+    repo: Path,
+    endpoint: PostgreSqlEndpoint,
+    database: str,
+) -> None:
+    """Apply the transactional database-level authority before schema work."""
+
+    engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                (repo / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+            )
+    finally:
+        engine.dispose()
+
+
 def _drop_database(endpoint: PostgreSqlEndpoint, database: str) -> None:
     _require_database_name(database)
     engine = _admin_engine(endpoint)
@@ -3004,6 +3021,7 @@ def run_logical_restore_contract(
     try:
         _create_database(endpoint, source_database)
         created.append(source_database)
+        _apply_database_authority(repo, endpoint, source_database)
         _migrate_source(repo, endpoint, source_database)
         identifiers = _seed_source(endpoint, source_database)
         with tempfile.TemporaryDirectory(prefix="omnigent-logical-restore-") as temporary:
@@ -3022,6 +3040,7 @@ def run_logical_restore_contract(
             source_hash, source_counts = _database_digest(endpoint, source_database)
             _create_database(endpoint, target_database)
             created.append(target_database)
+            _apply_database_authority(repo, endpoint, target_database)
             restore_client = _run_pg_tool(
                 "pg_restore",
                 endpoint,
@@ -3074,6 +3093,7 @@ def run_logical_restore_contract(
             "selected_table_row_counts": target_counts,
             **restored_facts,
             "source_and_restore_database_names_were_distinct": source_database != target_database,
+            "database_authority_applied_to_source_and_restore": True,
             "temporary_databases_dropped_after_report": True,
             "not_proven": [
                 "production data backup or restore",

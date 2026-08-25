@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+import sqlalchemy as sa
 
 from saas.control_plane.onboarding import OnboardingPlan
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
@@ -11,11 +13,41 @@ from saas.production.postgresql_restore import (
     _SELECTED_HASH_TABLES,
     PostgreSqlEndpoint,
     PostgreSqlRestoreContractError,
+    _apply_database_authority,
     _canonical_json_sha256,
+    _create_database,
+    _drop_database,
     _recovery_plan_snapshot,
     _recovery_runtime_target,
     run_logical_restore_contract,
 )
+
+
+def test_disposable_restore_database_applies_database_authority_before_schema() -> None:
+    raw_url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
+    if not raw_url:
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required")
+    endpoint = PostgreSqlEndpoint.parse(raw_url)
+    database = f"omnigent_restore_authority_{uuid4().hex[:20]}"
+    _create_database(endpoint, database)
+    try:
+        _apply_database_authority(Path.cwd(), endpoint, database)
+        engine = sa.create_engine(endpoint.sqlalchemy_url(database))
+        try:
+            with engine.connect() as connection:
+                public_has_temporary = connection.exec_driver_sql(
+                    "SELECT EXISTS (SELECT 1 FROM pg_database AS database "
+                    "CROSS JOIN LATERAL aclexplode(COALESCE(database.datacl, "
+                    "acldefault('d', database.datdba))) AS privilege "
+                    "WHERE database.datname = current_database() "
+                    "AND privilege.grantee = 0 "
+                    "AND privilege.privilege_type = 'TEMPORARY')"
+                ).scalar_one()
+        finally:
+            engine.dispose()
+        assert public_has_temporary is False
+    finally:
+        _drop_database(endpoint, database)
 
 
 def test_postgresql_endpoint_requires_explicit_tcp_admin_coordinates() -> None:
