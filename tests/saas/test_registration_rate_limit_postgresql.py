@@ -258,12 +258,16 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
             assert row.prosecdef is True
             assert row.provolatile == "v"
             assert "search_path=pg_catalog" in row.proconfig
-        assert "lock_timeout=250ms" in function_rows[
-            "saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
-        ].proconfig
-        assert "lock_timeout=500ms" in function_rows[
-            "saas_prune_registration_rate_limits(text,text,integer)"
-        ].proconfig
+        assert (
+            "lock_timeout=250ms"
+            in function_rows[
+                "saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
+            ].proconfig
+        )
+        assert (
+            "lock_timeout=500ms"
+            in function_rows["saas_prune_registration_rate_limits(text,text,integer)"].proconfig
+        )
 
         for role in ("saas_registration", "saas_platform"):
             for table in table_rows:
@@ -276,13 +280,15 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
                     "REFERENCES",
                     "TRIGGER",
                 ):
-                    assert connection.scalar(
-                        sa.text(
-                            "SELECT pg_catalog.has_table_privilege("
-                            ":role, :table, :privilege)"
-                        ),
-                        {"role": role, "table": f"public.{table}", "privilege": privilege},
-                    ) is False
+                    assert (
+                        connection.scalar(
+                            sa.text(
+                                "SELECT pg_catalog.has_table_privilege(:role, :table, :privilege)"
+                            ),
+                            {"role": role, "table": f"public.{table}", "privilege": privilege},
+                        )
+                        is False
+                    )
 
         expected_function_acl = {
             _CONSUME_SIGNATURE: {"saas_registration": True, "saas_platform": False},
@@ -291,23 +297,29 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
         }
         for signature, role_expectations in expected_function_acl.items():
             for role, expected in role_expectations.items():
-                assert connection.scalar(
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT pg_catalog.has_function_privilege("
+                            ":role, :signature, 'EXECUTE')"
+                        ),
+                        {"role": role, "signature": signature},
+                    )
+                    is expected
+                )
+            assert (
+                connection.scalar(
                     sa.text(
-                        "SELECT pg_catalog.has_function_privilege("
-                        ":role, :signature, 'EXECUTE')"
+                        "SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS procedure "
+                        "CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE("
+                        "procedure.proacl, pg_catalog.acldefault('f', procedure.proowner))) AS acl "
+                        "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature) "
+                        "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
                     ),
-                    {"role": role, "signature": signature},
-                ) is expected
-            assert connection.scalar(
-                sa.text(
-                    "SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS procedure "
-                    "CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE("
-                    "procedure.proacl, pg_catalog.acldefault('f', procedure.proowner))) AS acl "
-                    "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature) "
-                    "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
-                ),
-                {"signature": signature},
-            ) == 0
+                    {"signature": signature},
+                )
+                == 0
+            )
 
     with pytest.raises(DBAPIError) as direct_counter:
         with rate_limit_postgresql_engine.begin() as connection:
@@ -329,8 +341,7 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
             connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
             connection.execute(
                 sa.text(
-                    "UPDATE public.saas_registration_rate_limit_policies "
-                    "SET limit_count = 1000"
+                    "UPDATE public.saas_registration_rate_limit_policies SET limit_count = 1000"
                 )
             )
     assert direct_policy.value.orig.sqlstate == "42501"
@@ -353,21 +364,29 @@ def test_database_clock_and_hmac_only_storage(rate_limit_postgresql_engine: Engi
     )
     with rate_limit_postgresql_engine.connect() as connection:
         after = connection.scalar(sa.text("SELECT pg_catalog.clock_timestamp()"))
-        row = connection.execute(
-            sa.text(
-                "SELECT key_id, subject_hmac, window_started_at, created_at, updated_at, "
-                "expires_at, policy_revision "
-                "FROM public.saas_registration_rate_limits"
+        row = (
+            connection.execute(
+                sa.text(
+                    "SELECT key_id, subject_hmac, window_started_at, created_at, updated_at, "
+                    "expires_at, policy_revision "
+                    "FROM public.saas_registration_rate_limits"
+                )
             )
-        ).mappings().one()
-        arguments = connection.execute(
-            sa.text(
-                "SELECT procedure.pronargs, procedure.proargnames "
-                "FROM pg_catalog.pg_proc AS procedure "
-                "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature)"
-            ),
-            {"signature": _CONSUME_SIGNATURE},
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
+        arguments = (
+            connection.execute(
+                sa.text(
+                    "SELECT procedure.pronargs, procedure.proargnames "
+                    "FROM pg_catalog.pg_proc AS procedure "
+                    "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature)"
+                ),
+                {"signature": _CONSUME_SIGNATURE},
+            )
+            .mappings()
+            .one()
+        )
 
     assert before <= row["window_started_at"] <= after
     assert before <= row["created_at"] <= after
@@ -401,9 +420,7 @@ def test_concurrent_same_subject_saturates_one_shared_quota(
     assert set(results) == {"allowed", "registration_rate_limited"}
     with rate_limit_postgresql_engine.connect() as connection:
         counter = connection.execute(
-            sa.text(
-                "SELECT request_count, version FROM public.saas_registration_rate_limits"
-            )
+            sa.text("SELECT request_count, version FROM public.saas_registration_rate_limits")
         ).one()
         current_rows = connection.scalar(
             sa.text(
@@ -488,15 +505,19 @@ def test_capacity_lock_allows_only_one_distinct_subject(
     assert results.count("allowed") == 1
     assert results.count("registration_rate_limit_unavailable") == 1
     with rate_limit_postgresql_engine.connect() as connection:
-        assert connection.scalar(
-            sa.text("SELECT count(*) FROM public.saas_registration_rate_limits")
-        ) == 1
-        assert connection.scalar(
-            sa.text(
-                "SELECT current_rows FROM public.saas_registration_rate_limit_policies "
-                "WHERE action = 'registration.request' AND subject_kind = 'email'"
+        assert (
+            connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
+            == 1
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT current_rows FROM public.saas_registration_rate_limit_policies "
+                    "WHERE action = 'registration.request' AND subject_kind = 'email'"
+                )
             )
-        ) == 1
+            == 1
+        )
 
 
 def _insert_expired_rows(engine: Engine, count: int) -> None:
@@ -547,15 +568,19 @@ def test_ttl_prune_is_bounded_and_consumption_releases_expired_capacity(
 
     assert janitor.prune(action="registration.request", subject_kind="email", batch_size=2) == 2
     with rate_limit_postgresql_engine.connect() as connection:
-        assert connection.scalar(
-            sa.text("SELECT count(*) FROM public.saas_registration_rate_limits")
-        ) == 1
-        assert connection.scalar(
-            sa.text(
-                "SELECT current_rows FROM public.saas_registration_rate_limit_policies "
-                "WHERE action = 'registration.request' AND subject_kind = 'email'"
+        assert (
+            connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
+            == 1
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT current_rows FROM public.saas_registration_rate_limit_policies "
+                    "WHERE action = 'registration.request' AND subject_kind = 'email'"
+                )
             )
-        ) == 1
+            == 1
+        )
     assert janitor.prune(action="registration.request", subject_kind="email", batch_size=1000) == 1
 
     _set_policy(rate_limit_postgresql_engine, limit_count=5, max_rows=1)
@@ -610,9 +635,10 @@ def test_policy_lock_timeout_fails_closed(rate_limit_postgresql_engine: Engine) 
     assert denied.value.code == "registration_rate_limit_unavailable"
     assert 0.15 <= elapsed < 3.0
     with rate_limit_postgresql_engine.connect() as connection:
-        assert connection.scalar(
-            sa.text("SELECT count(*) FROM public.saas_registration_rate_limits")
-        ) == 0
+        assert (
+            connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
+            == 0
+        )
 
 
 def test_dynamic_owner_policy_survives_restore_owner_change(
@@ -634,8 +660,7 @@ def test_dynamic_owner_policy_survives_restore_owner_change(
             )
             connection.exec_driver_sql(f"GRANT {quoted_owner} TO {quoted_original}")
             connection.exec_driver_sql(
-                f"ALTER TABLE public.saas_registration_rate_limit_policies "
-                f"OWNER TO {quoted_owner}"
+                f"ALTER TABLE public.saas_registration_rate_limit_policies OWNER TO {quoted_owner}"
             )
             connection.exec_driver_sql(
                 f"ALTER TABLE public.saas_registration_rate_limits OWNER TO {quoted_owner}"
@@ -688,8 +713,7 @@ def test_dynamic_owner_policy_survives_restore_owner_change(
                     f"ALTER FUNCTION {_CONSUME_SIGNATURE} OWNER TO {quoted_original}"
                 )
                 connection.exec_driver_sql(
-                    "ALTER TABLE public.saas_registration_rate_limits "
-                    f"OWNER TO {quoted_original}"
+                    f"ALTER TABLE public.saas_registration_rate_limits OWNER TO {quoted_original}"
                 )
                 connection.exec_driver_sql(
                     "ALTER TABLE public.saas_registration_rate_limit_policies "
@@ -719,50 +743,60 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
             "p0s000000005"
         )
-        assert connection.scalar(
-            sa.text(
-                "SELECT relforcerowsecurity FROM pg_catalog.pg_class "
-                "WHERE oid = 'public.saas_registration_rate_limits'::pg_catalog.regclass"
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_catalog.pg_class "
+                    "WHERE oid = 'public.saas_registration_rate_limits'::pg_catalog.regclass"
+                )
             )
-        ) is True
-        assert connection.scalar(
-            sa.text(
-                "SELECT pg_catalog.to_regprocedure(:signature) IS NOT NULL"
-            ),
-            {"signature": _CONSUME_SIGNATURE},
-        ) is True
-        assert connection.scalar(
-            sa.text(
-                "SELECT pg_catalog.count(*) FROM information_schema.columns "
-                "WHERE table_schema = 'public' "
-                "AND table_name = 'saas_self_service_registrations' "
-                "AND column_name = 'deletion_manifest_id'"
+            is True
+        )
+        assert (
+            connection.scalar(
+                sa.text("SELECT pg_catalog.to_regprocedure(:signature) IS NOT NULL"),
+                {"signature": _CONSUME_SIGNATURE},
             )
-        ) == 1
-        assert connection.scalar(
-            sa.text(
-                "SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger "
-                "WHERE tgrelid = "
-                "'public.saas_self_service_registrations'::pg_catalog.regclass "
-                "AND tgname = 'trg_self_service_registration_privacy_erasure' "
-                "AND NOT tgisinternal"
+            is True
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT pg_catalog.count(*) FROM information_schema.columns "
+                    "WHERE table_schema = 'public' "
+                    "AND table_name = 'saas_self_service_registrations' "
+                    "AND column_name = 'deletion_manifest_id'"
+                )
             )
-        ) == 1
+            == 1
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger "
+                    "WHERE tgrelid = "
+                    "'public.saas_self_service_registrations'::pg_catalog.regclass "
+                    "AND tgname = 'trg_self_service_registration_privacy_erasure' "
+                    "AND NOT tgisinternal"
+                )
+            )
+            == 1
+        )
 
     with rate_limit_postgresql_engine.begin() as connection:
         connection.execute(sa.text("DELETE FROM public.saas_registration_rate_limits"))
         connection.execute(
-            sa.text(
-                "UPDATE public.saas_registration_rate_limit_policies SET current_rows = 0"
-            )
+            sa.text("UPDATE public.saas_registration_rate_limit_policies SET current_rows = 0")
         )
         command.downgrade(_migration_config(connection), "p0s000000004")
-        assert connection.scalar(
-            sa.text(
-                "SELECT pg_catalog.to_regclass("
-                "'public.saas_registration_rate_limits') IS NULL"
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT pg_catalog.to_regclass('public.saas_registration_rate_limits') IS NULL"
+                )
             )
-        ) is True
+            is True
+        )
         command.upgrade(_migration_config(connection), "head")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
@@ -770,9 +804,10 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
             "p0s000000005"
         )
-        assert connection.scalar(
-            sa.text(
-                "SELECT pg_catalog.to_regprocedure(:signature) IS NOT NULL"
-            ),
-            {"signature": _CONSUME_SIGNATURE},
-        ) is True
+        assert (
+            connection.scalar(
+                sa.text("SELECT pg_catalog.to_regprocedure(:signature) IS NOT NULL"),
+                {"signature": _CONSUME_SIGNATURE},
+            )
+            is True
+        )
