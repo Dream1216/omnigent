@@ -1826,6 +1826,10 @@ $$;
 -- The legacy Outbox RLS predicate references these authority tables at plan
 -- time.  Grant only the named columns below and force the compatibility role
 -- to observe an empty relation even if another permissive policy is added.
+-- A logical restore produced with --no-privileges recreates functions with
+-- PostgreSQL's default PUBLIC EXECUTE. Normalize that default before the
+-- fail-closed catalog verification; any other unexpected grantee still fails.
+REVOKE EXECUTE ON FUNCTION public.saas_bridge_n1_outbox_update() FROM PUBLIC;
 DROP POLICY IF EXISTS rls_n1_compat_role_assignments_deny
 ON saas_platform_role_assignments;
 CREATE POLICY rls_n1_compat_role_assignments_deny

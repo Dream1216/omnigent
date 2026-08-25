@@ -35,9 +35,7 @@ def _roles_source() -> str:
 
 def _principals_source() -> str:
     root = Path(__file__).resolve().parents[2]
-    return (root / "saas/control_plane/postgresql_principals.sql").read_text(
-        encoding="utf-8"
-    )
+    return (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
 
 
 def _assert_secret_free_rejection(
@@ -103,6 +101,13 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
     assert "AS RESTRICTIVE FOR SELECT" in source
     assert "USING (false)" in source
     assert "FROM pg_rewrite" in source
+    public_execute_revoke = source.index(
+        "REVOKE EXECUTE ON FUNCTION public.saas_bridge_n1_outbox_update() FROM PUBLIC"
+    )
+    guard_verification = source.index(
+        "p0s3 N-1 Outbox compatibility guards are absent or disabled"
+    )
+    assert public_execute_revoke < guard_verification
     compat_grants = source[
         source.index("REVOKE ALL ON SCHEMA public FROM saas_dispatcher_n1_compat") :
     ]
