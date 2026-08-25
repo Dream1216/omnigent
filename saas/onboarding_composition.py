@@ -572,7 +572,8 @@ def verify_onboarding_database_authority(
                 ).scalar_one()
             )
             status_column_authorities = tuple(
-                connection.execute(
+                (str(row[0]), str(row[1]), str(row[2]))
+                for row in connection.execute(
                     sa.text(
                         "SELECT object.relname, attribute.attname, "
                         "privilege.privilege_type FROM pg_class AS object "
@@ -599,7 +600,8 @@ def verify_onboarding_database_authority(
                 f"('{privilege}')" for privilege in table_privileges
             )
             status_table_authorities = tuple(
-                connection.execute(
+                (str(row[0]), str(row[1]))
+                for row in connection.execute(
                     sa.text(
                         "SELECT object.relname, privilege.privilege_type "
                         "FROM pg_class AS object JOIN pg_namespace AS namespace "
@@ -616,7 +618,8 @@ def verify_onboarding_database_authority(
                 ).all()
             )
             status_sequence_authorities = tuple(
-                connection.execute(
+                (str(row[0]), str(row[1]))
+                for row in connection.execute(
                     sa.text(
                         "SELECT object.relname, privilege.privilege_type "
                         "FROM pg_class AS object JOIN pg_namespace AS namespace "

@@ -1318,7 +1318,7 @@ class TenantOnboardingCoordinator:
                 plan_snapshot=registration.plan_snapshot,
                 plan_snapshot_hash=registration.plan_snapshot_hash,
                 home_region=registration.home_region,
-                trial_days=int(registration.plan_snapshot["trial_days"]),
+                trial_days=plan.trial_days,
                 trial_started_at=None,
                 trial_ends_at=None,
                 status="tenant_created",

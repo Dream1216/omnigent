@@ -17,6 +17,7 @@ from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.billing_models import (
@@ -248,6 +249,12 @@ class _PlanTerms:
     quota_resource: str
     quota_limit: int
 
+    @staticmethod
+    def _integer(value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("plan snapshot integer is invalid")
+        return value
+
     @classmethod
     def load(cls, saga: TenantOnboardingRecord) -> _PlanTerms:
         payload = saga.plan_snapshot
@@ -261,10 +268,10 @@ class _PlanTerms:
             )
         try:
             terms = cls(
-                trial_days=int(payload.get("trial_days", saga.trial_days)),
+                trial_days=cls._integer(payload.get("trial_days", saga.trial_days)),
                 currency=str(payload.get("currency", "USD")).upper(),
-                trial_run_limit=int(payload.get("trial_run_limit", 100)),
-                trial_concurrency_limit=int(payload.get("trial_concurrency_limit", 2)),
+                trial_run_limit=cls._integer(payload.get("trial_run_limit", 100)),
+                trial_concurrency_limit=cls._integer(payload.get("trial_concurrency_limit", 2)),
                 runtime_type=str(payload.get("runtime_type", "omnigent")),
                 capacity_class=str(payload.get("capacity_class", "starter")),
                 default_project_name=str(payload.get("default_project_name", "Getting Started")),
@@ -272,7 +279,7 @@ class _PlanTerms:
                     payload.get("default_project_visibility", "private")
                 ),
                 quota_resource=str(payload.get("quota_resource", "interactive_runs")),
-                quota_limit=int(payload.get("quota_limit", 100)),
+                quota_limit=cls._integer(payload.get("quota_limit", 100)),
             )
         except (TypeError, ValueError) as error:
             raise OnboardingWorkflowError(
@@ -956,21 +963,23 @@ class TenantOnboardingWorkflow:
                     AdmissionQuotaRecord.resource == terms.quota_resource,
                 )
             )
+            if subscription is None or entitlement is None or project is None:
+                raise OnboardingWorkflowError(
+                    "activation_precondition_failed",
+                    _SAFE_ERROR_DETAILS["activation_precondition_failed"],
+                )
             valid = (
                 tenant_state is not None
                 and tenant_state.status == "provisioning"
                 and tenant_state.lifecycle_version == 1
                 and space_status == "suspended"
-                and subscription is not None
                 and subscription.status == "trialing"
-                and entitlement is not None
                 and entitlement.status == "active"
                 and partition is not None
                 and partition.status == "active"
                 and placement_status in {"active", "draining"}
                 and alias is not None
                 and alias.status == "active"
-                and project is not None
                 and project.status == "suspended"
                 and membership is not None
                 and membership.status == "active"
@@ -992,23 +1001,29 @@ class TenantOnboardingWorkflow:
             entitlement.period_start = now
             entitlement.period_end = trial_ends_at
             entitlement.version += 1
-            tenant_updated = db.execute(
-                sa.update(Tenant)
-                .where(
-                    Tenant.id == saga.tenant_id,
-                    Tenant.status == "provisioning",
-                    Tenant.lifecycle_version == 1,
-                )
-                .values(status="trial", lifecycle_version=2)
+            tenant_updated = cast(
+                CursorResult[tuple[object]],
+                db.execute(
+                    sa.update(Tenant)
+                    .where(
+                        Tenant.id == saga.tenant_id,
+                        Tenant.status == "provisioning",
+                        Tenant.lifecycle_version == 1,
+                    )
+                    .values(status="trial", lifecycle_version=2)
+                ),
             ).rowcount
-            space_updated = db.execute(
-                sa.update(Space)
-                .where(
-                    Space.id == saga.space_id,
-                    Space.tenant_id == saga.tenant_id,
-                    Space.status == "suspended",
-                )
-                .values(status="active")
+            space_updated = cast(
+                CursorResult[tuple[object]],
+                db.execute(
+                    sa.update(Space)
+                    .where(
+                        Space.id == saga.space_id,
+                        Space.tenant_id == saga.tenant_id,
+                        Space.status == "suspended",
+                    )
+                    .values(status="active")
+                ),
             ).rowcount
             self._require_exact(tenant_updated == 1 and space_updated == 1)
             project.status = "active"
