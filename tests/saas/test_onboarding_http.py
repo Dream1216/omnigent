@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from saas.control_plane.db_models import GlobalUser, SaasBase, Tenant
+from saas.control_plane.db_models import (
+    GlobalUser,
+    RuntimePlacementRecord,
+    SaasBase,
+    Tenant,
+    TenantMembership,
+)
 from saas.control_plane.http_auth import SaasCookieConfig, create_saas_http_integration
 from saas.control_plane.identity import IdentityManagementService, PasswordCredentialService
 from saas.control_plane.lifecycle import MembershipLifecycleService
@@ -24,7 +30,11 @@ from saas.control_plane.onboarding import (
     TenantOnboardingCoordinator,
     VerificationEnvelopeKeyring,
 )
-from saas.control_plane.onboarding_models import SelfServiceRegistrationRecord
+from saas.control_plane.onboarding_models import (
+    SelfServiceRegistrationRecord,
+    TenantOnboardingRecord,
+)
+from saas.control_plane.onboarding_status import OnboardingStatusService
 from saas.control_plane.outbox import OutboxDispatcher
 from saas.control_plane.resolver import RuntimeCompatibilityPolicy, SqlAlchemyContextResolver
 
@@ -128,6 +138,7 @@ def _http_harness() -> Generator[_HttpHarness, None, None]:
             trusted_origins=frozenset({TRUSTED_ORIGIN}),
         ),
         onboarding=onboarding,
+        onboarding_status=OnboardingStatusService(sessions),
     )
     app = FastAPI()
     router, prefix, tags = integration.extra_router
@@ -181,6 +192,37 @@ def _assert_secret_free(response_body: object, *, forbidden_values: tuple[str, .
     )
     serialized = str(response_body)
     assert all(secret not in serialized for secret in forbidden_values)
+
+
+def _verify_start_and_login(
+    harness: _HttpHarness, *, suffix: str
+) -> tuple[UUID, UUID, dict[str, object]]:
+    body = _registration_body(suffix)
+    requested = harness.client.post(
+        "/saas/onboarding/registrations",
+        headers=_post_headers(f"status-registration-{suffix}"),
+        json=body,
+    )
+    assert requested.status_code == 202
+    registration_id = UUID(requested.json()["registration_id"])
+    assert harness.dispatcher.dispatch_once().published == 1
+    verification_token = harness.sender.deliveries[-1][1].verification_token
+    verified = harness.client.post(
+        f"/saas/onboarding/registrations/{registration_id}/verify",
+        headers=_post_headers(f"status-verification-{suffix}"),
+        json={"verification_token": verification_token, "password": PASSWORD},
+    )
+    assert verified.status_code == 202
+    assert harness.dispatcher.dispatch_once().published == 1
+    user_id = UUID(verified.json()["user_id"])
+    onboarding_id = UUID(verified.json()["onboarding_id"])
+    login = harness.client.post(
+        "/saas/auth/login",
+        headers={"Origin": TRUSTED_ORIGIN},
+        json={"email": body["email"], "password": PASSWORD},
+    )
+    assert login.status_code == 200
+    return user_id, onboarding_id, body
 
 
 def test_only_the_three_exact_post_paths_are_public_and_origin_guarded() -> None:
@@ -434,5 +476,235 @@ def test_verification_returns_tenant_provisioning_and_enables_password_login() -
         )
         assert login_after_verification.status_code == 200
         assert login_after_verification.json()["user_id"] == verified.json()["user_id"]
+    finally:
+        harness_iterator.close()
+
+
+def test_onboarding_status_requires_cookie_auth_and_rejects_bearer_session() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        _verify_start_and_login(harness, suffix="status-cookie")
+        authenticated = harness.client.get("/saas/onboarding/status")
+        assert authenticated.status_code == 200
+        session_token = harness.client.cookies.get("saas_session")
+        assert session_token
+
+        ambiguous_bearer = harness.client.get(
+            "/saas/onboarding/status",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        assert ambiguous_bearer.status_code == 400
+
+        for authorization in (f"bearer {session_token}", "Basic dXNlcjpwYXNz", ""):
+            ambiguous = harness.client.get(
+                "/saas/onboarding/status",
+                headers={"Authorization": authorization},
+            )
+            assert ambiguous.status_code == 401
+            assert ambiguous.json()["detail"]["code"] == "authentication_required"
+            assert ambiguous.headers["Cache-Control"] == "private, no-store"
+
+        harness.client.cookies.clear()
+        unauthenticated = harness.client.get("/saas/onboarding/status")
+        assert unauthenticated.status_code == 401
+        assert unauthenticated.json()["detail"]["code"] == "authentication_required"
+        assert unauthenticated.headers["Cache-Control"] == "private, no-store"
+
+        bearer = harness.client.get(
+            "/saas/onboarding/status",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        assert bearer.status_code == 401
+        assert bearer.json()["detail"]["code"] == "authentication_required"
+        assert bearer.headers["Cache-Control"] == "private, no-store"
+    finally:
+        harness_iterator.close()
+
+
+def test_onboarding_status_is_actor_scoped_and_missing_is_uniform() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        _verify_start_and_login(harness, suffix="status-owner")
+        other_user_id = uuid4()
+        other_email = "other-status-owner@example.com"
+        with harness.sessions.begin() as db:
+            db.add(
+                GlobalUser(
+                    id=other_user_id,
+                    status="active",
+                    primary_email_normalized=other_email,
+                    security_version=1,
+                )
+            )
+        PasswordCredentialService(harness.sessions).set_password(
+            user_id=other_user_id,
+            new_password=PASSWORD,
+            idempotency_key="status-other-user-password",
+        )
+        harness.client.cookies.clear()
+        login = harness.client.post(
+            "/saas/auth/login",
+            headers={"Origin": TRUSTED_ORIGIN},
+            json={"email": other_email, "password": PASSWORD},
+        )
+        assert login.status_code == 200
+
+        unavailable = harness.client.get("/saas/onboarding/status")
+        assert unavailable.status_code == 404
+        assert unavailable.json() == {
+            "detail": {
+                "code": "onboarding_status_unavailable",
+                "message": "Onboarding status is unavailable",
+            }
+        }
+        assert unavailable.headers["Cache-Control"] == "private, no-store"
+    finally:
+        harness_iterator.close()
+
+
+def test_onboarding_status_maps_forward_stages_and_hides_ids_until_activation() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        user_id, onboarding_id, _body = _verify_start_and_login(harness, suffix="status-forward")
+        expected = (
+            ("tenant_created", "provisioning", "billing"),
+            ("billing_ready", "provisioning", "runtime"),
+            ("runtime_ready", "provisioning", "project"),
+            ("project_ready", "provisioning", "activation"),
+            ("active", "ready_for_first_run", "first_run"),
+        )
+        placement_id = uuid4()
+        for internal_status, public_state, public_stage in expected:
+            if internal_status != "tenant_created":
+                with harness.sessions.begin() as db:
+                    saga = db.get(TenantOnboardingRecord, onboarding_id)
+                    assert saga is not None and saga.user_id == user_id
+                    occurred_at = saga.last_transition_at
+                    if internal_status == "billing_ready":
+                        saga.billing_ready_at = occurred_at
+                    elif internal_status == "runtime_ready":
+                        db.add(
+                            RuntimePlacementRecord(
+                                id=placement_id,
+                                runtime_type="omnigent",
+                                data_region="cn-east-1",
+                                failure_domain="status-test-a",
+                                database_cluster_ref="status-db",
+                                object_store_ref="status-objects",
+                                kms_key_ref="status-kms",
+                                official_schema_revision="onboarding-http-test",
+                                capacity_class="starter",
+                                status="active",
+                            )
+                        )
+                        saga.runtime_placement_id = placement_id
+                        saga.runtime_target_snapshot = {"placement_id": str(placement_id)}
+                        saga.runtime_request_hash = "a" * 64
+                        saga.runtime_ready_at = occurred_at
+                    elif internal_status == "project_ready":
+                        saga.project_ready_at = occurred_at
+                    elif internal_status == "active":
+                        saga.trial_started_at = occurred_at
+                        saga.trial_ends_at = occurred_at + timedelta(days=14)
+                        saga.activated_at = occurred_at
+                    saga.status = internal_status
+                    saga.version += 1
+
+            response = harness.client.get("/saas/onboarding/status")
+            assert response.status_code == 200
+            assert response.headers["Cache-Control"] == "private, no-store"
+            payload = response.json()
+            assert (payload["state"], payload["stage"]) == (public_state, public_stage)
+            assert payload["can_start_first_run"] is (internal_status == "active")
+            assert not {"user_id", "onboarding_id", "registration_id"} & set(payload)
+            resource_keys = {"tenant_id", "space_id", "default_project_id"}
+            if internal_status == "active":
+                assert resource_keys <= set(payload)
+                assert "trial_ends_at" in payload
+            else:
+                assert not resource_keys & set(payload)
+                assert "trial_ends_at" not in payload
+
+        with harness.sessions.begin() as db:
+            saga = db.get(TenantOnboardingRecord, onboarding_id)
+            assert saga is not None
+            membership = db.get(TenantMembership, (saga.tenant_id, user_id))
+            assert membership is not None
+            membership.status = "removed"
+            membership.version += 1
+        removed = harness.client.get("/saas/onboarding/status")
+        assert removed.status_code == 404
+        assert removed.json()["detail"]["code"] == "onboarding_status_unavailable"
+    finally:
+        harness_iterator.close()
+
+
+def test_onboarding_status_failure_projection_is_secret_free_and_support_reference_is_stable() -> (
+    None
+):
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        _user_id, onboarding_id, body = _verify_start_and_login(harness, suffix="status-support")
+        provider_secret = "provider-secret-receipt-must-never-render"
+        with harness.sessions.begin() as db:
+            saga = db.get(TenantOnboardingRecord, onboarding_id)
+            assert saga is not None
+            saga.status = "compensating"
+            saga.failure_stage = "tenant_created"
+            saga.compensation_cursor = "billing"
+            saga.last_error_code = "provider_internal_failure"
+            saga.last_error_detail = provider_secret
+            saga.version += 1
+
+        recovering = harness.client.get("/saas/onboarding/status")
+        assert recovering.status_code == 200
+        assert recovering.json()["state"] == "recovering"
+        assert recovering.json()["stage"] == "compensation"
+        assert "support_reference" not in recovering.json()
+
+        with harness.sessions.begin() as db:
+            saga = db.get(TenantOnboardingRecord, onboarding_id)
+            assert saga is not None
+            saga.status = "manual_review"
+            saga.version += 1
+        manual_review = harness.client.get("/saas/onboarding/status")
+        assert manual_review.status_code == 200
+        payload = manual_review.json()
+        assert payload["state"] == "support_required"
+        assert payload["stage"] == "support"
+        reference = payload["support_reference"]
+        assert reference.startswith("ob-")
+        assert str(onboarding_id) not in reference
+        assert not {"tenant_id", "space_id", "default_project_id"} & set(payload)
+        assert set(payload) == {
+            "state",
+            "stage",
+            "version",
+            "updated_at",
+            "can_start_first_run",
+            "support_reference",
+        }
+        _assert_secret_free(
+            payload,
+            forbidden_values=(str(body["email"]), provider_secret, str(onboarding_id)),
+        )
+
+        with harness.sessions.begin() as db:
+            saga = db.get(TenantOnboardingRecord, onboarding_id)
+            assert saga is not None
+            saga.status = "compensated"
+            saga.compensation_cursor = None
+            saga.compensated_at = saga.last_transition_at
+            saga.version += 1
+        compensated = harness.client.get("/saas/onboarding/status")
+        assert compensated.status_code == 200
+        assert compensated.json()["state"] == "support_required"
+        assert compensated.json()["support_reference"] == reference
+        assert provider_secret not in compensated.text
+        assert compensated.headers["Cache-Control"] == "private, no-store"
     finally:
         harness_iterator.close()

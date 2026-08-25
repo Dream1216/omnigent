@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from saas.control_plane.lifecycle import LifecycleError
@@ -15,6 +16,16 @@ from saas.control_plane.onboarding import (
     RegistrationAccepted,
     SelfServiceOnboardingService,
 )
+from saas.control_plane.onboarding_status import (
+    OnboardingCustomerStage,
+    OnboardingCustomerState,
+    OnboardingStatusError,
+    OnboardingStatusService,
+    OnboardingStatusView,
+)
+
+if TYPE_CHECKING:
+    from saas.control_plane.http_auth import SaasAuthProvider
 
 
 class _StrictRequest(BaseModel):
@@ -64,10 +75,58 @@ class OnboardingRequestedResponse(BaseModel):
     default_project_id: UUID
 
 
-def create_onboarding_router(*, onboarding: SelfServiceOnboardingService) -> APIRouter:
+class OnboardingStatusResponse(BaseModel):
+    """Allowlisted authenticated projection of the customer's current journey."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    state: OnboardingCustomerState
+    stage: OnboardingCustomerStage
+    version: int
+    updated_at: datetime
+    can_start_first_run: bool
+    tenant_id: UUID | None = None
+    space_id: UUID | None = None
+    default_project_id: UUID | None = None
+    trial_ends_at: datetime | None = None
+    support_reference: str | None = None
+
+
+def create_onboarding_router(
+    *,
+    onboarding: SelfServiceOnboardingService,
+    onboarding_status: OnboardingStatusService,
+    auth_provider: SaasAuthProvider,
+) -> APIRouter:
     """Expose non-enumerating registration, resend, and verification routes."""
 
     router = APIRouter()
+
+    @router.get(
+        "/onboarding/status",
+        response_model=OnboardingStatusResponse,
+        response_model_exclude_none=True,
+    )
+    def current_status(request: Request, response: Response) -> OnboardingStatusResponse:
+        response.headers["Cache-Control"] = "private, no-store"
+        authorization_present = "authorization" in request.headers
+        token, source = auth_provider.extract_token(request)
+        principal = auth_provider.get_principal(request) if token and source == "cookie" else None
+        if principal is None or authorization_present:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "authentication_required", "message": "login required"},
+                headers={"Cache-Control": "private, no-store"},
+            )
+        try:
+            status = onboarding_status.for_actor(principal.session.user_id)
+        except OnboardingStatusError as error:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": error.code, "message": str(error)},
+                headers={"Cache-Control": "private, no-store"},
+            ) from error
+        return _status_payload(status)
 
     @router.post(
         "/onboarding/registrations",
@@ -160,6 +219,21 @@ def _completion_payload(value: OnboardingRequested) -> OnboardingRequestedRespon
         subscription_id=value.subscription_id,
         runtime_partition_id=value.runtime_partition_id,
         default_project_id=value.default_project_id,
+    )
+
+
+def _status_payload(value: OnboardingStatusView) -> OnboardingStatusResponse:
+    return OnboardingStatusResponse(
+        state=value.state,
+        stage=value.stage,
+        version=value.version,
+        updated_at=value.updated_at,
+        can_start_first_run=value.can_start_first_run,
+        tenant_id=value.tenant_id,
+        space_id=value.space_id,
+        default_project_id=value.default_project_id,
+        trial_ends_at=value.trial_ends_at,
+        support_reference=value.support_reference,
     )
 
 

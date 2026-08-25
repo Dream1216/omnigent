@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from types import SimpleNamespace
 from uuid import UUID
@@ -57,7 +58,7 @@ def test_worker_drains_full_batches_and_returns_shutdown_counters() -> None:
     dispatcher = _ScriptedDispatcher(
         stop,
         [
-            DispatchResult(claimed=2, published=1, failed=1),
+            DispatchResult(claimed=2, published=1, failed=1, quarantined=1),
             DispatchResult(claimed=1, published=1, failed=0),
         ],
     )
@@ -70,6 +71,7 @@ def test_worker_drains_full_batches_and_returns_shutdown_counters() -> None:
     assert stats.claimed == 3
     assert stats.published == 2
     assert stats.event_failures == 1
+    assert stats.quarantined == 1
     assert stats.infrastructure_failures == 0
 
 
@@ -91,7 +93,32 @@ def test_worker_survives_transient_dispatch_infrastructure_failure() -> None:
 
     assert dispatcher.batch_sizes == [10, 10]
     assert stats.cycles == 1
+    assert stats.quarantined == 0
     assert stats.infrastructure_failures == 1
+
+
+def test_worker_logs_content_blind_infrastructure_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stop = threading.Event()
+    dispatcher = _ScriptedDispatcher(
+        stop,
+        [RuntimeError("provider-secret-value"), DispatchResult(0, 0, 0)],
+    )
+    worker = OutboxWorker(
+        dispatcher,
+        batch_size=10,
+        idle_interval=0.001,
+        error_backoff=0.001,
+        max_error_backoff=0.002,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="saas.outbox_worker"):
+        stats = worker.run(stop)
+
+    assert stats.infrastructure_failures == 1
+    assert "Outbox dispatch cycle failed" in caplog.text
+    assert "provider-secret-value" not in caplog.text
 
 
 @pytest.mark.parametrize(

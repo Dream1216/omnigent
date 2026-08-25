@@ -37,7 +37,7 @@ from saas.control_plane.onboarding_models import (
     SelfServiceRegistrationRecord,
     TenantOnboardingRecord,
 )
-from saas.control_plane.outbox import OutboxPublisher
+from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
 from saas.control_plane.privacy_lifecycle import password_email_locator_hash
 from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
 from saas.control_plane.rls import (
@@ -1414,7 +1414,28 @@ class OnboardingOutboxPublisher:
         payload: dict[str, object],
     ) -> None:
         if event_type == _EMAIL_EVENT:
-            message = self._envelopes.open(event_id=event_id, payload=payload)
+            try:
+                message = self._envelopes.open(event_id=event_id, payload=payload)
+            except OnboardingError as error:
+                raise OutboxPublishError(
+                    error.code,
+                    retryable=False,
+                    pre_side_effect=True,
+                ) from error
+            except Exception as error:
+                raise OutboxPublishError(
+                    "verification_envelope_unavailable",
+                    retryable=True,
+                    pre_side_effect=True,
+                ) from error
+            if aggregate_type != "self_service_registration" or aggregate_key != str(
+                message.registration_id
+            ):
+                raise OutboxPublishError(
+                    "onboarding_event_invalid",
+                    retryable=False,
+                    pre_side_effect=True,
+                )
             if _stored_time(message.expires_at) <= _now():
                 self._registrations.record_email_delivery(
                     message=message,
@@ -1437,17 +1458,31 @@ class OnboardingOutboxPublisher:
                     succeeded=False,
                     error_code="delivery_unavailable",
                 )
-                raise RuntimeError("email_verification_delivery_failed") from error
+                raise OutboxPublishError(
+                    "email_verification_delivery_failed",
+                    retryable=True,
+                    pre_side_effect=False,
+                ) from error
             self._registrations.record_email_delivery(
                 message=message, succeeded=True, error_code=None
             )
             return
         if event_type == _TENANT_EVENT:
+            if aggregate_type != "tenant_onboarding" or aggregate_key != str(
+                payload.get("onboarding_id", "")
+            ):
+                raise OutboxPublishError(
+                    "onboarding_event_invalid",
+                    retryable=False,
+                    pre_side_effect=True,
+                )
             try:
                 registration_id = UUID(str(payload["registration_id"]))
             except (KeyError, TypeError, ValueError) as error:
-                raise OnboardingError(
-                    "onboarding_event_invalid", "Tenant onboarding event is invalid"
+                raise OutboxPublishError(
+                    "onboarding_event_invalid",
+                    retryable=False,
+                    pre_side_effect=True,
                 ) from error
             try:
                 self._coordinator.start(
@@ -1455,25 +1490,45 @@ class OnboardingOutboxPublisher:
                     idempotency_key=str(event_id),
                 )
             except IntegrityError as error:
-                raise RuntimeError("tenant_onboarding_integrity_conflict") from error
+                raise OutboxPublishError(
+                    "tenant_onboarding_integrity_conflict",
+                    retryable=True,
+                    pre_side_effect=True,
+                ) from error
             return
         if aggregate_type == "tenant_onboarding" and event_type in _WORKFLOW_EVENTS:
             if self._workflow is None:
-                raise OnboardingError(
+                raise OutboxPublishError(
                     "outbox_route_unavailable",
-                    "Tenant onboarding workflow is not configured",
+                    retryable=True,
+                    pre_side_effect=True,
                 )
             if aggregate_key != str(payload.get("onboarding_id", "")):
-                raise OnboardingError(
+                raise OutboxPublishError(
                     "onboarding_event_invalid",
-                    "Tenant onboarding event scope is invalid",
+                    retryable=False,
+                    pre_side_effect=True,
                 )
-            self._workflow.handle_event(event_type=event_type, payload=payload)
+            try:
+                self._workflow.handle_event(event_type=event_type, payload=payload)
+            except Exception as error:
+                code = getattr(error, "code", "onboarding_workflow_unavailable")
+                retryable = getattr(error, "retryable", True)
+                if not isinstance(code, str) or not code or len(code) > 128:
+                    code = "onboarding_workflow_unavailable"
+                if not isinstance(retryable, bool):
+                    retryable = True
+                raise OutboxPublishError(
+                    code,
+                    retryable=retryable,
+                    pre_side_effect=not retryable,
+                ) from error
             return
         if self._fallback is None:
-            raise OnboardingError(
+            raise OutboxPublishError(
                 "outbox_route_unavailable",
-                f"no Outbox route is configured for {event_type}",
+                retryable=True,
+                pre_side_effect=True,
             )
         self._fallback.publish(
             event_id=event_id,

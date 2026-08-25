@@ -36,6 +36,7 @@ from saas.control_plane import (
     RuntimePlacementRecord,
     RuntimeProjectAllocation,
     RuntimeProjectTarget,
+    RuntimeProviderBindingSnapshot,
     RuntimeResourceBindingRecord,
     SaasBase,
     SelfServiceOnboardingService,
@@ -92,6 +93,7 @@ class _FakeRuntimePartitionProvisioner:
     project_failures_remaining: int = 0
     partition_compensation_failures_remaining: int = 0
     project_compensation_failures_remaining: int = 0
+    binding_revision: str = "test-binding-v1"
     allocation_attempts: list[str] = field(default_factory=list)
     project_attempts: list[str] = field(default_factory=list)
     partition_compensation_attempts: list[str] = field(default_factory=list)
@@ -101,6 +103,13 @@ class _FakeRuntimePartitionProvisioner:
     projects: dict[str, RuntimeProjectAllocation] = field(default_factory=dict)
     compensated_partitions: set[str] = field(default_factory=set)
     compensated_projects: set[str] = field(default_factory=set)
+
+    def binding_snapshot(self, placement_id: UUID) -> RuntimeProviderBindingSnapshot:
+        return RuntimeProviderBindingSnapshot(
+            provider_type="test-runtime",
+            binding_revision=self.binding_revision,
+            binding_hash=_hash(f"{self.binding_revision}:{placement_id}"),
+        )
 
     def allocate_partition(
         self, *, target: RuntimePartitionTarget, idempotency_key: str
@@ -881,7 +890,16 @@ def test_frozen_runtime_target_survives_retry_and_placement_drain(
     frozen = _saga(harness, scope)
     assert frozen.runtime_placement_id == harness.placement_id
     assert frozen.runtime_target_snapshot is not None
+    assert frozen.runtime_target_snapshot["schema_version"] == 2
+    assert frozen.runtime_target_snapshot["provider_binding"] == {
+        "provider_type": "test-runtime",
+        "binding_revision": "test-binding-v1",
+        "binding_hash": _hash(f"test-binding-v1:{harness.placement_id}"),
+    }
     assert frozen.runtime_request_hash is not None
+
+    # A deployment rotation after the Saga freeze must not retarget retries.
+    harness.runtime.binding_revision = "test-binding-v2"
 
     replacement_id = uuid4()
     with harness.sessions.begin() as db:
@@ -912,6 +930,9 @@ def test_frozen_runtime_target_survives_retry_and_placement_drain(
         harness.placement_id,
         harness.placement_id,
     ]
+    assert [
+        target.provider_binding.binding_revision for target in harness.runtime.partition_targets
+    ] == ["test-binding-v1", "test-binding-v1"]
     with harness.sessions() as db:
         partition = db.get(RuntimePartitionRecord, frozen.runtime_partition_id)
         assert partition is not None and partition.placement_id == harness.placement_id
@@ -964,6 +985,11 @@ def test_runtime_partition_replay_match_requires_every_authoritative_field(
         failure_domain="cn-east-1a",
         official_schema_revision=_SCHEMA_REVISION,
         capacity_class="starter",
+        provider_binding=RuntimeProviderBindingSnapshot(
+            provider_type="signed-http",
+            binding_revision="runtime-binding-v1",
+            binding_hash="b" * 64,
+        ),
     )
     allocation = RuntimePartitionAllocation(
         runtime_version=_RUNTIME_VERSION,

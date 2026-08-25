@@ -118,6 +118,25 @@ class OnboardingScope:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeProviderBindingSnapshot:
+    """Non-secret Provider identity frozen before the first external effect."""
+
+    provider_type: str
+    binding_revision: str
+    binding_hash: str
+
+    def __post_init__(self) -> None:
+        if not self.provider_type.strip() or len(self.provider_type) > 128:
+            raise ValueError("Runtime Provider type is invalid")
+        if not self.binding_revision.strip() or len(self.binding_revision) > 128:
+            raise ValueError("Runtime Provider binding revision is invalid")
+        if len(self.binding_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in self.binding_hash
+        ):
+            raise ValueError("Runtime Provider binding hash is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimePartitionTarget:
     """Server-selected Placement facts passed to the official-runtime adapter."""
 
@@ -132,6 +151,7 @@ class RuntimePartitionTarget:
     failure_domain: str
     official_schema_revision: str
     capacity_class: str
+    provider_binding: RuntimeProviderBindingSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +186,8 @@ class RuntimeProjectAllocation:
 
 class RuntimePartitionProvisioner(Protocol):
     """Placement adapter; every method must deduplicate by ``idempotency_key``."""
+
+    def binding_snapshot(self, placement_id: UUID) -> RuntimeProviderBindingSnapshot: ...
 
     def allocate_partition(
         self, *, target: RuntimePartitionTarget, idempotency_key: str
@@ -1262,14 +1284,26 @@ class TenantOnboardingWorkflow:
                     "runtime_placement_unavailable",
                     "runtime Placement is unavailable",
                 )
+            try:
+                provider_binding = self._runtime.binding_snapshot(placement.id)
+            except Exception as error:
+                raise OnboardingWorkflowError(
+                    "runtime_placement_unavailable",
+                    "runtime Provider binding is unavailable",
+                ) from error
             snapshot: dict[str, object] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "placement_id": str(placement.id),
                 "runtime_type": placement.runtime_type,
                 "data_region": placement.data_region,
                 "failure_domain": placement.failure_domain,
                 "official_schema_revision": placement.official_schema_revision,
                 "capacity_class": placement.capacity_class,
+                "provider_binding": {
+                    "provider_type": provider_binding.provider_type,
+                    "binding_revision": provider_binding.binding_revision,
+                    "binding_hash": provider_binding.binding_hash,
+                },
             }
             request_hash = _digest(snapshot)
             saga.runtime_placement_id = placement.id
@@ -1345,6 +1379,7 @@ class TenantOnboardingWorkflow:
         snapshot = claim.runtime_target_snapshot
         if (
             snapshot is None
+            or snapshot.get("schema_version") != 2
             or claim.runtime_placement_id is None
             or claim.runtime_request_hash is None
             or not hmac.compare_digest(_digest(snapshot), claim.runtime_request_hash)
@@ -1354,6 +1389,7 @@ class TenantOnboardingWorkflow:
             )
         try:
             placement_id = UUID(str(snapshot["placement_id"]))
+            provider_binding_document = cast(dict[str, object], snapshot["provider_binding"])
             target = RuntimePartitionTarget(
                 onboarding_id=claim.scope.onboarding_id,
                 tenant_id=claim.scope.tenant_id,
@@ -1366,6 +1402,11 @@ class TenantOnboardingWorkflow:
                 failure_domain=str(snapshot["failure_domain"]),
                 official_schema_revision=str(snapshot["official_schema_revision"]),
                 capacity_class=str(snapshot["capacity_class"]),
+                provider_binding=RuntimeProviderBindingSnapshot(
+                    provider_type=str(provider_binding_document["provider_type"]),
+                    binding_revision=str(provider_binding_document["binding_revision"]),
+                    binding_hash=str(provider_binding_document["binding_hash"]),
+                ),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise OnboardingWorkflowError(

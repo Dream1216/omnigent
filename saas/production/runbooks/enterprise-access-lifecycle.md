@@ -20,7 +20,7 @@ cover directory synchronization or prove SSO/SCIM production readiness.
    bounded approval inboxes without widening their RLS policy. `p6a000000006` adds
    Tenant Member, per-user Space access, and invitation-expiry indexes without changing
    either lifecycle state machine.
-2. Reapply `saas/control_plane/postgresql_roles.sql` and confirm all 57 control-plane
+2. Reapply `saas/control_plane/postgresql_roles.psql` and confirm all 57 control-plane
    and 17 Runtime tables still use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
    LEVEL SECURITY`. Governance logins must remain `NOSUPERUSER NOBYPASSRLS`.
 3. Register the enterprise router only through `SaasHttpIntegration`. The routes

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -27,15 +28,22 @@ from saas.control_plane.onboarding import (
     VerificationEnvelopeKeyring,
 )
 from saas.control_plane.onboarding_http import _http_error
+from saas.control_plane.onboarding_status import (
+    OnboardingStatusError,
+    OnboardingStatusService,
+)
 from saas.control_plane.onboarding_workflow import (
     OnboardingScope,
     RuntimePartitionAllocation,
     RuntimePartitionTarget,
     RuntimeProjectAllocation,
     RuntimeProjectTarget,
+    RuntimeProviderBindingSnapshot,
     TenantOnboardingWorkflow,
 )
+from saas.control_plane.outbox import OutboxDispatcher, OutboxPublishError
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
+from saas.control_plane.runtime_provider import ProductionRuntimePartitionAdapter
 from saas.onboarding_composition import (
     CommittedRunAdmissionObserver,
     OnboardingDatabaseAuthority,
@@ -58,6 +66,14 @@ class _PostgresqlRuntime:
     placement_id: UUID
     allocation_failures_remaining: int = 0
     partition_compensations: int = 0
+
+    def binding_snapshot(self, placement_id: UUID) -> RuntimeProviderBindingSnapshot:
+        assert placement_id == self.placement_id
+        return RuntimeProviderBindingSnapshot(
+            provider_type="postgresql-test-runtime",
+            binding_revision="postgresql-test-binding-v1",
+            binding_hash=sha256(f"postgresql-binding:{placement_id}".encode()).hexdigest(),
+        )
 
     def allocate_partition(
         self, *, target: RuntimePartitionTarget, idempotency_key: str
@@ -126,6 +142,23 @@ def postgresql_engine() -> Iterator[Engine]:
         engine.dispose()
 
 
+@pytest.fixture
+def isolated_onboarding_engine(isolated_postgres_url: str) -> Iterator[Engine]:
+    """Give placement-selection tests a database with no historical candidates."""
+
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(isolated_postgres_url)
+    with engine.begin() as connection:
+        _migrate(connection, root)
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
 def _role_sessions(engine: Engine, role: str) -> sessionmaker[Session]:
     sessions = sessionmaker(engine, expire_on_commit=False)
 
@@ -138,6 +171,32 @@ def _role_sessions(engine: Engine, role: str) -> sessionmaker[Session]:
         connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
 
     return sessions
+
+
+@contextmanager
+def _production_status_service(engine: Engine) -> Iterator[OnboardingStatusService]:
+    suffix = uuid4().hex[:12]
+    login = f"onboarding_status_{suffix}"
+    password = f"Onboarding-Status-{uuid4().hex}"
+    with engine.begin() as connection:
+        quoted_login = connection.dialect.identifier_preparer.quote(login)
+        connection.exec_driver_sql(
+            f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS "
+            f"PASSWORD '{password}'"
+        )
+        connection.exec_driver_sql(f"GRANT saas_onboarding_status TO {quoted_login}")
+        connection.exec_driver_sql(f"ALTER ROLE {quoted_login} SET search_path = public")
+    status_engine = sa.create_engine(
+        engine.url.set(username=login, password=password),
+        pool_pre_ping=True,
+    )
+    try:
+        yield OnboardingStatusService(sessionmaker(status_engine, expire_on_commit=False))
+    finally:
+        status_engine.dispose()
+        with engine.begin() as connection:
+            quoted_login = connection.dialect.identifier_preparer.quote(login)
+            connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_login}")
 
 
 def _policy() -> OnboardingPolicy:
@@ -264,14 +323,18 @@ def _insert_registration_probe(
             "id, email_normalized, email_hash, display_name, tenant_name, tenant_slug, "
             "default_space_name, default_space_slug, plan_key, plan_policy_revision, "
             "home_region, status, challenge_generation, expires_at, user_id, tenant_id, "
-            "space_id, subscription_id, runtime_partition_id, onboarding_id, "
+            "space_id, subscription_id, pricing_snapshot_id, entitlement_id, "
+            "runtime_partition_id, default_project_id, runtime_binding_id, "
+            "plan_snapshot, plan_snapshot_hash, onboarding_id, "
             "idempotency_key, request_hash, version, created_at, updated_at"
             ") VALUES ("
             ":id, :email, :email_hash, 'Denied Probe', 'Denied Tenant', :tenant_slug, "
             "'Default Space', 'default', 'starter', 'starter-p0-postgresql', "
             "'cn-east-1', 'pending_verification', 1, now() + interval '30 minutes', "
-            ":user_id, :tenant_id, :space_id, :subscription_id, :partition_id, "
-            ":onboarding_id, :idempotency_key, :request_hash, 1, now(), now())"
+            ":user_id, :tenant_id, :space_id, :subscription_id, :pricing_snapshot_id, "
+            ":entitlement_id, :partition_id, :default_project_id, :runtime_binding_id, "
+            "CAST(:plan_snapshot AS jsonb), :plan_snapshot_hash, :onboarding_id, "
+            ":idempotency_key, :request_hash, 1, now(), now())"
         ),
         {
             "id": registration_id,
@@ -282,7 +345,13 @@ def _insert_registration_probe(
             "tenant_id": uuid4(),
             "space_id": uuid4(),
             "subscription_id": uuid4(),
+            "pricing_snapshot_id": uuid4(),
+            "entitlement_id": uuid4(),
             "partition_id": uuid4(),
+            "default_project_id": uuid4(),
+            "runtime_binding_id": uuid4(),
+            "plan_snapshot": '{"plan_key":"starter"}',
+            "plan_snapshot_hash": "e" * 64,
             "onboarding_id": uuid4(),
             "idempotency_key": "b" * 64,
             "request_hash": "c" * 64,
@@ -290,7 +359,7 @@ def _insert_registration_probe(
     )
 
 
-def test_onboarding_roles_and_all_107_control_plane_tables_are_force_rls(
+def test_onboarding_roles_and_all_109_control_plane_tables_are_force_rls(
     postgresql_engine: Engine,
 ) -> None:
     with postgresql_engine.begin() as connection:
@@ -298,12 +367,14 @@ def test_onboarding_roles_and_all_107_control_plane_tables_are_force_rls(
             sa.text(
                 "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
                 "rolreplication, rolbypassrls FROM pg_roles "
-                "WHERE rolname IN ('saas_registration', 'saas_onboarding') "
+                "WHERE rolname IN ("
+                "'saas_registration', 'saas_onboarding', 'saas_onboarding_status') "
                 "ORDER BY rolname"
             )
         ).all()
         assert role_facts == [
             ("saas_onboarding", False, False, False, False, False, False),
+            ("saas_onboarding_status", False, False, False, False, False, False),
             ("saas_registration", False, False, False, False, False, False),
         ]
 
@@ -316,7 +387,7 @@ def test_onboarding_roles_and_all_107_control_plane_tables_are_force_rls(
                 {"table_names": sorted(CONTROL_PLANE_RLS_TABLES)},
             ).scalars()
         )
-        assert len(CONTROL_PLANE_RLS_TABLES) == 107
+        assert len(CONTROL_PLANE_RLS_TABLES) == 109
         assert protected == CONTROL_PLANE_RLS_TABLES
 
         email_index = connection.execute(
@@ -329,6 +400,64 @@ def test_onboarding_roles_and_all_107_control_plane_tables_are_force_rls(
         assert "pending_verification" in email_index
         assert "suppressed" in email_index
         assert "verified" in email_index
+        producer_policy = connection.execute(
+            sa.text(
+                "SELECT policy.polpermissive, policy.polcmd, policy.polroles "
+                "FROM pg_policy policy JOIN pg_class relation "
+                "ON relation.oid = policy.polrelid "
+                "WHERE relation.relname = 'saas_control_plane_outbox' "
+                "AND policy.polname = 'rls_outbox_producer_initial_state'"
+            )
+        ).one()
+        assert producer_policy == (False, "a", [0])
+        assert not connection.execute(
+            sa.text(
+                "SELECT has_column_privilege('saas_app', "
+                "'saas_tenant_onboardings', 'status', 'SELECT')"
+            )
+        ).scalar_one()
+        for role in ("saas_registration", "saas_onboarding"):
+            for column in (
+                "last_error",
+                "last_error_code",
+                "last_error_digest",
+                "quarantined_at",
+            ):
+                assert not connection.execute(
+                    sa.text(
+                        "SELECT has_column_privilege(:role, "
+                        "'saas_control_plane_outbox', :column, 'INSERT')"
+                    ),
+                    {"role": role, "column": column},
+                ).scalar_one()
+        allowed_dispatcher_updates = {
+            "attempt_count",
+            "available_at",
+            "claimed_at",
+            "claim_token",
+            "last_error_code",
+            "last_error_digest",
+            "published_at",
+            "quarantined_at",
+        }
+        for column in {
+            row.column_name
+            for row in connection.execute(
+                sa.text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' "
+                    "AND table_name = 'saas_control_plane_outbox'"
+                )
+            )
+        }:
+            can_update = connection.execute(
+                sa.text(
+                    "SELECT has_column_privilege('saas_dispatcher', "
+                    "'saas_control_plane_outbox', :column, 'UPDATE')"
+                ),
+                {"column": column},
+            ).scalar_one()
+            assert can_update is (column in allowed_dispatcher_updates)
 
 
 @pytest.mark.parametrize("context", ["missing", "wrong"])
@@ -349,6 +478,42 @@ def test_registration_insert_requires_exact_server_generated_gucs(
                 connection,
                 suffix=suffix,
                 registration_id=registration_id,
+            )
+    _assert_rls_denied(denied.value)
+
+
+def test_registration_cannot_fabricate_outbox_delivery_state(
+    postgresql_engine: Engine,
+) -> None:
+    suffix = uuid4().hex[:12]
+    registration_id = uuid4()
+    with pytest.raises(DBAPIError) as denied:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_registration")
+            _set_guc(connection, "app.registration_id", registration_id)
+            _set_guc(connection, "app.registration_email_hash", "a" * 64)
+            _set_guc(connection, "app.registration_idempotency_key", "b" * 64)
+            _insert_registration_probe(
+                connection,
+                suffix=suffix,
+                registration_id=registration_id,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_control_plane_outbox ("
+                    "id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
+                    "idempotency_key, request_hash, attempt_count, available_at, "
+                    "claimed_at, claim_token, published_at) VALUES ("
+                    ":id, NULL, 'self_service_registration', :aggregate_key, "
+                    "'onboarding.email_verification.requested', CAST('{}' AS jsonb), "
+                    ":idempotency_key, :request_hash, 0, NULL, NULL, NULL, now())"
+                ),
+                {
+                    "id": uuid4(),
+                    "aggregate_key": str(registration_id),
+                    "idempotency_key": f"forged-delivery-{registration_id}",
+                    "request_hash": "d" * 64,
+                },
             )
     _assert_rls_denied(denied.value)
 
@@ -550,9 +715,393 @@ def test_real_postgresql_registration_verify_and_onboarding_e2e(
                 connection.execute(sa.text(statement), {"event_id": event_id})
 
 
-def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
+def test_real_postgresql_customer_status_is_actor_owned_and_content_blind(
     postgresql_engine: Engine,
 ) -> None:
+    now = datetime.now(timezone.utc) - timedelta(minutes=5)
+    first_scope, _ = _create_started_scope(
+        postgresql_engine,
+        suffix=f"status-a-{uuid4().hex[:8]}",
+        now=now,
+    )
+    second_scope, _ = _create_started_scope(
+        postgresql_engine,
+        suffix=f"status-b-{uuid4().hex[:8]}",
+        now=now + timedelta(seconds=1),
+    )
+    with _production_status_service(postgresql_engine) as customer_status:
+        first = customer_status.for_actor(first_scope.actor_id)
+        second = customer_status.for_actor(second_scope.actor_id)
+        assert (first.state, first.stage) == ("provisioning", "billing")
+        assert (second.state, second.stage) == ("provisioning", "billing")
+        assert first.tenant_id is None and second.tenant_id is None
+
+        with pytest.raises(OnboardingStatusError) as unavailable:
+            customer_status.for_actor(uuid4())
+        assert unavailable.value.code == "onboarding_status_unavailable"
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_onboarding_status")
+            _set_guc(connection, "app.actor_id", first_scope.actor_id)
+            visible_ids = set(
+                connection.execute(
+                    sa.text("SELECT id FROM saas_tenant_onboardings ORDER BY id")
+                ).scalars()
+            )
+            assert visible_ids == {first_scope.onboarding_id}
+            assert second_scope.onboarding_id not in visible_ids
+
+        with pytest.raises(DBAPIError) as content_denied:
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql("SET LOCAL ROLE saas_onboarding_status")
+                _set_guc(connection, "app.actor_id", first_scope.actor_id)
+                connection.execute(
+                    sa.text(
+                        "SELECT last_error_detail FROM saas_tenant_onboardings "
+                        "WHERE id = :onboarding_id"
+                    ),
+                    {"onboarding_id": first_scope.onboarding_id},
+                ).all()
+        _assert_rls_denied(content_denied.value)
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_tenant_memberships SET status = 'removed', "
+                    "version = version + 1 WHERE tenant_id = :tenant_id "
+                    "AND user_id = :user_id"
+                ),
+                {"tenant_id": first_scope.tenant_id, "user_id": first_scope.actor_id},
+            )
+        with pytest.raises(OnboardingStatusError) as removed:
+            customer_status.for_actor(first_scope.actor_id)
+        assert removed.value.code == "onboarding_status_unavailable"
+
+
+def test_real_postgresql_dispatcher_quarantines_poison_with_content_blind_receipt(
+    postgresql_engine: Engine,
+) -> None:
+    event_id = uuid4()
+    dispatched_at = datetime.now(timezone.utc)
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_control_plane_outbox ("
+                "id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
+                "idempotency_key, request_hash, attempt_count, available_at, created_at"
+                ") VALUES ("
+                ":id, NULL, 'acceptance', :aggregate_key, 'acceptance.poison', "
+                "CAST('{}' AS jsonb), :idempotency_key, :request_hash, 0, "
+                ":created_at, :created_at)"
+            ),
+            {
+                "id": event_id,
+                "aggregate_key": str(event_id),
+                "idempotency_key": f"postgres-quarantine-{event_id}",
+                "request_hash": sha256(event_id.bytes).hexdigest(),
+                "created_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+            },
+        )
+
+    class _PoisonPublisher:
+        def publish(self, **_event: object) -> None:
+            raise OutboxPublishError(
+                "acceptance_envelope_invalid",
+                retryable=False,
+                pre_side_effect=True,
+            )
+
+    result = OutboxDispatcher(
+        _role_sessions(postgresql_engine, "saas_dispatcher"),
+        _PoisonPublisher(),
+    ).dispatch_once(batch_size=1, now=dispatched_at)
+    assert (result.claimed, result.published, result.failed, result.quarantined) == (
+        1,
+        0,
+        1,
+        1,
+    )
+
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+        source = connection.execute(
+            sa.text(
+                "SELECT published_at, quarantined_at, last_error, last_error_code, "
+                "last_error_digest, available_at, claimed_at, claim_token "
+                "FROM saas_control_plane_outbox WHERE id = :id"
+            ),
+            {"id": event_id},
+        ).one()
+        receipt = connection.execute(
+            sa.text(
+                "SELECT source_event_id, source_request_hash, source_attempt_count, "
+                "action, error_code, error_digest, sequence, previous_hash, event_hash "
+                "FROM saas_outbox_quarantine_events WHERE source_event_id = :id"
+            ),
+            {"id": event_id},
+        ).one()
+        assert source.published_at is None
+        assert source.quarantined_at == dispatched_at
+        assert source.available_at is None
+        assert source.claimed_at is None
+        assert source.claim_token is None
+        assert source.last_error is None
+        assert source.last_error_code == "acceptance_envelope_invalid"
+        assert receipt.source_event_id == event_id
+        assert receipt.source_attempt_count == 1
+        assert receipt.action == "quarantined"
+        assert receipt.error_code == source.last_error_code
+        assert receipt.error_digest == source.last_error_digest
+        assert receipt.sequence == 1
+        assert receipt.previous_hash == "0" * 64
+        assert len(receipt.source_request_hash) == 64
+        assert len(receipt.event_hash) == 64
+
+    with pytest.raises(DBAPIError) as dispatcher_mutation:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_outbox_quarantine_events SET error_code = 'mutated' "
+                    "WHERE source_event_id = :id"
+                ),
+                {"id": event_id},
+            )
+    _assert_rls_denied(dispatcher_mutation.value)
+
+    with postgresql_engine.begin() as connection:
+        columns = {
+            row.attname
+            for row in connection.execute(
+                sa.text(
+                    "SELECT attribute.attname FROM pg_attribute attribute "
+                    "JOIN pg_class relation ON relation.oid = attribute.attrelid "
+                    "WHERE relation.relname = 'saas_outbox_quarantine_events' "
+                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped"
+                )
+            )
+        }
+        assert "payload" not in columns
+        assert "aggregate_key" not in columns
+
+
+def test_real_postgresql_dispatcher_cannot_forge_or_skip_quarantine_receipt(
+    postgresql_engine: Engine,
+) -> None:
+    direct_id, forged_id = uuid4(), uuid4()
+    future = datetime.now(timezone.utc) + timedelta(days=365)
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        for event_id in (direct_id, forged_id):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_control_plane_outbox ("
+                    "id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
+                    "idempotency_key, request_hash, attempt_count, available_at"
+                    ") VALUES ("
+                    ":id, NULL, 'acceptance', :aggregate_key, 'acceptance.future', "
+                    "CAST('{}' AS jsonb), :idempotency_key, :request_hash, 0, :future)"
+                ),
+                {
+                    "id": event_id,
+                    "aggregate_key": str(event_id),
+                    "idempotency_key": f"postgres-quarantine-negative-{event_id}",
+                    "request_hash": sha256(event_id.bytes).hexdigest(),
+                    "future": future,
+                },
+            )
+
+    with pytest.raises(DBAPIError) as immutable_source:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_control_plane_outbox SET payload = CAST(:payload AS jsonb) "
+                    "WHERE id = :id"
+                ),
+                {"id": direct_id, "payload": '{"x":1}'},
+            )
+    _assert_rls_denied(immutable_source.value)
+
+    terminal_at = datetime.now(timezone.utc)
+    terminal_digest = sha256(b"direct terminal without receipt").hexdigest()
+    with pytest.raises(DBAPIError, match="requires one exact receipt") as missing_receipt:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_control_plane_outbox SET attempt_count = 1, "
+                    "available_at = NULL, last_error_code = 'acceptance_invalid', "
+                    "last_error_digest = :digest, quarantined_at = :terminal_at "
+                    "WHERE id = :id"
+                ),
+                {"id": direct_id, "digest": terminal_digest, "terminal_at": terminal_at},
+            )
+    assert getattr(missing_receipt.value.orig, "sqlstate", None) == "23514"
+
+    forged_at = terminal_at + timedelta(seconds=1)
+    forged_digest = sha256(b"forged mismatched receipt").hexdigest()
+    with pytest.raises(DBAPIError) as forged_receipt:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_control_plane_outbox SET attempt_count = 1, "
+                    "available_at = NULL, last_error_code = 'acceptance_invalid', "
+                    "last_error_digest = :digest, quarantined_at = :terminal_at "
+                    "WHERE id = :id"
+                ),
+                {"id": forged_id, "digest": forged_digest, "terminal_at": forged_at},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_outbox_quarantine_events ("
+                    "id, source_event_id, tenant_id, source_request_hash, "
+                    "source_attempt_count, action, error_code, error_digest, sequence, "
+                    "previous_hash, event_hash, created_at) VALUES ("
+                    ":receipt_id, :source_id, NULL, :request_hash, 2, 'quarantined', "
+                    "'acceptance_invalid', :digest, 1, :previous_hash, :event_hash, "
+                    ":terminal_at)"
+                ),
+                {
+                    "receipt_id": uuid4(),
+                    "source_id": forged_id,
+                    "request_hash": sha256(forged_id.bytes).hexdigest(),
+                    "digest": forged_digest,
+                    "previous_hash": "0" * 64,
+                    "event_hash": sha256(b"forged receipt").hexdigest(),
+                    "terminal_at": forged_at,
+                },
+            )
+    _assert_rls_denied(forged_receipt.value)
+
+
+def test_real_postgresql_quarantine_receipt_cannot_create_pg_temp_shadow(
+    postgresql_engine: Engine,
+) -> None:
+    event_id = uuid4()
+    terminal_at = datetime.now(timezone.utc)
+    request_hash = sha256(event_id.bytes).hexdigest()
+    terminal_digest = sha256(b"pg-temp-shadow-receipt").hexdigest()
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_control_plane_outbox ("
+                "id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
+                "idempotency_key, request_hash, attempt_count, available_at"
+                ") VALUES ("
+                ":id, NULL, 'acceptance', :aggregate_key, 'acceptance.temp_shadow', "
+                "CAST('{}' AS jsonb), :idempotency_key, :request_hash, 0, NULL)"
+            ),
+            {
+                "id": event_id,
+                "aggregate_key": str(event_id),
+                "idempotency_key": f"postgres-quarantine-shadow-{event_id}",
+                "request_hash": request_hash,
+            },
+        )
+
+    with pytest.raises(
+        DBAPIError, match="permission denied to create temporary tables"
+    ) as rejected:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.exec_driver_sql(
+                "CREATE TEMP TABLE saas_outbox_quarantine_events ("
+                "source_event_id uuid, tenant_id uuid, source_request_hash varchar(64), "
+                "source_attempt_count integer, action varchar(32), error_code varchar(128), "
+                "error_digest varchar(64), sequence bigint, previous_hash varchar(64), "
+                "created_at timestamptz) ON COMMIT DROP"
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO pg_temp.saas_outbox_quarantine_events VALUES ("
+                    ":source_event_id, NULL, :request_hash, 1, 'quarantined', "
+                    "'acceptance_invalid', :error_digest, 1, :previous_hash, :created_at)"
+                ),
+                {
+                    "source_event_id": event_id,
+                    "request_hash": request_hash,
+                    "error_digest": terminal_digest,
+                    "previous_hash": "0" * 64,
+                    "created_at": terminal_at,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE public.saas_control_plane_outbox SET attempt_count = 1, "
+                    "last_error_code = 'acceptance_invalid', "
+                    "last_error_digest = :digest, quarantined_at = :terminal_at "
+                    "WHERE id = :id"
+                ),
+                {"id": event_id, "digest": terminal_digest, "terminal_at": terminal_at},
+            )
+    assert getattr(rejected.value.orig, "sqlstate", None) == "42501"
+
+
+@pytest.mark.parametrize(
+    ("retained_column", "retained_value"),
+    (
+        ("available_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ("claimed_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ("claim_token", uuid4()),
+    ),
+)
+def test_real_postgresql_quarantine_rejects_retained_dispatch_state(
+    postgresql_engine: Engine,
+    retained_column: str,
+    retained_value: object,
+) -> None:
+    event_id = uuid4()
+    terminal_at = datetime.now(timezone.utc)
+    terminal_digest = sha256(f"terminal-{retained_column}".encode()).hexdigest()
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_control_plane_outbox ("
+                "id, tenant_id, aggregate_type, aggregate_key, event_type, payload, "
+                "idempotency_key, request_hash, attempt_count, available_at"
+                ") VALUES ("
+                ":id, NULL, 'acceptance', :aggregate_key, 'acceptance.quarantine_state', "
+                "CAST('{}' AS jsonb), :idempotency_key, :request_hash, 0, NULL)"
+            ),
+            {
+                "id": event_id,
+                "aggregate_key": str(event_id),
+                "idempotency_key": f"postgres-quarantine-state-{event_id}",
+                "request_hash": sha256(event_id.bytes).hexdigest(),
+            },
+        )
+
+    statement = sa.text(
+        "UPDATE saas_control_plane_outbox SET attempt_count = 1, "
+        "last_error_code = 'acceptance_invalid', last_error_digest = :digest, "
+        f"quarantined_at = :terminal_at, {retained_column} = :retained_value "
+        "WHERE id = :id"
+    )
+    with pytest.raises(DBAPIError, match="ck_outbox_quarantine_dispatch_clear") as rejected:
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_dispatcher")
+            connection.execute(
+                statement,
+                {
+                    "id": event_id,
+                    "digest": terminal_digest,
+                    "terminal_at": terminal_at,
+                    "retained_value": retained_value,
+                },
+            )
+    assert getattr(rejected.value.orig, "sqlstate", None) == "23514"
+
+
+def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
+    isolated_onboarding_engine: Engine,
+) -> None:
+    postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
     # Keep synthetic stage timestamps behind PostgreSQL's wall clock.  This
     # preserves the causal activated_at <= Run.created_at <= completed_at
@@ -746,8 +1295,9 @@ def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
 
 
 def test_real_postgresql_runtime_failure_compensates_exact_scope(
-    postgresql_engine: Engine,
+    isolated_onboarding_engine: Engine,
 ) -> None:
+    postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
     now = datetime.now(timezone.utc)
     scope, onboarding_sessions = _create_started_scope(
@@ -818,8 +1368,9 @@ def test_real_postgresql_runtime_failure_compensates_exact_scope(
 
 
 def test_real_postgresql_runtime_partition_is_bound_to_frozen_placement(
-    postgresql_engine: Engine,
+    isolated_onboarding_engine: Engine,
 ) -> None:
+    postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
     now = datetime.now(timezone.utc)
     scope, onboarding_sessions = _create_started_scope(
@@ -942,7 +1493,7 @@ def test_real_postgresql_runtime_partition_is_bound_to_frozen_placement(
     )
 
 
-def test_production_composition_requires_three_exact_login_authorities(
+def test_production_composition_requires_four_exact_login_authorities_and_sealed_runtime(
     postgresql_engine: Engine,
 ) -> None:
     suffix = uuid4().hex[:12]
@@ -951,6 +1502,7 @@ def test_production_composition_requires_three_exact_login_authorities(
         "registration": "saas_registration",
         "onboarding": "saas_onboarding",
         "execution": "saas_executor",
+        "status": "saas_onboarding_status",
     }
     login_by_authority = {
         authority: f"onboarding_{authority}_{suffix}" for authority in role_by_authority
@@ -965,7 +1517,8 @@ def test_production_composition_requires_three_exact_login_authorities(
                 login = login_by_authority[authority]
                 quoted_login = quote(login)
                 connection.exec_driver_sql(
-                    f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS "
+                    f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                    f"NOCREATEROLE NOREPLICATION NOBYPASSRLS "
                     f"PASSWORD '{password}'"
                 )
                 created_logins.append(login)
@@ -980,21 +1533,103 @@ def test_production_composition_requires_three_exact_login_authorities(
             login_engines[authority] = engine
             verify_onboarding_database_authority(engine, authority=authority)
 
-        TenantOnboardingDependencies(
-            registration_sessions=sessionmaker(
-                login_engines["registration"], expire_on_commit=False
-            ),
-            onboarding_sessions=sessionmaker(login_engines["onboarding"], expire_on_commit=False),
-            execution_sessions=sessionmaker(login_engines["execution"], expire_on_commit=False),
-            policy=_policy(),
-            envelopes=VerificationEnvelopeKeyring(
-                active_key_id=f"authority-{suffix}",
-                keys={f"authority-{suffix}": b"a" * 32},
-            ),
-            rate_limiter=_AllowAllRateLimiter(),
-            email_sender=_DiscardingEmailSender(),
-            runtime=_PostgresqlRuntime(uuid4()),
-        )
+        # A grant option on an already-allowed column does not change the
+        # effective projection returned by has_column_privilege().  The verifier
+        # must inspect the underlying ACL and reject the delegation authority.
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT SELECT (status) ON saas_tenant_onboardings "
+                "TO saas_onboarding_status WITH GRANT OPTION"
+            )
+        try:
+            login_engines["status"].dispose()
+            with pytest.raises(RuntimeError, match=r"grant options.*default ACLs"):
+                verify_onboarding_database_authority(login_engines["status"], authority="status")
+        finally:
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "REVOKE GRANT OPTION FOR SELECT (status) "
+                    "ON saas_tenant_onboardings FROM saas_onboarding_status CASCADE"
+                )
+        verify_onboarding_database_authority(login_engines["status"], authority="status")
+
+        # Default ACLs can silently widen future tables even when every current
+        # object still matches the allowlist.
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES "
+                "TO saas_onboarding_status"
+            )
+        try:
+            login_engines["status"].dispose()
+            with pytest.raises(RuntimeError, match=r"grant options.*default ACLs"):
+                verify_onboarding_database_authority(login_engines["status"], authority="status")
+        finally:
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES "
+                    "FROM saas_onboarding_status"
+                )
+        verify_onboarding_database_authority(login_engines["status"], authority="status")
+
+        with postgresql_engine.connect() as connection:
+            server_version_num = int(
+                connection.execute(
+                    sa.text("SELECT current_setting('server_version_num')::integer")
+                ).scalar_one()
+            )
+        if server_version_num >= 170000:
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "GRANT MAINTAIN ON saas_tenant_onboardings TO saas_onboarding_status"
+                )
+            try:
+                login_engines["status"].dispose()
+                with pytest.raises(RuntimeError, match="exact read-only projection"):
+                    verify_onboarding_database_authority(
+                        login_engines["status"], authority="status"
+                    )
+            finally:
+                with postgresql_engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        "REVOKE MAINTAIN ON saas_tenant_onboardings FROM saas_onboarding_status"
+                    )
+            verify_onboarding_database_authority(login_engines["status"], authority="status")
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT SELECT (last_error_detail) ON saas_tenant_onboardings "
+                "TO saas_onboarding_status"
+            )
+        login_engines["status"].dispose()
+        with pytest.raises(RuntimeError, match="exact read-only projection"):
+            verify_onboarding_database_authority(login_engines["status"], authority="status")
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE SELECT (last_error_detail) ON saas_tenant_onboardings "
+                "FROM saas_onboarding_status"
+            )
+
+        with pytest.raises(RuntimeError, match="construction-sealed"):
+            TenantOnboardingDependencies(
+                registration_sessions=sessionmaker(
+                    login_engines["registration"], expire_on_commit=False
+                ),
+                onboarding_sessions=sessionmaker(
+                    login_engines["onboarding"], expire_on_commit=False
+                ),
+                execution_sessions=sessionmaker(
+                    login_engines["execution"], expire_on_commit=False
+                ),
+                policy=_policy(),
+                envelopes=VerificationEnvelopeKeyring(
+                    active_key_id=f"authority-{suffix}",
+                    keys={f"authority-{suffix}": b"a" * 32},
+                ),
+                rate_limiter=_AllowAllRateLimiter(),
+                email_sender=_DiscardingEmailSender(),
+                runtime=object.__new__(ProductionRuntimePartitionAdapter),
+            )
 
         registration_login = login_by_authority["registration"]
         with postgresql_engine.begin() as connection:

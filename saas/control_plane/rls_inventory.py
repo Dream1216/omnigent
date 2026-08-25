@@ -24,6 +24,7 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_runtime_identity_aliases",
         "saas_runtime_resource_bindings",
         "saas_runtime_binding_sagas",
+        "saas_runtime_provider_operation_journal",
         "saas_ownership_transfers",
         "saas_member_removal_preflights",
         "saas_service_accounts",
@@ -40,6 +41,7 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_enterprise_scim_groups",
         "saas_enterprise_scim_events",
         "saas_control_plane_outbox",
+        "saas_outbox_quarantine_events",
         "saas_tasks",
         "saas_execution_sessions",
         "saas_session_tasks",
@@ -114,5 +116,5 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 107:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 107 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 109:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 109 tables")

@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-10.p1-notify-ops"
+POLICY_VERSION: Final = "2026-08-25.p1-onboarding-ops"
 
 
 class PermissionScope(StrEnum):
@@ -268,6 +268,37 @@ _DEFINITIONS = (
         api_surfaces=("GET /v2/platform-admin/operations",),
         ui_surface="operations",
         audit_event="platform.operations.read",
+    ),
+    _permission(
+        "platform.onboarding.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=(
+            "GET /v2/platform-admin/onboardings",
+            "GET /v2/platform-admin/onboardings/{id}",
+            "GET /v2/platform-admin/onboardings/{id}/operation-preview",
+        ),
+        ui_surface="onboarding-operations",
+        audit_event="platform.onboarding.read",
+    ),
+    _permission(
+        "platform.onboarding.reconcile",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("POST /v2/platform-admin/onboardings/{id}/operations",),
+        ui_surface="onboarding-operations",
+        audit_event="platform.onboarding.reconcile_requested",
+    ),
+    _permission(
+        "platform.onboarding.compensate",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        approval_required=True,
+        api_surfaces=("POST /v2/platform-admin/onboardings/{id}/operations",),
+        ui_surface="onboarding-operations",
+        audit_event="platform.onboarding.compensation_requested",
     ),
     _permission(
         "platform.operation.approve",
@@ -597,6 +628,9 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.read",
                 "platform.identity_conflict.manage",
                 "platform.operations.read",
+                "platform.onboarding.read",
+                "platform.onboarding.reconcile",
+                "platform.onboarding.compensate",
                 "platform.operation.approve",
                 "platform.notification.read",
                 "platform.notification.replay",
@@ -621,6 +655,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.identity_conflict.read",
                 "platform.support.read",
                 "platform.operations.read",
+                "platform.onboarding.read",
                 "platform.notification.read",
                 "platform.security.read",
                 "platform.audit.read",
@@ -638,6 +673,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.support.request",
                 "platform.break_glass.request",
                 "platform.operations.read",
+                "platform.onboarding.read",
                 "platform.notification.read",
             }
         ),

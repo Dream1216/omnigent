@@ -37,22 +37,52 @@ _NEW_TABLES = (
 )
 
 
-def _ensure_postgresql_roles() -> None:
-    """Create the two non-login capability roles before role-targeted policies."""
+def _preflight_postgresql_principals() -> None:
+    """Require operator-owned principals without granting Alembic CREATEROLE."""
 
-    op.execute(
-        "DO $$ BEGIN "
-        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_registration') THEN "
-        "CREATE ROLE saas_registration NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION NOBYPASSRLS; END IF; "
-        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_onboarding') THEN "
-        "CREATE ROLE saas_onboarding NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION NOBYPASSRLS; END IF; "
-        "ALTER ROLE saas_registration NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION NOBYPASSRLS; "
-        "ALTER ROLE saas_onboarding NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION NOBYPASSRLS; END $$"
-    )
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    rows = {
+        str(row["rolname"]): row
+        for row in bind.execute(
+            sa.text(
+                "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                "rolreplication, rolbypassrls, rolinherit, rolconnlimit, rolconfig "
+                "FROM pg_roles "
+                "WHERE rolname IN ('saas_registration', 'saas_onboarding')"
+            )
+        ).mappings()
+    }
+    unsafe = []
+    for role_name in ("saas_registration", "saas_onboarding"):
+        row = rows.get(role_name)
+        if row is None or (
+            bool(row["rolcanlogin"]),
+            bool(row["rolsuper"]),
+            bool(row["rolcreatedb"]),
+            bool(row["rolcreaterole"]),
+            bool(row["rolreplication"]),
+            bool(row["rolbypassrls"]),
+            bool(row["rolinherit"]),
+            int(row["rolconnlimit"]),
+            row["rolconfig"] is None,
+        ) != (False, False, False, False, False, False, True, -1, True):
+            unsafe.append(role_name)
+    outgoing_memberships = bind.execute(
+        sa.text(
+            "SELECT count(*) FROM pg_auth_members AS membership "
+            "JOIN pg_roles AS member ON member.oid = membership.member "
+            "WHERE member.rolname IN ('saas_registration', 'saas_onboarding')"
+        )
+    ).scalar_one()
+    if outgoing_memberships:
+        unsafe.append("fixed membership graph")
+    if unsafe:
+        raise RuntimeError(
+            "cannot apply p0s000000001: PostgreSQL principal preflight rejected; "
+            "run postgresql_principals.psql before Alembic"
+        )
 
 
 def _replace_authority_checks(*, include_onboarding: bool) -> None:
@@ -946,7 +976,6 @@ def _install_immutable_event_trigger() -> None:
 def _install_postgresql_authority() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
-    _ensure_postgresql_roles()
     for table in _NEW_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
@@ -1074,6 +1103,7 @@ def _drop_tables() -> None:
 def upgrade() -> None:
     """Create hash-only verification credentials and a staged onboarding Saga."""
 
+    _preflight_postgresql_principals()
     _replace_authority_checks(include_onboarding=True)
     _create_registration_table()
     _create_challenge_table()

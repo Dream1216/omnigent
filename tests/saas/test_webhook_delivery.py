@@ -505,9 +505,11 @@ def _role_factory(
     return factory
 
 
-def test_real_postgresql_webhook_forced_rls_dispatcher_role_and_immutable_fact() -> None:
+def test_real_postgresql_webhook_forced_rls_dispatcher_role_and_immutable_fact(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=0)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     actor_id, tenant_a, tenant_b = uuid4(), uuid4(), uuid4()
     try:
         with engine.begin() as connection:

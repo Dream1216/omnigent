@@ -304,6 +304,12 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
 
         owner_engine = sa.create_engine(database_url, pool_pre_ping=True)
         with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
+            )
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+            )
             _migrate(connection, root)
             role_authority_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(
                 encoding="utf-8"
@@ -315,7 +321,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 connection.execute(
                     sa.text("SELECT version_num FROM saas_alembic_version")
                 ).scalar_one()
-                == "pc5a00000005"
+                == "p0s000000004"
             )
             connection.exec_driver_sql(
                 f'CREATE ROLE "{dispatcher_login_role}" LOGIN PASSWORD '

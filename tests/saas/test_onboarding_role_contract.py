@@ -158,7 +158,6 @@ def test_registration_write_grants_are_column_scoped_and_minimal() -> None:
                 "available_at",
                 "claimed_at",
                 "claim_token",
-                "last_error",
                 "published_at",
             }
         ),
@@ -304,7 +303,6 @@ def test_onboarding_vertical_chain_write_grants_are_exact_and_exclude_runs() -> 
                 "available_at",
                 "claimed_at",
                 "claim_token",
-                "last_error",
                 "published_at",
             }
         ),
@@ -603,11 +601,21 @@ def test_platform_planning_columns_remain_force_rls_invisible() -> None:
     normalized = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
     assert (
         "GRANT SELECT (principal_id, role, status, expires_at) "
-        "ON saas_platform_role_assignments TO saas_registration, saas_onboarding;"
+        "ON saas_platform_role_assignments "
+        "TO saas_registration, saas_onboarding;"
     ) in normalized
     assert (
         "GRANT SELECT (principal_id, token_hash, revoked_at, expires_at) "
-        "ON saas_platform_support_sessions TO saas_registration, saas_onboarding;"
+        "ON saas_platform_support_sessions "
+        "TO saas_registration, saas_onboarding;"
+    ) in normalized
+    assert (
+        "GRANT SELECT (principal_id, role, status, expires_at) "
+        "ON saas_platform_role_assignments TO saas_onboarding_status;"
+    ) in normalized
+    assert (
+        "GRANT SELECT (principal_id, token_hash, revoked_at, expires_at) "
+        "ON saas_platform_support_sessions TO saas_onboarding_status;"
     ) in normalized
     assert (
         "GRANT SELECT (tenant_id, user_id, status) ON saas_tenant_memberships "
@@ -631,3 +639,37 @@ def test_platform_planning_columns_remain_force_rls_invisible() -> None:
     for role in ("saas_registration", "saas_onboarding"):
         assert role not in platform_policy_sources
         assert not re.search(rf"GRANT\s+saas_platform(?:_[a-z_]+)?\s+TO\s+{role}", normalized)
+
+
+def test_status_acl_replay_revokes_every_current_select_column_before_regrant() -> None:
+    start = ROLE_SQL.index("-- Customer onboarding status has a dedicated")
+    end = ROLE_SQL.index("GRANT SELECT, INSERT, UPDATE ON", start)
+    status_sql = ROLE_SQL[start:end]
+    targets = set(re.findall(r"\('([^']+)', '([^']+)'\)", status_sql))
+
+    assert targets == {
+        ("saas_onboarding_status", "saas_tenant_onboardings"),
+        ("saas_onboarding_status", "saas_tenant_memberships"),
+        ("saas_onboarding_status", "saas_platform_role_assignments"),
+        ("saas_onboarding_status", "saas_platform_support_sessions"),
+        ("saas_app", "saas_tenant_onboardings"),
+    }
+    assert "FROM pg_attribute AS attribute" in status_sql
+    assert "attribute.attnum > 0" in status_sql
+    assert "NOT attribute.attisdropped" in status_sql
+    assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in status_sql
+    assert "string_agg(quote_ident(attribute.attname)" in status_sql
+    assert "'REVOKE ' || target_privilege" in status_sql
+    assert "quote_ident(target_table)" in status_sql
+    assert "quote_ident(target_role)" in status_sql
+    assert "%" not in status_sql
+
+    dynamic_revoke_end = status_sql.index("$$;")
+    for exact_grant in (
+        "ON saas_platform_role_assignments TO saas_onboarding_status;",
+        "ON saas_platform_support_sessions TO saas_onboarding_status;",
+        ") ON saas_tenant_onboardings TO saas_onboarding_status;",
+        "ON saas_tenant_memberships TO saas_onboarding_status;",
+    ):
+        assert status_sql.index(exact_grant) > dynamic_revoke_end
+    assert "ON saas_tenant_onboardings TO saas_app" not in status_sql

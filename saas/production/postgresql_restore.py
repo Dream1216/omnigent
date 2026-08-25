@@ -52,6 +52,7 @@ _SELECTED_HASH_TABLES = (
     "saas_runtime_partitions",
     "saas_runtime_identity_aliases",
     "saas_runtime_resource_bindings",
+    "saas_runtime_provider_operation_journal",
     "saas_tenant_memberships",
     "saas_space_memberships",
     "saas_projects",
@@ -112,6 +113,7 @@ _SELECTED_HASH_TABLES = (
     "saas_billing_period_closes",
     "saas_billing_metering_receipts",
     "saas_control_plane_outbox",
+    "saas_outbox_quarantine_events",
 )
 
 
@@ -278,13 +280,18 @@ def _recovery_plan_snapshot() -> dict[str, object]:
 
 def _recovery_runtime_target(identifiers: Mapping[str, str | int]) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "placement_id": str(identifiers["runtime_placement"]),
         "runtime_type": "omnigent",
         "data_region": "region-a",
         "failure_domain": "region-a-1",
         "official_schema_revision": "runtime-schema-v1",
         "capacity_class": "starter",
+        "provider_binding": {
+            "provider_type": "restore-contract-provider",
+            "binding_revision": "restore-binding-v1",
+            "binding_hash": "b" * 64,
+        },
     }
 
 

@@ -35,9 +35,9 @@ P0 establishes executable controls that stay independent of feature claims:
    builds twice without publishing; it cannot be mistaken for signed production
    evidence.
 
-The active P0 product slice on `codex/saas-p0-self-service-onboarding` adds the
-first self-service onboarding authority without treating resource allocation as
-complete:
+The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
+self-service authority into a fail-closed backend activation chain without
+treating code contracts as production Provider evidence:
 
 - anonymous registration validates a deployment-owned plan/region catalog,
   normalizes the requested Tenant and default Space, applies an injected
@@ -56,19 +56,32 @@ complete:
   intent. The coordinator creates only a `provisioning` Tenant, `suspended`
   default Space and Owner memberships under the separate `saas_onboarding` role;
 - a hash-linked, PII-rejecting event stream and a staged onboarding Saga preserve
-  the audit and recovery boundary. Candidate schema revision `p0s000000001`
-  raises the forced-RLS inventory from 103 to 107 tables.
+  the audit and recovery boundary. Reviewed Plan/Trial terms, Placement and
+  Provider Binding identity, Runtime Partition/Alias, default Project/Quota,
+  activation and first normal Run admission are frozen and replayable;
+- poison Outbox events use content-blind error facts, bounded retry and an
+  immutable Quarantine receipt. A dedicated actor-owned status authority exposes
+  only the customer's onboarding projection;
+- candidate schema revision `p0s000000004` has 109 control-plane FORCE-RLS
+  tables, including the Outbox Quarantine ledger and durable Runtime Provider
+  operation journal.
 
-This is a development candidate, not P0 completion or production `GO`. Activation
-must remain closed until Billing entitlement, Runtime Partition/Placement,
-physical workspace allocation, Identity Alias and binding are all durable. P0
-also still requires a single Tenant-slug reservation authority; terminal-record
-retention/GC and privacy erasure (including encrypted Outbox payloads and a
-versioned HMAC blind index); bounded retry, DLQ, reconciliation, compensation and
-a customer-visible status path; plus production KMS, mail-provider, shared rate
-limiter and worker composition. Enterprise SAML/OIDC/domain/JIT and MFA/recovery,
-the full Staff administration product, and Operations Center remain separate P0
-tracks.
+The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
+the non-secret Provider type/revision/hash before any external effect, keeps old
+bindings available for in-flight replay and compensation, and requires a
+verified signed Receipt. `PostgresqlRuntimeProviderOperationJournal` writes the
+atomic effect fence before transport execution and replays only a fully verified
+response after process restart or acknowledgement loss. Its engine must be a
+one-purpose LOGIN inheriting only `saas_runtime_provider_journal`; owner,
+superuser, assumed-role, direct-ACL and catalog-drift connections fail startup.
+
+This remains a development candidate, not P0 completion or production `GO`.
+Production still requires a deployment-owned Provider transport, short-lived
+non-ambient credential authority, KMS/HSM-backed Receipt verifier, retained
+historical bindings, anonymous browser E2E, Staff Quarantine operations, protected
+CI/approval and signed deployment evidence. Enterprise SAML/OIDC/domain/JIT and
+MFA/recovery, the full Staff administration product, and Operations Center remain
+separate P0 tracks.
 
 The first P1 slice adds an independent control-plane schema and migration for
 Global User, Tenant, Space, versioned Membership, Runtime Placement, Runtime
@@ -242,11 +255,34 @@ domains (`projects`, `runs`, and `worktrees`). A missing required domain fails
 at startup; it is intentionally impossible to infer a zero impact from an
 unwired provider.
 
-Database roles are deliberately not created by Alembic because managed
-PostgreSQL role ownership is an operator concern. After migration, run
-`saas/control_plane/postgresql_roles.sql` as the control-plane database owner,
-and give each service login exactly one role. Run identity/session endpoints
-with `saas_authenticator`, governance workflows with `saas_governance`, runtime
+Control-plane installation has four ordered PostgreSQL authority phases; do
+not collapse them into one superuser migration connection:
+
+1. A cluster principal operator runs
+   `psql --no-psqlrc --file saas/control_plane/postgresql_principals.psql`.
+   This idempotently creates and hardens every Alembic-named `NOLOGIN`
+   capability principal and converges only the two fixed role-to-role
+   memberships. It grants no schema or data privilege. The operator needs
+   `CREATEROLE` plus `ADMIN OPTION` on any pre-existing named principal, but
+   does not need application-table access.
+2. The current database owner (or an explicitly audited superuser) runs
+   `psql --no-psqlrc --file saas/control_plane/postgresql_database.psql`.
+   This atomically revokes PostgreSQL's default `PUBLIC TEMPORARY` database
+   privilege. Without that boundary, a service login could shadow an
+   unqualified durable Outbox or Provider Journal relation in `pg_temp`.
+3. The control-plane schema owner, which must be `NOSUPERUSER`, `NOCREATEDB`,
+   `NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`, runs Alembic through the
+   target revision. Migrations never create, alter, grant, or revoke role
+   memberships; they fail before schema DDL when a required principal or fixed
+   membership is absent or unsafe.
+4. After the schema transaction commits, run
+   `psql --no-psqlrc --file saas/control_plane/postgresql_roles.psql` as the
+   control-plane database authority. This first-error-stopping transaction
+   converges schema/table/function/RLS grants against the now-existing schema.
+   Never invoke the `.sql` transaction bodies directly with plain `psql -f`.
+
+Give each service login exactly one role. Run identity/session endpoints with
+`saas_authenticator`, governance workflows with `saas_governance`, runtime
 resolution with `saas_app`, and dispatch workers with `saas_dispatcher`.
 P3 admission/API transactions also use tenant-scoped `saas_app`; execution
 workers inherit only `saas_executor`, while event delivery remains isolated in

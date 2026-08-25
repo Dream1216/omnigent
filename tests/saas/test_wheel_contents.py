@@ -30,10 +30,24 @@ def test_privacy_worker_is_a_required_wheel_artifact_and_console_entrypoint() ->
 
 def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> None:
     assert "saas/outbox_worker.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/postgresql_database.psql" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/postgresql_roles.psql" in REQUIRED_WHEEL_PATHS
+    assert "saas/n1_outbox_admission.py" in REQUIRED_WHEEL_PATHS
     assert "saas/onboarding_composition.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/onboarding_workflow.py" in REQUIRED_WHEEL_PATHS
     assert (
         "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
+        in REQUIRED_WHEEL_PATHS
+    )
+    assert "saas/control_plane/onboarding_status.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/runtime_provider.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/runtime_provider_journal.py" in REQUIRED_WHEEL_PATHS
+    assert (
+        "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
+        in REQUIRED_WHEEL_PATHS
+    )
+    assert (
+        "saas/control_plane/migrations/versions/p0s000000004_runtime_provider_journal.py"
         in REQUIRED_WHEEL_PATHS
     )
 

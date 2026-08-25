@@ -698,9 +698,11 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
     engine.dispose()
 
 
-def test_real_postgresql_isolation_migration_downgrade_removes_guards_and_policies() -> None:
+def test_real_postgresql_isolation_migration_downgrade_removes_guards_and_policies(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     with engine.begin() as connection:
         _migrate(connection, root, "head")
         _migrate(connection, root, "-p4b000000001")

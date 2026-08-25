@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import traceback
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -25,6 +27,12 @@ from saas.control_plane import (
     TenantMembership,
     VerifiedIdentityAssertion,
 )
+from saas.control_plane.db_models import ControlPlaneOutboxQuarantineEvent
+from saas.control_plane.onboarding import (
+    EmailVerificationMessage,
+    OnboardingOutboxPublisher,
+)
+from saas.control_plane.outbox import OutboxPublishError, _quarantine_event_hash
 
 NOW = datetime(2026, 8, 4, 4, 0, tzinfo=timezone.utc)
 
@@ -231,6 +239,282 @@ def test_outbox_dispatcher_is_detached_safe_and_retries_with_backoff(
         assert stored is not None
         assert stored.attempt_count == 2
         assert stored.published_at is not None
+
+
+def test_nonretryable_pre_side_effect_error_is_quarantined_once_without_secret(
+    sessions: sessionmaker[Session],
+) -> None:
+    event_id = uuid4()
+    _add_outbox_event(sessions, event_id)
+
+    class PoisonPublisher:
+        def publish(self, **_event: object) -> None:
+            raise OutboxPublishError(
+                "onboarding_event_invalid",
+                retryable=False,
+                pre_side_effect=True,
+            )
+
+    dispatcher = OutboxDispatcher(sessions, PoisonPublisher())
+    result = dispatcher.dispatch_once(now=NOW)
+
+    assert (result.claimed, result.published, result.failed, result.quarantined) == (1, 0, 1, 1)
+    assert dispatcher.dispatch_once(now=NOW + timedelta(days=1)).claimed == 0
+    with sessions() as db:
+        source = db.get(ControlPlaneOutboxEvent, event_id)
+        receipt = db.scalar(
+            sa.select(ControlPlaneOutboxQuarantineEvent).where(
+                ControlPlaneOutboxQuarantineEvent.source_event_id == event_id
+            )
+        )
+        assert source is not None and receipt is not None
+        assert source.published_at is None
+        assert source.quarantined_at is not None
+        assert source.available_at is None
+        assert source.claimed_at is None
+        assert source.claim_token is None
+        assert source.last_error is None
+        assert source.last_error_code == "onboarding_event_invalid"
+        assert receipt.sequence == 1
+        assert receipt.previous_hash == "0" * 64
+        assert receipt.event_hash == _quarantine_event_hash(
+            source_event_id=receipt.source_event_id,
+            tenant_id=receipt.tenant_id,
+            source_request_hash=receipt.source_request_hash,
+            source_attempt_count=receipt.source_attempt_count,
+            action=receipt.action,
+            error_code=receipt.error_code,
+            error_digest=receipt.error_digest,
+            sequence=receipt.sequence,
+            previous_hash=receipt.previous_hash,
+            created_at=receipt.created_at,
+        )
+        serialized = json.dumps(
+            {
+                "last_error": source.last_error,
+                "last_error_code": source.last_error_code,
+                "last_error_digest": source.last_error_digest,
+                "receipt_error_code": receipt.error_code,
+                "receipt_error_digest": receipt.error_digest,
+            },
+            sort_keys=True,
+        )
+        assert "customer-secret" not in serialized
+
+
+@pytest.mark.parametrize("code", ("", "UPPERCASE", "line\nbreak", "../escape", "x" * 129))
+def test_outbox_publish_error_rejects_unsafe_persisted_codes(code: str) -> None:
+    with pytest.raises(ValueError, match="code is invalid"):
+        OutboxPublishError(code, retryable=False, pre_side_effect=True)
+
+
+def test_unknown_failure_retries_then_quarantines_at_budget_without_raw_error(
+    sessions: sessionmaker[Session],
+) -> None:
+    event_id = uuid4()
+    _add_outbox_event(sessions, event_id)
+
+    class UnknownFailurePublisher:
+        def publish(self, **_event: object) -> None:
+            raise RuntimeError("provider rejected customer-secret")
+
+    dispatcher = OutboxDispatcher(sessions, UnknownFailurePublisher(), max_attempts=2)
+    first = dispatcher.dispatch_once(now=NOW)
+    assert (first.failed, first.quarantined) == (1, 0)
+    with sessions() as db:
+        source = db.get(ControlPlaneOutboxEvent, event_id)
+        assert source is not None
+        assert source.last_error is None
+        assert source.last_error_code == "outbox_publish_failed"
+        assert source.quarantined_at is None
+
+    terminal = dispatcher.dispatch_once(now=NOW + timedelta(seconds=1))
+    assert (terminal.failed, terminal.quarantined) == (1, 1)
+    with sessions() as db:
+        source = db.get(ControlPlaneOutboxEvent, event_id)
+        receipt = db.scalar(
+            sa.select(ControlPlaneOutboxQuarantineEvent).where(
+                ControlPlaneOutboxQuarantineEvent.source_event_id == event_id
+            )
+        )
+        assert source is not None and receipt is not None
+        assert source.attempt_count == 2
+        assert source.last_error is None
+        assert source.last_error_code == "outbox_retry_exhausted"
+        assert receipt.error_code == "outbox_retry_exhausted"
+        assert receipt.error_digest == source.last_error_digest
+        assert "customer-secret" not in json.dumps(
+            {
+                "code": receipt.error_code,
+                "digest": receipt.error_digest,
+                "legacy": source.last_error,
+            }
+        )
+
+
+def test_failure_state_database_error_suppresses_provider_exception_chain(
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_id = uuid4()
+    _add_outbox_event(sessions, event_id)
+
+    class SecretFailurePublisher:
+        def publish(self, **_event: object) -> None:
+            raise RuntimeError("provider-secret-value")
+
+    dispatcher = OutboxDispatcher(sessions, SecretFailurePublisher())
+
+    def fail_release(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("database-secret-value")
+
+    monkeypatch.setattr(dispatcher, "_release_failure", fail_release)
+    with pytest.raises(RuntimeError) as raised:
+        dispatcher.dispatch_once(now=NOW)
+
+    rendered = "".join(
+        traceback.format_exception(type(raised.value), raised.value, raised.value.__traceback__)
+    )
+    assert str(raised.value) == "Outbox failure-state persistence failed"
+    assert raised.value.__suppress_context__
+    assert "provider-secret-value" not in rendered
+    assert "database-secret-value" not in rendered
+
+
+def test_poison_event_does_not_block_the_rest_of_a_claimed_batch(
+    sessions: sessionmaker[Session],
+) -> None:
+    first_id, second_id = uuid4(), uuid4()
+    with sessions.begin() as db:
+        for index, event_id in enumerate((first_id, second_id)):
+            db.add(
+                ControlPlaneOutboxEvent(
+                    id=event_id,
+                    tenant_id=None,
+                    aggregate_type="global_user",
+                    aggregate_key=str(event_id),
+                    event_type=f"test.batch.{index}",
+                    idempotency_key=f"event-{event_id}",
+                    request_hash="d" * 64,
+                    payload={"value": index},
+                    attempt_count=0,
+                    created_at=NOW + timedelta(microseconds=index),
+                )
+            )
+
+    class PartialPoisonPublisher:
+        def publish(self, *, event_id: UUID, **_event: object) -> None:
+            if event_id == first_id:
+                raise OutboxPublishError(
+                    "onboarding_event_invalid",
+                    retryable=False,
+                    pre_side_effect=True,
+                )
+
+    result = OutboxDispatcher(sessions, PartialPoisonPublisher()).dispatch_once(
+        batch_size=2, now=NOW
+    )
+    assert (result.claimed, result.published, result.failed, result.quarantined) == (2, 1, 1, 1)
+    with sessions() as db:
+        assert db.get(ControlPlaneOutboxEvent, first_id).quarantined_at is not None
+        assert db.get(ControlPlaneOutboxEvent, second_id).published_at is not None
+
+
+def test_stale_claim_cannot_quarantine_or_append_evidence(
+    sessions: sessionmaker[Session],
+) -> None:
+    event_id = uuid4()
+    takeover_token = uuid4()
+    takeover_at = NOW + timedelta(seconds=31)
+    _add_outbox_event(sessions, event_id)
+
+    class LeaseTakingPoisonPublisher:
+        def publish(self, **_event: object) -> None:
+            with sessions.begin() as db:
+                result = db.execute(
+                    sa.update(ControlPlaneOutboxEvent)
+                    .where(ControlPlaneOutboxEvent.id == event_id)
+                    .values(
+                        claimed_at=takeover_at,
+                        claim_token=takeover_token,
+                        attempt_count=ControlPlaneOutboxEvent.attempt_count + 1,
+                    )
+                )
+                assert result.rowcount == 1
+            raise OutboxPublishError(
+                "onboarding_event_invalid",
+                retryable=False,
+                pre_side_effect=True,
+            )
+
+    result = OutboxDispatcher(sessions, LeaseTakingPoisonPublisher()).dispatch_once(now=NOW)
+    assert (result.failed, result.quarantined) == (1, 0)
+    with sessions() as db:
+        source = db.get(ControlPlaneOutboxEvent, event_id)
+        assert source is not None
+        assert source.claim_token == takeover_token
+        assert source.quarantined_at is None
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(ControlPlaneOutboxQuarantineEvent)
+                .where(ControlPlaneOutboxQuarantineEvent.source_event_id == event_id)
+            )
+            == 0
+        )
+
+
+def test_onboarding_publisher_classifies_malformed_scope_and_provider_failure() -> None:
+    verification_message = EmailVerificationMessage(
+        registration_id=uuid4(),
+        challenge_id=uuid4(),
+        email="redacted@example.test",
+        verification_token="one-time",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    class Registrations:
+        def email_delivery_is_current(self, *, message: object) -> bool:
+            del message
+            return True
+
+        def record_email_delivery(self, **_values: object) -> None:
+            return None
+
+    class Envelopes:
+        def open(self, **_values: object) -> EmailVerificationMessage:
+            return verification_message
+
+    class Sender:
+        def send_verification(self, **_values: object) -> None:
+            raise RuntimeError("provider customer-secret")
+
+    publisher = OnboardingOutboxPublisher(
+        registrations=Registrations(),  # type: ignore[arg-type]
+        coordinator=object(),  # type: ignore[arg-type]
+        envelopes=Envelopes(),  # type: ignore[arg-type]
+        email_sender=Sender(),  # type: ignore[arg-type]
+    )
+    with pytest.raises(OutboxPublishError) as malformed:
+        publisher.publish(
+            event_id=uuid4(),
+            event_type="onboarding.tenant.requested",
+            aggregate_type="tenant_onboarding",
+            aggregate_key="wrong",
+            payload={"registration_id": str(uuid4()), "onboarding_id": str(uuid4())},
+        )
+    assert (malformed.value.retryable, malformed.value.pre_side_effect) == (False, True)
+
+    with pytest.raises(OutboxPublishError) as provider:
+        publisher.publish(
+            event_id=uuid4(),
+            event_type="onboarding.email_verification.requested",
+            aggregate_type="self_service_registration",
+            aggregate_key=str(verification_message.registration_id),
+            payload={},
+        )
+    assert provider.value.code == "email_verification_delivery_failed"
+    assert (provider.value.retryable, provider.value.pre_side_effect) == (True, False)
 
 
 def test_outbox_lost_ack_is_an_event_failure_and_preserves_new_owner_claim(

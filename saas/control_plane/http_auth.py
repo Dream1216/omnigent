@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         NotificationOperationsProtocol,
     )
     from saas.control_plane.onboarding import SelfServiceOnboardingService
+    from saas.control_plane.onboarding_status import OnboardingStatusService
     from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
     from saas.control_plane.public_api import PublicApiExecutionService
@@ -1189,6 +1190,7 @@ def create_saas_http_integration(
     notification_operations: NotificationOperationsProtocol | None = None,
     notification_origin: str | None = None,
     onboarding: SelfServiceOnboardingService | None = None,
+    onboarding_status: OnboardingStatusService | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1204,10 +1206,18 @@ def create_saas_http_integration(
         oidc=oidc,
         context_snapshots=context_snapshots,
     )
-    if onboarding is not None:
+    if (onboarding is None) != (onboarding_status is None):
+        raise ValueError("Onboarding and Onboarding Status services must be configured together")
+    if onboarding is not None and onboarding_status is not None:
         from saas.control_plane.onboarding_http import create_onboarding_router
 
-        router.include_router(create_onboarding_router(onboarding=onboarding))
+        router.include_router(
+            create_onboarding_router(
+                onboarding=onboarding,
+                onboarding_status=onboarding_status,
+                auth_provider=auth_provider,
+            )
+        )
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
     if project_admin is not None and project_authorizer is not None:

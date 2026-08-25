@@ -60,10 +60,20 @@ BINDING_SAGA_STATUSES = (
     "compensated",
     "failed",
 )
+OUTBOX_QUARANTINE_ACTIONS = ("quarantined",)
 
 
 def _values(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
+
+
+def _hex64(column: str) -> str:
+    """Return a SQLite/PostgreSQL portable lowercase SHA-256 check."""
+
+    remainder = column
+    for value in "0123456789abcdef":
+        remainder = f"replace({remainder}, '{value}', '')"
+    return f"length({column}) = 64 AND {remainder} = ''"
 
 
 class SaasBase(DeclarativeBase):
@@ -768,6 +778,91 @@ class RuntimeBindingSagaRecord(SaasBase):
     )
 
 
+class RuntimeProviderOperationJournalRecord(SaasBase):
+    """Durable Provider invocation fence and immutable verified response."""
+
+    __tablename__ = "saas_runtime_provider_operation_journal"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_type: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    operation_kind: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    placement_id: Mapped[UUID] = mapped_column(nullable=False)
+    binding_revision: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    binding_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    target_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    receipt_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    attributes_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    response_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    receipt_json: Mapped[str | None] = mapped_column(sa.Text())
+    attributes_json: Mapped[str | None] = mapped_column(sa.Text())
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "operation_kind IN ('allocate_partition', 'provision_default_project', "
+            "'compensate_default_project', 'compensate_partition')",
+            name="ck_runtime_provider_journal_operation",
+        ),
+        sa.CheckConstraint(
+            "length(provider_type) > 0", name="ck_runtime_provider_journal_provider"
+        ),
+        sa.CheckConstraint(
+            "length(binding_revision) > 0", name="ck_runtime_provider_journal_revision"
+        ),
+        sa.CheckConstraint(
+            _hex64("binding_hash"), name="ck_runtime_provider_journal_binding_hash"
+        ),
+        sa.CheckConstraint(_hex64("target_hash"), name="ck_runtime_provider_journal_target_hash"),
+        sa.CheckConstraint(
+            _hex64("idempotency_hash"), name="ck_runtime_provider_journal_idempotency_hash"
+        ),
+        sa.CheckConstraint(
+            _hex64("request_hash"), name="ck_runtime_provider_journal_request_hash"
+        ),
+        sa.CheckConstraint(
+            "(receipt_hash IS NULL AND attributes_hash IS NULL AND response_hash IS NULL "
+            "AND receipt_json IS NULL AND attributes_json IS NULL AND verified_at IS NULL) OR "
+            "(receipt_hash IS NOT NULL AND attributes_hash IS NOT NULL "
+            "AND response_hash IS NOT NULL AND receipt_json IS NOT NULL "
+            "AND attributes_json IS NOT NULL AND verified_at IS NOT NULL)",
+            name="ck_runtime_provider_journal_response_atomic",
+        ),
+        sa.CheckConstraint(
+            f"receipt_hash IS NULL OR ({_hex64('receipt_hash')})",
+            name="ck_runtime_provider_journal_receipt_hash",
+        ),
+        sa.CheckConstraint(
+            f"attributes_hash IS NULL OR ({_hex64('attributes_hash')})",
+            name="ck_runtime_provider_journal_attributes_hash",
+        ),
+        sa.CheckConstraint(
+            f"response_hash IS NULL OR ({_hex64('response_hash')})",
+            name="ck_runtime_provider_journal_response_hash",
+        ),
+        sa.UniqueConstraint(
+            "provider_type",
+            "operation_kind",
+            "idempotency_hash",
+            name="uq_runtime_provider_journal_identity",
+        ),
+        sa.UniqueConstraint(
+            "request_hash",
+            name="uq_runtime_provider_journal_request_hash",
+        ),
+        sa.Index(
+            "ix_runtime_provider_journal_pending",
+            "created_at",
+            postgresql_where=sa.text("response_hash IS NULL"),
+            sqlite_where=sa.text("response_hash IS NULL"),
+        ),
+    )
+
+
 class MembershipInvitation(SaasBase):
     """Single-use invitation bound to an email, Tenant, optional Space, and roles."""
 
@@ -866,8 +961,20 @@ class ControlPlaneOutboxEvent(SaasBase):
     available_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     claimed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     claim_token: Mapped[UUID | None] = mapped_column()
-    last_error: Mapped[str | None] = mapped_column(sa.String(2048))
+    last_error: Mapped[str | None] = mapped_column(sa.String(2048), server_default=sa.text("NULL"))
+    # Dispatcher-owned terminal metadata deliberately uses server-side NULL
+    # defaults so ordinary producers omit these columns from INSERT and never
+    # need privileges that would let them fabricate delivery evidence.
+    last_error_code: Mapped[str | None] = mapped_column(
+        sa.String(128), server_default=sa.text("NULL")
+    )
+    last_error_digest: Mapped[str | None] = mapped_column(
+        sa.String(64), server_default=sa.text("NULL")
+    )
     published_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    quarantined_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.text("NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -877,11 +984,101 @@ class ControlPlaneOutboxEvent(SaasBase):
         sa.CheckConstraint("length(aggregate_key) > 0", name="ck_outbox_key_nonempty"),
         sa.CheckConstraint("length(event_type) > 0", name="ck_outbox_event_nonempty"),
         sa.CheckConstraint("length(idempotency_key) > 0", name="ck_outbox_idempotency_nonempty"),
-        sa.CheckConstraint("length(request_hash) = 64", name="ck_outbox_request_hash"),
+        sa.CheckConstraint(_hex64("request_hash"), name="ck_outbox_request_hash"),
         sa.CheckConstraint("attempt_count >= 0", name="ck_outbox_attempt_count"),
+        sa.CheckConstraint("last_error IS NULL", name="ck_outbox_legacy_error_null"),
+        sa.CheckConstraint(
+            "published_at IS NULL OR quarantined_at IS NULL",
+            name="ck_outbox_terminal_exclusive",
+        ),
+        sa.CheckConstraint(
+            "quarantined_at IS NULL OR "
+            "(available_at IS NULL AND claimed_at IS NULL AND claim_token IS NULL)",
+            name="ck_outbox_quarantine_dispatch_clear",
+        ),
+        sa.CheckConstraint(
+            "(last_error_code IS NULL AND last_error_digest IS NULL) OR "
+            "(length(last_error_code) BETWEEN 1 AND 128 AND last_error_digest IS NOT NULL)",
+            name="ck_outbox_safe_error_pair",
+        ),
+        sa.CheckConstraint(
+            f"last_error_digest IS NULL OR ({_hex64('last_error_digest')})",
+            name="ck_outbox_safe_error_digest",
+        ),
         sa.Index("ix_outbox_unpublished", "published_at", "created_at"),
         sa.Index("ix_outbox_dispatchable", "published_at", "available_at", "claimed_at"),
+        sa.Index(
+            "ix_outbox_dispatchable_v2",
+            "quarantined_at",
+            "published_at",
+            "available_at",
+            "claimed_at",
+        ),
         sa.Index("ix_outbox_tenant_event", "tenant_id", "event_type", "created_at"),
+        # Producers have no privilege to read dispatcher-owned defaults.  Avoid
+        # PostgreSQL INSERT .. RETURNING of those columns; IDs are application
+        # assigned and created_at can be read explicitly when needed.
+        {"implicit_returning": False},
+    )
+
+
+class ControlPlaneOutboxQuarantineEvent(SaasBase):
+    """Append-only, content-blind evidence for one terminal Outbox quarantine."""
+
+    __tablename__ = "saas_outbox_quarantine_events"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_event_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_control_plane_outbox.id", ondelete="RESTRICT"), nullable=False
+    )
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT")
+    )
+    source_request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    source_attempt_count: Mapped[int] = mapped_column(nullable=False)
+    action: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    error_code: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    error_digest: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    sequence: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    previous_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    event_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"action IN ({_values(OUTBOX_QUARANTINE_ACTIONS)})",
+            name="ck_outbox_quarantine_action",
+        ),
+        sa.CheckConstraint("source_attempt_count > 0", name="ck_outbox_quarantine_attempt_count"),
+        sa.CheckConstraint(
+            "length(error_code) BETWEEN 1 AND 128",
+            name="ck_outbox_quarantine_error_code",
+        ),
+        sa.CheckConstraint(_hex64("source_request_hash"), name="ck_outbox_quarantine_source_hash"),
+        sa.CheckConstraint(_hex64("error_digest"), name="ck_outbox_quarantine_error_digest"),
+        sa.CheckConstraint("sequence > 0", name="ck_outbox_quarantine_sequence"),
+        sa.CheckConstraint(_hex64("previous_hash"), name="ck_outbox_quarantine_previous_hash"),
+        sa.CheckConstraint(_hex64("event_hash"), name="ck_outbox_quarantine_event_hash"),
+        sa.UniqueConstraint(
+            "source_event_id",
+            "sequence",
+            name="uq_outbox_quarantine_source_sequence",
+        ),
+        sa.Index(
+            "uq_outbox_quarantine_once",
+            "source_event_id",
+            unique=True,
+            sqlite_where=sa.text("action = 'quarantined'"),
+            postgresql_where=sa.text("action = 'quarantined'"),
+        ),
+        sa.Index(
+            "ix_outbox_quarantine_tenant_created",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
     )
 
 

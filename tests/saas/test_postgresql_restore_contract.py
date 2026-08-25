@@ -81,13 +81,18 @@ def test_restore_fixture_freezes_a_complete_runtime_target() -> None:
     target = _recovery_runtime_target({"runtime_placement": str(placement_id)})
 
     assert target == {
-        "schema_version": 1,
+        "schema_version": 2,
         "placement_id": str(placement_id),
         "runtime_type": "omnigent",
         "data_region": "region-a",
         "failure_domain": "region-a-1",
         "official_schema_revision": "runtime-schema-v1",
         "capacity_class": "starter",
+        "provider_binding": {
+            "provider_type": "restore-contract-provider",
+            "binding_revision": "restore-binding-v1",
+            "binding_hash": "b" * 64,
+        },
     }
     assert len(_canonical_json_sha256(target)) == 64
 
@@ -102,6 +107,7 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
         "saas_runtime_placements",
         "saas_runtime_partitions",
         "saas_runtime_resource_bindings",
+        "saas_runtime_provider_operation_journal",
         "saas_admission_quotas",
         "saas_quota_reservations",
         "saas_runs",
@@ -109,8 +115,9 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
     }.issubset(_SELECTED_HASH_TABLES)
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_seven_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 107
+def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_nine_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 109
+    assert "saas_runtime_provider_operation_journal" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
