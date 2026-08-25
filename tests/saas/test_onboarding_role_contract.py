@@ -568,6 +568,41 @@ def test_onboarding_roles_revoke_historical_table_level_privileges_first() -> No
     )
 
 
+def test_all_onboarding_authorities_converge_stale_catalog_acl_channels() -> None:
+    normalized = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
+    convergence = (
+        normalized.split("-- Every write below is constrained", 1)[0]
+        if "-- Every write below is constrained" in normalized
+        else normalized
+    )
+    for role in (
+        "saas_registration",
+        "saas_onboarding",
+        "saas_executor",
+        "saas_onboarding_status",
+    ):
+        assert f"'{role}'" in convergence
+        assert "quote_ident(target_role)" in convergence
+    assert "relation.relkind IN ('r', 'p', 'v', 'm', 'f')" in convergence
+    assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in convergence
+    assert "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public" in convergence
+    assert "REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public" in convergence
+    assert "REVOKE ALL PRIVILEGES ON SCHEMA public" in convergence
+    assert "GRANT USAGE ON SCHEMA public" in convergence
+    assert "REVOKE CREATE, TEMPORARY ON DATABASE" in convergence
+    assert "quote_ident(current_database())" in convergence
+    for object_kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+        assert f"REVOKE ALL PRIVILEGES ON {object_kind} FROM" in convergence
+    assert (
+        "GRANT SELECT (principal_id, role, status, expires_at) "
+        "ON saas_platform_role_assignments TO saas_executor"
+    ) in normalized
+    assert (
+        "GRANT SELECT (principal_id, token_hash, revoked_at, expires_at) "
+        "ON saas_platform_support_sessions TO saas_executor"
+    ) in normalized
+
+
 def test_onboarding_outbox_policy_accepts_only_vertical_chain_requests() -> None:
     expected = {
         "onboarding.billing.requested",

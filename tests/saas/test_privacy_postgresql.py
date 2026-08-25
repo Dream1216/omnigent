@@ -67,7 +67,7 @@ def _attempt_registration_erasure(
     target_tenant_id: UUID | None,
     replacement_user_id: UUID,
     replacement_tenant_id: UUID,
-) -> None:
+) -> int:
     replacements = _registration_erasure_replacements(manifest_id, registration_id)
     connection.execute(
         sa.text("SELECT set_config('app.platform_principal_id', :value, true)"),
@@ -85,7 +85,7 @@ def _attempt_registration_erasure(
         sa.text("SELECT set_config('app.platform_privacy_manifest_id', :value, true)"),
         {"value": str(manifest_id)},
     )
-    connection.execute(
+    result = connection.execute(
         sa.text(
             "UPDATE saas_self_service_registrations SET "
             "email_normalized = :email_normalized, email_hash = :email_hash, "
@@ -105,6 +105,7 @@ def _attempt_registration_erasure(
             "registration_id": registration_id,
         },
     )
+    return int(result.rowcount or 0)
 
 
 def _cleanup_postgresql_test_state(
@@ -662,10 +663,10 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         replacement_tenant_id = exact["tenant_id"]
         assert isinstance(replacement_user_id, UUID)
         assert isinstance(replacement_tenant_id, UUID)
-        with pytest.raises(DBAPIError):
+        try:
             with engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {login_role}")
-                _attempt_registration_erasure(
+                affected = _attempt_registration_erasure(
                     connection,
                     registration_id=registration_id,
                     manifest_id=manifest_id,
@@ -675,6 +676,12 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
                     replacement_user_id=replacement_user_id,
                     replacement_tenant_id=replacement_tenant_id,
                 )
+        except DBAPIError:
+            # A row-level rejection and an RLS-hidden zero-row update are both
+            # acceptable as long as neither can mutate the protected record.
+            pass
+        else:
+            assert affected == 0
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")

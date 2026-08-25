@@ -105,7 +105,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000005"
+        assert revision == "p0s000000006"
         first_run_scope = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_tenant_onboardings")
@@ -214,19 +214,126 @@ def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> No
         assert {
             index["name"] for index in inspector.get_indexes("saas_registration_rate_limits")
         } == {"ix_registration_rate_limit_expiry"}
+        assert {
+            tuple(row)
+            for row in connection.execute(
+                sa.text("SELECT action, subject_kind FROM saas_registration_rate_limit_policies")
+            )
+        } == {
+            ("registration.request", "email"),
+            ("registration.resend", "email"),
+            ("registration.verify", "registration"),
+        }
+        old_now = datetime(2026, 8, 26, 5, 55, tzinfo=timezone.utc)
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_registration_rate_limits "
+                "(action, subject_kind, key_id, subject_hmac, window_started_at, "
+                "request_count, expires_at, policy_revision, version) "
+                "VALUES ('registration.request', 'email', 'p0s5-test', :subject_hmac, "
+                ":now, 1, :expires_at, 'registration-rate-limit-v1', 1)"
+            ),
+            {
+                "subject_hmac": "b" * 64,
+                "now": old_now,
+                "expires_at": old_now + timedelta(minutes=1),
+            },
+        )
+        connection.execute(
+            sa.text(
+                "UPDATE saas_registration_rate_limit_policies SET current_rows = 1 "
+                "WHERE action = 'registration.request' AND subject_kind = 'email'"
+            )
+        )
+
+        command.upgrade(config, "p0s000000006")
         assert (
             connection.scalar(
-                sa.text("SELECT count(*) FROM saas_registration_rate_limit_policies")
+                sa.text(
+                    "SELECT count(*) FROM saas_registration_rate_limits WHERE key_id = 'p0s5-test'"
+                )
             )
-            == 3
+            == 1
         )
+        policies = {
+            tuple(row)
+            for row in connection.execute(
+                sa.text(
+                    "SELECT action, subject_kind, limit_count, window_seconds, "
+                    "retention_seconds, max_rows, current_rows, policy_revision "
+                    "FROM saas_registration_rate_limit_policies"
+                )
+            )
+        }
+        assert policies == {
+            (
+                "registration.request",
+                "email",
+                5,
+                900,
+                86400,
+                1_000_000,
+                1,
+                "registration-rate-limit-v1",
+            ),
+            (
+                "registration.request",
+                "network",
+                60,
+                900,
+                86400,
+                1_000_000,
+                0,
+                "registration-rate-limit-v1",
+            ),
+            (
+                "registration.resend",
+                "email",
+                3,
+                900,
+                86400,
+                1_000_000,
+                0,
+                "registration-rate-limit-v1",
+            ),
+            (
+                "registration.resend",
+                "network",
+                60,
+                900,
+                86400,
+                1_000_000,
+                0,
+                "registration-rate-limit-v1",
+            ),
+            (
+                "registration.verify",
+                "registration",
+                10,
+                900,
+                86400,
+                1_000_000,
+                0,
+                "registration-rate-limit-v1",
+            ),
+            (
+                "registration.verify",
+                "network",
+                120,
+                900,
+                86400,
+                1_000_000,
+                0,
+                "registration-rate-limit-v1",
+            ),
+        }
         now = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
         connection.execute(
             sa.text(
                 "INSERT INTO saas_registration_rate_limits "
                 "(action, subject_kind, key_id, subject_hmac, window_started_at, "
                 "request_count, expires_at, policy_revision, version) "
-                "VALUES ('registration.request', 'email', 'test-v1', :subject_hmac, "
+                "VALUES ('registration.request', 'network', 'test-v1', :subject_hmac, "
                 ":now, 1, :expires_at, 'registration-rate-limit-v1', 1)"
             ),
             {
@@ -236,8 +343,55 @@ def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> No
             },
         )
 
-        with pytest.raises(RuntimeError, match="registration rate-limit counters"):
-            command.downgrade(config, "p0s000000004")
+        with pytest.raises(RuntimeError, match=r"p0s000000006.*network rate-limit counters"):
+            command.downgrade(config, "p0s000000005")
+        connection.execute(
+            sa.text("DELETE FROM saas_registration_rate_limits WHERE subject_kind = 'network'")
+        )
+        connection.execute(
+            sa.text(
+                "UPDATE saas_registration_rate_limit_policies SET limit_count = 61 "
+                "WHERE action = 'registration.request' AND subject_kind = 'network'"
+            )
+        )
+        with pytest.raises(RuntimeError, match=r"p0s000000006.*network policy drift"):
+            command.downgrade(config, "p0s000000005")
+        connection.execute(
+            sa.text(
+                "UPDATE saas_registration_rate_limit_policies SET limit_count = 60 "
+                "WHERE action = 'registration.request' AND subject_kind = 'network'"
+            )
+        )
+        command.downgrade(config, "p0s000000005")
+        assert {
+            tuple(row)
+            for row in connection.execute(
+                sa.text("SELECT action, subject_kind FROM saas_registration_rate_limit_policies")
+            )
+        } == {
+            ("registration.request", "email"),
+            ("registration.resend", "email"),
+            ("registration.verify", "registration"),
+        }
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT count(*) FROM saas_registration_rate_limits "
+                    "WHERE key_id = 'p0s5-test' AND subject_kind = 'email'"
+                )
+            )
+            == 1
+        )
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_registration_rate_limit_policies "
+                    "(action, subject_kind, limit_count, window_seconds, retention_seconds, "
+                    "max_rows, current_rows, policy_revision) VALUES "
+                    "('registration.request', 'network', 60, 900, 86400, 1000000, 0, "
+                    "'registration-rate-limit-v1')"
+                )
+            )
         connection.execute(sa.text("DELETE FROM saas_registration_rate_limits"))
         command.downgrade(config, "p0s000000004")
         assert "saas_registration_rate_limits" not in sa.inspect(connection).get_table_names()
@@ -463,7 +617,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000005"
+                == "p0s000000006"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 

@@ -149,7 +149,7 @@ def test_new_schema_head_requires_successor_architecture_approval() -> None:
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000001"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000005"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000006"  # type: ignore[index]
     assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
     assert validate_approval_contract(_repo(), baseline)["status"] == "pass"
 

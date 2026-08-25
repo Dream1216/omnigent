@@ -46,7 +46,7 @@ REGISTRATION_RATE_LIMIT_ACTIONS = (
     "registration.resend",
     "registration.verify",
 )
-REGISTRATION_RATE_LIMIT_SUBJECT_KINDS = ("email", "registration")
+REGISTRATION_RATE_LIMIT_SUBJECT_KINDS = ("email", "registration", "network")
 
 
 def _values(values: tuple[str, ...]) -> str:

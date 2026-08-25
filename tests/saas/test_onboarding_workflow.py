@@ -27,6 +27,7 @@ from saas.control_plane import (
     PasswordCredential,
     ProjectMembershipRecord,
     ProjectRecord,
+    RegistrationRateLimitDecision,
     RunAdmission,
     RuntimeCompatibilityPolicy,
     RuntimeIdentityAliasRecord,
@@ -73,6 +74,17 @@ def _hash(value: str) -> str:
 
 
 class _AllowAllRateLimiter:
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision:
+        del db, action, subject_kind, subject
+        return RegistrationRateLimitDecision(True, 0, 1, "test-allow-all")
+
     def require(self, *, action: str, subject_kind: str, subject: str) -> None:
         del action, subject_kind, subject
 

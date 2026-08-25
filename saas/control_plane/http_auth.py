@@ -24,6 +24,7 @@ from saas.control_plane.api_credentials import (
     ApiCredentialService,
     ValidatedApiCredential,
 )
+from saas.control_plane.client_network import TrustedClientNetworkResolver
 from saas.control_plane.context_snapshot import (
     ContextSnapshotError,
     ContextSnapshotService,
@@ -1191,6 +1192,7 @@ def create_saas_http_integration(
     notification_origin: str | None = None,
     onboarding: SelfServiceOnboardingService | None = None,
     onboarding_status: OnboardingStatusService | None = None,
+    onboarding_client_network: TrustedClientNetworkResolver | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1206,9 +1208,22 @@ def create_saas_http_integration(
         oidc=oidc,
         context_snapshots=context_snapshots,
     )
-    if (onboarding is None) != (onboarding_status is None):
-        raise ValueError("Onboarding and Onboarding Status services must be configured together")
-    if onboarding is not None and onboarding_status is not None:
+    onboarding_dependencies = (
+        onboarding,
+        onboarding_status,
+        onboarding_client_network,
+    )
+    if any(dependency is not None for dependency in onboarding_dependencies) and any(
+        dependency is None for dependency in onboarding_dependencies
+    ):
+        raise ValueError(
+            "Onboarding, Onboarding Status, and trusted client network must be configured together"
+        )
+    if (
+        onboarding is not None
+        and onboarding_status is not None
+        and onboarding_client_network is not None
+    ):
         from saas.control_plane.onboarding_http import create_onboarding_router
 
         router.include_router(
@@ -1216,6 +1231,7 @@ def create_saas_http_integration(
                 onboarding=onboarding,
                 onboarding_status=onboarding_status,
                 auth_provider=auth_provider,
+                client_network=onboarding_client_network,
             )
         )
     if (project_admin is None) != (project_authorizer is None):

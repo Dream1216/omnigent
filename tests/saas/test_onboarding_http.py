@@ -5,12 +5,17 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+import pytest
 import sqlalchemy as sa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from saas.control_plane.client_network import (
+    TrustedClientNetworkConfig,
+    TrustedClientNetworkResolver,
+)
 from saas.control_plane.db_models import (
     GlobalUser,
     RuntimePlacementRecord,
@@ -23,9 +28,11 @@ from saas.control_plane.identity import IdentityManagementService, PasswordCrede
 from saas.control_plane.lifecycle import MembershipLifecycleService
 from saas.control_plane.onboarding import (
     EmailVerificationMessage,
+    OnboardingError,
     OnboardingOutboxPublisher,
     OnboardingPlan,
     OnboardingPolicy,
+    RegistrationRateLimitDecision,
     SelfServiceOnboardingService,
     TenantOnboardingCoordinator,
     VerificationEnvelopeKeyring,
@@ -44,8 +51,34 @@ PASSWORD = "correct-horse-battery-staple"
 
 
 class _AllowAllRateLimiter:
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision:
+        del db, action, subject_kind, subject
+        return RegistrationRateLimitDecision(
+            allowed=True,
+            retry_after_seconds=0,
+            remaining=100,
+            policy_revision="onboarding-http-test",
+        )
+
     def require(self, *, action: str, subject_kind: str, subject: str) -> None:
         del action, subject_kind, subject
+
+
+class _NetworkAwareOnboardingService(SelfServiceOnboardingService):
+    network_calls: list[tuple[str, str]]
+    network_error: OnboardingError | None
+
+    def require_network_rate_limit(self, action: str, subject: str) -> None:
+        self.network_calls.append((action, subject))
+        if self.network_error is not None:
+            raise self.network_error
 
 
 class _RecordingEmailSender:
@@ -62,9 +95,15 @@ class _HttpHarness:
     sessions: sessionmaker[Session]
     sender: _RecordingEmailSender
     dispatcher: OutboxDispatcher
+    onboarding: _NetworkAwareOnboardingService
 
 
-def _http_harness() -> Generator[_HttpHarness, None, None]:
+def _http_harness(
+    *,
+    client_network: TrustedClientNetworkResolver | None = None,
+    omit_client_network: bool = False,
+    configure_onboarding: bool = True,
+) -> Generator[_HttpHarness, None, None]:
     engine = sa.create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -100,12 +139,14 @@ def _http_harness() -> Generator[_HttpHarness, None, None]:
         active_key_id="http-test-v1",
         keys={"http-test-v1": b"onboarding-http-envelope-key-001"},
     )
-    onboarding = SelfServiceOnboardingService(
+    onboarding = _NetworkAwareOnboardingService(
         sessions,
         policy=policy,
         envelope_keyring=envelopes,
         rate_limiter=_AllowAllRateLimiter(),
     )
+    onboarding.network_calls = []
+    onboarding.network_error = None
     coordinator = TenantOnboardingCoordinator(sessions, policy=policy)
     sender = _RecordingEmailSender()
     dispatcher = OutboxDispatcher(
@@ -127,30 +168,41 @@ def _http_harness() -> Generator[_HttpHarness, None, None]:
             adapter_contract_version="0.2.0",
         ),
     )
-    integration = create_saas_http_integration(
-        lifecycle=lifecycle,
-        identities=identities,
-        passwords=passwords,
-        context_resolver=resolver,
-        cookie_config=SaasCookieConfig(
-            name="saas_session",
-            secure=False,
-            trusted_origins=frozenset({TRUSTED_ORIGIN}),
-        ),
-        onboarding=onboarding,
-        onboarding_status=OnboardingStatusService(sessions),
-    )
-    app = FastAPI()
-    router, prefix, tags = integration.extra_router
-    app.include_router(router, prefix=prefix, tags=tags)
-    integration.install_middleware(app)
     try:
-        with TestClient(app, base_url=TRUSTED_ORIGIN) as client:
+        effective_client_network = client_network or TrustedClientNetworkResolver(
+            TrustedClientNetworkConfig()
+        )
+        integration = create_saas_http_integration(
+            lifecycle=lifecycle,
+            identities=identities,
+            passwords=passwords,
+            context_resolver=resolver,
+            cookie_config=SaasCookieConfig(
+                name="saas_session",
+                secure=False,
+                trusted_origins=frozenset({TRUSTED_ORIGIN}),
+            ),
+            onboarding=onboarding if configure_onboarding else None,
+            onboarding_status=(
+                OnboardingStatusService(sessions) if configure_onboarding else None
+            ),
+            onboarding_client_network=(None if omit_client_network else effective_client_network),
+        )
+        app = FastAPI()
+        router, prefix, tags = integration.extra_router
+        app.include_router(router, prefix=prefix, tags=tags)
+        integration.install_middleware(app)
+        with TestClient(
+            app,
+            base_url=TRUSTED_ORIGIN,
+            client=("198.51.100.77", 50443),
+        ) as client:
             yield _HttpHarness(
                 client=client,
                 sessions=sessions,
                 sender=sender,
                 dispatcher=dispatcher,
+                onboarding=onboarding,
             )
     finally:
         SaasBase.metadata.drop_all(engine)
@@ -172,6 +224,18 @@ def _registration_body(suffix: str) -> dict[str, object]:
 
 def _post_headers(idempotency_key: str, *, origin: str = TRUSTED_ORIGIN) -> dict[str, str]:
     return {"Idempotency-Key": idempotency_key, "Origin": origin}
+
+
+def _network_error(
+    code: str,
+    message: str,
+    *,
+    retry_after_seconds: object | None = None,
+) -> OnboardingError:
+    error = OnboardingError(code, message)
+    if retry_after_seconds is not None:
+        object.__setattr__(error, "retry_after_seconds", retry_after_seconds)
+    return error
 
 
 def _assert_secret_free(response_body: object, *, forbidden_values: tuple[str, ...]) -> None:
@@ -274,8 +338,174 @@ def test_only_the_three_exact_post_paths_are_public_and_origin_guarded() -> None
                 json={},
             )
             assert not_public_post.status_code == 404
+        assert harness.onboarding.network_calls == []
     finally:
         harness_iterator.close()
+
+
+@pytest.mark.parametrize(
+    ("path", "action"),
+    (
+        ("/saas/onboarding/registrations", "registration.request"),
+        (
+            f"/saas/onboarding/registrations/{uuid4()}/resend",
+            "registration.resend",
+        ),
+        (
+            f"/saas/onboarding/registrations/{uuid4()}/verify",
+            "registration.verify",
+        ),
+    ),
+)
+def test_network_gate_runs_before_json_and_body_validation(path: str, action: str) -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        invalid_json = harness.client.post(
+            path,
+            headers={
+                **_post_headers(f"invalid-json-{action}"),
+                "Content-Type": "application/json",
+            },
+            content=b"{",
+        )
+
+        assert invalid_json.status_code == 422
+        assert harness.onboarding.network_calls == [
+            (action, "client-network:ipv4:198.51.100.0/24")
+        ]
+    finally:
+        harness_iterator.close()
+
+
+@pytest.mark.parametrize("operation", ("resend", "verify"))
+def test_network_gate_runs_before_path_uuid_validation(operation: str) -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        body = (
+            {"email": "invalid-path@example.com"}
+            if operation == "resend"
+            else {"verification_token": "opaque", "password": PASSWORD}
+        )
+        invalid_uuid = harness.client.post(
+            f"/saas/onboarding/registrations/not-a-uuid/{operation}",
+            headers=_post_headers(f"invalid-uuid-{operation}"),
+            json=body,
+        )
+
+        assert invalid_uuid.status_code == 422
+        assert harness.onboarding.network_calls == [
+            (
+                f"registration.{operation}",
+                "client-network:ipv4:198.51.100.0/24",
+            )
+        ]
+    finally:
+        harness_iterator.close()
+
+
+def test_untrusted_peer_cannot_spoof_the_network_subject() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        accepted = harness.client.post(
+            "/saas/onboarding/registrations",
+            headers={
+                **_post_headers("spoofed-forwarding-header"),
+                "X-Forwarded-For": "203.0.113.99",
+            },
+            json=_registration_body("spoofed-forwarding-header"),
+        )
+
+        assert accepted.status_code == 202
+        assert harness.onboarding.network_calls == [
+            ("registration.request", "client-network:ipv4:198.51.100.0/24")
+        ]
+    finally:
+        harness_iterator.close()
+
+
+def test_unresolvable_trusted_proxy_subject_fails_generic_before_body_parsing() -> None:
+    client_network = TrustedClientNetworkResolver(
+        TrustedClientNetworkConfig(trusted_proxy_cidrs=("198.51.100.0/24",))
+    )
+    harness_iterator = _http_harness(client_network=client_network)
+    harness = next(harness_iterator)
+    try:
+        raw_forwarding_value = "not-a-public-network-subject"
+        unavailable = harness.client.post(
+            "/saas/onboarding/registrations",
+            headers={
+                **_post_headers("resolver-unavailable"),
+                "Content-Type": "application/json",
+                "X-Forwarded-For": raw_forwarding_value,
+            },
+            content=b"{",
+        )
+
+        assert unavailable.status_code == 503
+        assert unavailable.headers["Cache-Control"] == "no-store"
+        assert unavailable.json() == {
+            "detail": {
+                "code": "registration_rate_limit_unavailable",
+                "message": "registration abuse protection is unavailable",
+            }
+        }
+        assert raw_forwarding_value not in unavailable.text
+        assert harness.onboarding.network_calls == []
+    finally:
+        harness_iterator.close()
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "expected"),
+    ((None, "1"), (0, "1"), (37, "37"), (999_999, "86400"), ("45", "1")),
+)
+def test_network_rate_limit_is_generic_and_retry_after_is_bounded(
+    retry_after: object | None,
+    expected: str,
+) -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        leaked_message = "registration.request client-network:ipv4:198.51.100.0/24"
+        harness.onboarding.network_error = _network_error(
+            "registration_rate_limited",
+            leaked_message,
+            retry_after_seconds=retry_after,
+        )
+        denied = harness.client.post(
+            "/saas/onboarding/registrations",
+            headers={
+                **_post_headers("network-rate-limited"),
+                "Content-Type": "application/json",
+            },
+            content=b"{",
+        )
+
+        assert denied.status_code == 429
+        assert denied.headers["Cache-Control"] == "no-store"
+        assert denied.headers["Retry-After"] == expected
+        assert denied.json() == {
+            "detail": {
+                "code": "registration_rate_limited",
+                "message": "registration request rate limit exceeded",
+            }
+        }
+        assert leaked_message not in denied.text
+    finally:
+        harness_iterator.close()
+
+
+def test_onboarding_http_dependencies_are_all_or_none() -> None:
+    missing_network = _http_harness(omit_client_network=True)
+    with pytest.raises(ValueError, match="trusted client network"):
+        next(missing_network)
+
+    resolver_without_onboarding = _http_harness(configure_onboarding=False)
+    with pytest.raises(ValueError, match="trusted client network"):
+        next(resolver_without_onboarding)
 
 
 def test_registration_requires_idempotency_and_rejects_extra_fields() -> None:
@@ -289,6 +519,9 @@ def test_registration_requires_idempotency_and_rejects_extra_fields() -> None:
             json=body,
         )
         assert missing_key.status_code == 422
+        assert harness.onboarding.network_calls == [
+            ("registration.request", "client-network:ipv4:198.51.100.0/24")
+        ]
 
         extra_field = harness.client.post(
             "/saas/onboarding/registrations",
@@ -297,6 +530,10 @@ def test_registration_requires_idempotency_and_rejects_extra_fields() -> None:
         )
         assert extra_field.status_code == 422
         assert extra_field.json()["detail"][0]["type"] == "extra_forbidden"
+        assert harness.onboarding.network_calls == [
+            ("registration.request", "client-network:ipv4:198.51.100.0/24"),
+            ("registration.request", "client-network:ipv4:198.51.100.0/24"),
+        ]
     finally:
         harness_iterator.close()
 

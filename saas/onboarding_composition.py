@@ -125,7 +125,7 @@ class TenantOnboardingDependencies:
             if not callable(factory):
                 raise TypeError(f"{name} must be a SQLAlchemy Session factory")
         for name, dependency, methods in (
-            ("rate_limiter", self.rate_limiter, ("require",)),
+            ("rate_limiter", self.rate_limiter, ("consume", "require")),
             ("email_sender", self.email_sender, ("send_verification",)),
             (
                 "runtime",

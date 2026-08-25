@@ -23,6 +23,7 @@ from saas.control_plane.onboarding import (
     OnboardingError,
     OnboardingPlan,
     OnboardingPolicy,
+    RegistrationRateLimitDecision,
     RegistrationRateLimitSubjectKeyring,
     SelfServiceOnboardingService,
     SharedRegistrationRateLimiter,
@@ -59,6 +60,17 @@ _TENANT_EVENT = "onboarding.tenant.requested"
 
 
 class _AllowAllRateLimiter:
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision:
+        del db, action, subject_kind, subject
+        return RegistrationRateLimitDecision(True, 0, 1, "test-allow-all")
+
     def require(self, *, action: str, subject_kind: str, subject: str) -> None:
         del action, subject_kind, subject
 
@@ -464,6 +476,7 @@ def test_onboarding_roles_and_all_111_control_plane_tables_are_force_rls(
 
 def test_shared_registration_rate_limiter_uses_exact_force_rls_counter(
     postgresql_engine: Engine,
+    request: pytest.FixtureRequest,
 ) -> None:
     sessions = _role_sessions(postgresql_engine, "saas_registration")
     keyring = RegistrationRateLimitSubjectKeyring(
@@ -478,6 +491,35 @@ def test_shared_registration_rate_limiter_uses_exact_force_rls_counter(
         subject_kind="email",
         subject=subject,
     )
+
+    def cleanup_rate_limit_probe() -> None:
+        with postgresql_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "DELETE FROM saas_registration_rate_limits "
+                    "WHERE action = 'registration.request' AND subject_kind = 'email' "
+                    "AND key_id = :key_id AND subject_hmac = :subject_hmac"
+                ),
+                {
+                    "key_id": aliases.active_key_id,
+                    "subject_hmac": aliases.active_subject_hmac,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_registration_rate_limit_policies SET "
+                    "limit_count = 5, window_seconds = 900, retention_seconds = 86400, "
+                    "max_rows = 1000000, policy_revision = 'registration-rate-limit-v1', "
+                    "current_rows = (SELECT count(*) "
+                    "FROM saas_registration_rate_limits AS remaining "
+                    "WHERE remaining.action = 'registration.request' "
+                    "AND remaining.subject_kind = 'email'), "
+                    "updated_at = pg_catalog.clock_timestamp() "
+                    "WHERE action = 'registration.request' AND subject_kind = 'email'"
+                )
+            )
+
+    request.addfinalizer(cleanup_rate_limit_probe)
     with postgresql_engine.begin() as connection:
         connection.execute(
             sa.text(

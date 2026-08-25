@@ -25,6 +25,7 @@ from saas.control_plane import (
     OutboxDispatcher,
     PasswordCredential,
     PasswordCredentialService,
+    RegistrationRateLimitDecision,
     SaasBase,
     SelfServiceEventRecord,
     SelfServiceOnboardingService,
@@ -48,9 +49,24 @@ ZERO_HASH = "0" * 64
 class _AllowAllRateLimiter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.denied: set[tuple[str, str]] = set()
 
     def require(self, *, action: str, subject_kind: str, subject: str) -> None:
         self.calls.append((action, subject_kind, subject))
+
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision:
+        del db
+        self.calls.append((action, subject_kind, subject))
+        if (action, subject_kind) in self.denied:
+            return RegistrationRateLimitDecision(False, 37, 0, "test-deny")
+        return RegistrationRateLimitDecision(True, 0, 1, "test-allow-all")
 
 
 class _RecordingEmailSender:
@@ -69,6 +85,7 @@ class _OnboardingHarness:
     envelopes: VerificationEnvelopeKeyring
     sender: _RecordingEmailSender
     dispatcher: OutboxDispatcher
+    limiter: _AllowAllRateLimiter
     now: datetime
 
 
@@ -127,6 +144,7 @@ def onboarding() -> Iterator[_OnboardingHarness]:
         envelopes=envelopes,
         sender=sender,
         dispatcher=OutboxDispatcher(sessions, publisher),
+        limiter=limiter,
         now=now,
     )
     yield harness
@@ -227,6 +245,10 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _rate_calls(onboarding: _OnboardingHarness, action: str) -> list[tuple[str, str, str]]:
+    return [call for call in onboarding.limiter.calls if call[0] == action]
+
+
 def test_registration_stores_only_token_hash_and_dispatch_records_delivery(
     onboarding: _OnboardingHarness,
 ) -> None:
@@ -266,6 +288,9 @@ def test_registration_stores_only_token_hash_and_dispatch_records_delivery(
     )
     assert replay.registration_id == registration_id
     assert replay.replayed
+    assert _rate_calls(onboarding, "registration.request") == [
+        ("registration.request", "email", "owner-one@example.com")
+    ]
 
     dispatched = onboarding.dispatcher.dispatch_once(now=onboarding.now + timedelta(seconds=1))
     assert (dispatched.claimed, dispatched.published, dispatched.failed) == (1, 1, 0)
@@ -372,6 +397,126 @@ def test_pending_email_collision_is_non_enumerating_and_does_not_duplicate_autho
     assert len(email_events) == 1
 
 
+def test_invalid_registration_is_rejected_before_identity_rate_limit(
+    onboarding: _OnboardingHarness,
+) -> None:
+    with pytest.raises(OnboardingError) as error:
+        onboarding.service.request_registration(
+            email="invalid-before-limit@example.com",
+            display_name="Invalid",
+            tenant_name="Invalid Tenant",
+            tenant_slug="admin",
+            default_space_name="Default Space",
+            default_space_slug="default",
+            plan_key="starter",
+            home_region="cn-east-1",
+            idempotency_key="invalid-before-limit",
+            now=onboarding.now,
+        )
+
+    assert error.value.code == "registration_invalid"
+    assert _rate_calls(onboarding, "registration.request") == []
+
+
+def test_identity_limited_registration_is_non_enumerating_and_has_no_domain_writes(
+    onboarding: _OnboardingHarness,
+) -> None:
+    onboarding.limiter.denied.add(("registration.request", "email"))
+
+    accepted = onboarding.service.request_registration(
+        email="identity-limited@example.com",
+        display_name="Identity Limited",
+        tenant_name="Identity Limited Tenant",
+        tenant_slug="identity-limited",
+        default_space_name="Default Space",
+        default_space_slug="default",
+        plan_key="starter",
+        home_region="cn-east-1",
+        idempotency_key="identity-limited",
+        now=onboarding.now,
+    )
+
+    assert not accepted.replayed
+    assert _rate_calls(onboarding, "registration.request") == [
+        ("registration.request", "email", "identity-limited@example.com")
+    ]
+    with onboarding.sessions() as db:
+        assert db.get(SelfServiceRegistrationRecord, accepted.registration_id) is None
+        assert db.scalar(sa.select(sa.func.count()).select_from(ControlPlaneOutboxEvent)) == 0
+
+
+def test_unknown_resend_target_does_not_consume_identity_bucket(
+    onboarding: _OnboardingHarness,
+) -> None:
+    registration_id = _request(onboarding, suffix="resend-target")
+    with onboarding.sessions() as db:
+        original_challenges = db.scalar(
+            sa.select(sa.func.count()).select_from(EmailVerificationChallengeRecord)
+        )
+        original_events = db.scalar(
+            sa.select(sa.func.count()).select_from(ControlPlaneOutboxEvent)
+        )
+
+    for target_id, email in (
+        (registration_id, "wrong-resend-target@example.com"),
+        (uuid4(), "owner-resend-target@example.com"),
+    ):
+        accepted = onboarding.service.resend_verification(
+            registration_id=target_id,
+            email=email,
+            idempotency_key=f"unknown-{target_id}",
+            now=onboarding.now + timedelta(minutes=1),
+        )
+        assert not accepted.replayed
+
+    assert _rate_calls(onboarding, "registration.resend") == []
+    with onboarding.sessions() as db:
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(EmailVerificationChallengeRecord))
+            == original_challenges
+        )
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(ControlPlaneOutboxEvent))
+            == original_events
+        )
+
+
+def test_identity_limited_resend_is_non_enumerating_and_preserves_challenge(
+    onboarding: _OnboardingHarness,
+) -> None:
+    registration_id = _request(onboarding, suffix="resend-limited")
+    original_event = _email_event(onboarding, registration_id)
+    original_message = onboarding.envelopes.open(
+        event_id=original_event.id, payload=original_event.payload
+    )
+    onboarding.limiter.denied.add(("registration.resend", "email"))
+
+    accepted = onboarding.service.resend_verification(
+        registration_id=registration_id,
+        email="OWNER-RESEND-LIMITED@example.com",
+        idempotency_key="resend-limited",
+        now=onboarding.now + timedelta(minutes=1),
+    )
+
+    assert not accepted.replayed
+    assert _rate_calls(onboarding, "registration.resend") == [
+        ("registration.resend", "email", "owner-resend-limited@example.com")
+    ]
+    with onboarding.sessions() as db:
+        registration = db.get(SelfServiceRegistrationRecord, registration_id)
+        challenge = db.get(EmailVerificationChallengeRecord, original_message.challenge_id)
+        assert registration is not None and registration.challenge_generation == 1
+        assert challenge is not None and challenge.status == "pending"
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(ControlPlaneOutboxEvent)
+                .where(ControlPlaneOutboxEvent.aggregate_key == str(registration_id))
+            )
+            == 1
+        )
+
+
 def test_resend_revokes_old_token_and_replays_idempotently(
     onboarding: _OnboardingHarness,
 ) -> None:
@@ -393,6 +538,9 @@ def test_resend_revokes_old_token_and_replays_idempotently(
         now=onboarding.now + timedelta(minutes=3),
     )
     assert replay.replayed
+    assert _rate_calls(onboarding, "registration.resend") == [
+        ("registration.resend", "email", "owner-resend@example.com")
+    ]
 
     with onboarding.sessions() as db:
         challenges = list(
@@ -417,6 +565,7 @@ def test_resend_revokes_old_token_and_replays_idempotently(
             now=onboarding.now + timedelta(minutes=4),
         )
     assert error.value.code == "verification_invalid"
+    assert _rate_calls(onboarding, "registration.verify") == []
 
     new_message = _message_for_challenge(onboarding, registration_id, new_challenge_id)
     _verify(onboarding, registration_id, new_message, idempotency_key="verify-new-token")
@@ -482,6 +631,70 @@ def test_invalid_verification_does_not_run_the_password_kdf(
     assert error.value.code == "verification_invalid"
 
 
+def test_weak_password_is_rejected_before_verification_rate_limit(
+    onboarding: _OnboardingHarness,
+) -> None:
+    registration_id = _request(onboarding, suffix="weak-password")
+    event = _email_event(onboarding, registration_id)
+    message = onboarding.envelopes.open(event_id=event.id, payload=event.payload)
+
+    with pytest.raises(OnboardingError) as error:
+        onboarding.service.verify_and_request_onboarding(
+            registration_id=registration_id,
+            verification_token=message.verification_token,
+            password="too-short",
+            idempotency_key="weak-password",
+            now=onboarding.now + timedelta(minutes=1),
+        )
+
+    assert error.value.code == "password_policy"
+    assert _rate_calls(onboarding, "registration.verify") == []
+    with onboarding.sessions() as db:
+        registration = db.get(SelfServiceRegistrationRecord, registration_id)
+        challenge = db.get(EmailVerificationChallengeRecord, message.challenge_id)
+        assert registration is not None and registration.status == "pending_verification"
+        assert challenge is not None and challenge.status == "pending"
+
+
+def test_verification_rate_denial_commits_before_429_and_preserves_domain_state(
+    onboarding: _OnboardingHarness,
+) -> None:
+    registration_id = _request(onboarding, suffix="verify-limited")
+    event = _email_event(onboarding, registration_id)
+    message = onboarding.envelopes.open(event_id=event.id, payload=event.payload)
+    onboarding.limiter.denied.add(("registration.verify", "registration"))
+
+    with pytest.raises(OnboardingError) as error:
+        onboarding.service.verify_and_request_onboarding(
+            registration_id=registration_id,
+            verification_token=message.verification_token,
+            password=PASSWORD,
+            idempotency_key="verify-limited",
+            now=onboarding.now + timedelta(minutes=1),
+        )
+
+    assert error.value.code == "registration_rate_limited"
+    assert error.value.retry_after_seconds == 37
+    assert _rate_calls(onboarding, "registration.verify") == [
+        ("registration.verify", "registration", str(registration_id))
+    ]
+    with onboarding.sessions() as db:
+        registration = db.get(SelfServiceRegistrationRecord, registration_id)
+        challenge = db.get(EmailVerificationChallengeRecord, message.challenge_id)
+        assert registration is not None and registration.status == "pending_verification"
+        assert challenge is not None and challenge.status == "pending"
+        assert db.scalar(sa.select(sa.func.count()).select_from(GlobalUser)) == 0
+        assert db.scalar(sa.select(sa.func.count()).select_from(PasswordCredential)) == 0
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(ControlPlaneOutboxEvent)
+                .where(ControlPlaneOutboxEvent.event_type == TENANT_EVENT)
+            )
+            == 0
+        )
+
+
 def test_verification_creates_login_then_outbox_starts_fail_closed_tenant_saga(
     onboarding: _OnboardingHarness,
 ) -> None:
@@ -511,6 +724,9 @@ def test_verification_creates_login_then_outbox_starts_fail_closed_tenant_saga(
             now=onboarding.now + timedelta(minutes=1),
         )
     assert receipt_conflict.value.code == "idempotency_conflict"
+    assert _rate_calls(onboarding, "registration.verify") == [
+        ("registration.verify", "registration", str(registration_id))
+    ]
 
     with onboarding.sessions() as db:
         registration = db.get(SelfServiceRegistrationRecord, registration_id)
@@ -686,6 +902,7 @@ def test_invalid_and_expired_verification_tokens_fail_closed(
             now=onboarding.now + timedelta(minutes=1),
         )
     assert invalid.value.code == "verification_invalid"
+    assert _rate_calls(onboarding, "registration.verify") == []
     with onboarding.sessions() as db:
         registration = db.get(SelfServiceRegistrationRecord, registration_id)
         challenge = db.get(EmailVerificationChallengeRecord, message.challenge_id)

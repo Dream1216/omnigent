@@ -20,8 +20,8 @@ from saas.control_plane import (
     SaasBase,
     SelfServiceOnboardingService,
     SelfServiceRegistrationRecord,
-    SharedRegistrationRateLimitJanitor,
     SharedRegistrationRateLimiter,
+    SharedRegistrationRateLimitJanitor,
     VerificationEnvelopeKeyring,
 )
 from saas.control_plane.onboarding_http import _http_error
@@ -57,6 +57,7 @@ def _keyring(
     previous: str | None = None,
     anchor: str | None = None,
     write: str | None = None,
+    previous_writers_drained: bool = False,
 ) -> RegistrationRateLimitSubjectKeyring:
     keys = {active: (active.encode() + b"-") * 8}
     if previous is not None:
@@ -67,6 +68,7 @@ def _keyring(
         previous_key_id=previous,
         anchor_key_id=anchor,
         write_key_id=write,
+        previous_writers_drained=previous_writers_drained,
     )
 
 
@@ -93,8 +95,11 @@ def _set_policy(
     ("action", "subject_kind", "subject"),
     [
         ("registration.request", "email", "request@example.test"),
+        ("registration.request", "network", "198.51.100.0/24"),
         ("registration.resend", "email", "resend@example.test"),
+        ("registration.resend", "network", "2001:db8:1:2::/64"),
         ("registration.verify", "registration", "018f7c54-1500-7000-8000-000000000001"),
+        ("registration.verify", "network", "203.0.113.0/24"),
     ],
 )
 def test_database_policy_blocks_each_action_across_replicas_and_commits_denial(
@@ -190,7 +195,13 @@ def test_rotation_overlap_keeps_anchor_writes_until_old_replicas_drain(
 
     promoted = SharedRegistrationRateLimiter(
         sessions,
-        subject_keyring=_keyring(active="new", previous="old", anchor="old", write="new"),
+        subject_keyring=_keyring(
+            active="new",
+            previous="old",
+            anchor="old",
+            write="new",
+            previous_writers_drained=True,
+        ),
         development_clock=clock,
     )
     with pytest.raises(OnboardingError, match="rate limit exceeded"):
@@ -265,6 +276,12 @@ def test_keyring_requires_strong_exact_keys_and_domain_separates_aliases() -> No
         RegistrationRateLimitSubjectKeyring(
             keys={"active": b"a" * 32, "unused": b"b" * 32}, active_key_id="active"
         )
+    with pytest.raises(ValueError, match="keyring is invalid"):
+        RegistrationRateLimitSubjectKeyring(
+            keys={"active": b"a" * 32, "previous": b"a" * 32},
+            active_key_id="active",
+            previous_key_id="previous",
+        )
     keyring = _keyring()
     request = keyring.aliases(
         action="registration.request", subject_kind="email", subject="same@example.test"
@@ -275,6 +292,43 @@ def test_keyring_requires_strong_exact_keys_and_domain_separates_aliases() -> No
     assert request.active_subject_hmac != resend.active_subject_hmac
     assert len(request.active_subject_hmac) == 64
     assert "same@example.test" not in request.active_subject_hmac
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"active": "new", "previous": "old", "anchor": "new"},
+        {"active": "new", "previous": "old", "write": "new"},
+        {
+            "active": "new",
+            "previous": "old",
+            "write": "old",
+            "previous_writers_drained": True,
+        },
+        {"active": "new", "previous_writers_drained": True},
+        {"active": "new", "anchor": ""},
+        {"active": "new", "write": ""},
+    ],
+)
+def test_keyring_rejects_contradictory_rotation_phases(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="rotation IDs are invalid"):
+        _keyring(**overrides)  # type: ignore[arg-type]
+
+
+def test_keyring_requires_explicit_writer_drain_before_promotion() -> None:
+    overlap = _keyring(active="new", previous="old")
+    assert (overlap.anchor_key_id, overlap.write_key_id) == ("old", "old")
+
+    promoted = _keyring(
+        active="new",
+        previous="old",
+        anchor="old",
+        write="new",
+        previous_writers_drained=True,
+    )
+    assert (promoted.anchor_key_id, promoted.write_key_id) == ("old", "new")
 
 
 def test_consume_contract_has_no_caller_clock_or_policy_parameters() -> None:

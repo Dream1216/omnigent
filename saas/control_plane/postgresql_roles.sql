@@ -993,8 +993,113 @@ GRANT INSERT ON saas_notification_delivery_attempts TO saas_notification_dispatc
 
 -- Public registration and background Tenant onboarding are separate database
 -- identities. FORCE RLS additionally binds every row to server-generated GUCs.
--- Revoke first so rerunning this file also removes any historical table-level
--- grants. Every write below is constrained to the columns emitted by the two
+-- Revoke first so rerunning this file also removes every historical table- or
+-- column-level grant.  A table-level REVOKE is insufficient in PostgreSQL:
+-- column ACLs survive it.  Converge all four onboarding authorities over every
+-- current public relation before rebuilding the exact projections below.  The
+-- sequence, routine, schema, default-ACL, and database revocations keep an old
+-- release from retaining an independent authority channel.
+DO $$
+DECLARE
+    target_role text;
+    target_table text;
+    target_privilege text;
+    column_list text;
+BEGIN
+    FOREACH target_role IN ARRAY ARRAY[
+        'saas_registration',
+        'saas_onboarding',
+        'saas_executor',
+        'saas_onboarding_status'
+    ]
+    LOOP
+        FOR target_table IN
+            SELECT relation.relname
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+            ORDER BY relation.relname
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+            INTO column_list
+            FROM pg_attribute AS attribute
+            WHERE attribute.attrelid =
+                ('public.' || quote_ident(target_table))::regclass
+              AND attribute.attnum > 0
+              AND NOT attribute.attisdropped;
+            IF column_list IS NOT NULL THEN
+                FOREACH target_privilege IN ARRAY
+                    ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+                LOOP
+                    EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                        ') ON TABLE public.' || quote_ident(target_table) ||
+                        ' FROM ' || quote_ident(target_role);
+                END LOOP;
+            END IF;
+        END LOOP;
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM ' ||
+            quote_ident(target_role);
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM ' ||
+            quote_ident(target_role);
+        EXECUTE 'REVOKE ALL PRIVILEGES ON SCHEMA public FROM ' || quote_ident(target_role);
+        EXECUTE 'GRANT USAGE ON SCHEMA public TO ' || quote_ident(target_role);
+        EXECUTE 'REVOKE CREATE, TEMPORARY ON DATABASE ' ||
+            quote_ident(current_database()) || ' FROM ' || quote_ident(target_role);
+    END LOOP;
+END
+$$;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+
+-- The emergency Platform authority must audit rate-limit state only through
+-- the content-blind status/prune routines installed below.  Table-level
+-- REVOKE does not clear historical column ACLs, so converge both relations at
+-- the final projection boundary before granting only routine execution.
+REVOKE ALL PRIVILEGES ON
+    saas_registration_rate_limit_policies,
+    saas_registration_rate_limits
+FROM PUBLIC, saas_registration, saas_platform;
+DO $$
+DECLARE
+    target_table text;
+    target_privilege text;
+    column_list text;
+BEGIN
+    FOR target_table IN
+        SELECT table_name
+        FROM (VALUES
+            ('saas_registration_rate_limit_policies'),
+            ('saas_registration_rate_limits')
+        ) AS rate_tables(table_name)
+    LOOP
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH target_privilege IN ARRAY
+            ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) ||
+                ' FROM PUBLIC, saas_registration, saas_platform';
+        END LOOP;
+    END LOOP;
+END
+$$;
+
+-- Every write below is constrained to the columns emitted by the two
 -- onboarding services; state transitions cannot rewrite identity or scope.
 REVOKE ALL PRIVILEGES ON
     saas_registration_rate_limit_policies,
@@ -1588,10 +1693,9 @@ TO saas_app;
 GRANT SELECT, INSERT ON saas_artifacts, saas_run_artifacts TO saas_app;
 GRANT SELECT, INSERT ON saas_control_plane_outbox TO saas_app;
 -- Customer onboarding status has a dedicated read-only database authority.
--- Table-level REVOKE does not clear column ACLs. Dynamically revoke every
--- current SELECT column from the status authority on its four dependency
--- tables, plus every customer-status column from the historical app role,
--- before restoring only the allowlisted projections below.
+-- The global authority convergence above already clears this role.  Repeat its
+-- four dependency tables here as a local fail-safe, and also clear the
+-- historical app projection, before restoring only the customer-safe columns.
 DO $$
 DECLARE
     target_role text;
@@ -1641,6 +1745,14 @@ GRANT SELECT (
 ) ON saas_tenant_onboardings TO saas_onboarding_status;
 GRANT SELECT (tenant_id, user_id, status)
 ON saas_tenant_memberships TO saas_onboarding_status;
+
+-- Executor planning dependencies were intentionally removed by the global
+-- authority convergence.  Regrant only the columns used by the pre-existing
+-- Staff/Support RLS predicates; FORCE RLS keeps their rows invisible here.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_executor;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_executor;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_runs,

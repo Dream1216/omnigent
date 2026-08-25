@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
+from saas.control_plane.client_network import (
+    ClientNetworkUnavailableError,
+    TrustedClientNetworkResolver,
+)
 from saas.control_plane.lifecycle import LifecycleError
 from saas.control_plane.onboarding import (
     OnboardingError,
@@ -26,6 +33,20 @@ from saas.control_plane.onboarding_status import (
 
 if TYPE_CHECKING:
     from saas.control_plane.http_auth import SaasAuthProvider
+
+
+_MAX_RETRY_AFTER_SECONDS = 86_400
+_NETWORK_RATE_LIMIT_ROUTES = {
+    "request_registration": ("/onboarding/registrations", "registration.request"),
+    "resend_verification": (
+        "/onboarding/registrations/{registration_id}/resend",
+        "registration.resend",
+    ),
+    "verify_registration": (
+        "/onboarding/registrations/{registration_id}/verify",
+        "registration.verify",
+    ),
+}
 
 
 class _StrictRequest(BaseModel):
@@ -97,10 +118,18 @@ def create_onboarding_router(
     onboarding: SelfServiceOnboardingService,
     onboarding_status: OnboardingStatusService,
     auth_provider: SaasAuthProvider,
+    client_network: TrustedClientNetworkResolver,
 ) -> APIRouter:
     """Expose non-enumerating registration, resend, and verification routes."""
 
-    router = APIRouter()
+    if not isinstance(client_network, TrustedClientNetworkResolver):
+        raise TypeError("onboarding client network resolver is invalid")
+    router = APIRouter(
+        route_class=_network_rate_limited_route_class(
+            onboarding=onboarding,
+            client_network=client_network,
+        )
+    )
 
     @router.get(
         "/onboarding/status",
@@ -203,6 +232,54 @@ def create_onboarding_router(
     return router
 
 
+def _network_rate_limited_route_class(
+    *,
+    onboarding: SelfServiceOnboardingService,
+    client_network: TrustedClientNetworkResolver,
+) -> type[APIRoute]:
+    """Build a route wrapper that runs before FastAPI reads or validates a body."""
+
+    require_network_rate_limit = getattr(onboarding, "require_network_rate_limit", None)
+    if not callable(require_network_rate_limit):
+        raise TypeError("onboarding service must provide require_network_rate_limit()")
+
+    class OnboardingNetworkRateLimitedRoute(APIRoute):
+        def get_route_handler(
+            self,
+        ) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+            route_handler = super().get_route_handler()
+            methods = frozenset(self.methods or ())
+            if methods != {"POST"}:
+                return route_handler
+
+            route_contract = _NETWORK_RATE_LIMIT_ROUTES.get(self.endpoint.__name__)
+            if route_contract is None:
+                raise RuntimeError("public onboarding POST route is missing a network rate limit")
+            expected_suffix, action = route_contract
+            if not self.path_format.endswith(expected_suffix):
+                raise RuntimeError(
+                    "public onboarding POST route path does not match its rate limit"
+                )
+
+            async def network_rate_limited(request: Request) -> Response:
+                try:
+                    subject = client_network.resolve(request)
+                    await run_in_threadpool(
+                        require_network_rate_limit,
+                        action=action,
+                        subject=subject,
+                    )
+                except ClientNetworkUnavailableError:
+                    raise _rate_limit_unavailable_http_error() from None
+                except OnboardingError as error:
+                    raise _http_error(error) from error
+                return await route_handler(request)
+
+            return network_rate_limited
+
+    return OnboardingNetworkRateLimitedRoute
+
+
 def _registration_payload(value: RegistrationAccepted) -> OnboardingRegistrationResponse:
     return OnboardingRegistrationResponse(
         registration_id=value.registration_id,
@@ -238,20 +315,40 @@ def _status_payload(value: OnboardingStatusView) -> OnboardingStatusResponse:
 
 
 def _http_error(error: OnboardingError | LifecycleError) -> HTTPException:
+    headers = {"Cache-Control": "no-store"}
     if error.code == "registration_rate_limited":
         status = 429
+        message = "registration request rate limit exceeded"
+        retry_after = getattr(error, "retry_after_seconds", None)
+        if type(retry_after) is not int:
+            retry_after = 1
+        headers["Retry-After"] = str(min(_MAX_RETRY_AFTER_SECONDS, max(1, retry_after)))
     elif error.code == "registration_rate_limit_unavailable":
         status = 503
+        message = "registration abuse protection is unavailable"
     elif error.code in {
         "idempotency_conflict",
         "registration_conflict",
         "registration_unavailable",
     }:
         status = 409
+        message = str(error)
     else:
         status = 400
+        message = str(error)
     return HTTPException(
         status_code=status,
-        detail={"code": error.code, "message": str(error)},
+        detail={"code": error.code, "message": message},
+        headers=headers,
+    )
+
+
+def _rate_limit_unavailable_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "registration_rate_limit_unavailable",
+            "message": "registration abuse protection is unavailable",
+        },
         headers={"Cache-Control": "no-store"},
     )

@@ -75,8 +75,19 @@ _SENSITIVE_EVENT_KEYS = frozenset(
 class OnboardingError(RuntimeError):
     """Stable, content-blind failure returned by the onboarding boundary."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        if retry_after_seconds is not None and (
+            type(retry_after_seconds) is not int or not 1 <= retry_after_seconds <= 86400
+        ):
+            raise ValueError("onboarding retry delay must be between 1 and 86400 seconds")
         self.code = code
+        self.retry_after_seconds = retry_after_seconds
         super().__init__(message)
 
 
@@ -177,6 +188,15 @@ class OnboardingPolicy:
 class RegistrationRateLimiter(Protocol):
     """Shared, fail-closed rate limiter supplied by the deployment."""
 
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision: ...
+
     def require(self, *, action: str, subject_kind: str, subject: str) -> None: ...
 
 
@@ -211,6 +231,7 @@ class RegistrationRateLimitSubjectKeyring:
         previous_key_id: str | None = None,
         anchor_key_id: str | None = None,
         write_key_id: str | None = None,
+        previous_writers_drained: bool = False,
     ) -> None:
         copied = dict(keys)
         admitted_ids = {active_key_id}
@@ -225,11 +246,26 @@ class RegistrationRateLimitSubjectKeyring:
                 for key_id in copied
             )
             or any(not isinstance(key, bytes) or len(key) < 32 for key in copied.values())
+            or len(set(copied.values())) != len(copied)
+            or type(previous_writers_drained) is not bool
         ):
             raise ValueError("registration rate-limit subject keyring is invalid")
-        resolved_anchor = anchor_key_id or previous_key_id or active_key_id
-        resolved_write = write_key_id or resolved_anchor
-        if resolved_anchor not in admitted_ids or resolved_write not in admitted_ids:
+        if previous_key_id is None:
+            resolved_anchor = active_key_id if anchor_key_id is None else anchor_key_id
+            resolved_write = active_key_id if write_key_id is None else write_key_id
+            valid_rotation = (
+                not previous_writers_drained
+                and resolved_anchor == active_key_id
+                and resolved_write == active_key_id
+            )
+        else:
+            resolved_anchor = previous_key_id if anchor_key_id is None else anchor_key_id
+            expected_write = active_key_id if previous_writers_drained else previous_key_id
+            resolved_write = expected_write if write_key_id is None else write_key_id
+            valid_rotation = (
+                resolved_anchor == previous_key_id and resolved_write == expected_write
+            )
+        if not valid_rotation:
             raise ValueError("registration rate-limit rotation IDs are invalid")
         self._keys = copied
         self._active_key_id = active_key_id
@@ -295,8 +331,11 @@ class RegistrationRateLimitDecision:
 
 _SQLITE_RATE_LIMIT_POLICIES = (
     ("registration.request", "email", 5, 900, 86400, 1_000_000),
+    ("registration.request", "network", 60, 900, 86400, 1_000_000),
     ("registration.resend", "email", 3, 900, 86400, 1_000_000),
+    ("registration.resend", "network", 60, 900, 86400, 1_000_000),
     ("registration.verify", "registration", 10, 900, 86400, 1_000_000),
+    ("registration.verify", "network", 120, 900, 86400, 1_000_000),
 )
 
 
@@ -333,30 +372,19 @@ class SharedRegistrationRateLimiter:
     def require(self, *, action: str, subject_kind: str, subject: str) -> None:
         """Consume one DB-owned allowance and raise only after denial commits."""
 
-        aliases = self._keyring.aliases(
-            action=action,
-            subject_kind=subject_kind,
-            subject=subject,
-        )
         try:
             with self._sessions.begin() as db:
-                if db.get_bind().dialect.name == "postgresql":
-                    decision = self._consume_postgresql(
-                        db,
-                        action=action,
-                        subject_kind=subject_kind,
-                        aliases=aliases,
-                    )
-                else:
-                    decision = self._consume_sqlite(
-                        db,
-                        action=action,
-                        subject_kind=subject_kind,
-                        aliases=aliases,
-                    )
+                decision = self.consume(
+                    db,
+                    action=action,
+                    subject_kind=subject_kind,
+                    subject=subject,
+                )
         except OnboardingError:
             raise
         except Exception as error:
+            # The context-manager exit performs COMMIT.  A failure there must
+            # remain fail-closed and must win over a pending 429 decision.
             raise OnboardingError(
                 "registration_rate_limit_unavailable",
                 "registration abuse protection is unavailable",
@@ -365,7 +393,47 @@ class SharedRegistrationRateLimiter:
             raise OnboardingError(
                 "registration_rate_limited",
                 "registration request rate limit exceeded",
+                retry_after_seconds=decision.retry_after_seconds,
             )
+
+    def consume(
+        self,
+        db: Session,
+        *,
+        action: str,
+        subject_kind: str,
+        subject: str,
+    ) -> RegistrationRateLimitDecision:
+        """Consume within the caller transaction so replay and domain writes serialize."""
+
+        try:
+            if not db.in_transaction() or db.get_bind() is not self._sessions.kw.get("bind"):
+                raise RuntimeError("registration rate limiter transaction mismatch")
+            aliases = self._keyring.aliases(
+                action=action,
+                subject_kind=subject_kind,
+                subject=subject,
+            )
+            if db.get_bind().dialect.name == "postgresql":
+                return self._consume_postgresql(
+                    db,
+                    action=action,
+                    subject_kind=subject_kind,
+                    aliases=aliases,
+                )
+            return self._consume_sqlite(
+                db,
+                action=action,
+                subject_kind=subject_kind,
+                aliases=aliases,
+            )
+        except OnboardingError:
+            raise
+        except Exception as error:
+            raise OnboardingError(
+                "registration_rate_limit_unavailable",
+                "registration abuse protection is unavailable",
+            ) from error
 
     def _seed_sqlite_policies(self) -> None:
         with self._sessions.begin() as db:
@@ -749,13 +817,41 @@ def _idempotency_key(scope: str, scope_id: UUID | str, value: str) -> str:
     return scoped_idempotency_key(scope, scope_id, value)
 
 
-def _password_hash(password: str) -> str:
-    if not _MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH:
+def _validated_password(password: str) -> str:
+    if (
+        not isinstance(password, str)
+        or not _MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH
+    ):
         raise OnboardingError(
             "password_policy",
             f"password must contain {_MIN_PASSWORD_LENGTH} to {_MAX_PASSWORD_LENGTH} characters",
         )
-    return hash_password(password)
+    return password
+
+
+def _password_hash(password: str) -> str:
+    return hash_password(_validated_password(password))
+
+
+def _lock_registration_idempotency(db: Session, scoped_key: str) -> None:
+    """Serialize one registration idempotency key across PostgreSQL replicas."""
+
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    db.execute(
+        sa.text(
+            "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(:lock_key, 0))"
+        ),
+        {"lock_key": f"registration-idempotency|{scoped_key}"},
+    )
+
+
+def _rate_limit_error(decision: RegistrationRateLimitDecision) -> OnboardingError:
+    return OnboardingError(
+        "registration_rate_limited",
+        "registration request rate limit exceeded",
+        retry_after_seconds=decision.retry_after_seconds,
+    )
 
 
 def _b64(value: bytes) -> str:
@@ -802,6 +898,15 @@ class SelfServiceOnboardingService:
         self._envelopes = envelope_keyring
         self._rate_limiter = rate_limiter
 
+    def require_network_rate_limit(self, *, action: str, subject: str) -> None:
+        """Consume the transport-derived network bucket before HTTP body parsing."""
+
+        self._rate_limiter.require(
+            action=action,
+            subject_kind="network",
+            subject=subject,
+        )
+
     def request_registration(
         self,
         *,
@@ -819,11 +924,6 @@ class SelfServiceOnboardingService:
         requested_at = _stored_time(now or _now())
         normalized_email = normalize_email(email)
         email_hash = password_email_locator_hash(normalized_email)
-        self._rate_limiter.require(
-            action="registration.request",
-            subject_kind="email",
-            subject=normalized_email,
-        )
         cleaned_display_name = (
             _text(display_name, "display_name", 256) if display_name is not None else None
         )
@@ -905,6 +1005,7 @@ class SelfServiceOnboardingService:
                     email_hash=email_hash,
                     idempotency_key=scoped_key,
                 )
+                _lock_registration_idempotency(db, scoped_key)
                 replay = db.scalar(
                     sa.select(SelfServiceRegistrationRecord).where(
                         SelfServiceRegistrationRecord.idempotency_key == scoped_key
@@ -912,6 +1013,16 @@ class SelfServiceOnboardingService:
                 )
                 if replay is not None:
                     return self._registration_replay(replay, request_hash)
+                decision = self._rate_limiter.consume(
+                    db,
+                    action="registration.request",
+                    subject_kind="email",
+                    subject=normalized_email,
+                )
+                if not decision.allowed:
+                    # Keep email-specific throttling non-enumerating.  The HTTP
+                    # network bucket is the only anonymous 429 surface.
+                    return RegistrationAccepted(registration_id, expires_at, replayed=False)
                 db.add(record)
                 db.flush()
                 if self._email_is_blocked(db, record):
@@ -1012,11 +1123,6 @@ class SelfServiceOnboardingService:
         attempted_at = _stored_time(now or _now())
         normalized_email = normalize_email(email)
         email_hash = password_email_locator_hash(normalized_email)
-        self._rate_limiter.require(
-            action="registration.resend",
-            subject_kind="email",
-            subject=normalized_email,
-        )
         scoped_key = _idempotency_key("registration-resend", registration_id, idempotency_key)
         public_expiry = attempted_at + self._policy.verification_ttl
         token = secrets.token_urlsafe(32)
@@ -1050,6 +1156,16 @@ class SelfServiceOnboardingService:
                 return RegistrationAccepted(
                     registration_id, _stored_time(replay.expires_at), replayed=True
                 )
+            decision = self._rate_limiter.consume(
+                db,
+                action="registration.resend",
+                subject_kind="email",
+                subject=record.email_normalized,
+            )
+            if not decision.allowed:
+                # A 429 here would reveal which registration/email pair exists.
+                # Commit only the counter and preserve the generic 202 shape.
+                return RegistrationAccepted(registration_id, public_expiry, replayed=False)
             current = db.scalar(
                 sa.select(EmailVerificationChallengeRecord)
                 .where(
@@ -1128,11 +1244,7 @@ class SelfServiceOnboardingService:
     ) -> OnboardingRequested:
         verified_at = _stored_time(now or _now())
         token_hash = _hash(_text(verification_token, "verification_token", 1024))
-        self._rate_limiter.require(
-            action="registration.verify",
-            subject_kind="registration",
-            subject=str(registration_id),
-        )
+        _validated_password(password)
         scoped_key = _idempotency_key("registration-verify", registration_id, idempotency_key)
         failure: OnboardingError | None = None
         result: OnboardingRequested | None = None
@@ -1223,93 +1335,104 @@ class SelfServiceOnboardingService:
                     self._policy.require_plan(
                         record.plan_key, revision=record.plan_policy_revision
                     )
-                    # Run the expensive KDF only after the single-use challenge has
-                    # been authenticated and locked. Random public requests must not
-                    # be able to consume Argon2 capacity.
-                    password_hash = _password_hash(password)
-                    challenge.status = "consumed"
-                    challenge.consumed_at = verified_at
-                    challenge.updated_at = verified_at
-                    record.status = "verified"
-                    record.verified_at = verified_at
-                    record.terminal_at = verified_at
-                    record.version += 1
-                    record.updated_at = verified_at
-                    # RLS for the identity and Tenant-request Outbox requires the
-                    # durable registration row to already be verified. Flush only
-                    # these locked state transitions before adding dependent rows;
-                    # the surrounding transaction still rolls everything back on
-                    # any later failure.
-                    db.flush()
-                    db.add(
-                        GlobalUser(
-                            id=record.user_id,
-                            status="active",
-                            display_name=record.display_name,
-                            primary_email_normalized=record.email_normalized,
-                            security_version=1,
-                        )
-                    )
-                    db.add(
-                        IdentityConnection(
-                            id=uuid4(),
-                            user_id=record.user_id,
-                            provider="password",
-                            issuer=_EMAIL_ISSUER,
-                            subject=_hash(f"{_EMAIL_ISSUER}\0{record.email_normalized}"),
-                            email_normalized=record.email_normalized,
-                            email_verified=True,
-                            status="active",
-                        )
-                    )
-                    db.add(
-                        PasswordCredential(
-                            user_id=record.user_id,
-                            login_email_normalized=record.email_normalized,
-                            password_hash=password_hash,
-                            password_version=1,
-                            failed_attempts=0,
-                        )
-                    )
-                    event_payload: dict[str, object] = {
-                        "registration_id": str(record.id),
-                        "onboarding_id": str(record.onboarding_id),
-                        "user_id": str(record.user_id),
-                        "tenant_id": str(record.tenant_id),
-                        "plan_policy_revision": record.plan_policy_revision,
-                    }
-                    db.add(
-                        ControlPlaneOutboxEvent(
-                            tenant_id=None,
-                            aggregate_type="tenant_onboarding",
-                            aggregate_key=str(record.onboarding_id),
-                            event_type=_TENANT_EVENT,
-                            idempotency_key=scoped_idempotency_key(
-                                "registration", record.id, "tenant-requested"
-                            ),
-                            request_hash=_digest(event_payload),
-                            payload=event_payload,
-                            attempt_count=0,
-                        )
-                    )
-                    self._append_event(
+                    decision = self._rate_limiter.consume(
                         db,
-                        aggregate_type="registration",
-                        aggregate_id=record.id,
-                        tenant_id=None,
-                        user_id=record.user_id,
-                        event_type="registration.verified",
-                        from_status="pending_verification",
-                        to_status="verified",
-                        facts={
-                            "challenge_generation": challenge.generation,
-                            "onboarding_id": str(record.onboarding_id),
-                            "verification_receipt_hash": scoped_key,
-                        },
-                        occurred_at=verified_at,
+                        action="registration.verify",
+                        subject_kind="registration",
+                        subject=str(record.id),
                     )
-                    db.flush()
-                    result = self._requested(record, replayed=False)
+                    if not decision.allowed:
+                        # Raise only after the surrounding context has committed the
+                        # saturated counter. No domain state changes occur on this branch.
+                        failure = _rate_limit_error(decision)
+                    else:
+                        # Run the expensive KDF only after the single-use challenge has
+                        # been authenticated and locked. Random public requests must not
+                        # be able to consume Argon2 capacity.
+                        password_hash = _password_hash(password)
+                        challenge.status = "consumed"
+                        challenge.consumed_at = verified_at
+                        challenge.updated_at = verified_at
+                        record.status = "verified"
+                        record.verified_at = verified_at
+                        record.terminal_at = verified_at
+                        record.version += 1
+                        record.updated_at = verified_at
+                        # RLS for the identity and Tenant-request Outbox requires the
+                        # durable registration row to already be verified. Flush only
+                        # these locked state transitions before adding dependent rows;
+                        # the surrounding transaction still rolls everything back on
+                        # any later failure.
+                        db.flush()
+                        db.add(
+                            GlobalUser(
+                                id=record.user_id,
+                                status="active",
+                                display_name=record.display_name,
+                                primary_email_normalized=record.email_normalized,
+                                security_version=1,
+                            )
+                        )
+                        db.add(
+                            IdentityConnection(
+                                id=uuid4(),
+                                user_id=record.user_id,
+                                provider="password",
+                                issuer=_EMAIL_ISSUER,
+                                subject=_hash(f"{_EMAIL_ISSUER}\0{record.email_normalized}"),
+                                email_normalized=record.email_normalized,
+                                email_verified=True,
+                                status="active",
+                            )
+                        )
+                        db.add(
+                            PasswordCredential(
+                                user_id=record.user_id,
+                                login_email_normalized=record.email_normalized,
+                                password_hash=password_hash,
+                                password_version=1,
+                                failed_attempts=0,
+                            )
+                        )
+                        event_payload: dict[str, object] = {
+                            "registration_id": str(record.id),
+                            "onboarding_id": str(record.onboarding_id),
+                            "user_id": str(record.user_id),
+                            "tenant_id": str(record.tenant_id),
+                            "plan_policy_revision": record.plan_policy_revision,
+                        }
+                        db.add(
+                            ControlPlaneOutboxEvent(
+                                tenant_id=None,
+                                aggregate_type="tenant_onboarding",
+                                aggregate_key=str(record.onboarding_id),
+                                event_type=_TENANT_EVENT,
+                                idempotency_key=scoped_idempotency_key(
+                                    "registration", record.id, "tenant-requested"
+                                ),
+                                request_hash=_digest(event_payload),
+                                payload=event_payload,
+                                attempt_count=0,
+                            )
+                        )
+                        self._append_event(
+                            db,
+                            aggregate_type="registration",
+                            aggregate_id=record.id,
+                            tenant_id=None,
+                            user_id=record.user_id,
+                            event_type="registration.verified",
+                            from_status="pending_verification",
+                            to_status="verified",
+                            facts={
+                                "challenge_generation": challenge.generation,
+                                "onboarding_id": str(record.onboarding_id),
+                                "verification_receipt_hash": scoped_key,
+                            },
+                            occurred_at=verified_at,
+                        )
+                        db.flush()
+                        result = self._requested(record, replayed=False)
         except IntegrityError as error:
             raise OnboardingError(
                 "registration_unavailable", "registration cannot be verified"

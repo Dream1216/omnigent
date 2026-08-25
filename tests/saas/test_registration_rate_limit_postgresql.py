@@ -24,8 +24,11 @@ from saas.control_plane.onboarding import (
 
 _POLICIES = {
     ("registration.request", "email"): (5, 900, 86400, 1_000_000),
+    ("registration.request", "network"): (60, 900, 86400, 1_000_000),
     ("registration.resend", "email"): (3, 900, 86400, 1_000_000),
+    ("registration.resend", "network"): (60, 900, 86400, 1_000_000),
     ("registration.verify", "registration"): (10, 900, 86400, 1_000_000),
+    ("registration.verify", "network"): (120, 900, 86400, 1_000_000),
 }
 _CONSUME_SIGNATURE = (
     "public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
@@ -122,6 +125,7 @@ def _keyring(
     previous: str | None = None,
     anchor: str | None = None,
     write: str | None = None,
+    previous_writers_drained: bool = False,
 ) -> RegistrationRateLimitSubjectKeyring:
     keys = {active: b"a" * 32}
     if previous is not None:
@@ -132,6 +136,7 @@ def _keyring(
         previous_key_id=previous,
         anchor_key_id=anchor,
         write_key_id=write,
+        previous_writers_drained=previous_writers_drained,
     )
 
 
@@ -207,6 +212,22 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
         assert all(row.relrowsecurity and row.relforcerowsecurity for row in table_rows.values())
         assert len({row.owner for row in table_rows.values()}) == 1
         table_owner = next(iter(table_rows.values())).owner
+        policy_contracts = {
+            (row.action, row.subject_kind): (
+                row.limit_count,
+                row.window_seconds,
+                row.retention_seconds,
+                row.max_rows,
+            )
+            for row in connection.execute(
+                sa.text(
+                    "SELECT action, subject_kind, limit_count, window_seconds, "
+                    "retention_seconds, max_rows "
+                    "FROM public.saas_registration_rate_limit_policies"
+                )
+            )
+        }
+        assert policy_contracts == _POLICIES
 
         policies = list(
             connection.execute(
@@ -289,6 +310,39 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
                         )
                         is False
                     )
+                for privilege in ("SELECT", "INSERT", "UPDATE", "REFERENCES"):
+                    assert (
+                        connection.scalar(
+                            sa.text(
+                                "SELECT pg_catalog.has_any_column_privilege("
+                                ":role, :table, :privilege)"
+                            ),
+                            {
+                                "role": role,
+                                "table": f"public.{table}",
+                                "privilege": privilege,
+                            },
+                        )
+                        is False
+                    )
+
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT pg_catalog.count(*) "
+                    "FROM pg_catalog.pg_attribute AS attribute "
+                    "CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl "
+                    "WHERE attribute.attrelid IN ("
+                    "'public.saas_registration_rate_limit_policies'::pg_catalog.regclass, "
+                    "'public.saas_registration_rate_limits'::pg_catalog.regclass) "
+                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped "
+                    "AND (acl.grantee = 0 OR acl.grantee IN ("
+                    "SELECT role.oid FROM pg_catalog.pg_roles AS role "
+                    "WHERE role.rolname IN ('saas_registration', 'saas_platform')))"
+                )
+            )
+            == 0
+        )
 
         expected_function_acl = {
             _CONSUME_SIGNATURE: {"saas_registration": True, "saas_platform": False},
@@ -401,6 +455,29 @@ def test_database_clock_and_hmac_only_storage(rate_limit_postgresql_engine: Engi
     assert not {"now", "limit", "window"}.intersection(arguments["proargnames"])
 
 
+def test_all_action_subject_policies_use_independent_hmac_buckets(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    limiter = _limiter(rate_limit_postgresql_engine)
+    subject = "same-raw-test-subject"
+    for action, subject_kind in _POLICIES:
+        limiter.require(action=action, subject_kind=subject_kind, subject=subject)
+
+    with rate_limit_postgresql_engine.connect() as connection:
+        rows = list(
+            connection.execute(
+                sa.text(
+                    "SELECT action, subject_kind, subject_hmac "
+                    "FROM public.saas_registration_rate_limits "
+                    "ORDER BY action, subject_kind"
+                )
+            )
+        )
+    assert {(row.action, row.subject_kind) for row in rows} == set(_POLICIES)
+    assert len({row.subject_hmac for row in rows}) == len(_POLICIES)
+    assert all(subject not in row.subject_hmac for row in rows)
+
+
 def test_concurrent_same_subject_saturates_one_shared_quota(
     rate_limit_postgresql_engine: Engine,
 ) -> None:
@@ -459,6 +536,7 @@ def test_rotation_overlap_and_promotion_never_double_quota(
         previous="rate-old",
         anchor="rate-old",
         write="rate-new",
+        previous_writers_drained=True,
     )
     promoted = _limiter(rate_limit_postgresql_engine, promoted_keyring)
     assert _consume_result(promoted, subject) == "registration_rate_limited"
@@ -486,6 +564,50 @@ def test_rotation_overlap_and_promotion_never_double_quota(
             )
         )
     assert rows == [("rate-new", aliases.active_subject_hmac, 3, 7)]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "active_key_id": "rate-new",
+            "active_hmac": "a" * 64,
+            "previous_key_id": "rate-old",
+            "previous_hmac": "b" * 64,
+            "anchor_key_id": "rate-new",
+            "write_key_id": "rate-old",
+        },
+        {
+            "active_key_id": "rate-new",
+            "active_hmac": "a" * 64,
+            "previous_key_id": None,
+            "previous_hmac": None,
+            "anchor_key_id": "rate-new",
+            "write_key_id": "rate-old",
+        },
+    ],
+)
+def test_database_rejects_rotation_phase_bypass(
+    rate_limit_postgresql_engine: Engine,
+    arguments: dict[str, str | None],
+) -> None:
+    with pytest.raises(DBAPIError) as rejected:
+        with rate_limit_postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_registration")
+            connection.execute(
+                sa.text(
+                    "SELECT * FROM public.saas_consume_registration_rate_limit("
+                    "'registration.request', 'email', :active_key_id, :active_hmac, "
+                    ":previous_key_id, :previous_hmac, :anchor_key_id, :write_key_id)"
+                ),
+                arguments,
+            ).one()
+    assert rejected.value.orig.sqlstate == "22023"
+    with rate_limit_postgresql_engine.connect() as connection:
+        assert (
+            connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
+            == 0
+        )
 
 
 def test_capacity_lock_allows_only_one_distinct_subject(
@@ -640,6 +762,37 @@ def test_policy_lock_timeout_fails_closed(rate_limit_postgresql_engine: Engine) 
             connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
             == 0
         )
+
+
+def test_commit_failure_wins_over_pending_rate_limit(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    _set_policy(rate_limit_postgresql_engine, limit_count=1)
+    limiter = _limiter(rate_limit_postgresql_engine)
+    subject = f"commit-failure-{uuid4()}@example.test"
+    assert _consume_result(limiter, subject) == "allowed"
+
+    def fail_commit(_connection: sa.Connection) -> None:
+        raise RuntimeError("injected registration rate-limit commit failure")
+
+    sa.event.listen(rate_limit_postgresql_engine, "commit", fail_commit)
+    try:
+        with pytest.raises(OnboardingError) as denied:
+            limiter.require(
+                action="registration.request",
+                subject_kind="email",
+                subject=subject,
+            )
+    finally:
+        sa.event.remove(rate_limit_postgresql_engine, "commit", fail_commit)
+
+    assert denied.value.code == "registration_rate_limit_unavailable"
+    assert isinstance(denied.value.__cause__, RuntimeError)
+    with rate_limit_postgresql_engine.connect() as connection:
+        counter = connection.execute(
+            sa.text("SELECT request_count, version FROM public.saas_registration_rate_limits")
+        ).one()
+    assert counter == (1, 1)
 
 
 def test_dynamic_owner_policy_survives_restore_owner_change(
@@ -803,7 +956,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            "p0s000000005"
+            "p0s000000006"
         )
         assert (
             connection.scalar(
