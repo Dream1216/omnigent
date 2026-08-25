@@ -312,7 +312,8 @@ def test_catalog_seals_tables_and_security_definer_entrypoints(
                     sa.text(
                         "SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS procedure "
                         "CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE("
-                        "procedure.proacl, pg_catalog.acldefault('f', procedure.proowner))) AS acl "
+                        "procedure.proacl, "
+                        "pg_catalog.acldefault('f', procedure.proowner))) AS acl "
                         "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature) "
                         "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'"
                     ),
