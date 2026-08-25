@@ -7,8 +7,3 @@ web/electron/icons/AppIcon.icon/** binary -merge
 # hand-editable, so its unused-import/global artifacts are expected.
 omnigent/api/**/*_pb2.py linguist-generated=true
 omnigent/api/**/*_pb2.pyi linguist-generated=true
-
-# Unified diffs encode blank context lines as one leading space. Keep source
-# whitespace checks strict while avoiding false blank-at-eol reports for the
-# pinned N-1 compatibility patch artifact itself.
-saas/n1_compat/*.patch whitespace=-blank-at-eol
