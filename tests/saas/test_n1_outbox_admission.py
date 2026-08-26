@@ -118,6 +118,25 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
         in compat_grants
     )
     assert "must drain the compat worker" in compat_grants
+    schema_contract = source.index(
+        "-- This authority body is intentionally replayable at the two supported"
+    )
+    first_acl_mutation = source.index("GRANT USAGE ON SCHEMA public")
+    rate_projection = source.index("-- Rate-limit state is reachable only through")
+    assert schema_contract < first_acl_mutation < rate_projection
+    assert "schema_revision IN ('p0s000000003', 'p0s000000004')" in source
+    assert "IF privacy_column_present" in source
+    assert "OR rate_policy_table IS NOT NULL" in source
+    assert "OR rate_counter_table IS NOT NULL" in source
+    assert "IF registration_table IS NULL" in source
+    assert "OR rate_policy_table IS NULL" in source
+    assert "OR rate_counter_table IS NULL" in source
+    assert "control-plane schema revision/object contract rejected" in source
+    privacy_guard = source.index("schema_revision IN ('p0s000000003', 'p0s000000004')")
+    privacy_projection = source.index(
+        "GRANT SELECT (id, user_id, tenant_id, deletion_manifest_id, version)"
+    )
+    assert privacy_guard < privacy_projection
 
 
 def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
@@ -682,3 +701,290 @@ def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
                 connection.exec_driver_sql(f"DROP OWNED BY {quoted_login}")
                 connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_login}")
         admin_engine.dispose()
+
+
+@pytest.mark.parametrize("schema_revision", ["p0s000000003", "p0s000000004"])
+def test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_marker_drift(
+    isolated_postgres_url: str,
+    schema_revision: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), schema_revision)
+            connection.exec_driver_sql(_roles_source())
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == schema_revision
+            )
+            assert connection.scalar(
+                sa.text("SELECT to_regclass('public.saas_registration_rate_limits') IS NULL")
+            )
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE public.saas_self_service_registrations "
+                "ADD COLUMN deletion_manifest_id uuid"
+            )
+        with pytest.raises(
+            sa.exc.DBAPIError,
+            match="control-plane schema revision/object contract rejected",
+        ):
+            with engine.begin() as connection:
+                connection.exec_driver_sql(_roles_source())
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("schema_revision", "drift_sql"),
+    [
+        (
+            "p0s000000005",
+            "DROP POLICY rls_self_service_registrations_privacy_target "
+            "ON public.saas_self_service_registrations",
+        ),
+        (
+            "p0s000000006",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
+    ],
+)
+def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
+    isolated_postgres_url: str,
+    schema_revision: str,
+    drift_sql: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), schema_revision)
+            connection.exec_driver_sql(_roles_source())
+            connection.exec_driver_sql(drift_sql)
+        with pytest.raises(
+            sa.exc.DBAPIError,
+            match="control-plane schema revision/object contract rejected",
+        ):
+            with engine.begin() as connection:
+                connection.exec_driver_sql(_roles_source())
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("schema_revision", ["p0s000000005", "p0s000000006"])
+def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
+    isolated_postgres_url: str,
+    schema_revision: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    status_tamper = """
+        CREATE OR REPLACE FUNCTION public.saas_registration_rate_limit_status()
+        RETURNS TABLE(
+            action text,
+            subject_kind text,
+            limit_count integer,
+            window_seconds integer,
+            retention_seconds integer,
+            max_rows integer,
+            current_rows integer,
+            policy_revision text,
+            expired_rows bigint
+        )
+        LANGUAGE sql
+        VOLATILE
+        SECURITY DEFINER
+        SET search_path = pg_catalog
+        AS $tampered$
+            SELECT 'registration.request'::text, 'email'::text, 1, 60, 60,
+                   1, 0, 'tampered'::text, 0::bigint
+        $tampered$
+    """
+    privacy_trigger_tamper = """
+        CREATE OR REPLACE FUNCTION public.saas_guard_self_service_registration_privacy_erasure()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        VOLATILE
+        SECURITY INVOKER
+        AS $tampered$
+        BEGIN
+            RETURN NEW;
+        END
+        $tampered$
+    """
+    drifts = [
+        "ALTER POLICY rls_self_service_registrations_privacy_target "
+        "ON public.saas_self_service_registrations USING (true)",
+        "CREATE POLICY rls_registration_rate_limits_rogue "
+        "ON public.saas_registration_rate_limits FOR SELECT TO PUBLIC USING (true)",
+        "ALTER TABLE public.saas_registration_rate_limits "
+        "DROP CONSTRAINT ck_registration_rate_limit_count; "
+        "ALTER TABLE public.saas_registration_rate_limits "
+        "ADD CONSTRAINT ck_registration_rate_limit_count "
+        "CHECK (request_count >= 0) NOT VALID",
+        "ALTER TABLE public.saas_registration_rate_limit_policies "
+        "ALTER COLUMN updated_at DROP NOT NULL",
+        status_tamper,
+        privacy_trigger_tamper,
+    ]
+    if schema_revision == "p0s000000006":
+        drifts.append(
+            "UPDATE public.saas_registration_rate_limit_policies "
+            "SET limit_count = 61 WHERE action = 'registration.request' "
+            "AND subject_kind = 'network'"
+        )
+
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), schema_revision)
+            connection.exec_driver_sql(_roles_source())
+            for drift_sql in drifts:
+                savepoint = connection.begin_nested()
+                try:
+                    connection.exec_driver_sql(drift_sql)
+                    with pytest.raises(
+                        sa.exc.DBAPIError,
+                        match="control-plane schema revision/object contract rejected",
+                    ):
+                        connection.exec_driver_sql(_roles_source())
+                finally:
+                    savepoint.rollback()
+                connection.exec_driver_sql(_roles_source())
+    finally:
+        engine.dispose()
+
+
+def test_real_postgresql_rate_limit_authority_replay_removes_poisoned_acls(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    consume_signature = (
+        "public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
+    )
+    prune_signature = "public.saas_prune_registration_rate_limits(text,text,integer)"
+    status_signature = "public.saas_registration_rate_limit_status()"
+    rogue_role = f"rate_acl_rogue_{uuid4().hex[:12]}"
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "p0s000000006")
+            quoted_rogue = connection.dialect.identifier_preparer.quote(rogue_role)
+            connection.exec_driver_sql(
+                f"CREATE ROLE {quoted_rogue} NOLOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            )
+            connection.exec_driver_sql(
+                "GRANT SELECT ON public.saas_registration_rate_limit_policies TO saas_public_api"
+            )
+            connection.exec_driver_sql(
+                "GRANT UPDATE (action) ON public.saas_registration_rate_limit_policies "
+                "TO saas_approval_scheduler_audit"
+            )
+            connection.exec_driver_sql(
+                "GRANT SELECT (request_count) ON public.saas_registration_rate_limits TO PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "GRANT EXECUTE ON FUNCTION " + consume_signature + " "
+                "TO saas_approval_scheduler_audit"
+            )
+            connection.exec_driver_sql(
+                "GRANT SELECT ON public.saas_registration_rate_limit_policies TO " + quoted_rogue
+            )
+            connection.exec_driver_sql(
+                "GRANT UPDATE (request_count) ON public.saas_registration_rate_limits TO "
+                + quoted_rogue
+            )
+            for signature in (consume_signature, prune_signature, status_signature):
+                connection.exec_driver_sql(
+                    "GRANT EXECUTE ON FUNCTION " + signature + " TO " + quoted_rogue
+                )
+            connection.exec_driver_sql(_roles_source())
+
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_table_privilege('saas_public_api', "
+                        "'public.saas_registration_rate_limit_policies', 'SELECT')"
+                    )
+                )
+                is False
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_column_privilege('saas_approval_scheduler_audit', "
+                        "'public.saas_registration_rate_limit_policies', 'action', 'UPDATE')"
+                    )
+                )
+                is False
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT count(*) FROM pg_attribute AS attribute "
+                        "CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl "
+                        "WHERE attribute.attrelid = "
+                        "'public.saas_registration_rate_limits'::regclass "
+                        "AND attribute.attname = 'request_count' "
+                        "AND acl.grantee = 0 AND acl.privilege_type = 'SELECT'"
+                    )
+                )
+                == 0
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_function_privilege('saas_approval_scheduler_audit', "
+                        ":signature, 'EXECUTE')"
+                    ),
+                    {"signature": consume_signature},
+                )
+                is False
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_function_privilege('saas_registration', :signature, 'EXECUTE')"
+                    ),
+                    {"signature": consume_signature},
+                )
+                is True
+            )
+            for signature in (prune_signature, status_signature):
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT has_function_privilege('saas_platform', :signature, 'EXECUTE')"
+                        ),
+                        {"signature": signature},
+                    )
+                    is True
+                )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_table_privilege(:role, "
+                        "'public.saas_registration_rate_limit_policies', 'SELECT')"
+                    ),
+                    {"role": rogue_role},
+                )
+                is False
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT has_column_privilege(:role, "
+                        "'public.saas_registration_rate_limits', 'request_count', 'UPDATE')"
+                    ),
+                    {"role": rogue_role},
+                )
+                is False
+            )
+            for signature in (consume_signature, prune_signature, status_signature):
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT has_function_privilege(:role, :signature, 'EXECUTE')"),
+                        {"role": rogue_role, "signature": signature},
+                    )
+                    is False
+                )
+            connection.exec_driver_sql(f"DROP ROLE {quoted_rogue}")
+    finally:
+        engine.dispose()

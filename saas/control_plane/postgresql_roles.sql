@@ -122,6 +122,737 @@ BEGIN
     END IF;
 END
 $$;
+
+-- This authority body is intentionally replayable at the two supported
+-- schema-forward rollback points, p0s3 and p0s4.  Object-name probing alone is
+-- not a version boundary: a partial restore or a manually-created marker could
+-- otherwise make a newer grant execute over an older RLS/trigger contract.
+-- Reject every mixed state before the first ACL mutation below.
+DO $$
+DECLARE
+    schema_revision text;
+    revision_rows integer;
+    registration_table oid := to_regclass('public.saas_self_service_registrations');
+    privacy_manifest_table oid := to_regclass('public.saas_privacy_deletion_manifests');
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    rate_counter_table oid := to_regclass('public.saas_registration_rate_limits');
+    privacy_guard_function oid :=
+        to_regprocedure('public.saas_guard_self_service_registration_privacy_erasure()');
+    consume_function oid := to_regprocedure(
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
+    );
+    prune_function oid := to_regprocedure(
+        'public.saas_prune_registration_rate_limits(text,text,integer)'
+    );
+    status_function oid :=
+        to_regprocedure('public.saas_registration_rate_limit_status()');
+    privacy_column_present boolean;
+    privacy_column_exact boolean;
+    privacy_constraints integer;
+    privacy_constraint_contract_hash text;
+    privacy_policies integer;
+    registration_policy_contract_hash text;
+    privacy_triggers integer;
+    privacy_trigger_contracts integer;
+    privacy_function_contracts integer;
+    rate_relations integer;
+    rate_relation_owners integer;
+    rate_policies integer;
+    rate_policy_contract_hash text;
+    rate_functions integer;
+    rate_function_contracts integer;
+    policy_columns text[];
+    counter_columns text[];
+    rate_column_contract_hash text;
+    policy_constraints text[];
+    counter_constraints text[];
+    rate_constraint_contract_hash text;
+    policy_indexes text[];
+    counter_indexes text[];
+    rate_index_contract_hash text;
+    network_constraints integer;
+    network_policy_actions text[];
+    network_policy_contract text[];
+    rotation_guard_present boolean;
+BEGIN
+    IF to_regclass('public.saas_alembic_version') IS NULL THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+    SELECT count(*), min(version_num)::text
+    INTO revision_rows, schema_revision
+    FROM public.saas_alembic_version;
+    IF revision_rows <> 1 OR schema_revision NOT IN (
+        'p0s000000003',
+        'p0s000000004',
+        'p0s000000005',
+        'p0s000000006'
+    ) THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*) > 0, count(*) = 1 AND bool_and(
+        attribute.atttypid = 'uuid'::regtype
+        AND NOT attribute.attnotnull
+        AND NOT attribute.attisdropped
+        AND attribute.attidentity = ''
+        AND attribute.attgenerated = ''
+        AND attribute_default.oid IS NULL
+    )
+    INTO privacy_column_present, privacy_column_exact
+    FROM pg_attribute AS attribute
+    LEFT JOIN pg_attrdef AS attribute_default
+      ON attribute_default.adrelid = attribute.attrelid
+     AND attribute_default.adnum = attribute.attnum
+    WHERE attribute.attrelid = registration_table
+      AND attribute.attname = 'deletion_manifest_id'
+      AND NOT attribute.attisdropped;
+
+    IF schema_revision IN ('p0s000000003', 'p0s000000004') THEN
+        IF privacy_column_present
+           OR privacy_guard_function IS NOT NULL
+           OR rate_policy_table IS NOT NULL
+           OR rate_counter_table IS NOT NULL
+           OR consume_function IS NOT NULL
+           OR prune_function IS NOT NULL
+           OR status_function IS NOT NULL
+           OR EXISTS (
+                SELECT 1
+                FROM pg_policy
+                WHERE polrelid = registration_table
+                  AND polname IN (
+                      'rls_self_service_registrations_privacy_target',
+                      'rls_self_service_registrations_privacy_anonymize'
+                  )
+           ) OR EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid = registration_table
+                  AND tgname = 'trg_self_service_registration_privacy_erasure'
+                  AND NOT tgisinternal
+           )
+        THEN
+            RAISE EXCEPTION
+                'control-plane schema revision/object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+
+    IF registration_table IS NULL
+       OR privacy_manifest_table IS NULL
+       OR NOT privacy_column_exact
+       OR privacy_guard_function IS NULL
+       OR rate_policy_table IS NULL
+       OR rate_counter_table IS NULL
+       OR consume_function IS NULL
+       OR prune_function IS NULL
+       OR status_function IS NULL
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO privacy_constraints
+    FROM pg_constraint
+    WHERE conrelid = registration_table
+      AND (
+          (
+              conname = 'fk_self_service_registration_deletion_manifest'
+              AND contype = 'f'
+              AND confrelid = privacy_manifest_table
+          ) OR (
+              conname = 'ck_self_service_registration_deletion_manifest'
+              AND contype = 'c'
+              AND position('deletion_manifest_id' IN pg_get_constraintdef(oid)) > 0
+              AND position('status' IN pg_get_constraintdef(oid)) > 0
+              AND position('revoked' IN pg_get_constraintdef(oid)) > 0
+          )
+      );
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', constraint_row.conname, constraint_row.contype::text,
+                constraint_row.convalidated::text,
+                constraint_row.condeferrable::text,
+                constraint_row.condeferred::text,
+                regexp_replace(
+                    pg_get_constraintdef(constraint_row.oid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY constraint_row.conname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO privacy_constraint_contract_hash
+    FROM pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = registration_table
+      AND constraint_row.conname IN (
+          'fk_self_service_registration_deletion_manifest',
+          'ck_self_service_registration_deletion_manifest'
+      );
+    SELECT count(*)
+    INTO privacy_policies
+    FROM pg_policy AS policy
+    JOIN pg_roles AS target ON target.oid = ANY(policy.polroles)
+    WHERE policy.polrelid = registration_table
+      AND target.rolname = 'saas_privacy_executor'
+      AND cardinality(policy.polroles) = 1
+      AND policy.polpermissive
+      AND policy.polname IN (
+          'rls_self_service_registrations_privacy_target',
+          'rls_self_service_registrations_privacy_anonymize'
+      )
+      AND policy.polcmd = CASE
+          WHEN policy.polname = 'rls_self_service_registrations_privacy_target' THEN 'r'
+          ELSE 'w'
+      END;
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', policy.polname, policy.polpermissive::text, policy.polcmd,
+                ARRAY(
+                    SELECT CASE
+                        WHEN policy_role.role_oid = 0 THEN 'PUBLIC'
+                        ELSE pg_get_userbyid(policy_role.role_oid)
+                    END
+                    FROM unnest(policy.polroles) AS policy_role(role_oid)
+                    ORDER BY 1
+                )::text,
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polqual, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                ),
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polwithcheck, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                )
+            ),
+            E'\n' ORDER BY policy.polname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO registration_policy_contract_hash
+    FROM pg_policy AS policy
+    WHERE policy.polrelid = registration_table;
+    SELECT count(*)
+    INTO privacy_triggers
+    FROM pg_trigger
+    WHERE tgrelid = registration_table
+      AND tgname = 'trg_self_service_registration_privacy_erasure'
+      AND tgfoid = privacy_guard_function
+      AND tgtype = 19
+      AND tgenabled = 'O'
+      AND tgnargs = 0
+      AND tgattr = ''::int2vector
+      AND tgqual IS NULL
+      AND NOT tgisinternal;
+    SELECT count(*)
+    INTO privacy_trigger_contracts
+    FROM pg_trigger
+    WHERE tgrelid = registration_table
+      AND NOT tgisinternal;
+    SELECT count(*)
+    INTO privacy_function_contracts
+    FROM pg_proc AS procedure
+    JOIN pg_language AS language ON language.oid = procedure.prolang
+    WHERE procedure.oid = privacy_guard_function
+      AND procedure.proowner = (
+          SELECT relowner FROM pg_class WHERE oid = registration_table
+      )
+      AND language.lanname = 'plpgsql'
+      AND procedure.prokind = 'f'
+      AND NOT procedure.prosecdef
+      AND NOT procedure.proleakproof
+      AND procedure.provolatile = 'v'
+      AND procedure.proparallel = 'u'
+      AND procedure.proconfig IS NULL
+      AND pg_get_function_result(procedure.oid) = 'trigger'
+      AND encode(sha256(convert_to(
+          btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+      )), 'hex') =
+          '504a18be57b9bed8c87d7b2c96c7c33764a335f8005ccf814a3845dfb058ef7b';
+    IF privacy_constraints <> 2
+       OR privacy_constraint_contract_hash IS DISTINCT FROM
+          'f40979410766d2c6de7f7c96db487c7f47c7c016fc561deb6a3bf24e3fbf18f3'
+       OR privacy_policies <> 2
+       OR registration_policy_contract_hash IS DISTINCT FROM
+          'a0e09fe6eb825ad9bed3428d4bfc31e2fa6d6b1bc1324199a9fa5f7ccff375b1'
+       OR privacy_triggers <> 1
+       OR privacy_trigger_contracts <> 1
+       OR privacy_function_contracts <> 1
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO rate_relations
+    FROM pg_class
+    WHERE oid IN (rate_policy_table, rate_counter_table)
+      AND relkind IN ('r', 'p')
+      AND relrowsecurity
+      AND relforcerowsecurity;
+    SELECT count(DISTINCT relowner)
+    INTO rate_relation_owners
+    FROM pg_class
+    WHERE oid IN (rate_policy_table, rate_counter_table);
+    SELECT array_agg(attname::text ORDER BY attnum)
+    INTO policy_columns
+    FROM pg_attribute
+    WHERE attrelid = rate_policy_table
+      AND attnum > 0
+      AND NOT attisdropped;
+    SELECT array_agg(attname::text ORDER BY attnum)
+    INTO counter_columns
+    FROM pg_attribute
+    WHERE attrelid = rate_counter_table
+      AND attnum > 0
+      AND NOT attisdropped;
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, attribute.attnum::text,
+                attribute.attname,
+                format_type(attribute.atttypid, attribute.atttypmod),
+                attribute.attnotnull::text,
+                COALESCE(
+                    pg_get_expr(attribute_default.adbin, attribute_default.adrelid),
+                    '<null>'
+                ),
+                attribute.attidentity,
+                attribute.attgenerated
+            ),
+            E'\n' ORDER BY relation.relname, attribute.attnum
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_column_contract_hash
+    FROM pg_class AS relation
+    JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid
+    LEFT JOIN pg_attrdef AS attribute_default
+      ON attribute_default.adrelid = attribute.attrelid
+     AND attribute_default.adnum = attribute.attnum
+    WHERE relation.oid IN (rate_policy_table, rate_counter_table)
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped;
+    SELECT array_agg(conname::text ORDER BY conname)
+    INTO policy_constraints
+    FROM pg_constraint
+    WHERE conrelid = rate_policy_table
+      AND contype <> 'n';
+    SELECT array_agg(conname::text ORDER BY conname)
+    INTO counter_constraints
+    FROM pg_constraint
+    WHERE conrelid = rate_counter_table
+      AND contype <> 'n';
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, constraint_row.conname,
+                constraint_row.contype::text,
+                constraint_row.convalidated::text,
+                constraint_row.condeferrable::text,
+                constraint_row.condeferred::text,
+                regexp_replace(
+                    pg_get_constraintdef(constraint_row.oid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY relation.relname, constraint_row.conname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_constraint_contract_hash
+    FROM pg_constraint AS constraint_row
+    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+    WHERE constraint_row.conrelid IN (rate_policy_table, rate_counter_table)
+      -- PostgreSQL 18 also exposes virtual NOT NULL constraints in pg_constraint.
+      AND constraint_row.contype <> 'n';
+    SELECT array_agg(indexname::text ORDER BY indexname)
+    INTO policy_indexes
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'saas_registration_rate_limit_policies';
+    SELECT array_agg(indexname::text ORDER BY indexname)
+    INTO counter_indexes
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'saas_registration_rate_limits';
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', index_row.indexrelid::regclass::text,
+                index_row.indisunique::text,
+                index_row.indisprimary::text,
+                index_row.indisvalid::text,
+                index_row.indisready::text,
+                regexp_replace(
+                    pg_get_indexdef(index_row.indexrelid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY index_row.indexrelid::regclass::text
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_index_contract_hash
+    FROM pg_index AS index_row
+    WHERE index_row.indrelid IN (rate_policy_table, rate_counter_table);
+    SELECT count(*)
+    INTO rate_policies
+    FROM pg_policy
+    WHERE (
+        (
+            polrelid = rate_policy_table
+            AND polname = 'rls_registration_rate_limit_policies_owner'
+        ) OR (
+            polrelid = rate_counter_table
+            AND polname = 'rls_registration_rate_limits_owner'
+        )
+    )
+      AND polcmd = '*'
+      AND polpermissive
+      AND cardinality(polroles) = 1
+      AND 0 = ANY(polroles);
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, policy.polname,
+                policy.polpermissive::text, policy.polcmd,
+                ARRAY(
+                    SELECT CASE
+                        WHEN policy_role.role_oid = 0 THEN 'PUBLIC'
+                        ELSE pg_get_userbyid(policy_role.role_oid)
+                    END
+                    FROM unnest(policy.polroles) AS policy_role(role_oid)
+                    ORDER BY 1
+                )::text,
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polqual, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                ),
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polwithcheck, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                )
+            ),
+            E'\n' ORDER BY relation.relname, policy.polname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_policy_contract_hash
+    FROM pg_policy AS policy
+    JOIN pg_class AS relation ON relation.oid = policy.polrelid
+    WHERE policy.polrelid IN (rate_policy_table, rate_counter_table);
+    SELECT count(*)
+    INTO rate_functions
+    FROM pg_proc
+    WHERE oid IN (consume_function, prune_function, status_function)
+      AND prokind = 'f'
+      AND prosecdef
+      AND provolatile = 'v'
+      AND 'search_path=pg_catalog' = ANY(proconfig)
+      AND proowner = (SELECT relowner FROM pg_class WHERE oid = rate_policy_table);
+    SELECT count(*)
+    INTO rate_function_contracts
+    FROM pg_proc AS procedure
+    JOIN pg_language AS language ON language.oid = procedure.prolang
+    WHERE procedure.oid IN (consume_function, prune_function, status_function)
+      AND procedure.prokind = 'f'
+      AND procedure.prosecdef
+      AND NOT procedure.proleakproof
+      AND procedure.provolatile = 'v'
+      AND procedure.proparallel = 'u'
+      AND procedure.proowner = (
+          SELECT relowner FROM pg_class WHERE oid = rate_policy_table
+      )
+      AND (
+          (
+              procedure.oid = consume_function
+              AND language.lanname = 'plpgsql'
+              AND procedure.proconfig = ARRAY[
+                  'search_path=pg_catalog', 'lock_timeout=250ms'
+              ]::text[]
+              AND pg_get_function_result(procedure.oid) =
+                  'TABLE(allowed boolean, retry_after_seconds integer, '
+                  'remaining integer, policy_revision text)'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') = CASE schema_revision
+                  WHEN 'p0s000000005' THEN
+                      '5e56381f6058e96322e5bf27cde7f5add1fdfb70415095f4f65a9c5f169243a6'
+                  ELSE
+                      '84edaf917bdde5521267880561cb83d9b6099530dc8d76b3d07d26eb32867a8b'
+              END
+          ) OR (
+              procedure.oid = prune_function
+              AND language.lanname = 'plpgsql'
+              AND procedure.proconfig = ARRAY[
+                  'search_path=pg_catalog', 'lock_timeout=500ms'
+              ]::text[]
+              AND pg_get_function_result(procedure.oid) = 'integer'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') =
+                  '6353a9f1722a6b9be68c753dba6031b8364246887eeedba68923a5f7f6257041'
+          ) OR (
+              procedure.oid = status_function
+              AND language.lanname = 'sql'
+              AND procedure.proconfig = ARRAY['search_path=pg_catalog']::text[]
+              AND pg_get_function_result(procedure.oid) =
+                  'TABLE(action text, subject_kind text, limit_count integer, '
+                  'window_seconds integer, retention_seconds integer, max_rows integer, '
+                  'current_rows integer, policy_revision text, expired_rows bigint)'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') =
+                  '0459d679cf4e870d0725e2f93ee6f5a83548a9fcd65483a071dda61d76edcd73'
+          )
+      );
+
+    IF rate_relations <> 2
+       OR rate_relation_owners <> 1
+       OR policy_columns IS DISTINCT FROM ARRAY[
+            'action', 'subject_kind', 'limit_count', 'window_seconds',
+            'retention_seconds', 'max_rows', 'current_rows', 'policy_revision',
+            'created_at', 'updated_at'
+       ]::text[]
+       OR counter_columns IS DISTINCT FROM ARRAY[
+            'action', 'subject_kind', 'key_id', 'subject_hmac',
+            'window_started_at', 'request_count', 'expires_at',
+            'policy_revision', 'version', 'created_at', 'updated_at'
+       ]::text[]
+       OR rate_column_contract_hash IS DISTINCT FROM
+          'e5cffedb8c3546fb330bd1f885fa992d4d215ea88940429fdee07848ada2d59c'
+       OR policy_constraints IS DISTINCT FROM ARRAY[
+            'ck_registration_rate_limit_policy_action',
+            'ck_registration_rate_limit_policy_current_rows',
+            'ck_registration_rate_limit_policy_limit',
+            'ck_registration_rate_limit_policy_max_rows',
+            'ck_registration_rate_limit_policy_retention',
+            'ck_registration_rate_limit_policy_revision',
+            'ck_registration_rate_limit_policy_subject_kind',
+            'ck_registration_rate_limit_policy_window',
+            'saas_registration_rate_limit_policies_pkey'
+       ]::text[]
+       OR counter_constraints IS DISTINCT FROM ARRAY[
+            'ck_registration_rate_limit_action',
+            'ck_registration_rate_limit_count',
+            'ck_registration_rate_limit_expiry',
+            'ck_registration_rate_limit_key_id',
+            'ck_registration_rate_limit_revision',
+            'ck_registration_rate_limit_subject_hmac',
+            'ck_registration_rate_limit_subject_kind',
+            'ck_registration_rate_limit_version',
+            'fk_registration_rate_limit_policy',
+            'saas_registration_rate_limits_pkey'
+       ]::text[]
+       OR policy_indexes IS DISTINCT FROM ARRAY[
+            'saas_registration_rate_limit_policies_pkey'
+       ]::text[]
+       OR counter_indexes IS DISTINCT FROM ARRAY[
+            'ix_registration_rate_limit_expiry',
+            'saas_registration_rate_limits_pkey'
+       ]::text[]
+       OR rate_constraint_contract_hash IS DISTINCT FROM (CASE schema_revision
+          WHEN 'p0s000000005' THEN
+              '72a30643de641319a27cdc0ca7ba4d97b8dc2b6093c7089c802dc9e474276aa1'
+          ELSE
+              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
+       END)
+       OR rate_index_contract_hash IS DISTINCT FROM
+          '17a36e093545fdbf51d1ca5da5682b2cff1273de9e82ff580a96e54212d46b5f'
+       OR rate_policies <> 2
+       OR rate_policy_contract_hash IS DISTINCT FROM
+          'f056fa696bc9911c49b89d385197de29c5901b392fcb65069ec5d1334648d064'
+       OR rate_functions <> 3
+       OR rate_function_contracts <> 3
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO network_constraints
+    FROM pg_constraint
+    WHERE (
+        (
+            conrelid = rate_policy_table
+            AND conname = 'ck_registration_rate_limit_policy_subject_kind'
+        ) OR (
+            conrelid = rate_counter_table
+            AND conname = 'ck_registration_rate_limit_subject_kind'
+        )
+    )
+      AND position('network' IN pg_get_constraintdef(oid)) > 0;
+    SELECT array_agg(action::text ORDER BY action)
+    INTO network_policy_actions
+    FROM public.saas_registration_rate_limit_policies
+    WHERE subject_kind = 'network';
+    SELECT array_agg(
+        concat_ws(
+            '|', action::text, subject_kind::text, limit_count::text,
+            window_seconds::text, retention_seconds::text, max_rows::text,
+            policy_revision::text
+        )
+        ORDER BY action
+    )
+    INTO network_policy_contract
+    FROM public.saas_registration_rate_limit_policies
+    WHERE subject_kind = 'network';
+    SELECT position(
+        'registration rate-limit rotation phase rejected'
+        IN pg_get_functiondef(consume_function)
+    ) > 0
+    INTO rotation_guard_present;
+    IF schema_revision = 'p0s000000005' THEN
+        IF network_constraints <> 0
+           OR network_policy_actions IS NOT NULL
+           OR network_policy_contract IS NOT NULL
+           OR rotation_guard_present
+        THEN
+            RAISE EXCEPTION
+                'control-plane schema revision/object contract rejected';
+        END IF;
+    ELSIF network_constraints <> 2
+       OR network_policy_actions IS DISTINCT FROM ARRAY[
+            'registration.request',
+            'registration.resend',
+            'registration.verify'
+       ]::text[]
+       OR network_policy_contract IS DISTINCT FROM ARRAY[
+            'registration.request|network|60|900|86400|1000000|registration-rate-limit-v1',
+            'registration.resend|network|60|900|86400|1000000|registration-rate-limit-v1',
+            'registration.verify|network|120|900|86400|1000000|registration-rate-limit-v1'
+       ]::text[]
+       OR NOT rotation_guard_present
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+END
+$$;
+
+-- A replay can arrive after an older release, an operator, or a compromised
+-- owner has granted rate-limit state to PUBLIC or another fixed principal.
+-- Remove that drift immediately after the complete schema preflight and before
+-- any per-principal projection verifier runs.  The exact three routine grants
+-- and their terminal verifier remain in the onboarding authority section
+-- below; this phase only removes authority and therefore cannot make a partial
+-- projection usable.
+DO $$
+DECLARE
+    named_principals constant text[] := ARRAY[
+        'saas_app',
+        'saas_authenticator',
+        'saas_governance',
+        'saas_dispatcher',
+        'saas_dispatcher_n1_compat',
+        'saas_executor',
+        'saas_secret_broker',
+        'saas_preview_gateway',
+        'saas_webhook_dispatcher',
+        'saas_billing',
+        'saas_metering',
+        'saas_public_api',
+        'saas_platform',
+        'saas_platform_authenticator',
+        'saas_platform_app',
+        'saas_platform_governance',
+        'saas_platform_projector',
+        'saas_platform_support',
+        'saas_privacy_executor',
+        'saas_privacy_dispatcher',
+        'saas_privacy_verifier',
+        'saas_notification_scheduler',
+        'saas_notification_dispatcher',
+        'saas_notification_directory',
+        'saas_approval_scheduler_enterprise',
+        'saas_approval_scheduler_privacy',
+        'saas_approval_scheduler_audit',
+        'saas_approval_scheduler_support_customer',
+        'saas_approval_scheduler_support_staff',
+        'saas_registration',
+        'saas_onboarding',
+        'saas_onboarding_status',
+        'saas_runtime_provider_journal'
+    ];
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    target_role text;
+    target_table text;
+    target_privilege text;
+    target_signature text;
+    column_list text;
+BEGIN
+    IF rate_policy_table IS NULL THEN
+        RETURN;
+    END IF;
+
+    FOR target_table IN
+        SELECT table_name
+        FROM (VALUES
+            ('saas_registration_rate_limit_policies'),
+            ('saas_registration_rate_limits')
+        ) AS rate_tables(table_name)
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH target_role IN ARRAY named_principals
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
+        FOREACH target_privilege IN ARRAY
+            ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) || ' FROM PUBLIC';
+        END LOOP;
+    END LOOP;
+
+    FOREACH target_signature IN ARRAY ARRAY[
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)',
+        'public.saas_prune_registration_rate_limits(text,text,integer)',
+        'public.saas_registration_rate_limit_status()'
+    ]
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
+        FOREACH target_role IN ARRAY named_principals
+        LOOP
+            EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
+    END LOOP;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
@@ -168,8 +899,6 @@ REVOKE ALL PRIVILEGES ON
     saas_notification_delivery_attempts,
     saas_operation_batches,
     saas_operation_batch_items,
-    saas_registration_rate_limit_policies,
-    saas_registration_rate_limits,
     saas_self_service_registrations,
     saas_email_verification_challenges,
     saas_tenant_onboardings,
@@ -629,15 +1358,30 @@ GRANT UPDATE (
     email_normalized, status, accepted_by, deletion_manifest_id, version, updated_at
 )
 ON saas_membership_invitations TO saas_privacy_executor;
-GRANT SELECT (id, user_id, tenant_id, deletion_manifest_id, version)
-ON saas_self_service_registrations TO saas_privacy_executor;
-GRANT UPDATE (
-    email_normalized, email_hash, display_name, tenant_name, tenant_slug,
-    default_space_name, default_space_slug, status, verified_at, terminal_at,
-    user_id, tenant_id, idempotency_key, request_hash, deletion_manifest_id,
-    version, updated_at
-)
-ON saas_self_service_registrations TO saas_privacy_executor;
+-- p0s5 adds deletion_manifest_id to self-service registration.  Keep the
+-- current Privacy projection exact without making a p0s3 N-1 replay resolve a
+-- column that does not exist yet.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.saas_self_service_registrations'::regclass
+          AND attname = 'deletion_manifest_id'
+          AND NOT attisdropped
+    ) THEN
+        GRANT SELECT (id, user_id, tenant_id, deletion_manifest_id, version)
+        ON saas_self_service_registrations TO saas_privacy_executor;
+        GRANT UPDATE (
+            email_normalized, email_hash, display_name, tenant_name, tenant_slug,
+            default_space_name, default_space_slug, status, verified_at, terminal_at,
+            user_id, tenant_id, idempotency_key, request_hash, deletion_manifest_id,
+            version, updated_at
+        )
+        ON saas_self_service_registrations TO saas_privacy_executor;
+    END IF;
+END
+$$;
 GRANT UPDATE (name, description, status, security_version, updated_at)
 ON saas_service_accounts TO saas_privacy_executor;
 GRANT UPDATE (status, revoked_at) ON saas_api_credentials TO saas_privacy_executor;
@@ -1061,20 +1805,40 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
         saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
 
--- The emergency Platform authority must audit rate-limit state only through
--- the content-blind status/prune routines installed below.  Table-level
--- REVOKE does not clear historical column ACLs, so converge both relations at
--- the final projection boundary before granting only routine execution.
-REVOKE ALL PRIVILEGES ON
-    saas_registration_rate_limit_policies,
-    saas_registration_rate_limits
-FROM PUBLIC, saas_registration, saas_platform;
+-- Rate-limit state is reachable only through three content-blind routines.
+-- Remove table-, column-, and routine-level ACL drift from every observed
+-- non-owner grantee before restoring those three exact EXECUTE grants.  This
+-- catalog-driven closure also revokes grants to principals created outside the
+-- fixed SaaS role inventory.  The schema contract above proves that all objects
+-- are absent at p0s3/p0s4 or complete at p0s5/p0s6; this block never guesses
+-- from a partial object set.
 DO $$
 DECLARE
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    rate_counter_table oid := to_regclass('public.saas_registration_rate_limits');
+    consume_function oid := to_regprocedure(
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
+    );
+    prune_function oid := to_regprocedure(
+        'public.saas_prune_registration_rate_limits(text,text,integer)'
+    );
+    status_function oid :=
+        to_regprocedure('public.saas_registration_rate_limit_status()');
+    target_role text;
     target_table text;
     target_privilege text;
+    target_signature text;
     column_list text;
+    target_relation oid;
+    target_owner oid;
+    unexpected_relation_acls integer;
+    expected_function_acls integer;
+    unexpected_function_acls integer;
 BEGIN
+    IF rate_policy_table IS NULL THEN
+        RETURN;
+    END IF;
+
     FOR target_table IN
         SELECT table_name
         FROM (VALUES
@@ -1082,28 +1846,162 @@ BEGIN
             ('saas_registration_rate_limits')
         ) AS rate_tables(table_name)
     LOOP
+        target_relation := to_regclass('public.' || quote_ident(target_table));
+        SELECT relowner
+        INTO target_owner
+        FROM pg_class
+        WHERE oid = target_relation;
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
         SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
         INTO column_list
         FROM pg_attribute AS attribute
-        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+        WHERE attribute.attrelid = target_relation
           AND attribute.attnum > 0
           AND NOT attribute.attisdropped;
+        FOR target_role IN
+            SELECT DISTINCT observed_role.rolname
+            FROM (
+                SELECT acl.grantee
+                FROM pg_class AS relation
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(relation.relacl, acldefault('r', relation.relowner))
+                ) AS acl
+                WHERE relation.oid = target_relation
+                UNION
+                SELECT acl.grantee
+                FROM pg_attribute AS attribute
+                CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+                WHERE attribute.attrelid = target_relation
+                  AND attribute.attnum > 0
+                  AND NOT attribute.attisdropped
+                  AND attribute.attacl IS NOT NULL
+                  AND cardinality(attribute.attacl) > 0
+            ) AS observed_acl
+            JOIN pg_roles AS observed_role ON observed_role.oid = observed_acl.grantee
+            WHERE observed_acl.grantee <> target_owner
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
         FOREACH target_privilege IN ARRAY
             ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
         LOOP
             EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
-                ') ON TABLE public.' || quote_ident(target_table) ||
-                ' FROM PUBLIC, saas_registration, saas_platform';
+                ') ON TABLE public.' || quote_ident(target_table) || ' FROM PUBLIC';
         END LOOP;
     END LOOP;
+
+    FOREACH target_signature IN ARRAY ARRAY[
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)',
+        'public.saas_prune_registration_rate_limits(text,text,integer)',
+        'public.saas_registration_rate_limit_status()'
+    ]
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
+        SELECT procedure.proowner
+        INTO target_owner
+        FROM pg_proc AS procedure
+        WHERE procedure.oid = to_regprocedure(target_signature);
+        FOR target_role IN
+            SELECT DISTINCT observed_role.rolname
+            FROM pg_proc AS procedure
+            CROSS JOIN LATERAL aclexplode(
+                COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+            ) AS acl
+            JOIN pg_roles AS observed_role ON observed_role.oid = acl.grantee
+            WHERE procedure.oid = to_regprocedure(target_signature)
+              AND acl.grantee <> target_owner
+        LOOP
+            EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
+    END LOOP;
+    GRANT EXECUTE ON FUNCTION public.saas_consume_registration_rate_limit(
+        text, text, text, text, text, text, text, text
+    ) TO saas_registration;
+    GRANT EXECUTE ON FUNCTION public.saas_prune_registration_rate_limits(
+        text, text, integer
+    ) TO saas_platform;
+    GRANT EXECUTE ON FUNCTION public.saas_registration_rate_limit_status()
+    TO saas_platform;
+
+    SELECT count(*)
+    INTO unexpected_relation_acls
+    FROM (
+        SELECT acl.grantee, relation.relowner AS relation_owner
+        FROM pg_class AS relation
+        CROSS JOIN LATERAL aclexplode(
+            COALESCE(relation.relacl, acldefault('r', relation.relowner))
+        ) AS acl
+        WHERE relation.oid IN (rate_policy_table, rate_counter_table)
+        UNION ALL
+        SELECT acl.grantee, relation.relowner AS relation_owner
+        FROM pg_attribute AS attribute
+        JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+        WHERE attribute.attrelid IN (rate_policy_table, rate_counter_table)
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+          AND attribute.attacl IS NOT NULL
+          AND cardinality(attribute.attacl) > 0
+    ) AS relation_acl
+    WHERE relation_acl.grantee <> relation_acl.relation_owner;
+    SELECT count(*)
+    INTO expected_function_acls
+    FROM pg_proc AS procedure
+    CROSS JOIN LATERAL aclexplode(
+        COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+    ) AS acl
+    JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+    WHERE NOT acl.is_grantable
+      AND acl.privilege_type = 'EXECUTE'
+      AND (
+          (procedure.oid = consume_function AND grantee.rolname = 'saas_registration')
+          OR (
+              procedure.oid IN (prune_function, status_function)
+              AND grantee.rolname = 'saas_platform'
+          )
+      );
+    SELECT count(*)
+    INTO unexpected_function_acls
+    FROM pg_proc AS procedure
+    CROSS JOIN LATERAL aclexplode(
+        COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+    ) AS acl
+    LEFT JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+    WHERE procedure.oid IN (consume_function, prune_function, status_function)
+      AND acl.grantee <> procedure.proowner
+      AND NOT (
+          NOT acl.is_grantable
+          AND acl.privilege_type = 'EXECUTE'
+          AND (
+              (procedure.oid = consume_function AND grantee.rolname = 'saas_registration')
+              OR (
+                  procedure.oid IN (prune_function, status_function)
+                  AND grantee.rolname = 'saas_platform'
+              )
+          )
+      );
+    IF unexpected_relation_acls <> 0
+       OR expected_function_acls <> 3
+       OR unexpected_function_acls <> 0
+    THEN
+        RAISE EXCEPTION 'registration rate-limit authority projection rejected';
+    END IF;
 END
 $$;
 
 -- Every write below is constrained to the columns emitted by the two
 -- onboarding services; state transitions cannot rewrite identity or scope.
 REVOKE ALL PRIVILEGES ON
-    saas_registration_rate_limit_policies,
-    saas_registration_rate_limits,
     saas_self_service_registrations,
     saas_email_verification_challenges,
     saas_tenant_onboardings,
@@ -1154,36 +2052,6 @@ GRANT SELECT ON
     saas_self_service_registrations,
     saas_email_verification_challenges
 TO saas_registration;
-DO $$
-BEGIN
-    IF to_regprocedure(
-        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
-    ) IS NOT NULL THEN
-        REVOKE ALL ON FUNCTION public.saas_consume_registration_rate_limit(
-            text, text, text, text, text, text, text, text
-        ) FROM PUBLIC, saas_registration, saas_platform;
-        GRANT EXECUTE ON FUNCTION public.saas_consume_registration_rate_limit(
-            text, text, text, text, text, text, text, text
-        ) TO saas_registration;
-    END IF;
-    IF to_regprocedure(
-        'public.saas_prune_registration_rate_limits(text,text,integer)'
-    ) IS NOT NULL THEN
-        REVOKE ALL ON FUNCTION public.saas_prune_registration_rate_limits(
-            text, text, integer
-        ) FROM PUBLIC, saas_registration, saas_platform;
-        GRANT EXECUTE ON FUNCTION public.saas_prune_registration_rate_limits(
-            text, text, integer
-        ) TO saas_platform;
-    END IF;
-    IF to_regprocedure('public.saas_registration_rate_limit_status()') IS NOT NULL THEN
-        REVOKE ALL ON FUNCTION public.saas_registration_rate_limit_status()
-            FROM PUBLIC, saas_registration, saas_platform;
-        GRANT EXECUTE ON FUNCTION public.saas_registration_rate_limit_status()
-            TO saas_platform;
-    END IF;
-END
-$$;
 GRANT INSERT (
     id, email_normalized, email_hash, display_name, tenant_name, tenant_slug,
     default_space_name, default_space_slug, plan_key, plan_policy_revision,

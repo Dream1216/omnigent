@@ -215,17 +215,35 @@ def test_rate_limit_tables_have_zero_service_role_acl_and_exact_function_entries
     statements = [
         " ".join(value.split()) for value in re.sub(r"--[^\n]*", "", ROLE_SQL).split(";")
     ]
+    principal_preflight = ROLE_SQL[
+        ROLE_SQL.index("named_principals constant text[] := ARRAY[") : ROLE_SQL.index(
+            "unsafe_principals text[];"
+        )
+    ]
+    rate_projection = ROLE_SQL[
+        ROLE_SQL.index("-- Rate-limit state is reachable only through") : ROLE_SQL.index(
+            "-- Every write below"
+        )
+    ]
+    expected_principals = set(re.findall(r"'(saas_[a-z0-9_]+)'", principal_preflight))
+    assert "named_principals constant text[]" not in rate_projection
+    assert "JOIN pg_roles AS observed_role" in rate_projection
+    assert "observed_acl.grantee <> target_owner" in rate_projection
+    assert "acl.grantee <> target_owner" in rate_projection
+    assert "REVOKE ALL PRIVILEGES ON TABLE public." in rate_projection
+    assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in rate_projection
+    assert "REVOKE ALL ON FUNCTION " in rate_projection
+    assert "relation_acl.grantee <> relation_acl.relation_owner" in rate_projection
+    assert "acl.grantee <> procedure.proowner" in rate_projection
+    assert "unexpected_relation_acls <> 0" in rate_projection
+    assert "expected_function_acls <> 3" in rate_projection
+    assert "unexpected_function_acls <> 0" in rate_projection
     for table in (
         "saas_registration_rate_limit_policies",
         "saas_registration_rate_limits",
     ):
-        for role in ("saas_registration", "saas_platform"):
-            assert any(
-                statement.startswith("REVOKE ALL PRIVILEGES ON")
-                and table in statement
-                and role in statement.split(" FROM ")[-1]
-                for statement in statements
-            )
+        assert table in rate_projection
+        for role in expected_principals:
             assert not any(
                 statement.startswith("GRANT ")
                 and " ON " in statement

@@ -1,45 +1,54 @@
 name: SaaS N-1 compatibility image
+run-name: >-
+  SaaS N-1 ${{ github.event_name }}
+  pr=${{ github.event.pull_request.number || 'none' }}
+  base=${{ github.event.pull_request.base.sha || github.sha }}
+  head=${{ github.event.pull_request.head.sha || github.sha }}
 
 on:
   pull_request:
     paths:
+      - ".github/actions/compat-smoke-saas-n1-gate/**"
+      - ".github/workflows/saas-n1-merge-gate.yml"
       - ".github/workflows/saas-n1-compat-image.yml"
+      - ".python-version"
+      - ".uv/**"
+      - ".venv/**"
+      - "conftest.py"
       - "deploy/docker/Dockerfile"
-      - "saas/n1_compat/**"
-      - "saas/scripts/build_n1_compat.py"
-      - "saas/scripts/compare_oci_rebuilds.py"
-      - "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
-      - "saas/control_plane/postgresql_database.sql"
-      - "saas/control_plane/postgresql_database.psql"
-      - "saas/control_plane/postgresql_principals.sql"
-      - "saas/control_plane/postgresql_principals.psql"
-      - "saas/control_plane/postgresql_roles.sql"
-      - "saas/control_plane/postgresql_roles.psql"
-      - "saas/n1_outbox_admission.py"
-      - "tests/saas/test_n1_compat_patch.py"
-      - "tests/saas/test_n1_outbox_admission.py"
-      - "tests/saas/test_control_plane_migration.py"
+      - "pyproject.toml"
+      - "pytest.ini"
+      - "setup.cfg"
+      - "setup.py"
+      - "tox.ini"
+      - "uv.toml"
+      - "uv.lock"
+      - "saas/**"
+      - "tests/conftest.py"
+      - "tests/saas/**"
   push:
     branches:
       - main
       - "codex/**"
     paths:
+      - ".github/actions/compat-smoke-saas-n1-gate/**"
+      - ".github/workflows/saas-n1-merge-gate.yml"
       - ".github/workflows/saas-n1-compat-image.yml"
+      - ".python-version"
+      - ".uv/**"
+      - ".venv/**"
+      - "conftest.py"
       - "deploy/docker/Dockerfile"
-      - "saas/n1_compat/**"
-      - "saas/scripts/build_n1_compat.py"
-      - "saas/scripts/compare_oci_rebuilds.py"
-      - "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
-      - "saas/control_plane/postgresql_database.sql"
-      - "saas/control_plane/postgresql_database.psql"
-      - "saas/control_plane/postgresql_principals.sql"
-      - "saas/control_plane/postgresql_principals.psql"
-      - "saas/control_plane/postgresql_roles.sql"
-      - "saas/control_plane/postgresql_roles.psql"
-      - "saas/n1_outbox_admission.py"
-      - "tests/saas/test_n1_compat_patch.py"
-      - "tests/saas/test_n1_outbox_admission.py"
-      - "tests/saas/test_control_plane_migration.py"
+      - "pyproject.toml"
+      - "pytest.ini"
+      - "setup.cfg"
+      - "setup.py"
+      - "tox.ini"
+      - "uv.toml"
+      - "uv.lock"
+      - "saas/**"
+      - "tests/conftest.py"
+      - "tests/saas/**"
   workflow_dispatch:
     inputs:
       publish_signed:
@@ -148,8 +157,9 @@ jobs:
       - name: Run N-1 patch and PostgreSQL p0s3 schema contracts
         run: |
           set -euo pipefail
-          uv run pytest -q tests/saas/test_n1_compat_patch.py
-          uv run pytest -q \
+          uv run python -I -m pytest -q -c pyproject.toml --confcutdir=tests \
+            tests/saas/test_n1_compat_patch.py
+          uv run python -I -m pytest -q -c pyproject.toml --confcutdir=tests \
             tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge \
             tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
       - name: Set up QEMU
@@ -282,13 +292,88 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  verify-postgresql-n1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
+        postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+      UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/postgresql-n1-venv
+    steps:
+      - name: Checkout exact N-1 contract source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked N-1 test dependencies
+        run: uv sync --frozen --extra saas --group dev --no-install-local --no-config
+      - name: Verify PostgreSQL 16 and p0s3 N-1 contracts
+        run: |
+          set -euo pipefail
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I - <<'PY'
+          import os
+
+          import sqlalchemy as sa
+
+          engine = sa.create_engine(os.environ["OMNIGENT_SAAS_TEST_POSTGRES_URL"])
+          try:
+              with engine.connect() as connection:
+                  server_major = int(connection.scalar(sa.text("SHOW server_version_num"))) // 10000
+              if server_major != 16:
+                  raise SystemExit(f"expected PostgreSQL 16, observed {server_major}")
+          finally:
+              engine.dispose()
+          PY
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -m pytest -q \
+            -c pyproject.toml --confcutdir=tests \
+            --junitxml="${RUNNER_TEMP}/postgresql-n1.xml" \
+            tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge \
+            tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay \
+            'tests/saas/test_n1_outbox_admission.py::test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_marker_drift[p0s000000004]'
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(os.environ["RUNNER_TEMP"] + "/postgresql-n1.xml").getroot()
+          if root.tag != "testsuites" or len(root) != 1 or root[0].tag != "testsuite":
+              raise SystemExit("PostgreSQL N-1 JUnit structure rejected")
+          suite = root[0]
+          observed = {
+              key: int(suite.attrib.get(key, "0"))
+              for key in ("tests", "failures", "errors", "skipped")
+          }
+          expected = {"tests": 3, "failures": 0, "errors": 0, "skipped": 0}
+          if observed != expected:
+              raise SystemExit(f"PostgreSQL N-1 test cardinality rejected: {observed}")
+          PY
+
   publish-candidate:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main' &&
       inputs.product_revision == github.sha
-    needs: verify-candidate
+    needs:
+      - verify-candidate
+      - verify-postgresql-n1
     environment: production-image
     runs-on: ubuntu-latest
     timeout-minutes: 120
