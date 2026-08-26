@@ -9,7 +9,7 @@ set -euo pipefail
 POSTGRESQL_N1_CHECK="verify-postgresql-n1"
 POSTGRESQL_N1_WORKFLOW="SaaS N-1 compatibility image"
 POSTGRESQL_N1_WORKFLOW_PATH=".github/workflows/saas-n1-compat-image.yml"
-POSTGRESQL_N1_WORKFLOW_SHA256="8bca805eb58a4739a73478105233801409454d4defb4f2c9e082eb61b9673f52"
+POSTGRESQL_N1_WORKFLOW_SHA256="d2691ba340d0aa32451ca6c047d1c5f9c6a54d06223825a4eae26be575333eeb"
 
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
