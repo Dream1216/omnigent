@@ -310,7 +310,6 @@ jobs:
     env:
       OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
         postgresql+psycopg://postgres:postgres@localhost:5432/postgres
-      UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/postgresql-n1-venv
     steps:
       - name: Checkout exact N-1 contract source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -323,6 +322,8 @@ jobs:
           python-version: "3.12"
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Pin isolated PostgreSQL N-1 environment
+        run: printf '%s\n' "UV_PROJECT_ENVIRONMENT=${RUNNER_TEMP}/postgresql-n1-venv" >> "$GITHUB_ENV"
       - name: Install locked N-1 test dependencies
         run: uv sync --frozen --extra saas --group dev --no-install-local --no-config
       - name: Verify PostgreSQL 16 and p0s3 N-1 contracts
