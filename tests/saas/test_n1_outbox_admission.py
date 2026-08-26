@@ -813,6 +813,9 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
     drifts = [
         "ALTER POLICY rls_self_service_registrations_privacy_target "
         "ON public.saas_self_service_registrations USING (true)",
+        "CREATE POLICY rls_self_service_registrations_rogue "
+        "ON public.saas_self_service_registrations AS PERMISSIVE "
+        "FOR SELECT TO PUBLIC USING (true)",
         "CREATE POLICY rls_registration_rate_limits_rogue "
         "ON public.saas_registration_rate_limits FOR SELECT TO PUBLIC USING (true)",
         "ALTER TABLE public.saas_registration_rate_limits "

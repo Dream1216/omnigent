@@ -384,8 +384,17 @@ BEGIN
        OR privacy_constraint_contract_hash IS DISTINCT FROM
           'f40979410766d2c6de7f7c96db487c7f47c7c016fc561deb6a3bf24e3fbf18f3'
        OR privacy_policies <> 2
-       OR registration_policy_contract_hash IS DISTINCT FROM
-          'a0e09fe6eb825ad9bed3428d4bfc31e2fa6d6b1bc1324199a9fa5f7ccff375b1'
+       -- pg_dump/pg_restore preserves the seven-policy authority but PostgreSQL
+       -- reparses three varchar-array predicates into an equivalent text-array
+       -- AST.  Admit only the exact migrated or exact logical-roundtrip catalog
+       -- hashes; retaining the full-table aggregate still rejects an added,
+       -- removed, or widened policy.
+       OR (
+          registration_policy_contract_hash IS DISTINCT FROM
+             'a0e09fe6eb825ad9bed3428d4bfc31e2fa6d6b1bc1324199a9fa5f7ccff375b1'
+          AND registration_policy_contract_hash IS DISTINCT FROM
+             'd9cdb654555fb782037992891e66fac188c7260c404b36f0b10dcef0e0406605'
+       )
        OR privacy_triggers <> 1
        OR privacy_trigger_contracts <> 1
        OR privacy_function_contracts <> 1
@@ -669,12 +678,24 @@ BEGIN
             'ix_registration_rate_limit_expiry',
             'saas_registration_rate_limits_pkey'
        ]::text[]
-       OR rate_constraint_contract_hash IS DISTINCT FROM (CASE schema_revision
-          WHEN 'p0s000000005' THEN
-              '72a30643de641319a27cdc0ca7ba4d97b8dc2b6093c7089c802dc9e474276aa1'
-          ELSE
-              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
-       END)
+       -- PostgreSQL's logical roundtrip reparses varchar-array CHECK predicates
+       -- into equivalent per-element text casts.  Keep the complete constraint
+       -- aggregate and admit only the exact migrated or exact roundtrip catalog
+       -- hash for each supported revision.
+       OR (
+          schema_revision = 'p0s000000005'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '72a30643de641319a27cdc0ca7ba4d97b8dc2b6093c7089c802dc9e474276aa1'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             'a712a6bb5fa0f0b66ce8102486e8d51bcc11382fb5397ab5043b17e5689efda5'
+       )
+       OR (
+          schema_revision = 'p0s000000006'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '89e8bd459b1aab4e24bf7655fc9b386a01243bcb071a9c9bdd1eb8e6f46de49a'
+       )
        OR rate_index_contract_hash IS DISTINCT FROM
           '17a36e093545fdbf51d1ca5da5682b2cff1273de9e82ff580a96e54212d46b5f'
        OR rate_policies <> 2
