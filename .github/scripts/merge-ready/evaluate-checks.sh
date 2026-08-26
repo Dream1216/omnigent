@@ -22,7 +22,7 @@
 # PR) from blocking the gate; trusting a *skipped* run keeps fork/draft
 # PRs — whose entire e2e workflow is gated off — from wedging it.
 #
-# Env in: GH_TOKEN, REPO, SHA
+# Env in: GH_TOKEN, REPO, PR, SHA
 # Out:    failed=<markdown bullet list of failed names> on $GITHUB_OUTPUT
 # Exit:   0 if all green, 1 if any red.
 
@@ -31,9 +31,130 @@ set -euo pipefail
 HERE=$(dirname "$0")
 # shellcheck disable=SC1091
 source "$HERE/required.sh"
+# shellcheck disable=SC1091
+source "$HERE/saas-required.sh"
+
+# Contextual checks are selected from the authoritative current PR. Never mix a
+# file list from one PR with checks from another SHA: workflow_dispatch and a
+# stale workflow_run must not be able to paint an unrelated commit green.
+if ! [[ "${PR:-}" =~ ^[0-9]+$ ]] || ! [[ "${SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error::PR and full head SHA are required"
+  exit 1
+fi
+PR_METADATA=$(gh api "repos/$REPO/pulls/$PR" \
+  --jq '[.state, .head.sha, .base.ref, .base.sha, (.changed_files | tostring)] | @tsv')
+IFS=$'\t' read -r PR_STATE PR_HEAD_SHA PR_BASE_REF PR_BASE_SHA \
+  PR_CHANGED_FILES <<<"$PR_METADATA"
+if [[ "$PR_STATE" != "open" ]] || [[ "$PR_BASE_REF" != "main" ]] || \
+   [[ "$PR_HEAD_SHA" != "$SHA" ]] || ! [[ "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || \
+   ! [[ "$PR_CHANGED_FILES" =~ ^[0-9]+$ ]]; then
+  echo "::error::PR is not an open main-targeting PR at exact head SHA $SHA"
+  exit 1
+fi
+PR_FILE_ROWS=$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+  --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')
+PR_FILE_COUNT=$(printf '%s\n' "$PR_FILE_ROWS" | awk 'NF {count++} END {print count + 0}')
+if [[ "$PR_FILE_COUNT" -ne "$PR_CHANGED_FILES" ]]; then
+  echo "::error::PR file pagination is incomplete"
+  exit 1
+fi
+PR_FILES=$(printf '%s\n' "$PR_FILE_ROWS" | awk -F'\t' \
+  '{print $1; if ($2 != "") print $2}')
+if changes_postgresql_n1_forbidden_environment <<<"$PR_FILES"; then
+  echo "::error::Committed .uv/.venv state requires an explicit admin merge"
+  exit 1
+fi
+if changes_postgresql_n1_policy <<<"$PR_FILES"; then
+  echo "::error::PostgreSQL N-1 gate policy changes require an explicit admin merge"
+  exit 1
+fi
+if requires_postgresql_n1 <<<"$PR_FILES"; then
+  REQUIRED+=("$POSTGRESQL_N1_CHECK")
+  if ! [[ "$POSTGRESQL_N1_WORKFLOW_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "::error::trusted PostgreSQL N-1 workflow digest is not configured"
+    exit 1
+  fi
+  OBSERVED_N1_WORKFLOW_SHA256=$(gh api \
+    -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$REPO/contents/$POSTGRESQL_N1_WORKFLOW_PATH?ref=$SHA" \
+    | shasum -a 256 | awk '{print $1}')
+  if [[ "$OBSERVED_N1_WORKFLOW_SHA256" != "$POSTGRESQL_N1_WORKFLOW_SHA256" ]]; then
+    echo "::error::PostgreSQL N-1 workflow bytes do not match trusted main policy"
+    exit 1
+  fi
+  for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
+    trusted_path="${trusted_input%%|*}"
+    trusted_sha256="${trusted_input#*|}"
+    observed_sha256=$(gh api \
+      -H 'Accept: application/vnd.github.raw+json' \
+      "repos/$REPO/contents/$trusted_path?ref=$SHA" \
+      | shasum -a 256 | awk '{print $1}')
+    if [[ "$observed_sha256" != "$trusted_sha256" ]]; then
+      echo "::error::PostgreSQL N-1 trusted input drift: $trusted_path"
+      exit 1
+    fi
+  done
+fi
 
 CHECKS=$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate \
   --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion // "null")\t\(.completed_at // .started_at // "")"')
+
+# A PR can add another job with the same display name. For the contextual N-1
+# check, retain only rows whose check-run resolves to the pinned workflow path,
+# PR event, exact head SHA, exact PR, and exact job identity. The workflow bytes
+# were pinned above, so a PR cannot replace the PG16 commands and self-attest.
+if requires_postgresql_n1 <<<"$PR_FILES"; then
+  N1_CANDIDATES=$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate \
+    --jq '.check_runs[] | select(.name == "verify-postgresql-n1") | [.id, .name, .status, (.conclusion // "null"), (.completed_at // .started_at // ""), .details_url, .app.slug] | @tsv')
+  TRUSTED_N1_ROWS=""
+  while IFS=$'\t' read -r check_id check_name check_status check_conclusion \
+    check_time details_url app_slug; do
+    [[ -z "$check_id" ]] && continue
+    [[ "$app_slug" != "github-actions" ]] && continue
+    if ! [[ "$details_url" =~ ^https://github.com/$REPO/actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then
+      continue
+    fi
+    run_id="${BASH_REMATCH[1]}"
+    job_id="${BASH_REMATCH[2]}"
+    [[ "$job_id" != "$check_id" ]] && continue
+    if ! run_metadata=$(gh api "repos/$REPO/actions/runs/$run_id" \
+      --jq '[.name, .display_title, .path, .event, .status, (.conclusion // "null"), .head_sha, (.id | tostring)] | @tsv'); then
+      continue
+    fi
+    IFS=$'\t' read -r run_name run_display_title run_path run_event run_status \
+      run_conclusion run_head_sha observed_run_id <<<"$run_metadata"
+    expected_run_title="SaaS N-1 pull_request pr=$PR base=$PR_BASE_SHA head=$SHA"
+    if [[ "$run_name" != "$POSTGRESQL_N1_WORKFLOW" ]] || \
+       [[ "$run_display_title" != "$expected_run_title" ]] || \
+       [[ "$run_path" != "$POSTGRESQL_N1_WORKFLOW_PATH" ]] || \
+       [[ "$run_event" != "pull_request" ]] || \
+       [[ "$run_head_sha" != "$SHA" ]] || \
+       [[ "$observed_run_id" != "$run_id" ]] || \
+       [[ "$run_status" != "$check_status" ]] || \
+       [[ "$run_conclusion" != "$check_conclusion" ]]; then
+      continue
+    fi
+    if ! job_metadata=$(gh api "repos/$REPO/actions/jobs/$job_id" \
+      --jq '[.name, .status, (.conclusion // "null"), .head_sha, (.run_id | tostring), .workflow_name] | @tsv'); then
+      continue
+    fi
+    IFS=$'\t' read -r job_name job_status job_conclusion job_head_sha \
+      observed_job_run_id job_workflow_name <<<"$job_metadata"
+    if [[ "$job_name" != "$POSTGRESQL_N1_CHECK" ]] || \
+       [[ "$job_status" != "$check_status" ]] || \
+       [[ "$job_conclusion" != "$check_conclusion" ]] || \
+       [[ "$job_head_sha" != "$SHA" ]] || \
+       [[ "$observed_job_run_id" != "$run_id" ]] || \
+       [[ "$job_workflow_name" != "$POSTGRESQL_N1_WORKFLOW" ]]; then
+      continue
+    fi
+    TRUSTED_N1_ROWS+="$check_name"$'\t'"$check_status"$'\t'\
+"$check_conclusion"$'\t'"$check_time"$'\n'
+  done <<<"$N1_CANDIDATES"
+  CHECKS=$(printf '%s\n' "$CHECKS" | awk -F'\t' \
+    -v n="$POSTGRESQL_N1_CHECK" '$1 != n')
+  CHECKS+=$'\n'"$TRUSTED_N1_ROWS"
+fi
 
 # Per-workflow run state for this SHA (one row per run:
 # name<TAB>status<TAB>conclusion<TAB>created_at). Used to classify a
