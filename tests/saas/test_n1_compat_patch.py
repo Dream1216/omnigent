@@ -72,23 +72,60 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     workflow = yaml.load(source, Loader=yaml.BaseLoader)
 
     assert isinstance(workflow, dict)
+    jobs = workflow["jobs"]
+    current_postgresql = jobs["verify-candidate"]
+    n1_postgresql = jobs["verify-postgresql-n1"]
+    assert current_postgresql["services"]["postgres"]["image"] == "postgres:18"
+    assert n1_postgresql["services"]["postgres"]["image"] == (
+        "postgres:16.14-bookworm@"
+        "sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8"
+    )
+    n1_postgresql_commands = "\n".join(str(step.get("run", "")) for step in n1_postgresql["steps"])
+    assert workflow["run-name"] == (
+        "SaaS N-1 ${{ github.event_name }} "
+        "pr=${{ github.event.pull_request.number || 'none' }} "
+        "base=${{ github.event.pull_request.base.sha || github.sha }} "
+        "head=${{ github.event.pull_request.head.sha || github.sha }}"
+    )
+    assert n1_postgresql["env"]["UV_PROJECT_ENVIRONMENT"] == (
+        "${{ runner.temp }}/postgresql-n1-venv"
+    )
+    assert "--no-install-local --no-config" in n1_postgresql_commands
+    assert "uv run" not in n1_postgresql_commands
+    assert '"$UV_PROJECT_ENVIRONMENT/bin/python" -I' in n1_postgresql_commands
+    assert 'sa.text("SHOW server_version_num")' in n1_postgresql_commands
+    assert "server_major != 16" in n1_postgresql_commands
+    assert "test_real_postgresql_pinned_n1_outbox_compatibility_bridge" in (n1_postgresql_commands)
+    assert "test_real_postgresql_n1_compat_login_admission_and_roles_replay" in (
+        n1_postgresql_commands
+    )
+    assert "p0s000000004" in n1_postgresql_commands
+    assert "postgresql-n1.xml" in n1_postgresql_commands
+    assert source.count("-c pyproject.toml --confcutdir=tests") == 3
+    assert 'root.tag != "testsuites" or len(root) != 1' in n1_postgresql_commands
+    assert 'root[0].tag != "testsuite"' in n1_postgresql_commands
+    assert "suite = root[0]" in n1_postgresql_commands
+    assert '"tests": 3' in n1_postgresql_commands
+    assert '"skipped": 0' in n1_postgresql_commands
     expected_paths = {
+        ".github/scripts/merge-ready/**",
+        ".github/workflows/merge-ready.yml",
         ".github/workflows/saas-n1-compat-image.yml",
+        ".python-version",
+        ".uv/**",
+        ".venv/**",
+        "conftest.py",
         "deploy/docker/Dockerfile",
-        "saas/n1_compat/**",
-        "saas/scripts/build_n1_compat.py",
-        "saas/scripts/compare_oci_rebuilds.py",
-        "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py",
-        "saas/control_plane/postgresql_database.sql",
-        "saas/control_plane/postgresql_database.psql",
-        "saas/control_plane/postgresql_principals.sql",
-        "saas/control_plane/postgresql_principals.psql",
-        "saas/control_plane/postgresql_roles.sql",
-        "saas/control_plane/postgresql_roles.psql",
-        "saas/n1_outbox_admission.py",
-        "tests/saas/test_n1_compat_patch.py",
-        "tests/saas/test_n1_outbox_admission.py",
-        "tests/saas/test_control_plane_migration.py",
+        "pyproject.toml",
+        "pytest.ini",
+        "setup.cfg",
+        "setup.py",
+        "tox.ini",
+        "uv.toml",
+        "uv.lock",
+        "saas/**",
+        "tests/conftest.py",
+        "tests/saas/**",
     }
     assert set(workflow["on"]["pull_request"]["paths"]) == expected_paths
     assert set(workflow["on"]["push"]["paths"]) == expected_paths
@@ -105,9 +142,9 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_PATCHED_TREE_HASH: git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
-    assert source.count('      - "saas/control_plane/postgresql_principals.sql"') == 2
-    assert source.count('      - "saas/control_plane/postgresql_principals.psql"') == 2
-    assert source.count('      - "saas/n1_outbox_admission.py"') == 2
+    assert source.count('      - "saas/**"') == 2
+    assert source.count('      - "tests/saas/**"') == 2
+    assert source.count('      - ".github/scripts/merge-ready/**"') == 2
     assert (
         source.count("uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf")
         == 3
@@ -145,7 +182,8 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
         == 2
     )
 
-    publish = workflow["jobs"]["publish-candidate"]
+    publish = jobs["publish-candidate"]
+    assert publish["needs"] == ["verify-candidate", "verify-postgresql-n1"]
     publish_condition = publish["if"]
     assert "github.event_name == 'workflow_dispatch'" in publish_condition
     assert "github.ref == 'refs/heads/main'" in publish_condition
