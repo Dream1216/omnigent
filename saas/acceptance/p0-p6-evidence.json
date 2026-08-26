@@ -57,6 +57,7 @@
             "setup.py",
             "tests/saas/test_image_supply_chain.py",
             "saas/acceptance/p0-adr-image-candidate-ci-31276491134.json",
+            "saas/acceptance/p0-n1-security-compat-image-candidate-ci-33020428815.json",
             "saas/acceptance/p4-image-candidate-ci-30901594130.json",
             "saas/acceptance/p5-image-candidate-ci-30978680569.json",
             "saas/production/readiness.py",

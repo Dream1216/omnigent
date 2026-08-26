@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "evidence_id": "p0-n1-security-compat-image-candidate-ci-33020428815",
+  "evidence_kind": "n1-security-compat-candidate-not-production-promotion",
+  "recorded_at": "2026-08-27",
+  "repository": "Dream1216/omnigent",
+  "branch": "codex/wave1-upstream-onboarding-p0s6",
+  "source_revision": "5a35742a8797637f0b85ca1427e98be12ffa325e",
+  "source_tree": "ae8de93c9c580301b733ff9c8e8bb8eed90e28d2",
+  "upstream_revision": "14df304a8e958da36b8a606a2c825e3a6642247e",
+  "adapter_contract_version": "0.2.0",
+  "workflow": {
+    "id": 342012814,
+    "name": "SaaS N-1 compatibility image",
+    "path": ".github/workflows/saas-n1-compat-image.yml",
+    "source_sha256": "d2691ba340d0aa32451ca6c047d1c5f9c6a54d06223825a4eae26be575333eeb"
+  },
+  "pull_request": {
+    "number": 17,
+    "url": "https://github.com/Dream1216/omnigent/pull/17",
+    "base_revision": "3d4b0b55a1f78e1dde918162d174ace1e7dde2b5",
+    "head_revision": "5a35742a8797637f0b85ca1427e98be12ffa325e",
+    "merged_at": "2026-08-26T23:09:09Z",
+    "merge_commit": "fe229be78ef5007de1351cd6e44a091450597d05",
+    "merge_commit_parents": [
+      "3d4b0b55a1f78e1dde918162d174ace1e7dde2b5",
+      "5a35742a8797637f0b85ca1427e98be12ffa325e"
+    ],
+    "merge_tree": "ae8de93c9c580301b733ff9c8e8bb8eed90e28d2"
+  },
+  "exact_source_push": {
+    "event": "push",
+    "run_id": 33020428815,
+    "run_attempt": 1,
+    "run_url": "https://github.com/Dream1216/omnigent/actions/runs/33020428815",
+    "api_head_sha": "5a35742a8797637f0b85ca1427e98be12ffa325e",
+    "conclusion": "success",
+    "verify_candidate_job": {
+      "id": 98349356663,
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020428815/job/98349356663",
+      "conclusion": "success",
+      "n1_patch_tests": {
+        "passed": 5,
+        "failed": 0
+      },
+      "postgresql_18_p0s3_contract_tests": {
+        "passed": 2,
+        "failed": 0
+      }
+    },
+    "verify_postgresql_n1_job": {
+      "id": 98349356732,
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020428815/job/98349356732",
+      "conclusion": "success",
+      "postgresql_image": "postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
+      "junit": {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "validated_in_job": true,
+        "retained_as_artifact": false
+      }
+    },
+    "artifact": {
+      "id": 9626551206,
+      "name": "n1-compat-candidate-5a35742a8797637f0b85ca1427e98be12ffa325e",
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020428815/artifacts/9626551206",
+      "size_bytes": 2997,
+      "archive_sha256": "2caabde535f6481ea891128eacfb4ca58aa482f5192afb02820e4867147bed25",
+      "payload_sha256": {
+        "artifacts-n1-builder.json": "4526590e39f80dfba793c3ea329c6fb20e2ab02bd13bc5b1bbda57965f9c84e1",
+        "artifacts/n1-compat-rebuild.json": "cdec5f4d2774458528313d622179e1163addfd57a25ef18d93668872e60be41c",
+        "artifacts/n1-compat-candidate-evidence.json": "6d32d4d1a6a0dc911531ddf19ebd25c2d9dbb21ac3a578395da2550d580799bf"
+      }
+    },
+    "artifact_product_revision": "5a35742a8797637f0b85ca1427e98be12ffa325e"
+  },
+  "pull_request_temporary_merge_validation": {
+    "event": "pull_request",
+    "run_id": 33020754508,
+    "run_attempt": 1,
+    "run_url": "https://github.com/Dream1216/omnigent/actions/runs/33020754508",
+    "api_head_sha": "5a35742a8797637f0b85ca1427e98be12ffa325e",
+    "temporary_merge_revision": "334cfe9c74f7eb7da4639da7868e0a1f5a6c5757",
+    "temporary_merge_parents": [
+      "3d4b0b55a1f78e1dde918162d174ace1e7dde2b5",
+      "5a35742a8797637f0b85ca1427e98be12ffa325e"
+    ],
+    "temporary_merge_tree": "ae8de93c9c580301b733ff9c8e8bb8eed90e28d2",
+    "conclusion": "success",
+    "verify_candidate_job": {
+      "id": 98350265340,
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020754508/job/98350265340",
+      "conclusion": "success",
+      "n1_patch_tests": {
+        "passed": 5,
+        "failed": 0
+      },
+      "postgresql_18_p0s3_contract_tests": {
+        "passed": 2,
+        "failed": 0
+      }
+    },
+    "verify_postgresql_n1_job": {
+      "id": 98350265263,
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020754508/job/98350265263",
+      "conclusion": "success",
+      "postgresql_image": "postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
+      "junit": {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "validated_in_job": true,
+        "retained_as_artifact": false
+      }
+    },
+    "artifact": {
+      "id": 9626753565,
+      "name": "n1-compat-candidate-334cfe9c74f7eb7da4639da7868e0a1f5a6c5757",
+      "url": "https://github.com/Dream1216/omnigent/actions/runs/33020754508/artifacts/9626753565",
+      "size_bytes": 2994,
+      "archive_sha256": "158615e19d365177ae83753bf602b599424d34b7e14e6cc4b32d373f38e69fec",
+      "payload_sha256": {
+        "artifacts-n1-builder.json": "4526590e39f80dfba793c3ea329c6fb20e2ab02bd13bc5b1bbda57965f9c84e1",
+        "artifacts/n1-compat-rebuild.json": "5832203efe9d1c2fd09f21a7697eafa9f81a3447df365a8c3cc8828f8c738b81",
+        "artifacts/n1-compat-candidate-evidence.json": "fdbe793ccd578fb3145002b15756f7b5f9615fa628f34674192bf699d0ce8dbf"
+      }
+    },
+    "artifact_product_revision": "334cfe9c74f7eb7da4639da7868e0a1f5a6c5757"
+  },
+  "candidate_contract": {
+    "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
+    "contract_version": "p0s3-n1-outbox-security-compat-v1",
+    "patch_sha256": "810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35",
+    "patched_tree_hash": "git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac",
+    "required_schema_revision": "p0s000000003",
+    "outbox_ddl_requires_worker_drain": true,
+    "catalog_recheck_before_restart": true,
+    "repeat_builds_per_run": 2,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "matching_platform_manifest_and_config_within_each_run": true,
+    "attestation_descriptors_per_build": 2
+  },
+  "exact_source_candidate": {
+    "linux/amd64": {
+      "manifest_digest": "sha256:e326e2af9386cbc63752ba306333b4d53aa63a0b2e611558059807ace78298bc",
+      "config_digest": "sha256:0c79f46efdf4f172a5b5c1c23689a30334f48e73381d71ec94245a2528c8bba2"
+    },
+    "linux/arm64": {
+      "manifest_digest": "sha256:a7ee68b1ae7ea803b2cced70db9c7aa0cd1137da666d1f0d297d7f8258a7a721",
+      "config_digest": "sha256:471daf1137cd612b3bdbfd05b7dbb13919390b405ebca5b9b857bc7f043e4bff"
+    }
+  },
+  "production_ready": false,
+  "registry_published": false,
+  "signature_receipt": null,
+  "external_hsm_receipt": null,
+  "vulnerability_scan": null,
+  "license_scan": null,
+  "canary": null,
+  "n_minus_one_production_rollback": null,
+  "production_receipt": null,
+  "production_blockers": [
+    "the candidate archives are not six registry-published immutable production image digests",
+    "a protected OpenBao-backed production signature Receipt is not attached",
+    "vulnerability and license admission scans are not completed",
+    "a one-hour digest-pinned production Canary is not completed",
+    "a 900-second production N-1 rollback exercise is not completed",
+    "candidate CI is not production rollback evidence"
+  ],
+  "acceptance_boundary": "The exact source Push and PR temporary-merge runs prove the pinned N-1 patch, PostgreSQL 18 p0s3 contracts, fixed PostgreSQL 16.14 JUnit cardinality, and two repeatable dual-platform OCI candidate builds. PR #17 merged the exact source tree, but these unpublished candidate archives are neither a signed production promotion nor a production N-1 rollback. The P0 image gate remains pending and the release remains NO-GO.",
+  "evidence_successor_policy": "This successor records executable facts produced at source revision 5a35742a8797637f0b85ca1427e98be12ffa325e. Its evidence-only commit is not a replacement product revision and must not rewrite these source-bound run or artifact identities."
+}
