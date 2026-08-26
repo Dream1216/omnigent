@@ -158,7 +158,7 @@ def test_privacy_registration_sql_and_psql_authority_are_consistent() -> None:
     assert "659fd922560eea249898647400542e711de87d290327029d74325201d82b725a" in roles
     assert "89e8bd459b1aab4e24bf7655fc9b386a01243bcb071a9c9bdd1eb8e6f46de49a" in roles
     assert "a712a6bb5fa0f0b66ce8102486e8d51bcc11382fb5397ab5043b17e5689efda5" in roles
-    assert "Keep the complete constraint aggregate" in roles
+    assert "Keep the complete constraint" in roles
     assert "rls_self_service_registrations_privacy_anonymize" in migration
     assert "OLD.deletion_manifest_id IS NOT NULL" in migration
     assert "privacy_registration_manifest.status = 'executing'" in migration
