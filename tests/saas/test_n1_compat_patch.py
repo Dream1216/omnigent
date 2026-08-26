@@ -80,16 +80,28 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
         "postgres:16.14-bookworm@"
         "sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8"
     )
-    n1_postgresql_commands = "\n".join(str(step.get("run", "")) for step in n1_postgresql["steps"])
+    n1_postgresql_steps = n1_postgresql["steps"]
+    n1_postgresql_commands = "\n".join(str(step.get("run", "")) for step in n1_postgresql_steps)
     assert workflow["run-name"] == (
         "SaaS N-1 ${{ github.event_name }} "
         "pr=${{ github.event.pull_request.number || 'none' }} "
         "base=${{ github.event.pull_request.base.sha || github.sha }} "
         "head=${{ github.event.pull_request.head.sha || github.sha }}"
     )
-    assert n1_postgresql["env"]["UV_PROJECT_ENVIRONMENT"] == (
-        "${{ runner.temp }}/postgresql-n1-venv"
+    setup_uv_index = next(
+        index for index, step in enumerate(n1_postgresql_steps) if step["name"] == "Set up uv"
     )
+    pin_environment_index = next(
+        index
+        for index, step in enumerate(n1_postgresql_steps)
+        if step["name"] == "Pin isolated PostgreSQL N-1 environment"
+    )
+    assert setup_uv_index < pin_environment_index
+    assert n1_postgresql_steps[pin_environment_index]["run"] == (
+        "printf '%s\\n' \"UV_PROJECT_ENVIRONMENT=${RUNNER_TEMP}/postgresql-n1-venv\" "
+        '>> "$GITHUB_ENV"'
+    )
+    assert "UV_PROJECT_ENVIRONMENT" not in n1_postgresql["env"]
     assert "--no-install-local --no-config" in n1_postgresql_commands
     assert "uv run" not in n1_postgresql_commands
     assert '"$UV_PROJECT_ENVIRONMENT/bin/python" -I' in n1_postgresql_commands
