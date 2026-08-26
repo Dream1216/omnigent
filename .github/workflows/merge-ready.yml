@@ -40,10 +40,6 @@ on:
         description: PR number to (re)evaluate.
         required: true
         type: string
-      sha:
-        description: Head SHA to post on (defaults to the PR's current head).
-        required: false
-        type: string
 
 # Read-only at top level; write scopes live on the job below.
 permissions:
@@ -113,7 +109,6 @@ jobs:
           CHECK_RUN_SHA: ${{ github.event.check_run.head_sha }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           PR_INPUT: ${{ inputs.pr }}
-          SHA_INPUT: ${{ inputs.sha }}
         run: |
           # Resolve the open PR from a head SHA -- fork-PR events leave the
           # payload's pull_requests array empty (cross-repo). Use the search
@@ -135,11 +130,7 @@ jobs:
               exit 1
             fi
             PR="$PR_INPUT"
-            if [[ "$SHA_INPUT" =~ ^[0-9a-f]{7,40}$ ]]; then
-              SHA="$SHA_INPUT"
-            else
-              SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
-            fi
+            SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
           elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
             # The job `if` contains() pre-filter also fires on incidental
             # mentions; re-validate `/merge` as a command (first non-space
