@@ -1,19 +1,63 @@
 name: SaaS image candidate
 
 on:
-  push:
-    branches:
-      - "codex/**"
+  pull_request:
     paths:
+      - ".dockerignore"
       - ".github/workflows/saas-image-candidate.yml"
       - ".github/workflows/saas-production-admission.yml"
       - "deploy/docker/Dockerfile"
+      - "deploy/docker/entrypoint.py"
       - "setup.py"
       - "pyproject.toml"
       - "uv.lock"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "LICENSE"
+      - "NOTICE"
       - "web/**"
+      - "omnigent/**"
+      - "sdks/**"
+      - "examples/**"
+      - "saas/**"
+      - "saas/**/*.py"
+      - "saas/**/*.sql"
+      - "saas/**/*.psql"
+      - "saas/**/*.json"
+      - "tests/saas/**/*.py"
+      - "saas/actions/build-oci-candidate/**"
+      - "saas/production/**"
+      - "saas/supply_chain/**"
+      - "saas/scripts/check_image_supply_chain.py"
+      - "saas/scripts/compare_oci_rebuilds.py"
+      - "saas/scripts/*evidence_receipt.py"
+      - "tests/saas/test_image_supply_chain.py"
+  push:
+    branches:
+      - "codex/**"
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/saas-image-candidate.yml"
+      - ".github/workflows/saas-production-admission.yml"
+      - "deploy/docker/Dockerfile"
+      - "deploy/docker/entrypoint.py"
+      - "setup.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "LICENSE"
+      - "NOTICE"
+      - "web/**"
+      - "omnigent/**"
+      - "sdks/**"
+      - "examples/**"
+      - "saas/**"
+      - "saas/**/*.py"
+      - "saas/**/*.sql"
+      - "saas/**/*.psql"
+      - "saas/**/*.json"
+      - "tests/saas/**/*.py"
       - "saas/actions/build-oci-candidate/**"
       - "saas/production/**"
       - "saas/supply_chain/**"
@@ -73,6 +117,15 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
         run: uv sync --frozen --extra all --group dev --extra saas
+      - name: Bootstrap PostgreSQL principal and database authority
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql --host localhost --username postgres --dbname postgres \
+            --file saas/control_plane/postgresql_principals.psql
+          psql --host localhost --username postgres --dbname postgres \
+            --file saas/control_plane/postgresql_database.psql
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
       - name: Run current-revision OSS and SaaS regressions

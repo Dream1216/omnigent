@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,13 +20,6 @@ from saas.control_plane.api_http import create_public_api_router
 from saas.control_plane.http_auth import SaasMachinePrincipal
 from saas.control_plane.public_api import PublicApiError, PublicApiExecutionService
 from saas.public_api_contract import PUBLIC_API_PREFIX, FilterBoundCursorCodec
-
-
-def _postgres_url() -> str:
-    value = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
-    if not value:
-        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required for public API acceptance")
-    return value
 
 
 def _migration_config(connection: sa.Connection, root: Path) -> Config:
@@ -86,9 +78,11 @@ def _set_public_context(
     )
 
 
-def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
+def test_public_api_real_role_rls_provenance_rate_and_idempotency(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     owner_id, steward_id = uuid4(), uuid4()
     tenant_id, space_id, project_id = uuid4(), uuid4(), uuid4()
     service_account_id, credential_id = uuid4(), uuid4()
@@ -110,9 +104,6 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         command.downgrade(migration, "pc5c00000002")
-        connection.exec_driver_sql(
-            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
-        )
         assert (
             connection.execute(
                 sa.text("SELECT to_regclass('saas_public_api_mutation_receipts')")
@@ -136,7 +127,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency() -> None:
             connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            == "pc5a00000005"
+            == "p0s000000006"
         )
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(

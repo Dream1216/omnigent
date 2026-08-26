@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.production.recovery import (
     canonical_record_sha256,
     load_recovery_evidence,
@@ -121,6 +122,20 @@ def test_empty_evidence_is_structurally_valid_but_production_blocked() -> None:
         "violation_count": 0,
         "readiness_blocker_count": 2,
     }
+
+
+def test_recovery_policy_tracks_the_forced_rls_inventory_size() -> None:
+    required_checks = _policy()["required_checks"]
+    expected = f"forced_rls_control_plane_{len(CONTROL_PLANE_RLS_TABLES)}"
+
+    assert expected in required_checks  # type: ignore[operator]
+    assert (
+        sum(
+            check.startswith("forced_rls_control_plane_")
+            for check in required_checks  # type: ignore[union-attr]
+        )
+        == 1
+    )
 
 
 def test_exact_tenant_and_cluster_drills_satisfy_the_contract() -> None:

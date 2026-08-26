@@ -190,9 +190,11 @@ def _assert_sqlstate(error: pytest.ExceptionInfo[DBAPIError], expected: str) -> 
     assert getattr(error.value.orig, "sqlstate", None) == expected
 
 
-def test_real_postgresql_notification_approval_security_and_worker_contracts() -> None:
+def test_real_postgresql_notification_approval_security_and_worker_contracts(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_pre_ping=True)
+    engine = sa.create_engine(isolated_postgres_url, pool_pre_ping=True)
     now = datetime.now(timezone.utc).replace(microsecond=0)
     tenant_a, tenant_b = uuid4(), uuid4()
     requester, approver, assignee, delegate, outsider, tenant_b_user = (

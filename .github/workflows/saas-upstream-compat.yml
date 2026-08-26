@@ -46,6 +46,15 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked dependencies
         run: uv sync --frozen --extra all --group dev --extra saas
+      - name: Bootstrap PostgreSQL principal and database authority
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql --host localhost --username postgres --dbname postgres \
+            --file saas/control_plane/postgresql_principals.psql
+          psql --host localhost --username postgres --dbname postgres \
+            --file saas/control_plane/postgresql_database.psql
       - name: Install P2 browser runtime
         run: uv run playwright install --with-deps chromium
       - name: Install hard sandbox runtime

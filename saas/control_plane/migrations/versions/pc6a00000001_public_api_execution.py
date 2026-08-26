@@ -256,20 +256,56 @@ def _exact_credential_project_scope(row_project: str) -> str:
     return f"({row_project} = {_PROJECT} AND {current})"
 
 
+def _preflight_postgresql_principal() -> None:
+    """Require the operator-owned Public API principal before schema DDL."""
+
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    row = (
+        bind.execute(
+            sa.text(
+                "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                "rolreplication, rolbypassrls, rolinherit, rolconnlimit, rolconfig "
+                "FROM pg_roles "
+                "WHERE rolname = 'saas_public_api'"
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None or (
+        bool(row["rolcanlogin"]),
+        bool(row["rolsuper"]),
+        bool(row["rolcreatedb"]),
+        bool(row["rolcreaterole"]),
+        bool(row["rolreplication"]),
+        bool(row["rolbypassrls"]),
+        bool(row["rolinherit"]),
+        int(row["rolconnlimit"]),
+        row["rolconfig"] is None,
+    ) != (False, False, False, False, False, False, True, -1, True):
+        raise RuntimeError(
+            "cannot apply pc6a00000001: PostgreSQL principal preflight rejected; "
+            "run postgresql_principals.psql before Alembic"
+        )
+    outgoing_memberships = bind.execute(
+        sa.text(
+            "SELECT count(*) FROM pg_auth_members AS membership "
+            "JOIN pg_roles AS member ON member.oid = membership.member "
+            "WHERE member.rolname = 'saas_public_api'"
+        )
+    ).scalar_one()
+    if outgoing_memberships:
+        raise RuntimeError(
+            "cannot apply pc6a00000001: PostgreSQL principal preflight rejected; "
+            "run postgresql_principals.psql before Alembic"
+        )
+
+
 def _install_postgresql_security() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_public_api') THEN
-                CREATE ROLE saas_public_api NOLOGIN NOSUPERUSER NOBYPASSRLS;
-            END IF;
-        END
-        $$
-        """
-    )
     for table in _EXECUTION_TABLES:
         legacy_scope = f"(tenant_id = {_TENANT} AND space_id = {_SPACE})"
         if table == "saas_runs":
@@ -475,6 +511,7 @@ def _install_postgresql_security() -> None:
 def upgrade() -> None:
     """Install direct Service Account provenance without a shadow GlobalUser."""
 
+    _preflight_postgresql_principal()
     with op.batch_alter_table("saas_service_accounts") as batch:
         batch.create_unique_constraint(
             "uq_service_account_project_identity",

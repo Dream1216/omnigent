@@ -1,8 +1,8 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index ed248a557..d3fc3259b 100644
+index 44947d123..7ee763fa6 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -134,6 +134,8 @@ from omnigent.version import VERSION
+@@ -135,6 +135,8 @@ from omnigent.version import VERSION
 
  _logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ index ed248a557..d3fc3259b 100644
 
  class _WaitidInfo(Protocol):
      si_pid: int
-@@ -1587,10 +1589,14 @@ class HostProcess:
+@@ -1602,10 +1604,14 @@ class HostProcess:
 
              with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
@@ -30,7 +30,7 @@ index ed248a557..d3fc3259b 100644
                      env=env,
                      # A daemon may outlive the checkout it started from.
                      cwd=str(workspace),
-@@ -3408,6 +3414,7 @@ class HostProcess:
+@@ -3423,6 +3429,7 @@ class HostProcess:
  def run_host_process(
      server_url: str,
      config_path: Path | None = None,
@@ -38,7 +38,7 @@ index ed248a557..d3fc3259b 100644
  ) -> None:
      """Entry point for ``omnigent host``.
 
-@@ -3418,6 +3425,7 @@ def run_host_process(
+@@ -3433,6 +3440,7 @@ def run_host_process(
          ``"https://omnigent-app.databricksapps.com"``.
      :param config_path: Optional path to ``config.yaml``.
          Defaults to ``~/.omnigent/config.yaml``.
@@ -46,7 +46,7 @@ index ed248a557..d3fc3259b 100644
      :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
          fails permanently (auth / authorization / outdated server, or a
          loopback server that is gone). The actionable cause is printed
-@@ -3452,7 +3460,7 @@ def run_host_process(
+@@ -3467,7 +3475,7 @@ def run_host_process(
      if _cli_log is not None and _cli_log != host_log_path:
          print(f"CLI diagnostics: {display_log_path(_cli_log)}")
 

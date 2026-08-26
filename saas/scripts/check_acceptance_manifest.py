@@ -10,6 +10,26 @@ from typing import Any
 _PHASES = tuple(f"P{index}" for index in range(7))
 _PHASE_STATUSES = {"not_started", "in_progress", "complete"}
 _GATE_STATUSES = {"pending", "passed"}
+_ADR_APPROVAL_GATE = "p0-approved-production-adrs-and-owners"
+
+
+def _adr_bundle_is_approved(repo: Path) -> bool:
+    baseline_path = repo / "saas/production/baseline.json"
+    try:
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(baseline, dict):
+        return False
+    approval = baseline.get("approval")
+    adrs = baseline.get("adrs")
+    return (
+        isinstance(approval, dict)
+        and approval.get("state") == "approved"
+        and isinstance(adrs, list)
+        and len(adrs) == 11
+        and all(isinstance(adr, dict) and adr.get("status") == "accepted" for adr in adrs)
+    )
 
 
 def validate_manifest(repo: Path, manifest: dict[str, Any]) -> list[str]:
@@ -53,6 +73,14 @@ def validate_manifest(repo: Path, manifest: dict[str, Any]) -> list[str]:
             gate_status = gate.get("status")
             if gate_status not in _GATE_STATUSES:
                 violations.append(f"{gate_id} has invalid status {gate_status}")
+            if (
+                gate_id == _ADR_APPROVAL_GATE
+                and gate_status == "passed"
+                and not _adr_bundle_is_approved(repo)
+            ):
+                violations.append(
+                    f"{gate_id} cannot pass before the current ADR bundle is approved"
+                )
             pending = pending or gate_status != "passed"
             evidence = gate.get("evidence")
             if not isinstance(evidence, list):

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "contract_version": "p0s3-n1-outbox-security-compat-v1",
+  "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
+  "patch_file": "saas/n1_compat/9451a64c1.patch",
+  "patch_sha256": "810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35",
+  "allowed_paths": [
+    "deploy/docker/Dockerfile",
+    "saas/control_plane/outbox.py",
+    "saas/n1_outbox_compat_admission.py",
+    "saas/n1_outbox_launcher.py",
+    "saas/outbox_worker.py"
+  ],
+  "patched_tree_hash": "git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac",
+  "required_schema_revision": "p0s000000003",
+  "launcher_module": "saas.n1_outbox_launcher",
+  "worker_module": "saas.outbox_worker",
+  "artifact_admission": "external-signed-receipt-required",
+  "schema_change_policy": {
+    "outbox_ddl_requires_worker_drain": true,
+    "catalog_recheck_before_restart": true
+  }
+}

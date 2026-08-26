@@ -16,7 +16,7 @@ role. Destructive User/Tenant deletion and production release remain separate ga
    authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
    incorrect Origin, and an incorrect Audience fail closed.
 3. Migrate through `pc5a00000003`, then apply
-   `saas/control_plane/postgresql_roles.sql` as the schema owner. Verify 85 control-plane
+   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 85 control-plane
    tables and 17 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
 

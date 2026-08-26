@@ -1,206 +1,879 @@
+-- Transaction body: never invoke this file directly with plain `psql -f`.
+-- psql operators must use postgresql_roles.psql, which enables ON_ERROR_STOP
+-- and wraps this entire authority projection in one transaction. API callers
+-- must execute this body inside an explicit transaction.
 -- Run as the SaaS control-plane database owner after every schema migration.
 -- Application login roles should inherit exactly one of these NOLOGIN roles.
+-- Cluster principals and their fixed role graph are an operator-owned phase.
+-- Database-level PUBLIC TEMPORARY revocation is a separate database-owner
+-- phase in postgresql_database.psql and must already be complete.
+-- This database-object authority projection is intentionally read-only over
+-- pg_roles/pg_auth_members so a NOCREATEROLE schema owner can apply it.
 DO $$
+DECLARE
+    named_principals constant text[] := ARRAY[
+        'saas_app',
+        'saas_authenticator',
+        'saas_governance',
+        'saas_dispatcher',
+        'saas_dispatcher_n1_compat',
+        'saas_executor',
+        'saas_secret_broker',
+        'saas_preview_gateway',
+        'saas_webhook_dispatcher',
+        'saas_billing',
+        'saas_metering',
+        'saas_public_api',
+        'saas_platform',
+        'saas_platform_authenticator',
+        'saas_platform_app',
+        'saas_platform_governance',
+        'saas_platform_projector',
+        'saas_platform_support',
+        'saas_privacy_executor',
+        'saas_privacy_dispatcher',
+        'saas_privacy_verifier',
+        'saas_notification_scheduler',
+        'saas_notification_dispatcher',
+        'saas_notification_directory',
+        'saas_approval_scheduler_enterprise',
+        'saas_approval_scheduler_privacy',
+        'saas_approval_scheduler_audit',
+        'saas_approval_scheduler_support_customer',
+        'saas_approval_scheduler_support_staff',
+        'saas_registration',
+        'saas_onboarding',
+        'saas_onboarding_status',
+        'saas_runtime_provider_journal'
+    ];
+    unsafe_principals text[];
+    outgoing_memberships integer;
+    fixed_memberships integer;
+    n1_incoming_memberships integer;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_app') THEN
-        CREATE ROLE saas_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    SELECT array_agg(expected.role_name ORDER BY expected.role_name)
+    INTO unsafe_principals
+    FROM unnest(named_principals) AS expected(role_name)
+    LEFT JOIN pg_roles AS principal ON principal.rolname = expected.role_name
+    WHERE principal.oid IS NULL
+       OR principal.rolcanlogin
+       OR principal.rolsuper
+       OR principal.rolcreatedb
+       OR principal.rolcreaterole
+       OR principal.rolreplication
+       OR principal.rolbypassrls
+       OR NOT principal.rolinherit
+       OR principal.rolconnlimit <> -1
+       OR principal.rolconfig IS NOT NULL;
+
+    IF unsafe_principals IS NOT NULL THEN
+        RAISE EXCEPTION
+            'control-plane principal preflight rejected; run postgresql_principals.psql first';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_authenticator') THEN
-        CREATE ROLE saas_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
+
+    SELECT count(*) INTO outgoing_memberships
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS member ON member.oid = membership.member
+    WHERE member.rolname = ANY(named_principals);
+
+    SELECT count(*) INTO fixed_memberships
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS member ON member.oid = membership.member
+    JOIN pg_roles AS granted ON granted.oid = membership.roleid
+    WHERE NOT membership.admin_option
+      AND (
+          (
+              member.rolname = 'saas_dispatcher_n1_compat'
+              AND granted.rolname = 'saas_dispatcher'
+              AND NOT COALESCE(
+                  (to_jsonb(membership) ->> 'inherit_option')::boolean,
+                  true
+              )
+              AND NOT COALESCE(
+                  (to_jsonb(membership) ->> 'set_option')::boolean,
+                  true
+              )
+          ) OR (
+              member.rolname = 'saas_privacy_executor'
+              AND granted.rolname = 'saas_platform_governance'
+              AND COALESCE(
+                  (to_jsonb(membership) ->> 'inherit_option')::boolean,
+                  true
+              )
+              AND COALESCE(
+                  (to_jsonb(membership) ->> 'set_option')::boolean,
+                  true
+              )
+          )
+      );
+
+    SELECT count(*) INTO n1_incoming_memberships
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS granted ON granted.oid = membership.roleid
+    WHERE granted.rolname = 'saas_dispatcher_n1_compat';
+
+    IF n1_incoming_memberships <> 0 THEN
+        RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_governance') THEN
-        CREATE ROLE saas_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_dispatcher') THEN
-        CREATE ROLE saas_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_executor') THEN
-        CREATE ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_secret_broker') THEN
-        CREATE ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_preview_gateway') THEN
-        CREATE ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_webhook_dispatcher') THEN
-        CREATE ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_billing') THEN
-        CREATE ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_metering') THEN
-        CREATE ROLE saas_metering NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_public_api') THEN
-        CREATE ROLE saas_public_api NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform') THEN
-        CREATE ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_authenticator') THEN
-        CREATE ROLE saas_platform_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_app') THEN
-        CREATE ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_governance') THEN
-        CREATE ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_projector') THEN
-        CREATE ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_platform_support') THEN
-        CREATE ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_executor') THEN
-        CREATE ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_dispatcher') THEN
-        CREATE ROLE saas_privacy_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_privacy_verifier') THEN
-        CREATE ROLE saas_privacy_verifier NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_notification_scheduler') THEN
-        CREATE ROLE saas_notification_scheduler NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_notification_dispatcher') THEN
-        CREATE ROLE saas_notification_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_notification_directory') THEN
-        CREATE ROLE saas_notification_directory NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_enterprise') THEN
-        CREATE ROLE saas_approval_scheduler_enterprise NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_privacy') THEN
-        CREATE ROLE saas_approval_scheduler_privacy NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_audit') THEN
-        CREATE ROLE saas_approval_scheduler_audit NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_support_customer') THEN
-        CREATE ROLE saas_approval_scheduler_support_customer NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'saas_approval_scheduler_support_staff') THEN
-        CREATE ROLE saas_approval_scheduler_support_staff NOLOGIN NOSUPERUSER NOBYPASSRLS;
+
+    IF outgoing_memberships <> 2 OR fixed_memberships <> 2 THEN
+        RAISE EXCEPTION
+            'control-plane fixed principal membership preflight rejected';
     END IF;
 END
 $$;
 
-ALTER ROLE saas_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_secret_broker NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_preview_gateway NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_webhook_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_billing NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_metering NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_public_api NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform_authenticator NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform_governance NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform_projector NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_platform_support NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_privacy_executor NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_privacy_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_privacy_verifier NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_notification_scheduler NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_notification_dispatcher NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_notification_directory NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_approval_scheduler_enterprise NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_approval_scheduler_privacy NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_approval_scheduler_audit NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_approval_scheduler_support_customer NOLOGIN NOSUPERUSER NOBYPASSRLS;
-ALTER ROLE saas_approval_scheduler_support_staff NOLOGIN NOSUPERUSER NOBYPASSRLS;
+-- This authority body is intentionally replayable at the two supported
+-- schema-forward rollback points, p0s3 and p0s4.  Object-name probing alone is
+-- not a version boundary: a partial restore or a manually-created marker could
+-- otherwise make a newer grant execute over an older RLS/trigger contract.
+-- Reject every mixed state before the first ACL mutation below.
+DO $$
+DECLARE
+    schema_revision text;
+    revision_rows integer;
+    registration_table oid := to_regclass('public.saas_self_service_registrations');
+    privacy_manifest_table oid := to_regclass('public.saas_privacy_deletion_manifests');
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    rate_counter_table oid := to_regclass('public.saas_registration_rate_limits');
+    privacy_guard_function oid :=
+        to_regprocedure('public.saas_guard_self_service_registration_privacy_erasure()');
+    consume_function oid := to_regprocedure(
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
+    );
+    prune_function oid := to_regprocedure(
+        'public.saas_prune_registration_rate_limits(text,text,integer)'
+    );
+    status_function oid :=
+        to_regprocedure('public.saas_registration_rate_limit_status()');
+    privacy_column_present boolean;
+    privacy_column_exact boolean;
+    privacy_constraints integer;
+    privacy_constraint_contract_hash text;
+    privacy_policies integer;
+    registration_policy_contract_hash text;
+    privacy_triggers integer;
+    privacy_trigger_contracts integer;
+    privacy_function_contracts integer;
+    rate_relations integer;
+    rate_relation_owners integer;
+    rate_policies integer;
+    rate_policy_contract_hash text;
+    rate_functions integer;
+    rate_function_contracts integer;
+    policy_columns text[];
+    counter_columns text[];
+    rate_column_contract_hash text;
+    policy_constraints text[];
+    counter_constraints text[];
+    rate_constraint_contract_hash text;
+    policy_indexes text[];
+    counter_indexes text[];
+    rate_index_contract_hash text;
+    network_constraints integer;
+    network_policy_actions text[];
+    network_policy_contract text[];
+    rotation_guard_present boolean;
+BEGIN
+    IF to_regclass('public.saas_alembic_version') IS NULL THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+    SELECT count(*), min(version_num)::text
+    INTO revision_rows, schema_revision
+    FROM public.saas_alembic_version;
+    IF revision_rows <> 1 OR schema_revision NOT IN (
+        'p0s000000003',
+        'p0s000000004',
+        'p0s000000005',
+        'p0s000000006'
+    ) THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
 
--- The deletion worker is a one-purpose backend identity. It inherits the
--- content-blind governance policies, while its additional PII privileges are
--- never inherited by a browser/API Staff login.
-GRANT saas_platform_governance TO saas_privacy_executor;
-REVOKE saas_platform_governance, saas_privacy_executor, saas_privacy_verifier
-FROM saas_privacy_dispatcher;
-REVOKE saas_platform_governance, saas_privacy_executor, saas_privacy_dispatcher
-FROM saas_privacy_verifier;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier,
-    saas_notification_dispatcher
-FROM saas_notification_scheduler;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier,
-    saas_notification_scheduler, saas_notification_directory
-FROM saas_notification_dispatcher;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier,
-    saas_notification_scheduler, saas_notification_dispatcher
-FROM saas_notification_directory;
-REVOKE saas_notification_directory FROM
-    saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier,
-    saas_notification_scheduler, saas_notification_dispatcher;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_privacy,
-    saas_approval_scheduler_audit, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff
-FROM saas_approval_scheduler_enterprise;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_enterprise,
-    saas_approval_scheduler_audit, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff
-FROM saas_approval_scheduler_privacy;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_enterprise,
-    saas_approval_scheduler_privacy, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff
-FROM saas_approval_scheduler_audit;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_enterprise,
-    saas_approval_scheduler_privacy, saas_approval_scheduler_audit,
-    saas_approval_scheduler_support_staff
-FROM saas_approval_scheduler_support_customer;
-REVOKE saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_enterprise,
-    saas_approval_scheduler_privacy, saas_approval_scheduler_audit,
-    saas_approval_scheduler_support_customer
-FROM saas_approval_scheduler_support_staff;
-REVOKE saas_approval_scheduler_enterprise, saas_approval_scheduler_privacy,
-    saas_approval_scheduler_audit, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff
-FROM saas_app, saas_governance, saas_platform, saas_platform_governance,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory;
-REVOKE saas_app, saas_authenticator, saas_governance, saas_dispatcher,
-    saas_executor, saas_secret_broker, saas_preview_gateway,
-    saas_webhook_dispatcher, saas_billing, saas_metering, saas_platform,
-    saas_platform_authenticator, saas_platform_app, saas_platform_governance,
-    saas_platform_projector, saas_platform_support, saas_privacy_executor,
-    saas_privacy_dispatcher, saas_privacy_verifier, saas_notification_scheduler,
-    saas_notification_dispatcher, saas_notification_directory,
-    saas_approval_scheduler_enterprise, saas_approval_scheduler_privacy,
-    saas_approval_scheduler_audit, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff
-FROM saas_public_api;
-REVOKE saas_public_api FROM
-    saas_app, saas_authenticator, saas_governance, saas_dispatcher,
-    saas_executor, saas_secret_broker, saas_preview_gateway,
-    saas_webhook_dispatcher, saas_billing, saas_metering, saas_platform,
-    saas_platform_authenticator, saas_platform_app, saas_platform_governance,
-    saas_platform_projector, saas_platform_support, saas_privacy_executor,
-    saas_privacy_dispatcher, saas_privacy_verifier, saas_notification_scheduler,
-    saas_notification_dispatcher, saas_notification_directory,
-    saas_approval_scheduler_enterprise, saas_approval_scheduler_privacy,
-    saas_approval_scheduler_audit, saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff;
+    SELECT count(*) > 0, count(*) = 1 AND bool_and(
+        attribute.atttypid = 'uuid'::regtype
+        AND NOT attribute.attnotnull
+        AND NOT attribute.attisdropped
+        AND attribute.attidentity = ''
+        AND attribute.attgenerated = ''
+        AND attribute_default.oid IS NULL
+    )
+    INTO privacy_column_present, privacy_column_exact
+    FROM pg_attribute AS attribute
+    LEFT JOIN pg_attrdef AS attribute_default
+      ON attribute_default.adrelid = attribute.attrelid
+     AND attribute_default.adnum = attribute.attnum
+    WHERE attribute.attrelid = registration_table
+      AND attribute.attname = 'deletion_manifest_id'
+      AND NOT attribute.attisdropped;
 
+    IF schema_revision IN ('p0s000000003', 'p0s000000004') THEN
+        IF privacy_column_present
+           OR privacy_guard_function IS NOT NULL
+           OR rate_policy_table IS NOT NULL
+           OR rate_counter_table IS NOT NULL
+           OR consume_function IS NOT NULL
+           OR prune_function IS NOT NULL
+           OR status_function IS NOT NULL
+           OR EXISTS (
+                SELECT 1
+                FROM pg_policy
+                WHERE polrelid = registration_table
+                  AND polname IN (
+                      'rls_self_service_registrations_privacy_target',
+                      'rls_self_service_registrations_privacy_anonymize'
+                  )
+           ) OR EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgrelid = registration_table
+                  AND tgname = 'trg_self_service_registration_privacy_erasure'
+                  AND NOT tgisinternal
+           )
+        THEN
+            RAISE EXCEPTION
+                'control-plane schema revision/object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+
+    IF registration_table IS NULL
+       OR privacy_manifest_table IS NULL
+       OR NOT privacy_column_exact
+       OR privacy_guard_function IS NULL
+       OR rate_policy_table IS NULL
+       OR rate_counter_table IS NULL
+       OR consume_function IS NULL
+       OR prune_function IS NULL
+       OR status_function IS NULL
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO privacy_constraints
+    FROM pg_constraint
+    WHERE conrelid = registration_table
+      AND (
+          (
+              conname = 'fk_self_service_registration_deletion_manifest'
+              AND contype = 'f'
+              AND confrelid = privacy_manifest_table
+          ) OR (
+              conname = 'ck_self_service_registration_deletion_manifest'
+              AND contype = 'c'
+              AND position('deletion_manifest_id' IN pg_get_constraintdef(oid)) > 0
+              AND position('status' IN pg_get_constraintdef(oid)) > 0
+              AND position('revoked' IN pg_get_constraintdef(oid)) > 0
+          )
+      );
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', constraint_row.conname, constraint_row.contype::text,
+                constraint_row.convalidated::text,
+                constraint_row.condeferrable::text,
+                constraint_row.condeferred::text,
+                regexp_replace(
+                    pg_get_constraintdef(constraint_row.oid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY constraint_row.conname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO privacy_constraint_contract_hash
+    FROM pg_constraint AS constraint_row
+    WHERE constraint_row.conrelid = registration_table
+      AND constraint_row.conname IN (
+          'fk_self_service_registration_deletion_manifest',
+          'ck_self_service_registration_deletion_manifest'
+      );
+    SELECT count(*)
+    INTO privacy_policies
+    FROM pg_policy AS policy
+    JOIN pg_roles AS target ON target.oid = ANY(policy.polroles)
+    WHERE policy.polrelid = registration_table
+      AND target.rolname = 'saas_privacy_executor'
+      AND cardinality(policy.polroles) = 1
+      AND policy.polpermissive
+      AND policy.polname IN (
+          'rls_self_service_registrations_privacy_target',
+          'rls_self_service_registrations_privacy_anonymize'
+      )
+      AND policy.polcmd = CASE
+          WHEN policy.polname = 'rls_self_service_registrations_privacy_target' THEN 'r'
+          ELSE 'w'
+      END;
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', policy.polname, policy.polpermissive::text, policy.polcmd,
+                ARRAY(
+                    SELECT CASE
+                        WHEN policy_role.role_oid = 0 THEN 'PUBLIC'
+                        ELSE pg_get_userbyid(policy_role.role_oid)
+                    END
+                    FROM unnest(policy.polroles) AS policy_role(role_oid)
+                    ORDER BY 1
+                )::text,
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polqual, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                ),
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polwithcheck, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                )
+            ),
+            E'\n' ORDER BY policy.polname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO registration_policy_contract_hash
+    FROM pg_policy AS policy
+    WHERE policy.polrelid = registration_table;
+    SELECT count(*)
+    INTO privacy_triggers
+    FROM pg_trigger
+    WHERE tgrelid = registration_table
+      AND tgname = 'trg_self_service_registration_privacy_erasure'
+      AND tgfoid = privacy_guard_function
+      AND tgtype = 19
+      AND tgenabled = 'O'
+      AND tgnargs = 0
+      AND tgattr = ''::int2vector
+      AND tgqual IS NULL
+      AND NOT tgisinternal;
+    SELECT count(*)
+    INTO privacy_trigger_contracts
+    FROM pg_trigger
+    WHERE tgrelid = registration_table
+      AND NOT tgisinternal;
+    SELECT count(*)
+    INTO privacy_function_contracts
+    FROM pg_proc AS procedure
+    JOIN pg_language AS language ON language.oid = procedure.prolang
+    WHERE procedure.oid = privacy_guard_function
+      AND procedure.proowner = (
+          SELECT relowner FROM pg_class WHERE oid = registration_table
+      )
+      AND language.lanname = 'plpgsql'
+      AND procedure.prokind = 'f'
+      AND NOT procedure.prosecdef
+      AND NOT procedure.proleakproof
+      AND procedure.provolatile = 'v'
+      AND procedure.proparallel = 'u'
+      AND procedure.proconfig IS NULL
+      AND pg_get_function_result(procedure.oid) = 'trigger'
+      AND encode(sha256(convert_to(
+          btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+      )), 'hex') =
+          '504a18be57b9bed8c87d7b2c96c7c33764a335f8005ccf814a3845dfb058ef7b';
+    IF privacy_constraints <> 2
+       OR privacy_constraint_contract_hash IS DISTINCT FROM
+          'f40979410766d2c6de7f7c96db487c7f47c7c016fc561deb6a3bf24e3fbf18f3'
+       OR privacy_policies <> 2
+       -- pg_dump/pg_restore preserves the seven-policy authority but PostgreSQL
+       -- reparses three varchar-array predicates into an equivalent text-array
+       -- AST.  Admit only the exact migrated or exact logical-roundtrip catalog
+       -- hashes; retaining the full-table aggregate still rejects an added,
+       -- removed, or widened policy.
+       OR (
+          registration_policy_contract_hash IS DISTINCT FROM
+             'a0e09fe6eb825ad9bed3428d4bfc31e2fa6d6b1bc1324199a9fa5f7ccff375b1'
+          AND registration_policy_contract_hash IS DISTINCT FROM
+             'd9cdb654555fb782037992891e66fac188c7260c404b36f0b10dcef0e0406605'
+       )
+       OR privacy_triggers <> 1
+       OR privacy_trigger_contracts <> 1
+       OR privacy_function_contracts <> 1
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO rate_relations
+    FROM pg_class
+    WHERE oid IN (rate_policy_table, rate_counter_table)
+      AND relkind IN ('r', 'p')
+      AND relrowsecurity
+      AND relforcerowsecurity;
+    SELECT count(DISTINCT relowner)
+    INTO rate_relation_owners
+    FROM pg_class
+    WHERE oid IN (rate_policy_table, rate_counter_table);
+    SELECT array_agg(attname::text ORDER BY attnum)
+    INTO policy_columns
+    FROM pg_attribute
+    WHERE attrelid = rate_policy_table
+      AND attnum > 0
+      AND NOT attisdropped;
+    SELECT array_agg(attname::text ORDER BY attnum)
+    INTO counter_columns
+    FROM pg_attribute
+    WHERE attrelid = rate_counter_table
+      AND attnum > 0
+      AND NOT attisdropped;
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, attribute.attnum::text,
+                attribute.attname,
+                format_type(attribute.atttypid, attribute.atttypmod),
+                attribute.attnotnull::text,
+                COALESCE(
+                    pg_get_expr(attribute_default.adbin, attribute_default.adrelid),
+                    '<null>'
+                ),
+                attribute.attidentity,
+                attribute.attgenerated
+            ),
+            E'\n' ORDER BY relation.relname, attribute.attnum
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_column_contract_hash
+    FROM pg_class AS relation
+    JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid
+    LEFT JOIN pg_attrdef AS attribute_default
+      ON attribute_default.adrelid = attribute.attrelid
+     AND attribute_default.adnum = attribute.attnum
+    WHERE relation.oid IN (rate_policy_table, rate_counter_table)
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped;
+    SELECT array_agg(conname::text ORDER BY conname)
+    INTO policy_constraints
+    FROM pg_constraint
+    WHERE conrelid = rate_policy_table
+      AND contype <> 'n';
+    SELECT array_agg(conname::text ORDER BY conname)
+    INTO counter_constraints
+    FROM pg_constraint
+    WHERE conrelid = rate_counter_table
+      AND contype <> 'n';
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, constraint_row.conname,
+                constraint_row.contype::text,
+                constraint_row.convalidated::text,
+                constraint_row.condeferrable::text,
+                constraint_row.condeferred::text,
+                regexp_replace(
+                    pg_get_constraintdef(constraint_row.oid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY relation.relname, constraint_row.conname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_constraint_contract_hash
+    FROM pg_constraint AS constraint_row
+    JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+    WHERE constraint_row.conrelid IN (rate_policy_table, rate_counter_table)
+      -- PostgreSQL 18 also exposes virtual NOT NULL constraints in pg_constraint.
+      AND constraint_row.contype <> 'n';
+    SELECT array_agg(indexname::text ORDER BY indexname)
+    INTO policy_indexes
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'saas_registration_rate_limit_policies';
+    SELECT array_agg(indexname::text ORDER BY indexname)
+    INTO counter_indexes
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND tablename = 'saas_registration_rate_limits';
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', index_row.indexrelid::regclass::text,
+                index_row.indisunique::text,
+                index_row.indisprimary::text,
+                index_row.indisvalid::text,
+                index_row.indisready::text,
+                regexp_replace(
+                    pg_get_indexdef(index_row.indexrelid),
+                    '[[:space:]]+', '', 'g'
+                )
+            ),
+            E'\n' ORDER BY index_row.indexrelid::regclass::text
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_index_contract_hash
+    FROM pg_index AS index_row
+    WHERE index_row.indrelid IN (rate_policy_table, rate_counter_table);
+    SELECT count(*)
+    INTO rate_policies
+    FROM pg_policy
+    WHERE (
+        (
+            polrelid = rate_policy_table
+            AND polname = 'rls_registration_rate_limit_policies_owner'
+        ) OR (
+            polrelid = rate_counter_table
+            AND polname = 'rls_registration_rate_limits_owner'
+        )
+    )
+      AND polcmd = '*'
+      AND polpermissive
+      AND cardinality(polroles) = 1
+      AND 0 = ANY(polroles);
+    SELECT encode(sha256(convert_to(
+        string_agg(
+            concat_ws(
+                '|', relation.relname, policy.polname,
+                policy.polpermissive::text, policy.polcmd,
+                ARRAY(
+                    SELECT CASE
+                        WHEN policy_role.role_oid = 0 THEN 'PUBLIC'
+                        ELSE pg_get_userbyid(policy_role.role_oid)
+                    END
+                    FROM unnest(policy.polroles) AS policy_role(role_oid)
+                    ORDER BY 1
+                )::text,
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polqual, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                ),
+                COALESCE(
+                    regexp_replace(
+                        pg_get_expr(policy.polwithcheck, policy.polrelid),
+                        '[[:space:]]+', '', 'g'
+                    ),
+                    '<null>'
+                )
+            ),
+            E'\n' ORDER BY relation.relname, policy.polname
+        ),
+        'UTF8'
+    )), 'hex')
+    INTO rate_policy_contract_hash
+    FROM pg_policy AS policy
+    JOIN pg_class AS relation ON relation.oid = policy.polrelid
+    WHERE policy.polrelid IN (rate_policy_table, rate_counter_table);
+    SELECT count(*)
+    INTO rate_functions
+    FROM pg_proc
+    WHERE oid IN (consume_function, prune_function, status_function)
+      AND prokind = 'f'
+      AND prosecdef
+      AND provolatile = 'v'
+      AND 'search_path=pg_catalog' = ANY(proconfig)
+      AND proowner = (SELECT relowner FROM pg_class WHERE oid = rate_policy_table);
+    SELECT count(*)
+    INTO rate_function_contracts
+    FROM pg_proc AS procedure
+    JOIN pg_language AS language ON language.oid = procedure.prolang
+    WHERE procedure.oid IN (consume_function, prune_function, status_function)
+      AND procedure.prokind = 'f'
+      AND procedure.prosecdef
+      AND NOT procedure.proleakproof
+      AND procedure.provolatile = 'v'
+      AND procedure.proparallel = 'u'
+      AND procedure.proowner = (
+          SELECT relowner FROM pg_class WHERE oid = rate_policy_table
+      )
+      AND (
+          (
+              procedure.oid = consume_function
+              AND language.lanname = 'plpgsql'
+              AND procedure.proconfig = ARRAY[
+                  'search_path=pg_catalog', 'lock_timeout=250ms'
+              ]::text[]
+              AND pg_get_function_result(procedure.oid) =
+                  'TABLE(allowed boolean, retry_after_seconds integer, '
+                  'remaining integer, policy_revision text)'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') = CASE schema_revision
+                  WHEN 'p0s000000005' THEN
+                      '5e56381f6058e96322e5bf27cde7f5add1fdfb70415095f4f65a9c5f169243a6'
+                  ELSE
+                      '84edaf917bdde5521267880561cb83d9b6099530dc8d76b3d07d26eb32867a8b'
+              END
+          ) OR (
+              procedure.oid = prune_function
+              AND language.lanname = 'plpgsql'
+              AND procedure.proconfig = ARRAY[
+                  'search_path=pg_catalog', 'lock_timeout=500ms'
+              ]::text[]
+              AND pg_get_function_result(procedure.oid) = 'integer'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') =
+                  '6353a9f1722a6b9be68c753dba6031b8364246887eeedba68923a5f7f6257041'
+          ) OR (
+              procedure.oid = status_function
+              AND language.lanname = 'sql'
+              AND procedure.proconfig = ARRAY['search_path=pg_catalog']::text[]
+              AND pg_get_function_result(procedure.oid) =
+                  'TABLE(action text, subject_kind text, limit_count integer, '
+                  'window_seconds integer, retention_seconds integer, max_rows integer, '
+                  'current_rows integer, policy_revision text, expired_rows bigint)'
+              AND encode(sha256(convert_to(
+                  btrim(procedure.prosrc, E' \n\r\t'), 'UTF8'
+              )), 'hex') =
+                  '0459d679cf4e870d0725e2f93ee6f5a83548a9fcd65483a071dda61d76edcd73'
+          )
+      );
+
+    IF rate_relations <> 2
+       OR rate_relation_owners <> 1
+       OR policy_columns IS DISTINCT FROM ARRAY[
+            'action', 'subject_kind', 'limit_count', 'window_seconds',
+            'retention_seconds', 'max_rows', 'current_rows', 'policy_revision',
+            'created_at', 'updated_at'
+       ]::text[]
+       OR counter_columns IS DISTINCT FROM ARRAY[
+            'action', 'subject_kind', 'key_id', 'subject_hmac',
+            'window_started_at', 'request_count', 'expires_at',
+            'policy_revision', 'version', 'created_at', 'updated_at'
+       ]::text[]
+       OR rate_column_contract_hash IS DISTINCT FROM
+          'e5cffedb8c3546fb330bd1f885fa992d4d215ea88940429fdee07848ada2d59c'
+       OR policy_constraints IS DISTINCT FROM ARRAY[
+            'ck_registration_rate_limit_policy_action',
+            'ck_registration_rate_limit_policy_current_rows',
+            'ck_registration_rate_limit_policy_limit',
+            'ck_registration_rate_limit_policy_max_rows',
+            'ck_registration_rate_limit_policy_retention',
+            'ck_registration_rate_limit_policy_revision',
+            'ck_registration_rate_limit_policy_subject_kind',
+            'ck_registration_rate_limit_policy_window',
+            'saas_registration_rate_limit_policies_pkey'
+       ]::text[]
+       OR counter_constraints IS DISTINCT FROM ARRAY[
+            'ck_registration_rate_limit_action',
+            'ck_registration_rate_limit_count',
+            'ck_registration_rate_limit_expiry',
+            'ck_registration_rate_limit_key_id',
+            'ck_registration_rate_limit_revision',
+            'ck_registration_rate_limit_subject_hmac',
+            'ck_registration_rate_limit_subject_kind',
+            'ck_registration_rate_limit_version',
+            'fk_registration_rate_limit_policy',
+            'saas_registration_rate_limits_pkey'
+       ]::text[]
+       OR policy_indexes IS DISTINCT FROM ARRAY[
+            'saas_registration_rate_limit_policies_pkey'
+       ]::text[]
+       OR counter_indexes IS DISTINCT FROM ARRAY[
+            'ix_registration_rate_limit_expiry',
+            'saas_registration_rate_limits_pkey'
+       ]::text[]
+       -- PostgreSQL's logical roundtrip reparses varchar-array CHECK predicates
+       -- into equivalent per-element text casts.  Keep the complete constraint
+       -- aggregate and admit only the exact migrated or exact roundtrip catalog
+       -- hash for each supported revision.
+       OR (
+          schema_revision = 'p0s000000005'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '72a30643de641319a27cdc0ca7ba4d97b8dc2b6093c7089c802dc9e474276aa1'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             'a712a6bb5fa0f0b66ce8102486e8d51bcc11382fb5397ab5043b17e5689efda5'
+       )
+       OR (
+          schema_revision = 'p0s000000006'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
+          AND rate_constraint_contract_hash IS DISTINCT FROM
+             '89e8bd459b1aab4e24bf7655fc9b386a01243bcb071a9c9bdd1eb8e6f46de49a'
+       )
+       OR rate_index_contract_hash IS DISTINCT FROM
+          '17a36e093545fdbf51d1ca5da5682b2cff1273de9e82ff580a96e54212d46b5f'
+       OR rate_policies <> 2
+       OR rate_policy_contract_hash IS DISTINCT FROM
+          'f056fa696bc9911c49b89d385197de29c5901b392fcb65069ec5d1334648d064'
+       OR rate_functions <> 3
+       OR rate_function_contracts <> 3
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+
+    SELECT count(*)
+    INTO network_constraints
+    FROM pg_constraint
+    WHERE (
+        (
+            conrelid = rate_policy_table
+            AND conname = 'ck_registration_rate_limit_policy_subject_kind'
+        ) OR (
+            conrelid = rate_counter_table
+            AND conname = 'ck_registration_rate_limit_subject_kind'
+        )
+    )
+      AND position('network' IN pg_get_constraintdef(oid)) > 0;
+    SELECT array_agg(action::text ORDER BY action)
+    INTO network_policy_actions
+    FROM public.saas_registration_rate_limit_policies
+    WHERE subject_kind = 'network';
+    SELECT array_agg(
+        concat_ws(
+            '|', action::text, subject_kind::text, limit_count::text,
+            window_seconds::text, retention_seconds::text, max_rows::text,
+            policy_revision::text
+        )
+        ORDER BY action
+    )
+    INTO network_policy_contract
+    FROM public.saas_registration_rate_limit_policies
+    WHERE subject_kind = 'network';
+    SELECT position(
+        'registration rate-limit rotation phase rejected'
+        IN pg_get_functiondef(consume_function)
+    ) > 0
+    INTO rotation_guard_present;
+    IF schema_revision = 'p0s000000005' THEN
+        IF network_constraints <> 0
+           OR network_policy_actions IS NOT NULL
+           OR network_policy_contract IS NOT NULL
+           OR rotation_guard_present
+        THEN
+            RAISE EXCEPTION
+                'control-plane schema revision/object contract rejected';
+        END IF;
+    ELSIF network_constraints <> 2
+       OR network_policy_actions IS DISTINCT FROM ARRAY[
+            'registration.request',
+            'registration.resend',
+            'registration.verify'
+       ]::text[]
+       OR network_policy_contract IS DISTINCT FROM ARRAY[
+            'registration.request|network|60|900|86400|1000000|registration-rate-limit-v1',
+            'registration.resend|network|60|900|86400|1000000|registration-rate-limit-v1',
+            'registration.verify|network|120|900|86400|1000000|registration-rate-limit-v1'
+       ]::text[]
+       OR NOT rotation_guard_present
+    THEN
+        RAISE EXCEPTION
+            'control-plane schema revision/object contract rejected';
+    END IF;
+END
+$$;
+
+-- A replay can arrive after an older release, an operator, or a compromised
+-- owner has granted rate-limit state to PUBLIC or another fixed principal.
+-- Remove that drift immediately after the complete schema preflight and before
+-- any per-principal projection verifier runs.  The exact three routine grants
+-- and their terminal verifier remain in the onboarding authority section
+-- below; this phase only removes authority and therefore cannot make a partial
+-- projection usable.
+DO $$
+DECLARE
+    named_principals constant text[] := ARRAY[
+        'saas_app',
+        'saas_authenticator',
+        'saas_governance',
+        'saas_dispatcher',
+        'saas_dispatcher_n1_compat',
+        'saas_executor',
+        'saas_secret_broker',
+        'saas_preview_gateway',
+        'saas_webhook_dispatcher',
+        'saas_billing',
+        'saas_metering',
+        'saas_public_api',
+        'saas_platform',
+        'saas_platform_authenticator',
+        'saas_platform_app',
+        'saas_platform_governance',
+        'saas_platform_projector',
+        'saas_platform_support',
+        'saas_privacy_executor',
+        'saas_privacy_dispatcher',
+        'saas_privacy_verifier',
+        'saas_notification_scheduler',
+        'saas_notification_dispatcher',
+        'saas_notification_directory',
+        'saas_approval_scheduler_enterprise',
+        'saas_approval_scheduler_privacy',
+        'saas_approval_scheduler_audit',
+        'saas_approval_scheduler_support_customer',
+        'saas_approval_scheduler_support_staff',
+        'saas_registration',
+        'saas_onboarding',
+        'saas_onboarding_status',
+        'saas_runtime_provider_journal'
+    ];
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    target_role text;
+    target_table text;
+    target_privilege text;
+    target_signature text;
+    column_list text;
+BEGIN
+    IF rate_policy_table IS NULL THEN
+        RETURN;
+    END IF;
+
+    FOR target_table IN
+        SELECT table_name
+        FROM (VALUES
+            ('saas_registration_rate_limit_policies'),
+            ('saas_registration_rate_limits')
+        ) AS rate_tables(table_name)
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH target_role IN ARRAY named_principals
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
+        FOREACH target_privilege IN ARRAY
+            ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) || ' FROM PUBLIC';
+        END LOOP;
+    END LOOP;
+
+    FOREACH target_signature IN ARRAY ARRAY[
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)',
+        'public.saas_prune_registration_rate_limits(text,text,integer)',
+        'public.saas_registration_rate_limit_status()'
+    ]
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
+        FOREACH target_role IN ARRAY named_principals
+        LOOP
+            EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
+    END LOOP;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO
     saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
     saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
@@ -212,7 +885,8 @@ GRANT USAGE ON SCHEMA public TO
     saas_notification_directory, saas_approval_scheduler_enterprise,
     saas_approval_scheduler_privacy, saas_approval_scheduler_audit,
     saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff;
+    saas_approval_scheduler_support_staff, saas_registration, saas_onboarding,
+    saas_onboarding_status;
 
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
@@ -245,14 +919,19 @@ REVOKE ALL PRIVILEGES ON
     saas_notification_deliveries,
     saas_notification_delivery_attempts,
     saas_operation_batches,
-    saas_operation_batch_items
+    saas_operation_batch_items,
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events
 FROM PUBLIC, saas_app, saas_authenticator, saas_governance, saas_dispatcher,
     saas_executor, saas_secret_broker, saas_preview_gateway,
     saas_webhook_dispatcher, saas_billing, saas_metering,
     saas_platform_authenticator, saas_platform_app, saas_platform_governance,
     saas_platform_projector, saas_platform_support, saas_privacy_executor,
     saas_privacy_dispatcher, saas_privacy_verifier, saas_notification_scheduler,
-    saas_notification_dispatcher, saas_notification_directory, saas_platform;
+    saas_notification_dispatcher, saas_notification_directory, saas_platform,
+    saas_registration, saas_onboarding, saas_onboarding_status;
 
 GRANT SELECT ON
     saas_platform_staff_principals,
@@ -354,8 +1033,198 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_notification_deliveries,
     saas_notification_delivery_attempts,
     saas_operation_batches,
-    saas_operation_batch_items
+    saas_operation_batch_items,
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events
 TO saas_platform;
+
+-- Runtime Provider journal authority is intentionally independent from every
+-- control-plane application/runtime role.  Converge all historical grants
+-- before installing the fixed Fence-write and Receipt-write column sets.
+DO $$
+DECLARE
+    privilege_name text;
+    column_list text;
+    target_table text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE rolname = 'saas_runtime_provider_journal'
+          AND NOT rolcanlogin
+          AND NOT rolsuper
+          AND NOT rolcreatedb
+          AND NOT rolcreaterole
+          AND NOT rolreplication
+          AND NOT rolbypassrls
+          AND rolinherit
+          AND rolconnlimit = -1
+          AND rolconfig IS NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_auth_members AS membership
+        JOIN pg_roles AS member ON member.oid = membership.member
+        WHERE member.rolname = 'saas_runtime_provider_journal'
+    ) THEN
+        RAISE EXCEPTION
+            'Runtime Provider journal principal bootstrap is absent or unsafe';
+    END IF;
+    IF to_regclass('public.saas_runtime_provider_operation_journal') IS NULL THEN
+        RETURN;
+    END IF;
+
+    FOR target_table IN
+        SELECT relation.relname
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p')
+          AND left(relation.relname, 5) = 'saas_'
+        ORDER BY relation.relname
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM saas_runtime_provider_journal';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid =
+            ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH privilege_name IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || privilege_name || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) ||
+                ' FROM saas_runtime_provider_journal';
+        END LOOP;
+    END LOOP;
+END
+$$;
+DO $$
+BEGIN
+    IF to_regclass('public.saas_runtime_provider_operation_journal') IS NOT NULL THEN
+        REVOKE ALL ON SCHEMA public FROM saas_runtime_provider_journal;
+        GRANT USAGE ON SCHEMA public TO saas_runtime_provider_journal;
+        GRANT SELECT ON saas_runtime_provider_operation_journal
+        TO saas_runtime_provider_journal;
+        GRANT INSERT (
+            id, provider_type, operation_kind, placement_id, binding_revision,
+            binding_hash, target_hash, idempotency_hash, request_hash
+        ) ON saas_runtime_provider_operation_journal
+        TO saas_runtime_provider_journal;
+        GRANT UPDATE (
+            receipt_hash, attributes_hash, response_hash, receipt_json, attributes_json
+        ) ON saas_runtime_provider_operation_journal
+        TO saas_runtime_provider_journal;
+    END IF;
+END
+$$;
+
+DO $$
+DECLARE
+    journal_oid oid;
+BEGIN
+    SELECT oid INTO STRICT journal_oid
+    FROM pg_roles WHERE rolname = 'saas_runtime_provider_journal';
+    IF to_regclass('public.saas_runtime_provider_operation_journal') IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF NOT has_schema_privilege(journal_oid, 'public', 'USAGE')
+       OR has_schema_privilege(journal_oid, 'public', 'CREATE')
+       OR NOT EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.saas_runtime_provider_operation_journal'::regclass
+              AND relrowsecurity
+              AND relforcerowsecurity
+       ) OR (
+            SELECT array_agg(privilege_type ORDER BY privilege_type)
+            FROM information_schema.table_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'saas_runtime_provider_operation_journal'
+              AND grantee = 'saas_runtime_provider_journal'
+       ) IS DISTINCT FROM ARRAY['SELECT']::information_schema.character_data[]
+       OR (
+            SELECT count(DISTINCT column_name)
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'saas_runtime_provider_operation_journal'
+              AND grantee = 'saas_runtime_provider_journal'
+              AND privilege_type = 'INSERT'
+       ) <> 9 OR EXISTS (
+            SELECT 1
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'saas_runtime_provider_operation_journal'
+              AND grantee = 'saas_runtime_provider_journal'
+              AND privilege_type = 'INSERT'
+              AND column_name NOT IN (
+                  'id', 'provider_type', 'operation_kind', 'placement_id',
+                  'binding_revision', 'binding_hash', 'target_hash',
+                  'idempotency_hash', 'request_hash'
+              )
+       ) OR (
+            SELECT count(DISTINCT column_name)
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'saas_runtime_provider_operation_journal'
+              AND grantee = 'saas_runtime_provider_journal'
+              AND privilege_type = 'UPDATE'
+       ) <> 5 OR EXISTS (
+            SELECT 1
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'saas_runtime_provider_operation_journal'
+              AND grantee = 'saas_runtime_provider_journal'
+              AND privilege_type = 'UPDATE'
+              AND column_name NOT IN (
+                  'receipt_hash', 'attributes_hash', 'response_hash',
+                  'receipt_json', 'attributes_json'
+              )
+       ) OR has_table_privilege(
+            journal_oid,
+            'public.saas_runtime_provider_operation_journal',
+            'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+       ) OR has_any_column_privilege(
+            journal_oid,
+            'public.saas_runtime_provider_operation_journal',
+            'REFERENCES'
+       ) OR EXISTS (
+            SELECT 1
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p')
+              AND left(relation.relname, 5) = 'saas_'
+              AND relation.relname <> 'saas_runtime_provider_operation_journal'
+              AND (
+                  has_table_privilege(
+                      journal_oid, relation.oid,
+                      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+                  ) OR has_any_column_privilege(
+                      journal_oid, relation.oid,
+                      'SELECT,INSERT,UPDATE,REFERENCES'
+                  )
+              )
+       ) OR (
+            SELECT count(*)
+            FROM pg_policy AS policy
+            JOIN pg_roles AS target ON target.oid = ANY(policy.polroles)
+            WHERE policy.polrelid =
+                'public.saas_runtime_provider_operation_journal'::regclass
+              AND target.rolname = 'saas_runtime_provider_journal'
+              AND policy.polname IN (
+                  'rls_runtime_provider_journal_select',
+                  'rls_runtime_provider_journal_insert',
+                  'rls_runtime_provider_journal_update'
+              )
+       ) <> 3
+    THEN
+        RAISE EXCEPTION 'Runtime Provider journal authority projection rejected';
+    END IF;
+END
+$$;
 
 -- PC2 platform lifecycle commands are target-bound by FORCE RLS. The Staff
 -- governance login gets only the metadata and columns required by those commands.
@@ -510,6 +1379,30 @@ GRANT UPDATE (
     email_normalized, status, accepted_by, deletion_manifest_id, version, updated_at
 )
 ON saas_membership_invitations TO saas_privacy_executor;
+-- p0s5 adds deletion_manifest_id to self-service registration.  Keep the
+-- current Privacy projection exact without making a p0s3 N-1 replay resolve a
+-- column that does not exist yet.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.saas_self_service_registrations'::regclass
+          AND attname = 'deletion_manifest_id'
+          AND NOT attisdropped
+    ) THEN
+        GRANT SELECT (id, user_id, tenant_id, deletion_manifest_id, version)
+        ON saas_self_service_registrations TO saas_privacy_executor;
+        GRANT UPDATE (
+            email_normalized, email_hash, display_name, tenant_name, tenant_slug,
+            default_space_name, default_space_slug, status, verified_at, terminal_at,
+            user_id, tenant_id, idempotency_key, request_hash, deletion_manifest_id,
+            version, updated_at
+        )
+        ON saas_self_service_registrations TO saas_privacy_executor;
+    END IF;
+END
+$$;
 GRANT UPDATE (name, description, status, security_version, updated_at)
 ON saas_service_accounts TO saas_privacy_executor;
 GRANT UPDATE (status, revoked_at) ON saas_api_credentials TO saas_privacy_executor;
@@ -863,6 +1756,564 @@ GRANT UPDATE (
 GRANT INSERT ON saas_notification_deliveries TO saas_notification_dispatcher;
 GRANT INSERT ON saas_notification_delivery_attempts TO saas_notification_dispatcher;
 
+-- Public registration and background Tenant onboarding are separate database
+-- identities. FORCE RLS additionally binds every row to server-generated GUCs.
+-- Revoke first so rerunning this file also removes every historical table- or
+-- column-level grant.  A table-level REVOKE is insufficient in PostgreSQL:
+-- column ACLs survive it.  Converge all four onboarding authorities over every
+-- current public relation before rebuilding the exact projections below.  The
+-- sequence, routine, schema, default-ACL, and database revocations keep an old
+-- release from retaining an independent authority channel.
+DO $$
+DECLARE
+    target_role text;
+    target_table text;
+    target_privilege text;
+    column_list text;
+BEGIN
+    FOREACH target_role IN ARRAY ARRAY[
+        'saas_registration',
+        'saas_onboarding',
+        'saas_executor',
+        'saas_onboarding_status'
+    ]
+    LOOP
+        FOR target_table IN
+            SELECT relation.relname
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+            ORDER BY relation.relname
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+            INTO column_list
+            FROM pg_attribute AS attribute
+            WHERE attribute.attrelid =
+                ('public.' || quote_ident(target_table))::regclass
+              AND attribute.attnum > 0
+              AND NOT attribute.attisdropped;
+            IF column_list IS NOT NULL THEN
+                FOREACH target_privilege IN ARRAY
+                    ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+                LOOP
+                    EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                        ') ON TABLE public.' || quote_ident(target_table) ||
+                        ' FROM ' || quote_ident(target_role);
+                END LOOP;
+            END IF;
+        END LOOP;
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM ' ||
+            quote_ident(target_role);
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM ' ||
+            quote_ident(target_role);
+        EXECUTE 'REVOKE ALL PRIVILEGES ON SCHEMA public FROM ' || quote_ident(target_role);
+        EXECUTE 'GRANT USAGE ON SCHEMA public TO ' || quote_ident(target_role);
+        EXECUTE 'REVOKE CREATE, TEMPORARY ON DATABASE ' ||
+            quote_ident(current_database()) || ' FROM ' || quote_ident(target_role);
+    END LOOP;
+END
+$$;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
+        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+
+-- Rate-limit state is reachable only through three content-blind routines.
+-- Remove table-, column-, and routine-level ACL drift from every observed
+-- non-owner grantee before restoring those three exact EXECUTE grants.  This
+-- catalog-driven closure also revokes grants to principals created outside the
+-- fixed SaaS role inventory.  The schema contract above proves that all objects
+-- are absent at p0s3/p0s4 or complete at p0s5/p0s6; this block never guesses
+-- from a partial object set.
+DO $$
+DECLARE
+    rate_policy_table oid := to_regclass('public.saas_registration_rate_limit_policies');
+    rate_counter_table oid := to_regclass('public.saas_registration_rate_limits');
+    consume_function oid := to_regprocedure(
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)'
+    );
+    prune_function oid := to_regprocedure(
+        'public.saas_prune_registration_rate_limits(text,text,integer)'
+    );
+    status_function oid :=
+        to_regprocedure('public.saas_registration_rate_limit_status()');
+    target_role text;
+    target_table text;
+    target_privilege text;
+    target_signature text;
+    column_list text;
+    target_relation oid;
+    target_owner oid;
+    unexpected_relation_acls integer;
+    expected_function_acls integer;
+    unexpected_function_acls integer;
+BEGIN
+    IF rate_policy_table IS NULL THEN
+        RETURN;
+    END IF;
+
+    FOR target_table IN
+        SELECT table_name
+        FROM (VALUES
+            ('saas_registration_rate_limit_policies'),
+            ('saas_registration_rate_limits')
+        ) AS rate_tables(table_name)
+    LOOP
+        target_relation := to_regclass('public.' || quote_ident(target_table));
+        SELECT relowner
+        INTO target_owner
+        FROM pg_class
+        WHERE oid = target_relation;
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = target_relation
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOR target_role IN
+            SELECT DISTINCT observed_role.rolname
+            FROM (
+                SELECT acl.grantee
+                FROM pg_class AS relation
+                CROSS JOIN LATERAL aclexplode(
+                    COALESCE(relation.relacl, acldefault('r', relation.relowner))
+                ) AS acl
+                WHERE relation.oid = target_relation
+                UNION
+                SELECT acl.grantee
+                FROM pg_attribute AS attribute
+                CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+                WHERE attribute.attrelid = target_relation
+                  AND attribute.attnum > 0
+                  AND NOT attribute.attisdropped
+                  AND attribute.attacl IS NOT NULL
+                  AND cardinality(attribute.attacl) > 0
+            ) AS observed_acl
+            JOIN pg_roles AS observed_role ON observed_role.oid = observed_acl.grantee
+            WHERE observed_acl.grantee <> target_owner
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
+        FOREACH target_privilege IN ARRAY
+            ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) || ' FROM PUBLIC';
+        END LOOP;
+    END LOOP;
+
+    FOREACH target_signature IN ARRAY ARRAY[
+        'public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)',
+        'public.saas_prune_registration_rate_limits(text,text,integer)',
+        'public.saas_registration_rate_limit_status()'
+    ]
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
+        SELECT procedure.proowner
+        INTO target_owner
+        FROM pg_proc AS procedure
+        WHERE procedure.oid = to_regprocedure(target_signature);
+        FOR target_role IN
+            SELECT DISTINCT observed_role.rolname
+            FROM pg_proc AS procedure
+            CROSS JOIN LATERAL aclexplode(
+                COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+            ) AS acl
+            JOIN pg_roles AS observed_role ON observed_role.oid = acl.grantee
+            WHERE procedure.oid = to_regprocedure(target_signature)
+              AND acl.grantee <> target_owner
+        LOOP
+            EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
+    END LOOP;
+    GRANT EXECUTE ON FUNCTION public.saas_consume_registration_rate_limit(
+        text, text, text, text, text, text, text, text
+    ) TO saas_registration;
+    GRANT EXECUTE ON FUNCTION public.saas_prune_registration_rate_limits(
+        text, text, integer
+    ) TO saas_platform;
+    GRANT EXECUTE ON FUNCTION public.saas_registration_rate_limit_status()
+    TO saas_platform;
+
+    SELECT count(*)
+    INTO unexpected_relation_acls
+    FROM (
+        SELECT acl.grantee, relation.relowner AS relation_owner
+        FROM pg_class AS relation
+        CROSS JOIN LATERAL aclexplode(
+            COALESCE(relation.relacl, acldefault('r', relation.relowner))
+        ) AS acl
+        WHERE relation.oid IN (rate_policy_table, rate_counter_table)
+        UNION ALL
+        SELECT acl.grantee, relation.relowner AS relation_owner
+        FROM pg_attribute AS attribute
+        JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+        WHERE attribute.attrelid IN (rate_policy_table, rate_counter_table)
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+          AND attribute.attacl IS NOT NULL
+          AND cardinality(attribute.attacl) > 0
+    ) AS relation_acl
+    WHERE relation_acl.grantee <> relation_acl.relation_owner;
+    SELECT count(*)
+    INTO expected_function_acls
+    FROM pg_proc AS procedure
+    CROSS JOIN LATERAL aclexplode(
+        COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+    ) AS acl
+    JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+    WHERE NOT acl.is_grantable
+      AND acl.privilege_type = 'EXECUTE'
+      AND (
+          (procedure.oid = consume_function AND grantee.rolname = 'saas_registration')
+          OR (
+              procedure.oid IN (prune_function, status_function)
+              AND grantee.rolname = 'saas_platform'
+          )
+      );
+    SELECT count(*)
+    INTO unexpected_function_acls
+    FROM pg_proc AS procedure
+    CROSS JOIN LATERAL aclexplode(
+        COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+    ) AS acl
+    LEFT JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+    WHERE procedure.oid IN (consume_function, prune_function, status_function)
+      AND acl.grantee <> procedure.proowner
+      AND NOT (
+          NOT acl.is_grantable
+          AND acl.privilege_type = 'EXECUTE'
+          AND (
+              (procedure.oid = consume_function AND grantee.rolname = 'saas_registration')
+              OR (
+                  procedure.oid IN (prune_function, status_function)
+                  AND grantee.rolname = 'saas_platform'
+              )
+          )
+      );
+    IF unexpected_relation_acls <> 0
+       OR expected_function_acls <> 3
+       OR unexpected_function_acls <> 0
+    THEN
+        RAISE EXCEPTION 'registration rate-limit authority projection rejected';
+    END IF;
+END
+$$;
+
+-- Every write below is constrained to the columns emitted by the two
+-- onboarding services; state transitions cannot rewrite identity or scope.
+REVOKE ALL PRIVILEGES ON
+    saas_self_service_registrations,
+    saas_email_verification_challenges,
+    saas_tenant_onboardings,
+    saas_self_service_events,
+    saas_global_users,
+    saas_identity_connections,
+    saas_password_credentials,
+    saas_privacy_identity_tombstones,
+    saas_tenants,
+    saas_spaces,
+    saas_tenant_memberships,
+    saas_space_memberships,
+    saas_billing_subscriptions,
+    saas_pricing_snapshots,
+    saas_billing_entitlements,
+    saas_billing_balances,
+    saas_runtime_placements,
+    saas_runtime_partitions,
+    saas_runtime_identity_aliases,
+    saas_runtime_resource_bindings,
+    saas_projects,
+    saas_project_memberships,
+    saas_admission_quotas,
+    saas_control_plane_outbox
+FROM saas_registration, saas_onboarding;
+
+-- Existing Staff/Support policies contain subqueries against these two tables.
+-- PostgreSQL validates their referenced columns even when a separate onboarding
+-- policy admits the target row. These are planning-only grants: neither role is
+-- a Platform role member, so FORCE RLS exposes zero Staff or Support rows.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments
+TO saas_registration, saas_onboarding;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions
+TO saas_registration, saas_onboarding;
+-- Existing Global User and Tenant SELECT policies plan ownership subqueries
+-- even when a dedicated onboarding policy admits the exact row. Cleared or
+-- exact customer GUCs keep this planning grant row-invisible under FORCE RLS.
+GRANT SELECT (tenant_id, user_id, status)
+ON saas_tenant_memberships TO saas_registration;
+GRANT SELECT (tenant_id, user_id, status)
+ON saas_tenant_memberships TO saas_onboarding;
+GRANT SELECT (tenant_id, space_id, user_id, status)
+ON saas_space_memberships TO saas_onboarding;
+
+GRANT SELECT ON
+    saas_self_service_registrations,
+    saas_email_verification_challenges
+TO saas_registration;
+GRANT INSERT (
+    id, email_normalized, email_hash, display_name, tenant_name, tenant_slug,
+    default_space_name, default_space_slug, plan_key, plan_policy_revision,
+    home_region, status, challenge_generation, expires_at, verified_at,
+    terminal_at, user_id, tenant_id, space_id, subscription_id,
+    runtime_partition_id, default_project_id, pricing_snapshot_id,
+    entitlement_id, runtime_binding_id, onboarding_id, plan_snapshot,
+    plan_snapshot_hash, idempotency_key, request_hash, version, created_at,
+    updated_at
+) ON saas_self_service_registrations TO saas_registration;
+GRANT UPDATE (
+    status, challenge_generation, expires_at, verified_at, terminal_at,
+    version, updated_at
+) ON saas_self_service_registrations TO saas_registration;
+GRANT INSERT (
+    id, registration_id, generation, token_hash, status, delivery_status,
+    delivery_attempts, delivery_idempotency_key, last_delivery_error_code,
+    expires_at, delivered_at, consumed_at, expired_at, revoked_at, created_at,
+    updated_at
+) ON saas_email_verification_challenges TO saas_registration;
+GRANT UPDATE (
+    status, delivery_status, delivery_attempts, last_delivery_error_code,
+    delivered_at, consumed_at, expired_at, revoked_at, updated_at
+) ON saas_email_verification_challenges TO saas_registration;
+GRANT SELECT ON saas_self_service_events TO saas_registration;
+GRANT INSERT (
+    id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, event_type,
+    from_status, to_status, facts, facts_hash, previous_hash, event_hash,
+    occurred_at
+) ON saas_self_service_events TO saas_registration;
+GRANT SELECT (user_id, email_normalized, email_verified, status, created_at, updated_at)
+ON saas_identity_connections TO saas_registration;
+GRANT SELECT (user_id, login_email_normalized, updated_at)
+ON saas_password_credentials TO saas_registration;
+GRANT SELECT (id, locator_kind, locator_hash)
+ON saas_privacy_identity_tombstones TO saas_registration;
+GRANT INSERT (
+    id, status, display_name, primary_email_normalized, security_version
+) ON saas_global_users TO saas_registration;
+GRANT SELECT (created_at, updated_at)
+ON saas_global_users TO saas_registration;
+GRANT INSERT (
+    id, user_id, provider, issuer, subject, email_normalized, email_verified,
+    status
+) ON saas_identity_connections TO saas_registration;
+GRANT INSERT (
+    user_id, login_email_normalized, password_hash, password_version,
+    failed_attempts, locked_until
+) ON saas_password_credentials TO saas_registration;
+GRANT INSERT (
+    id, tenant_id, aggregate_type, aggregate_key, event_type, payload,
+    idempotency_key, request_hash, attempt_count, available_at, claimed_at,
+    claim_token, published_at
+) ON saas_control_plane_outbox TO saas_registration;
+GRANT SELECT (created_at)
+ON saas_control_plane_outbox TO saas_registration;
+
+GRANT SELECT ON
+    saas_self_service_registrations,
+    saas_global_users
+TO saas_onboarding;
+GRANT SELECT ON saas_tenant_onboardings TO saas_onboarding;
+GRANT INSERT (
+    id, registration_id, user_id, tenant_id, space_id, subscription_id,
+    runtime_partition_id, runtime_placement_id, runtime_target_snapshot,
+    runtime_request_hash, default_project_id, pricing_snapshot_id,
+    entitlement_id, runtime_binding_id, plan_key, plan_policy_revision,
+    plan_snapshot, plan_snapshot_hash, home_region, trial_days,
+    trial_started_at, trial_ends_at, status, idempotency_key, request_hash,
+    version, attempt_count, available_at, claimed_at, claim_token,
+    lease_expires_at, last_error_code, last_error_detail, billing_ready_at,
+    runtime_ready_at, project_ready_at, activated_at, first_run_id,
+    completed_at, compensated_at, failure_stage, compensation_cursor,
+    last_transition_at, created_at, updated_at
+) ON saas_tenant_onboardings TO saas_onboarding;
+GRANT UPDATE (
+    trial_started_at, trial_ends_at, status, version, attempt_count,
+    available_at, claimed_at, claim_token, lease_expires_at, last_error_code,
+    last_error_detail, billing_ready_at, runtime_ready_at, project_ready_at,
+    activated_at, first_run_id, completed_at, compensated_at, failure_stage,
+    compensation_cursor, runtime_placement_id, runtime_target_snapshot,
+    runtime_request_hash, last_transition_at, updated_at
+) ON saas_tenant_onboardings TO saas_onboarding;
+GRANT SELECT ON saas_self_service_events TO saas_onboarding;
+GRANT INSERT (
+    id, aggregate_type, aggregate_id, tenant_id, user_id, sequence, event_type,
+    from_status, to_status, facts, facts_hash, previous_hash, event_hash,
+    occurred_at
+) ON saas_self_service_events TO saas_onboarding;
+GRANT SELECT (
+    id, slug, name, status, plan, home_region, lifecycle_version, created_at,
+    updated_at
+), INSERT (
+    id, slug, name, status, plan, home_region, lifecycle_version
+) ON saas_tenants TO saas_onboarding;
+GRANT UPDATE (status, lifecycle_version, updated_at)
+ON saas_tenants TO saas_onboarding;
+GRANT SELECT (
+    id, tenant_id, slug, name, status, created_at, updated_at
+), INSERT (
+    id, tenant_id, slug, name, status
+) ON saas_spaces TO saas_onboarding;
+GRANT UPDATE (status, updated_at)
+ON saas_spaces TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, user_id, role, status, version, joined_at
+) ON saas_tenant_memberships TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, space_id, user_id, role, status, version, joined_at
+) ON saas_space_memberships TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, aggregate_type, aggregate_key, event_type, payload,
+    idempotency_key, request_hash, attempt_count, available_at, claimed_at,
+    claim_token, published_at
+) ON saas_control_plane_outbox TO saas_onboarding;
+GRANT SELECT (created_at)
+ON saas_control_plane_outbox TO saas_onboarding;
+
+-- The onboarding worker can touch only the preallocated facts of its exact Saga.
+-- FORCE RLS policies in p0s000000002 additionally bind every row to the trusted
+-- registration/onboarding/actor/Tenant GUC tuple; Runtime Partition reads and
+-- writes are also bound to the frozen Saga Placement. Run writes remain excluded.
+GRANT SELECT (
+    id, tenant_id, plan_key, provider, provider_customer_ref,
+    provider_subscription_ref, status, current_period_start,
+    current_period_end, trial_ends_at, cancel_at_period_end,
+    provider_event_cursor, version, updated_by, created_at, updated_at
+) ON saas_billing_subscriptions TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, plan_key, provider, provider_customer_ref,
+    provider_subscription_ref, status, current_period_start,
+    current_period_end, trial_ends_at, cancel_at_period_end,
+    provider_event_cursor, version, updated_by
+) ON saas_billing_subscriptions TO saas_onboarding;
+GRANT UPDATE (
+    status, current_period_start, current_period_end, trial_ends_at,
+    cancel_at_period_end, provider_event_cursor, version, updated_by, updated_at
+) ON saas_billing_subscriptions TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, plan_key, currency, rates, version, effective_from,
+    effective_until, created_by, created_at
+) ON saas_pricing_snapshots TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, plan_key, currency, rates, version, effective_from,
+    effective_until, created_by
+) ON saas_pricing_snapshots TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, subscription_id, scope_type, scope_key, space_id,
+    project_id, user_id, model_key, meter, unit, limit_quantity,
+    reserved_quantity, consumed_quantity, concurrency_limit,
+    active_reservations, hard_limit, period, period_start, period_end,
+    status, version, updated_by, created_at, updated_at
+) ON saas_billing_entitlements TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, subscription_id, scope_type, scope_key, space_id,
+    project_id, user_id, model_key, meter, unit, limit_quantity,
+    reserved_quantity, consumed_quantity, concurrency_limit,
+    active_reservations, hard_limit, period, period_start, period_end,
+    status, version, updated_by
+) ON saas_billing_entitlements TO saas_onboarding;
+GRANT UPDATE (status, period_start, period_end, version, updated_by, updated_at)
+ON saas_billing_entitlements TO saas_onboarding;
+
+GRANT SELECT (
+    tenant_id, currency, available_minor, reserved_minor, consumed_minor,
+    version, updated_at
+) ON saas_billing_balances TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, currency, available_minor, reserved_minor, consumed_minor, version
+) ON saas_billing_balances TO saas_onboarding;
+
+GRANT SELECT (
+    id, runtime_type, data_region, failure_domain, official_schema_revision,
+    capacity_class, status, created_at, updated_at
+) ON saas_runtime_placements TO saas_onboarding;
+GRANT SELECT (
+    id, tenant_id, space_id, placement_id, runtime_type, runtime_version,
+    physical_partition_key, placement_generation, source_revision,
+    adapter_contract_version, status, created_at, updated_at
+) ON saas_runtime_partitions TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, placement_id, runtime_type, runtime_version,
+    physical_partition_key, placement_generation, source_revision,
+    adapter_contract_version, status
+) ON saas_runtime_partitions TO saas_onboarding;
+GRANT UPDATE (status, updated_at)
+ON saas_runtime_partitions TO saas_onboarding;
+
+GRANT SELECT (runtime_partition_id, user_id, runtime_user_key, status, created_at)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+GRANT INSERT (runtime_partition_id, user_id, runtime_user_key, status)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+GRANT UPDATE (status)
+ON saas_runtime_identity_aliases TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, space_id, name, visibility, created_by, status,
+    authorization_version, created_at, updated_at
+) ON saas_projects TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, name, visibility, created_by, status,
+    authorization_version
+) ON saas_projects TO saas_onboarding;
+GRANT UPDATE (status, authorization_version, updated_at)
+ON saas_projects TO saas_onboarding;
+
+GRANT SELECT (
+    tenant_id, space_id, project_id, subject_type, subject_id, role, status,
+    expires_at, created_by, version, created_at, updated_at
+) ON saas_project_memberships TO saas_onboarding;
+GRANT INSERT (
+    tenant_id, space_id, project_id, subject_type, subject_id, role, status,
+    expires_at, created_by, version
+) ON saas_project_memberships TO saas_onboarding;
+GRANT UPDATE (status, version, updated_at)
+ON saas_project_memberships TO saas_onboarding;
+
+GRANT SELECT (
+    id, runtime_partition_id, tenant_id, space_id, project_id, resource_type,
+    runtime_resource_id, saas_resource_id, partition_generation,
+    binding_generation, status, created_at
+) ON saas_runtime_resource_bindings TO saas_onboarding;
+GRANT INSERT (
+    id, runtime_partition_id, tenant_id, space_id, project_id, resource_type,
+    runtime_resource_id, saas_resource_id, partition_generation,
+    binding_generation, status
+) ON saas_runtime_resource_bindings TO saas_onboarding;
+GRANT UPDATE (status)
+ON saas_runtime_resource_bindings TO saas_onboarding;
+
+GRANT SELECT (
+    id, tenant_id, space_id, project_id, resource, limit_units,
+    reserved_units, consumed_units, version, created_at, updated_at
+) ON saas_admission_quotas TO saas_onboarding;
+GRANT INSERT (
+    id, tenant_id, space_id, project_id, resource, limit_units,
+    reserved_units, consumed_units, version
+) ON saas_admission_quotas TO saas_onboarding;
+
 GRANT SELECT ON saas_webhook_endpoints TO saas_webhook_dispatcher;
 GRANT SELECT, UPDATE ON saas_webhook_deliveries TO saas_webhook_dispatcher;
 GRANT INSERT ON saas_control_plane_outbox TO saas_webhook_dispatcher;
@@ -1130,6 +2581,67 @@ TO saas_app;
 
 GRANT SELECT, INSERT ON saas_artifacts, saas_run_artifacts TO saas_app;
 GRANT SELECT, INSERT ON saas_control_plane_outbox TO saas_app;
+-- Customer onboarding status has a dedicated read-only database authority.
+-- The global authority convergence above already clears this role.  Repeat its
+-- four dependency tables here as a local fail-safe, and also clear the
+-- historical app projection, before restoring only the customer-safe columns.
+DO $$
+DECLARE
+    target_role text;
+    target_table text;
+    target_privilege text;
+    column_list text;
+BEGIN
+    FOR target_role, target_table IN
+        SELECT * FROM (VALUES
+            ('saas_onboarding_status', 'saas_tenant_onboardings'),
+            ('saas_onboarding_status', 'saas_tenant_memberships'),
+            ('saas_onboarding_status', 'saas_platform_role_assignments'),
+            ('saas_onboarding_status', 'saas_platform_support_sessions'),
+            ('saas_app', 'saas_tenant_onboardings')
+        ) AS targets(role_name, table_name)
+    LOOP
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid =
+            ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        IF column_list IS NOT NULL THEN
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END IF;
+    END LOOP;
+END
+$$;
+REVOKE ALL PRIVILEGES ON
+    saas_tenant_onboardings,
+    saas_tenant_memberships
+FROM saas_onboarding_status;
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_onboarding_status;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_onboarding_status;
+GRANT SELECT (
+    id, user_id, tenant_id, space_id, default_project_id, status, version,
+    trial_ends_at, last_transition_at, created_at
+) ON saas_tenant_onboardings TO saas_onboarding_status;
+GRANT SELECT (tenant_id, user_id, status)
+ON saas_tenant_memberships TO saas_onboarding_status;
+
+-- Executor planning dependencies were intentionally removed by the global
+-- authority convergence.  Regrant only the columns used by the pre-existing
+-- Staff/Support RLS predicates; FORCE RLS keeps their rows invisible here.
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_executor;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_executor;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_runs,
@@ -1248,7 +2760,337 @@ GRANT SELECT, INSERT ON saas_control_plane_outbox TO saas_preview_gateway;
 
 GRANT SELECT, UPDATE ON saas_preview_leases TO saas_preview_gateway;
 
-GRANT SELECT, UPDATE ON saas_control_plane_outbox TO saas_dispatcher;
+GRANT SELECT ON saas_control_plane_outbox TO saas_dispatcher;
+-- A column GRANT does not narrow a historical table-level UPDATE.  Revoke it
+-- explicitly first so applying this file converges existing deployments.
+REVOKE UPDATE ON saas_control_plane_outbox FROM saas_dispatcher;
+GRANT UPDATE (
+    attempt_count, available_at, claimed_at, claim_token, last_error_code,
+    last_error_digest, published_at, quarantined_at
+) ON saas_control_plane_outbox TO saas_dispatcher;
+REVOKE ALL PRIVILEGES ON saas_outbox_quarantine_events FROM PUBLIC;
+GRANT SELECT, INSERT ON saas_outbox_quarantine_events TO saas_dispatcher;
+
+-- Schema-forward application rollback only: the p0s3 migration and this
+-- p0s3 authority bootstrap stay at N while the pinned N-1 worker switches to
+-- a login inheriting saas_dispatcher_n1_compat.  Never replay the 9451a64
+-- migration/roles SQL over this schema.  Fail closed before restoring the
+-- security-patched N-1 fixed column grants unless all three p0s3 guards are
+-- present: raw-error NULL constraint, restrictive quarantine policy, and the
+-- enabled BEFORE sanitizer/boundary trigger.  This SQL only installs the
+-- dormant schema bridge and never creates a password.  Production admission
+-- remains blocked by ``python -m saas.n1_outbox_admission`` until a signed
+-- patched-worker artifact Receipt can be verified and credential-bound.
+REVOKE ALL PRIVILEGES ON saas_control_plane_outbox
+FROM saas_dispatcher_n1_compat;
+-- Zero incoming members is the only currently admitted state.  Catalog checks
+-- below diagnose an otherwise well-shaped provisional LOGIN without exposing
+-- its name, but still reject it: 9451a64 can log raw SQL bind parameters before
+-- the database sanitizer runs.  A later patched worker may be enabled only by
+-- a separate workflow that verifies a trusted artifact Receipt and binds its
+-- non-exportable credential; this generic bootstrap cannot self-attest that.
+DO $$
+DECLARE
+    compat_oid oid;
+    incoming_count integer;
+    incoming_oid oid;
+    incoming_is_safe boolean;
+    incoming_direct_memberships integer;
+    incoming_login_memberships integer;
+    incoming_authority_dependencies integer;
+    admission_role_settings integer;
+BEGIN
+    SELECT oid INTO STRICT compat_oid
+    FROM pg_roles WHERE rolname = 'saas_dispatcher_n1_compat';
+
+    SELECT count(*), min(membership.member)
+    INTO incoming_count, incoming_oid
+    FROM pg_auth_members AS membership
+    WHERE membership.roleid = compat_oid;
+
+    IF incoming_count > 1 THEN
+        RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
+    END IF;
+
+    IF incoming_count = 1 THEN
+        SELECT
+            member.rolcanlogin
+            AND NOT member.rolsuper
+            AND NOT member.rolcreatedb
+            AND NOT member.rolcreaterole
+            AND NOT member.rolreplication
+            AND NOT member.rolbypassrls
+            AND member.rolinherit
+            AND NOT membership.admin_option
+            AND COALESCE(
+                (to_jsonb(membership) ->> 'inherit_option')::boolean,
+                true
+            )
+            AND NOT COALESCE(
+                (to_jsonb(membership) ->> 'set_option')::boolean,
+                true
+            )
+        INTO incoming_is_safe
+        FROM pg_auth_members AS membership
+        JOIN pg_roles AS member ON member.oid = membership.member
+        WHERE membership.roleid = compat_oid
+          AND membership.member = incoming_oid;
+
+        SELECT count(*) INTO incoming_direct_memberships
+        FROM pg_auth_members WHERE member = incoming_oid;
+
+        -- The rollback LOGIN is an endpoint identity, never a role that any
+        -- LOGIN/NOLOGIN principal may inherit or SET ROLE into.
+        SELECT count(*) INTO incoming_login_memberships
+        FROM pg_auth_members WHERE roleid = incoming_oid;
+
+        SELECT count(*) INTO incoming_authority_dependencies
+        FROM pg_shdepend AS dependency
+        WHERE dependency.refclassid = 'pg_authid'::regclass
+          AND dependency.refobjid = incoming_oid
+          AND dependency.deptype IN ('a', 'o');
+
+        SELECT count(*) INTO admission_role_settings
+        FROM pg_db_role_setting
+        WHERE setrole IN (incoming_oid, compat_oid);
+
+        IF NOT COALESCE(incoming_is_safe, false)
+            OR incoming_direct_memberships <> 1
+            OR incoming_login_memberships <> 0
+            OR incoming_authority_dependencies <> 0
+            OR admission_role_settings <> 0
+        THEN
+            RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
+        END IF;
+
+        RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
+    END IF;
+END
+$$;
+-- The legacy Outbox RLS predicate references these authority tables at plan
+-- time.  Grant only the named columns below and force the compatibility role
+-- to observe an empty relation even if another permissive policy is added.
+-- A logical restore produced with --no-privileges recreates functions with
+-- PostgreSQL's default PUBLIC EXECUTE. Normalize that default before the
+-- fail-closed catalog verification; any other unexpected grantee still fails.
+REVOKE EXECUTE ON FUNCTION public.saas_bridge_n1_outbox_update() FROM PUBLIC;
+DROP POLICY IF EXISTS rls_n1_compat_role_assignments_deny
+ON saas_platform_role_assignments;
+CREATE POLICY rls_n1_compat_role_assignments_deny
+ON saas_platform_role_assignments AS RESTRICTIVE FOR SELECT
+TO saas_dispatcher_n1_compat USING (false);
+DROP POLICY IF EXISTS rls_n1_compat_support_sessions_deny
+ON saas_platform_support_sessions;
+CREATE POLICY rls_n1_compat_support_sessions_deny
+ON saas_platform_support_sessions AS RESTRICTIVE FOR SELECT
+TO saas_dispatcher_n1_compat USING (false);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'public.saas_control_plane_outbox'::regclass
+          AND relrowsecurity
+          AND relforcerowsecurity
+    ) OR (
+        SELECT count(*)
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relname IN (
+              'saas_platform_role_assignments',
+              'saas_platform_support_sessions'
+          )
+          AND relation.relrowsecurity
+          AND relation.relforcerowsecurity
+    ) <> 2 OR EXISTS (
+        SELECT 1
+        FROM (
+            VALUES
+                (
+                    'saas_platform_role_assignments',
+                    'rls_n1_compat_role_assignments_deny'
+                ),
+                (
+                    'saas_platform_support_sessions',
+                    'rls_n1_compat_support_sessions_deny'
+                )
+        ) AS expected(table_name, policy_name)
+        LEFT JOIN pg_class AS relation
+          ON relation.relname = expected.table_name
+         AND relation.relnamespace = 'public'::regnamespace
+         AND relation.relkind IN ('r', 'p')
+        LEFT JOIN pg_policy AS policy
+          ON policy.polrelid = relation.oid
+         AND policy.polname = expected.policy_name
+        LEFT JOIN pg_roles AS compat
+          ON compat.rolname = 'saas_dispatcher_n1_compat'
+        WHERE relation.oid IS NULL
+           OR policy.oid IS NULL
+           OR policy.polpermissive
+           OR policy.polcmd <> 'r'
+           OR cardinality(policy.polroles) <> 1
+           OR compat.oid IS NULL
+           OR NOT (compat.oid = ANY(policy.polroles))
+           OR regexp_replace(
+                pg_get_expr(policy.polqual, policy.polrelid),
+                '[[:space:]()]', '', 'g'
+              ) <> 'false'
+           OR policy.polwithcheck IS NOT NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_policy AS policy
+        JOIN pg_class AS relation ON relation.oid = policy.polrelid
+        JOIN pg_roles AS compat
+          ON compat.rolname = 'saas_dispatcher_n1_compat'
+        WHERE relation.relnamespace = 'public'::regnamespace
+          AND relation.relname IN (
+              'saas_platform_role_assignments',
+              'saas_platform_support_sessions'
+          )
+          AND compat.oid = ANY(policy.polroles)
+          AND NOT (
+              (
+                  relation.relname = 'saas_platform_role_assignments'
+                  AND policy.polname = 'rls_n1_compat_role_assignments_deny'
+              ) OR (
+                  relation.relname = 'saas_platform_support_sessions'
+                  AND policy.polname = 'rls_n1_compat_support_sessions_deny'
+              )
+          )
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_rewrite
+        WHERE ev_class = 'public.saas_control_plane_outbox'::regclass
+          AND rulename <> '_RETURN'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'public.saas_control_plane_outbox'::regclass
+          AND conname = 'ck_outbox_legacy_error_null'
+          AND contype = 'c'
+          AND convalidated
+          AND regexp_replace(
+              pg_get_constraintdef(oid), '[[:space:]()]', '', 'g'
+          ) = 'CHECKlast_errorISNULL'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'public.saas_control_plane_outbox'::regclass
+          AND polname = 'rls_outbox_n1_compat_dispatchable'
+          AND NOT polpermissive
+          AND polcmd = '*'
+          AND cardinality(polroles) = 1
+          AND (
+              SELECT oid FROM pg_roles
+              WHERE rolname = 'saas_dispatcher_n1_compat'
+          ) = ANY(polroles)
+          AND regexp_replace(
+              pg_get_expr(polqual, polrelid), '[[:space:]()]', '', 'g'
+          ) = 'quarantined_atISNULL'
+          AND regexp_replace(
+              pg_get_expr(polwithcheck, polrelid), '[[:space:]()]', '', 'g'
+          ) = 'quarantined_atISNULL'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS sanitizer
+        JOIN pg_language AS language ON language.oid = sanitizer.prolang
+        JOIN pg_class AS outbox
+          ON outbox.oid = 'public.saas_control_plane_outbox'::regclass
+        JOIN pg_roles AS compat
+          ON compat.rolname = 'saas_dispatcher_n1_compat'
+        WHERE sanitizer.oid =
+            to_regprocedure('public.saas_bridge_n1_outbox_update()')
+          AND sanitizer.proowner = outbox.relowner
+          AND language.lanname = 'plpgsql'
+          AND NOT sanitizer.prosecdef
+          AND NOT sanitizer.proleakproof
+          AND sanitizer.provolatile = 'v'
+          AND sanitizer.proparallel = 'u'
+          AND sanitizer.proconfig = ARRAY['search_path=pg_catalog']::text[]
+          AND encode(sha256(convert_to(btrim(sanitizer.prosrc), 'UTF8')), 'hex') =
+              '06622ed237a21880bf84846f082deb876c3935597cd692f283d6f505cb616e3a'
+          AND NOT has_function_privilege(compat.oid, sanitizer.oid, 'EXECUTE')
+          AND NOT EXISTS (
+              SELECT 1 FROM aclexplode(sanitizer.proacl) AS acl
+              WHERE acl.grantee <> sanitizer.proowner
+          )
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgrelid = 'public.saas_control_plane_outbox'::regclass
+          AND tgname = 'trg_outbox_n1_compatibility'
+          AND NOT tgisinternal
+          AND tgenabled = 'O'
+          AND tgtype = 19
+          AND tgfoid = to_regprocedure('public.saas_bridge_n1_outbox_update()')
+    ) OR (
+        SELECT count(*)
+        FROM pg_trigger
+        WHERE tgrelid = 'public.saas_control_plane_outbox'::regclass
+          AND NOT tgisinternal
+          AND (tgtype & 19) = 19
+    ) <> 1
+    THEN
+        RAISE EXCEPTION
+            'p0s3 N-1 Outbox compatibility guards are absent or disabled';
+    END IF;
+END
+$$;
+DO $$
+DECLARE
+    privilege_name text;
+    column_list text;
+    target_table text;
+BEGIN
+    FOR target_table IN
+        SELECT relation.relname
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p')
+          AND left(relation.relname, 5) = 'saas_'
+        ORDER BY relation.relname
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM saas_dispatcher_n1_compat';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid =
+            ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH privilege_name IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        LOOP
+            EXECUTE 'REVOKE ' || privilege_name || ' (' || column_list ||
+                ') ON TABLE public.' || quote_ident(target_table) ||
+                ' FROM saas_dispatcher_n1_compat';
+        END LOOP;
+    END LOOP;
+END
+$$;
+REVOKE ALL ON SCHEMA public FROM saas_dispatcher_n1_compat;
+GRANT USAGE ON SCHEMA public TO saas_dispatcher_n1_compat;
+-- Fixed 9451a64 query projection.  Never replace these with table privileges:
+-- an Outbox schema migration must drain the compat worker, apply DDL, and pass
+-- a fresh catalog admission before restart so new columns cannot be inherited.
+GRANT SELECT (
+    id, published_at, available_at, claimed_at, created_at, claim_token,
+    event_type, aggregate_type, aggregate_key, payload, attempt_count
+) ON saas_control_plane_outbox TO saas_dispatcher_n1_compat;
+GRANT UPDATE (
+    attempt_count, available_at, claimed_at, claim_token, last_error, published_at
+) ON saas_control_plane_outbox TO saas_dispatcher_n1_compat;
+-- Planning-only columns required by the pre-existing public Outbox RLS policy
+-- branches.  The role-specific restrictive false policies above expose no
+-- Staff/Support rows, and the pinned verifier checks table privileges (these
+-- remain false).
+GRANT SELECT (principal_id, role, status, expires_at)
+ON saas_platform_role_assignments TO saas_dispatcher_n1_compat;
+GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+ON saas_platform_support_sessions TO saas_dispatcher_n1_compat;
 
 -- Billing owns commercial state but never customer prompts, code, secrets, or
 -- runtime workspace content. Immutable facts have INSERT and SELECT only.

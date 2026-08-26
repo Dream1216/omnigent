@@ -7,7 +7,7 @@ administration, expose credential secrets, or claim production SSO/SCIM readines
 ## Production composition
 
 1. Migrate through `p6a000000007`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Confirm the database logins remain
+   `saas/control_plane/postgresql_roles.psql`. Confirm the database logins remain
    `NOSUPERUSER NOBYPASSRLS` and inherit exactly one application role.
 2. Construct the authentication `MembershipLifecycleService` with a session factory
    inheriting `saas_authenticator`. It performs login and invitation acceptance. Under

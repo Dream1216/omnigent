@@ -11,7 +11,7 @@ Service Accounts on upstream Runtime routes.
    persist, bake into an image, or reuse the browser Cookie/signing secret as this
    pepper.
 2. Run migrations through `p6a000000007`, then reapply
-   `saas/control_plane/postgresql_roles.sql`. Confirm all 57 control-plane and all 17
+   `saas/control_plane/postgresql_roles.psql`. Confirm all 57 control-plane and all 17
    Runtime tables retain `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`.
 3. Use separate database logins inheriting exactly `saas_governance` for management
    and `saas_authenticator` for token validation. Both must remain `NOSUPERUSER

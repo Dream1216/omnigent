@@ -29,11 +29,23 @@ def isolated_postgres_url() -> str:
     database_name = f"omnigent_isolated_{uuid4().hex}"
     database_url = base_url.set(database=database_name)
     admin_engine = sa.create_engine(base_url, isolation_level="AUTOCOMMIT")
+    database_admin_engine: sa.Engine | None = None
     try:
         with admin_engine.connect() as connection:
             connection.exec_driver_sql(f'CREATE DATABASE "{database_name}" TEMPLATE template0')
+        root = Path(__file__).resolve().parents[2]
+        database_admin_engine = sa.create_engine(database_url)
+        with database_admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
+            )
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+            )
         yield database_url.render_as_string(hide_password=False)
     finally:
+        if database_admin_engine is not None:
+            database_admin_engine.dispose()
         with admin_engine.connect() as connection:
             connection.exec_driver_sql(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)')
         admin_engine.dispose()
