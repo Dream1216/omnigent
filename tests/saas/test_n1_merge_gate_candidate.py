@@ -42,11 +42,14 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
 
 
 def test_candidate_run_title_binds_pr_base_and_head() -> None:
-    workflow = N1_WORKFLOW.read_text(encoding="utf-8")
+    source = N1_WORKFLOW.read_text(encoding="utf-8")
+    workflow = yaml.load(source, Loader=yaml.BaseLoader)
 
-    assert "pr=${{ github.event.pull_request.number || 'none' }}" in workflow
-    assert "base=${{ github.event.pull_request.base.sha || github.sha }}" in workflow
-    assert "head=${{ github.event.pull_request.head.sha || github.sha }}" in workflow
-    assert "verify-postgresql-n1" in workflow
-    assert "publish-candidate:" in workflow
-    assert "needs: [verify-candidate, verify-postgresql-n1]" in workflow
+    assert "pr=${{ github.event.pull_request.number || 'none' }}" in source
+    assert "base=${{ github.event.pull_request.base.sha || github.sha }}" in source
+    assert "head=${{ github.event.pull_request.head.sha || github.sha }}" in source
+    assert "verify-postgresql-n1" in workflow["jobs"]
+    assert workflow["jobs"]["publish-candidate"]["needs"] == [
+        "verify-candidate",
+        "verify-postgresql-n1",
+    ]

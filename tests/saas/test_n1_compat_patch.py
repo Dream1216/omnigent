@@ -108,8 +108,8 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert '"tests": 3' in n1_postgresql_commands
     assert '"skipped": 0' in n1_postgresql_commands
     expected_paths = {
-        ".github/scripts/merge-ready/**",
-        ".github/workflows/merge-ready.yml",
+        ".github/actions/compat-smoke-saas-n1-gate/**",
+        ".github/workflows/saas-n1-merge-gate.yml",
         ".github/workflows/saas-n1-compat-image.yml",
         ".python-version",
         ".uv/**",
@@ -144,7 +144,7 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
     assert source.count('      - "saas/**"') == 2
     assert source.count('      - "tests/saas/**"') == 2
-    assert source.count('      - ".github/scripts/merge-ready/**"') == 2
+    assert source.count('      - ".github/actions/compat-smoke-saas-n1-gate/**"') == 2
     assert (
         source.count("uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf")
         == 3
