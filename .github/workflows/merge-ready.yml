@@ -27,7 +27,7 @@ on:
   pull_request_target:
     types: [labeled]
   workflow_run:
-    workflows: [PR Template, CI, Lint, Docker build, E2E UI Tests, E2E Tests, Integration Tests, UI Snapshot, SaaS N-1 compatibility image]
+    workflows: [PR Template, CI, Lint, Docker build, E2E UI Tests, E2E Tests, Integration Tests, UI Snapshot]
     types: [completed]
   check_run:
     types: [completed]
@@ -204,7 +204,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ steps.ctx.outputs.pr }}
           SHA: ${{ steps.ctx.outputs.sha }}
         run: bash .github/scripts/merge-ready/evaluate-checks.sh
 
