@@ -8,8 +8,8 @@ run-name: >-
 on:
   pull_request:
     paths:
-      - ".github/scripts/merge-ready/**"
-      - ".github/workflows/merge-ready.yml"
+      - ".github/actions/compat-smoke-saas-n1-gate/**"
+      - ".github/workflows/saas-n1-merge-gate.yml"
       - ".github/workflows/saas-n1-compat-image.yml"
       - ".python-version"
       - ".uv/**"
@@ -31,8 +31,8 @@ on:
       - main
       - "codex/**"
     paths:
-      - ".github/scripts/merge-ready/**"
-      - ".github/workflows/merge-ready.yml"
+      - ".github/actions/compat-smoke-saas-n1-gate/**"
+      - ".github/workflows/saas-n1-merge-gate.yml"
       - ".github/workflows/saas-n1-compat-image.yml"
       - ".python-version"
       - ".uv/**"
