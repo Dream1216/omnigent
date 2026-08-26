@@ -74,10 +74,12 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
 
 
 def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_postgres_url: str,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=2)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=2)
     suffix = uuid4().hex[:12]
     roles = {
         name: f"saas_{name}_metering_acceptance_{suffix}"

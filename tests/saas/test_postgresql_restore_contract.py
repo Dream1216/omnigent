@@ -1,15 +1,53 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
+import sqlalchemy as sa
 
+from saas.control_plane.onboarding import OnboardingPlan
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.production.postgresql_restore import (
+    _SELECTED_HASH_TABLES,
     PostgreSqlEndpoint,
     PostgreSqlRestoreContractError,
+    _apply_database_authority,
+    _canonical_json_sha256,
+    _create_database,
+    _drop_database,
+    _recovery_plan_snapshot,
+    _recovery_runtime_target,
     run_logical_restore_contract,
 )
+
+
+def test_disposable_restore_database_applies_database_authority_before_schema() -> None:
+    raw_url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
+    if not raw_url:
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required")
+    endpoint = PostgreSqlEndpoint.parse(raw_url)
+    database = f"omnigent_restore_authority_{uuid4().hex[:20]}"
+    _create_database(endpoint, database)
+    try:
+        _apply_database_authority(Path.cwd(), endpoint, database)
+        engine = sa.create_engine(endpoint.sqlalchemy_url(database))
+        try:
+            with engine.connect() as connection:
+                public_has_temporary = connection.exec_driver_sql(
+                    "SELECT EXISTS (SELECT 1 FROM pg_database AS database "
+                    "CROSS JOIN LATERAL aclexplode(COALESCE(database.datacl, "
+                    "acldefault('d', database.datdba))) AS privilege "
+                    "WHERE database.datname = current_database() "
+                    "AND privilege.grantee = 0 "
+                    "AND privilege.privilege_type = 'TEMPORARY')"
+                ).scalar_one()
+        finally:
+            engine.dispose()
+        assert public_has_temporary is False
+    finally:
+        _drop_database(endpoint, database)
 
 
 def test_postgresql_endpoint_requires_explicit_tcp_admin_coordinates() -> None:
@@ -58,8 +96,64 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
         )
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_three_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 103
+def test_restore_fixture_uses_current_vertical_onboarding_plan_contract() -> None:
+    plan = OnboardingPlan(
+        key="test",
+        policy_revision="recovery-plan-v1",
+        trial_days=14,
+    )
+
+    assert _recovery_plan_snapshot() == plan.snapshot()
+    assert _canonical_json_sha256(_recovery_plan_snapshot()) == plan.snapshot_hash()
+
+
+def test_restore_fixture_freezes_a_complete_runtime_target() -> None:
+    placement_id = UUID("95000000-0000-4000-8000-000000000001")
+
+    target = _recovery_runtime_target({"runtime_placement": str(placement_id)})
+
+    assert target == {
+        "schema_version": 2,
+        "placement_id": str(placement_id),
+        "runtime_type": "omnigent",
+        "data_region": "region-a",
+        "failure_domain": "region-a-1",
+        "official_schema_revision": "runtime-schema-v1",
+        "capacity_class": "starter",
+        "provider_binding": {
+            "provider_type": "restore-contract-provider",
+            "binding_revision": "restore-binding-v1",
+            "binding_hash": "b" * 64,
+        },
+    }
+    assert len(_canonical_json_sha256(target)) == 64
+
+
+def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
+    assert {
+        "saas_self_service_registrations",
+        "saas_tenant_onboardings",
+        "saas_self_service_events",
+        "saas_projects",
+        "saas_project_memberships",
+        "saas_runtime_placements",
+        "saas_runtime_partitions",
+        "saas_runtime_resource_bindings",
+        "saas_runtime_provider_operation_journal",
+        "saas_admission_quotas",
+        "saas_quota_reservations",
+        "saas_runs",
+        "saas_run_events",
+        "saas_registration_rate_limit_policies",
+        "saas_registration_rate_limits",
+    }.issubset(_SELECTED_HASH_TABLES)
+
+
+def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_eleven_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 111
+    assert "saas_registration_rate_limit_policies" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_registration_rate_limits" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_runtime_provider_operation_journal" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_lifecycle_operations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_staff_principals" in CONTROL_PLANE_RLS_TABLES
     assert "saas_platform_role_assignments" in CONTROL_PLANE_RLS_TABLES
@@ -102,3 +196,7 @@ def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_three_tab
     assert "saas_approval_work_items" in CONTROL_PLANE_RLS_TABLES
     assert "saas_notification_deliveries" in CONTROL_PLANE_RLS_TABLES
     assert "saas_operation_batch_items" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_self_service_registrations" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_email_verification_challenges" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_tenant_onboardings" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_self_service_events" in CONTROL_PLANE_RLS_TABLES

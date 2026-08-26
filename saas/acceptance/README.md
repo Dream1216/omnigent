@@ -1260,3 +1260,68 @@ code rollback must retain the schema, while schema reversal requires a reviewed 
 migration or approved restore. No production Provider, KMS/HSM, immutable evidence
 store, real backup estate, managed-email identity, protected image, or deletion drill was
 created. The production result therefore remains 0/10 and `NO-GO`.
+
+## 2026-08-25 Wave 1 onboarding exact-SHA Push exit gates
+
+Product candidate `7441c866540c86ff3b45731436eabda6c2f7b12c` is the pushed
+`codex/wave1-upstream-onboarding` successor of implementation commit
+`04e3a5ab43335984802f39dba5e19d36d0dfe3d7`. Its linear repair chain restores the
+ten-file intrusion budget, appends the first candidate ledger, bootstraps the four
+PostgreSQL authority phases in CI and disposable Restore databases, normalizes the
+N-1 compatibility function ACL, expands Image workflow source coverage, and closes
+the full-package type gate. Exact-tree Upstream Delta passes at ten direct official
+files, 173 net-added official lines, two active patches, zero forbidden files, zero
+reverse dependencies and a 0.9991 isolated-code ratio. Patch Replay passes 2/2.
+
+The candidate advances the schema to `p0s000000004` and 109 Control Plane
+FORCE-RLS tables. It adds the append-only Outbox quarantine ledger, four-phase
+PostgreSQL principal/database/schema/role installation, ordinary Dispatcher and
+N-1 login catalog admission, a dedicated Runtime Provider Journal role, an
+independently committed effect fence, frozen Provider binding/region checks,
+signed receipt replay and fail-closed downgrade guards. A second PostgreSQL
+connection observes a newly acquired Journal fence before Provider execution.
+
+Local acceptance used PostgreSQL 18 initialized through
+`postgresql_principals.psql` and `postgresql_database.psql`: the complete
+`tests/saas` shard passed 864 tests with 9 environment-conditioned skips and zero
+failures in 437.21 seconds. Full-package Pyrefly reported zero errors, current-file
+Pre-commit passed, the Wheel contained 321 required SaaS artifacts, and the fixed
+N-1 Builder returned `verified`. The N-1 patch SHA-256 is
+`810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35`; its
+deterministic patched-tree identity is
+`git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac`. A full logical Restore also
+passed source/target database authority, 109/17 FORCE RLS, cross-scope negative
+probes, hashes and replay.
+
+Exact-SHA [Push Compatibility run 32849132003](https://github.com/Dream1216/omnigent/actions/runs/32849132003)
+completed successfully. Exact-SHA [Push Image run 32849132069](https://github.com/Dream1216/omnigent/actions/runs/32849132069)
+also completed its candidate job successfully after two Server and two Host
+multi-architecture builds plus repeated executable-fact comparison. Candidate
+artifact `9566083811`, named
+`saas-image-candidate-7441c866540c86ff3b45731436eabda6c2f7b12c`, is retained
+for 30 days. The protected `publish-signed` job was skipped by design because the
+event was a `codex/**` Push, not an approved `main` workflow dispatch. These facts
+therefore close Push code/candidate-image contracts, not protected PR or signed
+release gates.
+
+The evidence successor that adds this ledger paragraph changes no Product source.
+It must pass its own Push Compatibility run before it can be used as branch-level
+evidence. At the Product SHA, the GitHub API reports zero open PRs for this branch
+and the actor endpoint returns `401 Requires authentication`; no PR, protected-merge
+check, reviewer approval or merge exists. The comparison entry point is
+`https://github.com/Dream1216/omnigent/compare/main...codex/wave1-upstream-onboarding?expand=1`.
+
+The current uncommitted successor advances the schema contract to
+`p0s000000005` and 111 Control Plane FORCE-RLS tables by adding exact-scope,
+database-authoritative registration, resend and verification abuse counters. The
+production composition rejects AllowAll/Noop substitutes, and counter-store failure
+returns an unavailable result before onboarding domain writes. This paragraph records
+only the candidate contract and local tests; the `7441c866...` exact-SHA Push facts
+above remain historical `p0s000000004` evidence and are not promoted to this successor.
+
+The revision-bound production-admission preflight remains structurally valid but
+reports `production_readiness=blocked`, `release_decision=NO-GO`, zero of ten
+aggregate gates and zero of eight admitted evidence kinds. No real Provider/KMS,
+anonymous deployed-browser E2E, signed OCI, vulnerability/license admission,
+one-hour Canary, N-1 production rollback, three-role independent approval or
+production Receipt was manufactured. Push success does not change those facts.

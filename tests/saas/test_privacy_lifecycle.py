@@ -30,6 +30,7 @@ from saas.control_plane.identity import (
     VerifiedIdentityAssertion,
 )
 from saas.control_plane.lifecycle import LifecycleError
+from saas.control_plane.onboarding_models import SelfServiceRegistrationRecord
 from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
@@ -133,6 +134,7 @@ def _seed_user(factory: sessionmaker[Session]) -> tuple[UUID, UUID, UUID, str, s
     directory_id = uuid4()
     scim_user_id = uuid4()
     raw_token = "scim-deletion-token"
+    email = "subject@example.test"
     with factory.begin() as db:
         db.add_all(
             [
@@ -140,7 +142,7 @@ def _seed_user(factory: sessionmaker[Session]) -> tuple[UUID, UUID, UUID, str, s
                     id=user_id,
                     status="active",
                     display_name="Privacy Subject",
-                    primary_email_normalized="subject@example.test",
+                    primary_email_normalized=email,
                     security_version=1,
                     created_at=NOW,
                     updated_at=NOW,
@@ -161,6 +163,32 @@ def _seed_user(factory: sessionmaker[Session]) -> tuple[UUID, UUID, UUID, str, s
         db.flush()
         db.add_all(
             [
+                SelfServiceRegistrationRecord(
+                    email_normalized=email,
+                    email_hash=sha256(email.encode()).hexdigest(),
+                    display_name="Privacy Subject",
+                    tenant_name="Privacy Tenant",
+                    tenant_slug="privacy-tenant",
+                    default_space_name="Main Space",
+                    default_space_slug="main",
+                    plan_key="enterprise",
+                    plan_policy_revision="privacy-test-v1",
+                    home_region="cn-east-1",
+                    status="verified",
+                    challenge_generation=1,
+                    expires_at=NOW + timedelta(days=1),
+                    verified_at=NOW,
+                    terminal_at=NOW,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    plan_snapshot={"plan_key": "enterprise"},
+                    plan_snapshot_hash="a" * 64,
+                    idempotency_key="b" * 64,
+                    request_hash="c" * 64,
+                    version=2,
+                    created_at=NOW,
+                    updated_at=NOW,
+                ),
                 TenantMembership(
                     tenant_id=tenant_id,
                     user_id=user_id,
@@ -175,7 +203,7 @@ def _seed_user(factory: sessionmaker[Session]) -> tuple[UUID, UUID, UUID, str, s
                     provider="oidc",
                     issuer="https://idp.example.test",
                     subject="subject-123",
-                    email_normalized="subject@example.test",
+                    email_normalized=email,
                     email_verified=True,
                     status="active",
                     created_at=NOW,
@@ -597,7 +625,7 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
     privacy,
 ) -> None:
     factory, service, sessions, _operator_id = privacy
-    user_id, _tenant_id, _directory_id, token, external = _seed_user(factory)
+    user_id, tenant_id, _directory_id, token, external = _seed_user(factory)
     actor = _actor(sessions)
     preview = service.preview_deletion(
         actor,
@@ -632,10 +660,30 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
         assert all(value.email_normalized.startswith("deleted-") for value in invitations)
         assert all(value.accepted_by is None for value in invitations)
         assert all(value.deletion_manifest_id == started.manifest_id for value in invitations)
-        assert db.query(PrivacyIdentityTombstoneRecord).count() == 2
+        assert db.query(PrivacyIdentityTombstoneRecord).count() == 3
         receipt = db.scalar(sa.select(EnterpriseScimEventRecord))
         assert receipt.redaction_manifest_id == started.manifest_id
         assert receipt.result["redacted"] is True
+        registration = db.scalar(
+            sa.select(SelfServiceRegistrationRecord).where(
+                SelfServiceRegistrationRecord.deletion_manifest_id == started.manifest_id
+            )
+        )
+        assert registration is not None
+        assert registration.status == "revoked"
+        assert registration.email_normalized.startswith("deleted-")
+        assert registration.email_normalized.endswith("@invalid")
+        assert registration.email_normalized != "subject@example.test"
+        assert registration.email_hash != sha256(b"subject@example.test").hexdigest()
+        assert registration.display_name is None
+        assert registration.tenant_name == "Deleted Tenant"
+        assert registration.default_space_name == "Deleted Space"
+        assert registration.user_id != user_id
+        assert registration.tenant_id != tenant_id
+        assert registration.idempotency_key != "b" * 64
+        assert registration.request_hash != "c" * 64
+        assert registration.verified_at is None
+        assert registration.terminal_at.replace(tzinfo=timezone.utc) == NOW + timedelta(seconds=3)
 
     assertion = VerifiedIdentityAssertion(
         provider="oidc",
@@ -762,3 +810,15 @@ def test_tenant_deletion_preview_requires_suspension_and_no_active_runs(privacy)
         assert all(value.email_normalized.startswith("deleted-") for value in invitations)
         assert all(value.accepted_by is None for value in invitations)
         assert all(value.deletion_manifest_id == started.manifest_id for value in invitations)
+        registration = db.scalar(
+            sa.select(SelfServiceRegistrationRecord).where(
+                SelfServiceRegistrationRecord.deletion_manifest_id == started.manifest_id
+            )
+        )
+        assert registration is not None
+        assert registration.status == "revoked"
+        assert registration.email_normalized.startswith("deleted-")
+        assert registration.email_normalized.endswith("@invalid")
+        assert registration.email_normalized != "subject@example.test"
+        assert registration.user_id != _user_id
+        assert registration.tenant_id != tenant_id

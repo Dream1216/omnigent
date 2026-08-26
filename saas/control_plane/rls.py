@@ -26,6 +26,26 @@ class RlsContext:
 
 
 @dataclass(frozen=True, slots=True)
+class RegistrationRlsContext:
+    """Server-generated facts for the unauthenticated registration boundary."""
+
+    registration_id: UUID | None = None
+    token_hash: str | None = None
+    email_hash: str | None = None
+    idempotency_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OnboardingRlsContext:
+    """Trusted worker facts for one durable Tenant-onboarding Saga."""
+
+    onboarding_id: UUID | None = None
+    registration_id: UUID | None = None
+    actor_id: UUID | None = None
+    tenant_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PlatformRlsContext:
     """Server-verified Staff Realm facts used by platform-only policies."""
 
@@ -67,6 +87,7 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
     _set_local(session, "app.platform_target_admin_operation_id", "")
     _set_local(session, "app.platform_support_session_token_hash", "")
     _set_local(session, "app.platform_privacy_manifest_id", "")
+    _clear_registration_context(session)
     _set_local(session, "app.privacy_locator_hash", context.privacy_locator_hash or "")
     _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
     _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
@@ -112,6 +133,7 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         "app.privacy_locator_hash",
     ):
         _set_local(session, name, "")
+    _clear_registration_context(session)
     _set_local(
         session,
         "app.platform_principal_id",
@@ -160,3 +182,92 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
         str(context.privacy_manifest_id) if context.privacy_manifest_id else "",
     )
     _set_local(session, "app.privacy_locator_hash", context.privacy_locator_hash or "")
+
+
+def apply_registration_rls_context(session: Session, context: RegistrationRlsContext) -> None:
+    """Bind one public registration request and clear authenticated realms."""
+
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    _clear_customer_context(session)
+    _clear_platform_context(session)
+    _set_local(
+        session,
+        "app.registration_id",
+        str(context.registration_id) if context.registration_id else "",
+    )
+    _set_local(session, "app.registration_token_hash", context.token_hash or "")
+    _set_local(session, "app.registration_email_hash", context.email_hash or "")
+    _set_local(
+        session,
+        "app.registration_idempotency_key",
+        context.idempotency_key or "",
+    )
+    _set_local(session, "app.onboarding_id", "")
+
+
+def apply_onboarding_rls_context(session: Session, context: OnboardingRlsContext) -> None:
+    """Bind one trusted onboarding worker and clear all unrelated realms."""
+
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    _clear_customer_context(session)
+    _clear_platform_context(session)
+    _set_local(session, "app.registration_token_hash", "")
+    _set_local(session, "app.registration_email_hash", "")
+    _set_local(session, "app.registration_idempotency_key", "")
+    _set_local(
+        session,
+        "app.registration_id",
+        str(context.registration_id) if context.registration_id else "",
+    )
+    _set_local(
+        session,
+        "app.onboarding_id",
+        str(context.onboarding_id) if context.onboarding_id else "",
+    )
+    _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
+    _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
+
+
+def _clear_registration_context(session: Session) -> None:
+    for name in (
+        "app.registration_id",
+        "app.registration_token_hash",
+        "app.registration_email_hash",
+        "app.registration_idempotency_key",
+        "app.onboarding_id",
+    ):
+        _set_local(session, name, "")
+
+
+def _clear_customer_context(session: Session) -> None:
+    for name in (
+        "app.actor_id",
+        "app.tenant_id",
+        "app.space_id",
+        "app.api_credential_id",
+        "app.invitation_token_hash",
+        "app.scim_token_hash",
+        "app.privacy_locator_hash",
+    ):
+        _set_local(session, name, "")
+
+
+def _clear_platform_context(session: Session) -> None:
+    for name in (
+        "app.platform_principal_id",
+        "app.platform_session_token_hash",
+        "app.platform_identity_issuer",
+        "app.platform_identity_subject",
+        "app.platform_target_tenant_id",
+        "app.platform_target_user_id",
+        "app.platform_target_identity_conflict_id",
+        "app.platform_target_support_grant_id",
+        "app.platform_target_admin_operation_id",
+        "app.platform_support_session_token_hash",
+        "app.platform_privacy_manifest_id",
+    ):
+        _set_local(session, name, "")

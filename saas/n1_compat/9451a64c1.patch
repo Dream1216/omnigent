@@ -1,0 +1,927 @@
+diff --git a/deploy/docker/Dockerfile b/deploy/docker/Dockerfile
+index 041e82bb0..43dc45465 100644
+--- a/deploy/docker/Dockerfile
++++ b/deploy/docker/Dockerfile
+@@ -425,3 +425,26 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+     CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
+ 
+ CMD ["python", "/app/entrypoint.py"]
++
++# ── Pinned N-1 Outbox compatibility runtime ─────────────
++# This stage is part of the fixed 9451 compatibility patch. It inherits the
++# server runtime solely for its PostgreSQL-capable Python environment, removes
++# the HTTP health check, and starts only the content-blind admission launcher.
++FROM runtime AS n1-compat-runtime
++
++ARG SOURCE_REVISION
++ARG CONTROL_PLANE_SCHEMA_REVISION
++ARG N1_BASE_COMMIT
++ARG N1_CONTRACT_VERSION
++ARG N1_PATCH_SHA256
++ARG N1_PATCHED_TREE_HASH
++
++LABEL ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT} \
++      ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION} \
++      ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256} \
++      ai.omnigent.saas.n1.patched-tree-hash=${N1_PATCHED_TREE_HASH} \
++      ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
++      ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}
++
++HEALTHCHECK NONE
++CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]
+diff --git a/saas/control_plane/outbox.py b/saas/control_plane/outbox.py
+index 9bac41efe..de81a1fb3 100644
+--- a/saas/control_plane/outbox.py
++++ b/saas/control_plane/outbox.py
+@@ -98,9 +98,12 @@ class OutboxDispatcher:
+                     aggregate_key=event.aggregate_key,
+                     payload=event.payload,
+                 )
+-            except Exception as error:  # noqa: BLE001 - external sink failures are retried
++            except Exception:  # noqa: BLE001 - external sink failures are retried
+                 failed += 1
+-                self._release_failure(event, claim_token, error, dispatched_at)
++                try:
++                    self._release_failure(event, claim_token, dispatched_at)
++                except Exception:  # noqa: BLE001 - never chain a provider secret into logs
++                    raise RuntimeError("outbox_failure_release_failed") from None
+             else:
+                 if self._acknowledge(event.id, claim_token, dispatched_at):
+                     published += 1
+@@ -209,7 +212,6 @@ class OutboxDispatcher:
+         self,
+         event: ClaimedOutboxEvent,
+         claim_token: UUID,
+-        error: Exception,
+         failed_at: datetime,
+     ) -> None:
+         backoff_seconds = min(
+@@ -228,6 +230,9 @@ class OutboxDispatcher:
+                     available_at=failed_at + timedelta(seconds=backoff_seconds),
+                     claimed_at=None,
+                     claim_token=None,
+-                    last_error=str(error)[:2048],
++                    # p0s3's trusted database bridge maps this fixed, content-free
++                    # sentinel to its structured error code and digest.  Never
++                    # bind provider exception text into SQL parameters.
++                    last_error="n1_compat_delivery_error",
+                 )
+             )
+diff --git a/saas/n1_outbox_compat_admission.py b/saas/n1_outbox_compat_admission.py
+new file mode 100644
+index 000000000..760b0fc06
+--- /dev/null
++++ b/saas/n1_outbox_compat_admission.py
+@@ -0,0 +1,712 @@
++"""Catalog-bound admission for the pinned N-1 Outbox compatibility worker."""
++
++from __future__ import annotations
++
++import json
++import re
++from hashlib import sha256
++from typing import Never
++
++import sqlalchemy as sa
++from sqlalchemy.engine import Engine
++
++_BASE_ROLE = "saas_dispatcher"
++_COMPAT_ROLE = "saas_dispatcher_n1_compat"
++_CONTRACT = "p0s3-n1-outbox-security-compat-v1"
++_LOGIN_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,62}")
++_REJECTION = "N-1 Outbox compatibility catalog admission rejected"
++_SANITIZER_SOURCE_SHA256 = "06622ed237a21880bf84846f082deb876c3935597cd692f283d6f505cb616e3a"
++_DSN_FINGERPRINT_DOMAIN = b"omnigent:n1-compat:control-plane-coordinate:v1\0"
++_N1_OUTBOX_SELECT_COLUMNS = frozenset(
++    {
++        "id",
++        "published_at",
++        "available_at",
++        "claimed_at",
++        "created_at",
++        "claim_token",
++        "event_type",
++        "aggregate_type",
++        "aggregate_key",
++        "payload",
++        "attempt_count",
++    }
++)
++_N1_OUTBOX_UPDATE_COLUMNS = frozenset(
++    {
++        "attempt_count",
++        "available_at",
++        "claimed_at",
++        "claim_token",
++        "last_error",
++        "published_at",
++    }
++)
++_N1_COLUMN_ACLS = (
++    {
++        ("saas_platform_role_assignments", "expires_at", "SELECT", False),
++        ("saas_platform_role_assignments", "principal_id", "SELECT", False),
++        ("saas_platform_role_assignments", "role", "SELECT", False),
++        ("saas_platform_role_assignments", "status", "SELECT", False),
++        ("saas_platform_support_sessions", "expires_at", "SELECT", False),
++        ("saas_platform_support_sessions", "principal_id", "SELECT", False),
++        ("saas_platform_support_sessions", "revoked_at", "SELECT", False),
++        ("saas_platform_support_sessions", "token_hash", "SELECT", False),
++    }
++    | {
++        ("saas_control_plane_outbox", column, "SELECT", False)
++        for column in _N1_OUTBOX_SELECT_COLUMNS
++    }
++    | {
++        ("saas_control_plane_outbox", column, "UPDATE", False)
++        for column in _N1_OUTBOX_UPDATE_COLUMNS
++    }
++)
++_N1_EFFECTIVE_COLUMN_ACLS = {
++    (table, column, privilege) for table, column, privilege, _ in _N1_COLUMN_ACLS
++}
++_OUTBOX_SCHEMA_SIGNATURE = [
++    (1, "id", "uuid", True, None, "", ""),
++    (2, "tenant_id", "uuid", False, None, "", ""),
++    (3, "aggregate_type", "character varying(64)", True, None, "", ""),
++    (4, "aggregate_key", "character varying(256)", True, None, "", ""),
++    (5, "event_type", "character varying(128)", True, None, "", ""),
++    (6, "payload", "json", True, None, "", ""),
++    (7, "idempotency_key", "character varying(128)", True, None, "", ""),
++    (8, "request_hash", "character varying(64)", True, None, "", ""),
++    (9, "attempt_count", "integer", True, None, "", ""),
++    (10, "published_at", "timestamp with time zone", False, None, "", ""),
++    (11, "created_at", "timestamp with time zone", True, "now()", "", ""),
++    (12, "available_at", "timestamp with time zone", False, None, "", ""),
++    (13, "claimed_at", "timestamp with time zone", False, None, "", ""),
++    (14, "claim_token", "uuid", False, None, "", ""),
++    (15, "last_error", "character varying(2048)", False, None, "", ""),
++    (16, "last_error_code", "character varying(128)", False, "NULL::character varying", "", ""),
++    (17, "last_error_digest", "character varying(64)", False, "NULL::character varying", "", ""),
++    (18, "quarantined_at", "timestamp with time zone", False, None, "", ""),
++]
++
++
++def _reject() -> Never:
++    raise RuntimeError(_REJECTION) from None
++
++
++def dsn_coordinate_fingerprint(database_url: str) -> str:
++    """Bind non-secret connection coordinates without deriving from credentials."""
++
++    try:
++        url = sa.engine.make_url(database_url)
++        query = dict(url.query)
++        if not url.drivername.startswith("postgresql") or set(query) - {"sslmode"}:
++            _reject()
++        sslmode = query.get("sslmode", "")
++        if sslmode not in {
++            "",
++            "disable",
++            "allow",
++            "prefer",
++            "require",
++            "verify-ca",
++            "verify-full",
++        }:
++            _reject()
++        coordinates = {
++            "database": url.database or "",
++            "driver": url.drivername,
++            "host": url.host or "",
++            "port": url.port or 0,
++            "sslmode": sslmode,
++            "username": url.username or "",
++        }
++        encoded = json.dumps(
++            coordinates, sort_keys=True, separators=(",", ":"), ensure_ascii=True
++        ).encode()
++    except Exception:  # noqa: BLE001 - URL failures must not expose credential text
++        _reject()
++    return sha256(_DSN_FINGERPRINT_DOMAIN + encoded).hexdigest()
++
++
++def _normalized_expression(value: object) -> str:
++    return re.sub(r"[\s()]", "", str(value)).upper()
++
++
++def _membership_projection() -> str:
++    # PostgreSQL 16 introduced per-membership INHERIT/SET options.  Reading
++    # through to_jsonb keeps the query parseable on older catalogs; absence is
++    # intentionally treated as the historical permissive default.
++    return (
++        "granted.rolname, membership.admin_option, "
++        "COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true), "
++        "COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true) "
++    )
++
++
++def catalog_fingerprint(engine: Engine, *, expected_login: str) -> str:
++    """Return a canonical fingerprint only for the exact p0s3 compatibility ACL.
++
++    Every read is made by the worker's real connection in one read-only,
++    repeatable-read transaction.  Neither a DSN nor a catalog value is exposed
++    on rejection.  The launcher passes the result across ``execve`` and the
++    worker recomputes it before constructing the dispatcher.
++    """
++
++    if engine.dialect.name != "postgresql" or not _LOGIN_PATTERN.fullmatch(expected_login):
++        _reject()
++
++    try:
++        with engine.connect() as connection:
++            connection.exec_driver_sql(
++                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
++            )
++            identity = connection.execute(
++                sa.text(
++                    "SELECT current_user, session_user, current_database(), "
++                    "(SELECT oid FROM pg_database WHERE datname = current_database()), "
++                    "current_schema(), current_schemas(false), "
++                    "current_setting('server_version_num'), "
++                    "has_schema_privilege(current_user, 'public', 'USAGE'), "
++                    "has_schema_privilege(current_user, 'public', 'CREATE'), "
++                    "pg_has_role(current_user, :compat, 'MEMBER'), "
++                    "pg_has_role(current_user, :compat, 'USAGE'), "
++                    "pg_has_role(current_user, :base, 'MEMBER'), "
++                    "pg_has_role(current_user, :base, 'USAGE')"
++                ),
++                {"base": _BASE_ROLE, "compat": _COMPAT_ROLE},
++            ).one()
++            role_facts = connection.execute(
++                sa.text(
++                    "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
++                    "rolreplication, rolbypassrls, rolinherit "
++                    "FROM pg_roles WHERE rolname IN (:login, :compat, :base) "
++                    "ORDER BY rolname"
++                ),
++                {
++                    "base": _BASE_ROLE,
++                    "compat": _COMPAT_ROLE,
++                    "login": expected_login,
++                },
++            ).all()
++            projection = _membership_projection()
++            outgoing_memberships = connection.execute(
++                sa.text(
++                    f"SELECT member.rolname, {projection}"
++                    "FROM pg_auth_members AS membership "
++                    "JOIN pg_roles AS member ON member.oid = membership.member "
++                    "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
++                    "WHERE member.rolname IN (:login, :compat) "
++                    "ORDER BY member.rolname, granted.rolname"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).all()
++            incoming_memberships = connection.execute(
++                sa.text(
++                    f"SELECT granted.rolname, member.rolname, "
++                    f"{projection}"
++                    "FROM pg_auth_members AS membership "
++                    "JOIN pg_roles AS member ON member.oid = membership.member "
++                    "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
++                    "WHERE granted.rolname IN (:login, :compat) "
++                    "ORDER BY granted.rolname, member.rolname"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).all()
++            role_settings = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_db_role_setting AS setting "
++                    "JOIN pg_roles AS role ON role.oid = setting.setrole "
++                    "WHERE role.rolname IN (:login, :compat)"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            login_authority_dependencies = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_shdepend AS dependency "
++                    "JOIN pg_roles AS role ON role.oid = dependency.refobjid "
++                    "WHERE dependency.refclassid = 'pg_authid'::regclass "
++                    "AND dependency.deptype IN ('a', 'o') AND role.rolname = :login"
++                ),
++                {"login": expected_login},
++            ).scalar_one()
++            direct_relation_authority = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
++                    "WHERE namespace.nspname <> 'information_schema' "
++                    "AND namespace.nspname !~ '^pg_' "
++                    "AND (EXISTS (SELECT 1 FROM pg_roles AS owner "
++                    "WHERE owner.oid = relation.relowner "
++                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
++                    "SELECT 1 FROM aclexplode(relation.relacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE grantee.rolname IN (:login, :compat)))"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            direct_column_acls = connection.execute(
++                sa.text(
++                    "SELECT grantee.rolname, namespace.nspname, relation.relname, "
++                    "attribute.attname, "
++                    "acl.privilege_type, acl.is_grantable "
++                    "FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
++                    "JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid "
++                    "CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE namespace.nspname <> 'information_schema' "
++                    "AND namespace.nspname !~ '^pg_' "
++                    "AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') "
++                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped "
++                    "AND grantee.rolname IN (:login, :compat) "
++                    "ORDER BY grantee.rolname, relation.relname, attribute.attname, "
++                    "acl.privilege_type"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).all()
++            direct_schema_acls = connection.execute(
++                sa.text(
++                    "SELECT grantee.rolname, namespace.nspname, "
++                    "acl.privilege_type, acl.is_grantable "
++                    "FROM pg_namespace AS namespace "
++                    "CROSS JOIN LATERAL aclexplode(namespace.nspacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE namespace.nspname <> 'information_schema' "
++                    "AND namespace.nspname !~ '^pg_' "
++                    "AND grantee.rolname IN (:login, :compat) "
++                    "ORDER BY grantee.rolname, namespace.nspname, acl.privilege_type"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).all()
++            non_system_schema_ownership = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_namespace AS namespace "
++                    "JOIN pg_roles AS owner ON owner.oid = namespace.nspowner "
++                    "WHERE namespace.nspname <> 'information_schema' "
++                    "AND namespace.nspname !~ '^pg_' "
++                    "AND owner.rolname IN (:login, :compat)"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            direct_catalog_authority = connection.execute(
++                sa.text(
++                    "SELECT ("
++                    "SELECT count(*) FROM pg_proc AS object "
++                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
++                    "WHERE owner.oid = object.proowner "
++                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
++                    "SELECT 1 FROM aclexplode(object.proacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE grantee.rolname IN (:login, :compat))) + ("
++                    "SELECT count(*) FROM pg_type AS object "
++                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
++                    "WHERE owner.oid = object.typowner "
++                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
++                    "SELECT 1 FROM aclexplode(object.typacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE grantee.rolname IN (:login, :compat))) + ("
++                    "SELECT count(*) FROM pg_database AS object "
++                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
++                    "WHERE owner.oid = object.datdba "
++                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
++                    "SELECT 1 FROM aclexplode(object.datacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE grantee.rolname IN (:login, :compat))) + ("
++                    "SELECT count(*) FROM pg_default_acl AS object "
++                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
++                    "WHERE owner.oid = object.defaclrole "
++                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
++                    "SELECT 1 FROM aclexplode(object.defaclacl) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "WHERE grantee.rolname IN (:login, :compat)))"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            executable_security_definers = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_proc AS routine "
++                    "JOIN pg_namespace AS namespace "
++                    "ON namespace.oid = routine.pronamespace "
++                    "WHERE namespace.nspname <> 'information_schema' "
++                    "AND namespace.nspname !~ '^pg_' "
++                    "AND routine.prosecdef "
++                    "AND has_schema_privilege(current_user, namespace.oid, 'USAGE') "
++                    "AND has_function_privilege(current_user, routine.oid, 'EXECUTE')"
++                )
++            ).scalar_one()
++            effective_database_temp = connection.execute(
++                sa.text("SELECT has_database_privilege(current_user, current_database(), 'TEMP')")
++            ).scalar_one()
++            outbox_schema_columns = connection.execute(
++                sa.text(
++                    "SELECT attribute.attnum, attribute.attname, "
++                    "format_type(attribute.atttypid, attribute.atttypmod), "
++                    "attribute.attnotnull, "
++                    "pg_get_expr(default_value.adbin, default_value.adrelid), "
++                    "attribute.attidentity, attribute.attgenerated "
++                    "FROM pg_attribute AS attribute "
++                    "LEFT JOIN pg_attrdef AS default_value "
++                    "ON default_value.adrelid = attribute.attrelid "
++                    "AND default_value.adnum = attribute.attnum "
++                    "WHERE attribute.attrelid = "
++                    "'public.saas_control_plane_outbox'::regclass "
++                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped "
++                    "ORDER BY attribute.attnum"
++                )
++            ).all()
++            effective_allowed_column_acls = connection.execute(
++                sa.text(
++                    "SELECT relation.relname, attribute.attname, "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'SELECT'), "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'INSERT'), "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'UPDATE'), "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'REFERENCES') "
++                    "FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace "
++                    "ON namespace.oid = relation.relnamespace "
++                    "JOIN pg_attribute AS attribute "
++                    "ON attribute.attrelid = relation.oid "
++                    "WHERE namespace.nspname = 'public' "
++                    "AND relation.relkind IN ('r', 'p') "
++                    "AND relation.relname IN "
++                    "('saas_control_plane_outbox', "
++                    "'saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') "
++                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped "
++                    "ORDER BY relation.relname, attribute.attnum"
++                )
++            ).all()
++            effective_outbox_acl = connection.execute(
++                sa.text(
++                    "SELECT has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'SELECT'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'UPDATE'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'INSERT'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'DELETE'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'TRUNCATE'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'REFERENCES'), "
++                    "has_table_privilege(current_user, "
++                    "'public.saas_control_plane_outbox', 'TRIGGER')"
++                )
++            ).one()
++            forbidden_relation_acl = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
++                    "WHERE namespace.nspname = 'public' "
++                    "AND relation.relname NOT IN "
++                    "('saas_control_plane_outbox', "
++                    "'saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') AND (("
++                    "relation.relkind IN ('r', 'p', 'v', 'm', 'f') AND ("
++                    "has_table_privilege(current_user, relation.oid, 'SELECT') OR "
++                    "has_table_privilege(current_user, relation.oid, 'INSERT') OR "
++                    "has_table_privilege(current_user, relation.oid, 'UPDATE') OR "
++                    "has_table_privilege(current_user, relation.oid, 'DELETE') OR "
++                    "has_table_privilege(current_user, relation.oid, 'TRUNCATE') OR "
++                    "has_table_privilege(current_user, relation.oid, 'REFERENCES') OR "
++                    "has_table_privilege(current_user, relation.oid, 'TRIGGER'))) OR ("
++                    "relation.relkind = 'S' AND ("
++                    "has_sequence_privilege(current_user, relation.oid, 'USAGE') OR "
++                    "has_sequence_privilege(current_user, relation.oid, 'SELECT') OR "
++                    "has_sequence_privilege(current_user, relation.oid, 'UPDATE'))))"
++                )
++            ).scalar_one()
++            forbidden_column_acl = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace "
++                    "ON namespace.oid = relation.relnamespace "
++                    "JOIN pg_attribute AS attribute "
++                    "ON attribute.attrelid = relation.oid "
++                    "WHERE namespace.nspname = 'public' "
++                    "AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') "
++                    "AND relation.relname NOT IN "
++                    "('saas_control_plane_outbox', "
++                    "'saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') "
++                    "AND attribute.attnum > 0 AND NOT attribute.attisdropped AND ("
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'SELECT') OR "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'INSERT') OR "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'UPDATE') OR "
++                    "has_column_privilege(current_user, relation.oid, "
++                    "attribute.attname, 'REFERENCES'))"
++                )
++            ).scalar_one()
++            table_security = connection.execute(
++                sa.text(
++                    "SELECT relation.relname, relation.relrowsecurity, "
++                    "relation.relforcerowsecurity FROM pg_class AS relation "
++                    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
++                    "WHERE namespace.nspname = 'public' AND relation.relname IN "
++                    "('saas_control_plane_outbox', 'saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') ORDER BY relation.relname"
++                )
++            ).all()
++            constraint_definitions = connection.execute(
++                sa.text(
++                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
++                    "WHERE conrelid = 'public.saas_control_plane_outbox'::regclass "
++                    "AND conname = 'ck_outbox_legacy_error_null' "
++                    "AND contype = 'c' AND convalidated"
++                )
++            ).all()
++            policy_facts = connection.execute(
++                sa.text(
++                    "SELECT NOT policy.polpermissive, policy.polcmd, "
++                    "cardinality(policy.polroles), compat.oid = ANY(policy.polroles), "
++                    "pg_get_expr(policy.polqual, policy.polrelid), "
++                    "pg_get_expr(policy.polwithcheck, policy.polrelid) "
++                    "FROM pg_policy AS policy "
++                    "JOIN pg_roles AS compat ON compat.rolname = :compat "
++                    "WHERE policy.polrelid = "
++                    "'public.saas_control_plane_outbox'::regclass "
++                    "AND policy.polname = 'rls_outbox_n1_compat_dispatchable'"
++                ),
++                {"compat": _COMPAT_ROLE},
++            ).all()
++            planning_policy_facts = connection.execute(
++                sa.text(
++                    "SELECT relation.relname, policy.polname, NOT policy.polpermissive, "
++                    "policy.polcmd, cardinality(policy.polroles), "
++                    "compat.oid = ANY(policy.polroles), "
++                    "pg_get_expr(policy.polqual, policy.polrelid), "
++                    "pg_get_expr(policy.polwithcheck, policy.polrelid) "
++                    "FROM pg_policy AS policy "
++                    "JOIN pg_class AS relation ON relation.oid = policy.polrelid "
++                    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
++                    "JOIN pg_roles AS compat ON compat.rolname = :compat "
++                    "WHERE namespace.nspname = 'public' "
++                    "AND relation.relname IN "
++                    "('saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') "
++                    "AND compat.oid = ANY(policy.polroles) "
++                    "ORDER BY relation.relname, policy.polname"
++                ),
++                {"compat": _COMPAT_ROLE},
++            ).all()
++            sanitizer_facts = connection.execute(
++                sa.text(
++                    "SELECT sanitizer.proowner = outbox.relowner, language.lanname, "
++                    "sanitizer.prosecdef, sanitizer.proleakproof, sanitizer.provolatile, "
++                    "sanitizer.proparallel, sanitizer.proconfig, sanitizer.prosrc, "
++                    "(SELECT count(*) FROM aclexplode(sanitizer.proacl) AS acl "
++                    "WHERE acl.grantee <> sanitizer.proowner), "
++                    "has_function_privilege(compat.oid, sanitizer.oid, 'EXECUTE') "
++                    "FROM pg_proc AS sanitizer "
++                    "JOIN pg_language AS language ON language.oid = sanitizer.prolang "
++                    "JOIN pg_class AS outbox ON outbox.oid = "
++                    "'public.saas_control_plane_outbox'::regclass "
++                    "JOIN pg_roles AS compat ON compat.rolname = :compat "
++                    "WHERE sanitizer.oid = "
++                    "to_regprocedure('public.saas_bridge_n1_outbox_update()')"
++                ),
++                {"compat": _COMPAT_ROLE},
++            ).all()
++            trigger_facts = connection.execute(
++                sa.text(
++                    "SELECT trigger.tgname, trigger.tgenabled, trigger.tgtype, "
++                    "trigger.tgfoid = "
++                    "to_regprocedure('public.saas_bridge_n1_outbox_update()') "
++                    "FROM pg_trigger AS trigger WHERE trigger.tgrelid = "
++                    "'public.saas_control_plane_outbox'::regclass "
++                    "AND NOT trigger.tgisinternal AND (trigger.tgtype & 19) = 19 "
++                    "ORDER BY trigger.tgname"
++                )
++            ).all()
++            rewrite_rules = connection.execute(
++                sa.text(
++                    "SELECT relation.relname, rewrite.rulename "
++                    "FROM pg_rewrite AS rewrite "
++                    "JOIN pg_class AS relation ON relation.oid = rewrite.ev_class "
++                    "JOIN pg_namespace AS namespace "
++                    "ON namespace.oid = relation.relnamespace "
++                    "WHERE namespace.nspname = 'public' "
++                    "AND relation.relname IN "
++                    "('saas_control_plane_outbox', "
++                    "'saas_platform_role_assignments', "
++                    "'saas_platform_support_sessions') "
++                    "AND rewrite.rulename <> '_RETURN' "
++                    "ORDER BY relation.relname, rewrite.rulename"
++                )
++            ).all()
++    except Exception:  # noqa: BLE001 - catalog and driver failures are content-blind
++        _reject()
++
++    roles = {str(row[0]): tuple(bool(value) for value in row[1:]) for row in role_facts}
++    expected_roles = {
++        expected_login: (True, False, False, False, False, False, True),
++        _COMPAT_ROLE: (False, False, False, False, False, False, True),
++        _BASE_ROLE: (False, False, False, False, False, False, True),
++    }
++    outgoing = {tuple(row) for row in outgoing_memberships}
++    incoming = {tuple(row) for row in incoming_memberships}
++    expected_outgoing = {
++        (expected_login, _COMPAT_ROLE, False, True, False),
++        (_COMPAT_ROLE, _BASE_ROLE, False, False, False),
++    }
++    expected_incoming = {(_COMPAT_ROLE, expected_login, _COMPAT_ROLE, False, True, False)}
++    column_acls = [tuple(row) for row in direct_column_acls]
++    schema_acls = [tuple(row) for row in direct_schema_acls]
++    constraints = [_normalized_expression(row[0]) for row in constraint_definitions]
++    policies = [
++        (
++            bool(row[0]),
++            str(row[1]),
++            int(row[2]),
++            bool(row[3]),
++            _normalized_expression(row[4]),
++            _normalized_expression(row[5]),
++        )
++        for row in policy_facts
++    ]
++    planning_policies = [
++        (
++            str(row[0]),
++            str(row[1]),
++            bool(row[2]),
++            str(row[3]),
++            int(row[4]),
++            bool(row[5]),
++            _normalized_expression(row[6]),
++            row[7] is None,
++        )
++        for row in planning_policy_facts
++    ]
++    sanitizers = [
++        (
++            bool(row[0]),
++            str(row[1]),
++            bool(row[2]),
++            bool(row[3]),
++            str(row[4]),
++            str(row[5]),
++            list(row[6]) if row[6] is not None else None,
++            sha256(str(row[7]).strip().encode()).hexdigest(),
++            int(row[8]),
++            bool(row[9]),
++        )
++        for row in sanitizer_facts
++    ]
++    triggers = [tuple(row) for row in trigger_facts]
++    security = [tuple(row) for row in table_security]
++    outbox_schema = [
++        (
++            int(row[0]),
++            str(row[1]),
++            str(row[2]),
++            bool(row[3]),
++            None if row[4] is None else str(row[4]),
++            str(row[5]),
++            str(row[6]),
++        )
++        for row in outbox_schema_columns
++    ]
++    privilege_names = ("SELECT", "INSERT", "UPDATE", "REFERENCES")
++    effective_column_acls = {
++        (str(row[0]), str(row[1]), privilege)
++        for row in effective_allowed_column_acls
++        for privilege, allowed in zip(privilege_names, row[2:], strict=True)
++        if bool(allowed)
++    }
++
++    if (
++        tuple(identity[:2]) != (expected_login, expected_login)
++        or identity[4] != "public"
++        or list(identity[5]) != ["public"]
++        or not identity[7]
++        or identity[8]
++        or tuple(bool(value) for value in identity[9:]) != (True, True, True, False)
++        or roles != expected_roles
++        or outgoing != expected_outgoing
++        or incoming != expected_incoming
++        or role_settings != 0
++        or login_authority_dependencies != 0
++        or direct_relation_authority != 0
++        or {(row[2], row[3], row[4], bool(row[5])) for row in column_acls} != _N1_COLUMN_ACLS
++        or any(row[0] != _COMPAT_ROLE or row[1] != "public" for row in column_acls)
++        or schema_acls != [(_COMPAT_ROLE, "public", "USAGE", False)]
++        or non_system_schema_ownership != 0
++        or direct_catalog_authority != 0
++        or executable_security_definers != 0
++        or bool(effective_database_temp)
++        or tuple(bool(value) for value in effective_outbox_acl)
++        != (False, False, False, False, False, False, False)
++        or forbidden_relation_acl != 0
++        or forbidden_column_acl != 0
++        or effective_column_acls != _N1_EFFECTIVE_COLUMN_ACLS
++        or outbox_schema != _OUTBOX_SCHEMA_SIGNATURE
++        or security
++        != [
++            ("saas_control_plane_outbox", True, True),
++            ("saas_platform_role_assignments", True, True),
++            ("saas_platform_support_sessions", True, True),
++        ]
++        or constraints != ["CHECKLAST_ERRORISNULL"]
++        or policies != [(True, "*", 1, True, "QUARANTINED_ATISNULL", "QUARANTINED_ATISNULL")]
++        or planning_policies
++        != [
++            (
++                "saas_platform_role_assignments",
++                "rls_n1_compat_role_assignments_deny",
++                True,
++                "r",
++                1,
++                True,
++                "FALSE",
++                True,
++            ),
++            (
++                "saas_platform_support_sessions",
++                "rls_n1_compat_support_sessions_deny",
++                True,
++                "r",
++                1,
++                True,
++                "FALSE",
++                True,
++            ),
++        ]
++        or sanitizers
++        != [
++            (
++                True,
++                "plpgsql",
++                False,
++                False,
++                "v",
++                "u",
++                ["search_path=pg_catalog"],
++                _SANITIZER_SOURCE_SHA256,
++                0,
++                False,
++            )
++        ]
++        or triggers != [("trg_outbox_n1_compatibility", "O", 19, True)]
++        or rewrite_rules
++    ):
++        _reject()
++
++    canonical_facts = {
++        "contract": _CONTRACT,
++        "database": [str(identity[2]), int(identity[3])],
++        "expected_login": expected_login,
++        "roles": {name: list(values) for name, values in sorted(roles.items())},
++        "server_version_num": int(identity[6]),
++        "outbox_schema": [list(row) for row in outbox_schema],
++        "table_security": [list(row) for row in security],
++    }
++    encoded = json.dumps(
++        canonical_facts, sort_keys=True, separators=(",", ":"), ensure_ascii=True
++    ).encode()
++    return sha256(encoded).hexdigest()
+diff --git a/saas/n1_outbox_launcher.py b/saas/n1_outbox_launcher.py
+new file mode 100644
+index 000000000..bf08d1f58
+--- /dev/null
++++ b/saas/n1_outbox_launcher.py
+@@ -0,0 +1,63 @@
++"""One-purpose launcher for the patched N-1 Outbox compatibility worker."""
++
++from __future__ import annotations
++
++import os
++import sys
++
++import sqlalchemy as sa
++
++from saas.n1_outbox_compat_admission import (
++    catalog_fingerprint,
++    dsn_coordinate_fingerprint,
++)
++
++_CATALOG_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_CATALOG_FINGERPRINT"
++_DATABASE_URL_ENV = "OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL"
++_DSN_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_DSN_FINGERPRINT"
++_EXPECTED_LOGIN_ENV = "OMNIGENT_SAAS_N1_COMPAT_EXPECTED_LOGIN"
++_PYTHON_INJECTION_ENV = frozenset(
++    {
++        "PYTHONBREAKPOINT",
++        "PYTHONHOME",
++        "PYTHONINSPECT",
++        "PYTHONPATH",
++        "PYTHONSTARTUP",
++        "PYTHONWARNINGS",
++    }
++)
++
++
++def main() -> int:
++    """Admit the real Worker DSN, then atomically replace this process."""
++
++    database_url = os.environ.get(_DATABASE_URL_ENV, "").strip()
++    expected_login = os.environ.get(_EXPECTED_LOGIN_ENV, "").strip()
++    if not database_url or not expected_login:
++        raise RuntimeError("N-1 Outbox compatibility launcher configuration is invalid")
++
++    engine = None
++    try:
++        engine = sa.create_engine(database_url, pool_pre_ping=True, hide_parameters=True)
++        fingerprint = catalog_fingerprint(engine, expected_login=expected_login)
++    except Exception:  # noqa: BLE001 - never expose a credential-bearing URL
++        raise RuntimeError("N-1 Outbox compatibility launcher admission failed") from None
++    finally:
++        if engine is not None:
++            engine.dispose()
++
++    child_environment = {
++        name: value for name, value in os.environ.items() if name not in _PYTHON_INJECTION_ENV
++    }
++    child_environment[_CATALOG_FINGERPRINT_ENV] = fingerprint
++    child_environment[_DSN_FINGERPRINT_ENV] = dsn_coordinate_fingerprint(database_url)
++    os.execve(
++        sys.executable,
++        [sys.executable, "-I", "-m", "saas.outbox_worker"],
++        child_environment,
++    )
++    return 1  # pragma: no cover - successful execve never returns
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/saas/outbox_worker.py b/saas/outbox_worker.py
+index ddede8f42..655d72e40 100644
+--- a/saas/outbox_worker.py
++++ b/saas/outbox_worker.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import hmac
+ import importlib
+ import logging
+ import os
+@@ -15,9 +16,16 @@ from sqlalchemy.engine import Engine
+ from sqlalchemy.orm import Session, sessionmaker
+ 
+ from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
++from saas.n1_outbox_compat_admission import (
++    catalog_fingerprint,
++    dsn_coordinate_fingerprint,
++)
+ from saas.onboarding_composition import validate_production_outbox_publisher
+ 
+ _LOGGER = logging.getLogger("omnigent-saas-outbox")
++_CATALOG_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_CATALOG_FINGERPRINT"
++_DSN_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_DSN_FINGERPRINT"
++_EXPECTED_LOGIN_ENV = "OMNIGENT_SAAS_N1_COMPAT_EXPECTED_LOGIN"
+ 
+ 
+ class _Dispatcher(Protocol):
+@@ -75,14 +83,14 @@ class OutboxWorker:
+         while not stop.is_set():
+             try:
+                 result = self._dispatcher.dispatch_once(batch_size=self._batch_size)
+-            except Exception:
++            except Exception:  # noqa: BLE001 - cycle errors are retried without traceback logging
+                 infrastructure_failures += 1
+                 consecutive_errors += 1
+                 delay = min(
+                     self._max_error_backoff,
+                     self._error_backoff * (2 ** min(consecutive_errors - 1, 10)),
+                 )
+-                self._logger.exception(
++                self._logger.error(
+                     "Outbox dispatch cycle failed; retrying in %.3fs",
+                     delay,
+                 )
+@@ -272,9 +280,22 @@ def main() -> int:
+     if not publisher_reference:
+         raise RuntimeError("OMNIGENT_SAAS_OUTBOX_PUBLISHER is required")
+ 
+-    engine = sa.create_engine(database_url, pool_pre_ping=True)
++    expected_login = os.environ.get(_EXPECTED_LOGIN_ENV, "").strip()
++    expected_fingerprint = os.environ.get(_CATALOG_FINGERPRINT_ENV, "").strip()
++    expected_dsn_fingerprint = os.environ.get(_DSN_FINGERPRINT_ENV, "").strip()
++    if not expected_login or not expected_fingerprint or not expected_dsn_fingerprint:
++        raise RuntimeError("N-1 Outbox compatibility launcher admission is required")
++    if not hmac.compare_digest(dsn_coordinate_fingerprint(database_url), expected_dsn_fingerprint):
++        raise RuntimeError("N-1 Outbox compatibility DSN changed after launcher admission")
++
++    try:
++        engine = sa.create_engine(database_url, pool_pre_ping=True, hide_parameters=True)
++    except Exception:  # noqa: BLE001 - never expose a credential-bearing URL
++        raise RuntimeError("N-1 Outbox compatibility database setup failed") from None
+     try:
+-        verify_dispatcher_database_role(engine)
++        observed_fingerprint = catalog_fingerprint(engine, expected_login=expected_login)
++        if not hmac.compare_digest(observed_fingerprint, expected_fingerprint):
++            raise RuntimeError("N-1 Outbox compatibility catalog changed after admission")
+         sessions = sessionmaker(engine, expire_on_commit=False, class_=Session)
+         dispatcher = OutboxDispatcher(sessions, _load_publisher(publisher_reference))
+         stop = threading.Event()

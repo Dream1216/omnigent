@@ -1,0 +1,6 @@
+\set ON_ERROR_STOP on
+
+-- Atomic, first-error-stopping entrypoint for cluster-principal bootstrap.
+BEGIN;
+\ir postgresql_principals.sql
+COMMIT;

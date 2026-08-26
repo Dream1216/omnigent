@@ -1257,17 +1257,9 @@ def downgrade() -> None:
                 f"REVOKE ALL PRIVILEGES ON TABLE {', '.join(source_authority_tables)} FROM {role}"
             )
             op.execute(f"REVOKE USAGE ON SCHEMA public FROM {role}")
-            inherited_roles = bind.execute(
-                sa.text(
-                    "SELECT parent.rolname FROM pg_auth_members membership "
-                    "JOIN pg_roles parent ON parent.oid = membership.roleid "
-                    "JOIN pg_roles member ON member.oid = membership.member "
-                    "WHERE member.rolname = :role"
-                ),
-                {"role": role},
-            ).scalars()
-            for inherited_role in inherited_roles:
-                op.execute(f"REVOKE {inherited_role} FROM {role}")
+        # Cluster-role memberships belong to postgresql_principals.psql.  A
+        # schema downgrade must remain executable by the NOCREATEROLE schema
+        # owner and therefore revokes only database-object authority here.
 
     source_count = bind.execute(
         sa.text(

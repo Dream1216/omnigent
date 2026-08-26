@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _DATA_CLASSES = {"T0", "T1", "T2"}
@@ -145,7 +147,7 @@ def _validate_policy(
         "restore_completed",
         "source_schema_exact",
         "source_revision_exact",
-        "forced_rls_control_plane_101",
+        f"forced_rls_control_plane_{len(CONTROL_PLANE_RLS_TABLES)}",
         "forced_rls_runtime_17",
         "cross_tenant_negative",
         "tombstone_replay",

@@ -433,7 +433,15 @@ include = ["omnigent*", "saas*"]
 [tool.setuptools.package-data]
 "omnigent.db" = ["alembic.ini"]
 "omnigent.db.migrations" = ["script.py.mako"]
-"saas.control_plane" = ["alembic.ini", "postgresql_roles.sql"]
+"saas.control_plane" = [
+  "alembic.ini",
+  "postgresql_database.psql",
+  "postgresql_database.sql",
+  "postgresql_principals.psql",
+  "postgresql_principals.sql",
+  "postgresql_roles.psql",
+  "postgresql_roles.sql",
+]
 "saas.control_plane.migrations" = ["script.py.mako"]
 "saas" = ["upstream-baseline.json", "openapi-v1.json"]
 "saas.acceptance" = ["*.json", "README.md"]

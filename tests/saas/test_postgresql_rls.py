@@ -38,6 +38,9 @@ def _postgres_url() -> str:
 
 
 def _migrate(connection: sa.Connection, root: Path) -> None:
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+    )
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
@@ -979,7 +982,10 @@ def test_real_postgresql_outbox_dispatcher_concurrent_claim_and_lease_recovery()
         )
         connection.execute(
             sa.update(ControlPlaneOutboxEvent)
-            .where(ControlPlaneOutboxEvent.published_at.is_(None))
+            .where(
+                ControlPlaneOutboxEvent.published_at.is_(None),
+                ControlPlaneOutboxEvent.quarantined_at.is_(None),
+            )
             .values(available_at=dispatch_at + timedelta(days=1))
         )
         for event_id in event_ids:
@@ -1301,6 +1307,8 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
     wrong_password = f"wrong-{uuid4().hex}"
     mixed_password = f"mixed-{uuid4().hex}"
     schema_password = f"schema-{uuid4().hex}"
+    external_schema = f"dispatcher_external_{suffix}"
+    quoted_external_schema = owner_engine.dialect.identifier_preparer.quote(external_schema)
     with owner_engine.begin() as connection:
         _migrate(connection, root)
         connection.exec_driver_sql(
@@ -1321,6 +1329,13 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
             GRANT saas_dispatcher, saas_app TO {mixed_login};
             GRANT saas_dispatcher TO {schema_login};
             ALTER ROLE {schema_login} SET search_path = pg_catalog, public;
+            CREATE SCHEMA {quoted_external_schema};
+            CREATE SEQUENCE {quoted_external_schema}.probe_sequence;
+            CREATE VIEW {quoted_external_schema}.probe_view AS SELECT 1 AS id;
+            CREATE FUNCTION {quoted_external_schema}.probe_function() RETURNS integer
+                LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog
+                AS 'SELECT 1';
+            REVOKE ALL ON FUNCTION {quoted_external_schema}.probe_function() FROM PUBLIC;
             """
         )
 
@@ -1341,7 +1356,165 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
         base.set(username=schema_login, password=schema_password),
         pool_pre_ping=True,
     )
+    database_name = base.database
+    assert database_name is not None
+    quoted_database = owner_engine.dialect.identifier_preparer.quote(database_name)
     try:
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"GRANT TEMPORARY ON DATABASE {quoted_database} TO PUBLIC")
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="temporary schemas"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE TEMPORARY ON DATABASE {quoted_database} FROM PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"ALTER ROLE {dispatcher_login} CREATEDB")
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="non-bypass RLS posture"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"ALTER ROLE {dispatcher_login} NOCREATEDB")
+            connection.exec_driver_sql(f"GRANT SELECT (id) ON saas_tenants TO {dispatcher_login}")
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE SELECT (id) ON saas_tenants FROM {dispatcher_login}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT saas_dispatcher TO {dispatcher_login} WITH ADMIN OPTION"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe role membership options"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE ADMIN OPTION FOR saas_dispatcher FROM {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT UPDATE (attempt_count) ON saas_control_plane_outbox "
+                "TO saas_dispatcher WITH GRANT OPTION"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE GRANT OPTION FOR UPDATE (attempt_count) "
+                "ON saas_control_plane_outbox FROM saas_dispatcher CASCADE"
+            )
+            connection.exec_driver_sql(
+                "GRANT USAGE ON SCHEMA public TO saas_dispatcher WITH GRANT OPTION"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE GRANT OPTION FOR USAGE ON SCHEMA public FROM saas_dispatcher CASCADE"
+            )
+            connection.exec_driver_sql(
+                f"GRANT SELECT ON saas_control_plane_outbox TO {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE SELECT ON saas_control_plane_outbox FROM {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql("GRANT INSERT (id) ON saas_control_plane_outbox TO PUBLIC")
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe Outbox table grant set"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE INSERT (id) ON saas_control_plane_outbox FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "GRANT UPDATE (id) ON saas_outbox_quarantine_events TO PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe quarantine ledger grant set"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE UPDATE (id) ON saas_outbox_quarantine_events FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "GRANT REFERENCES (id) ON saas_control_plane_outbox TO PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe Outbox table grant set"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE REFERENCES (id) ON saas_control_plane_outbox FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "GRANT REFERENCES (id) ON saas_outbox_quarantine_events TO PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe quarantine ledger grant set"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE REFERENCES (id) ON saas_outbox_quarantine_events FROM PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA {quoted_external_schema} TO PUBLIC")
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="non-contract database objects"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON SCHEMA {quoted_external_schema} FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                f"GRANT SELECT ON {quoted_external_schema}.probe_view TO saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE SELECT ON {quoted_external_schema}.probe_view FROM saas_dispatcher"
+            )
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON SEQUENCE {quoted_external_schema}.probe_sequence TO PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="non-contract database objects"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON SEQUENCE {quoted_external_schema}.probe_sequence FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                f"GRANT EXECUTE ON FUNCTION {quoted_external_schema}.probe_function() TO PUBLIC"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="non-contract database objects"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE EXECUTE ON FUNCTION {quoted_external_schema}.probe_function() FROM PUBLIC"
+            )
+        dispatcher_engine.dispose()
         verify_dispatcher_database_role(dispatcher_engine)
         with pytest.raises(RuntimeError, match="dispatcher privilege boundary"):
             verify_dispatcher_database_role(wrong_engine)
@@ -1355,6 +1528,20 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
         mixed_engine.dispose()
         schema_engine.dispose()
         with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE TEMPORARY ON DATABASE {quoted_database} FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "REVOKE INSERT (id), REFERENCES (id) ON saas_control_plane_outbox FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                "REVOKE UPDATE (id), REFERENCES (id) ON saas_outbox_quarantine_events FROM PUBLIC"
+            )
+            connection.exec_driver_sql(f"DROP SCHEMA IF EXISTS {quoted_external_schema} CASCADE")
+            connection.exec_driver_sql(f"DROP OWNED BY {dispatcher_login}")
+            connection.exec_driver_sql(f"DROP OWNED BY {wrong_login}")
+            connection.exec_driver_sql(f"DROP OWNED BY {mixed_login}")
+            connection.exec_driver_sql(f"DROP OWNED BY {schema_login}")
             connection.exec_driver_sql(f"DROP ROLE {dispatcher_login}")
             connection.exec_driver_sql(f"DROP ROLE {wrong_login}")
             connection.exec_driver_sql(f"DROP ROLE {mixed_login}")

@@ -22,6 +22,40 @@ SOURCE_ROLES = {
 }
 
 
+def _pc5c2_source_role_projection(current_role_sql: str) -> str:
+    """Return the bounded database grants shipped with the pc5c2 source roles.
+
+    A rollback must replay the authority projection from the target release, not
+    the head projection whose later sections reference tables that do not exist
+    at pc5c2. Keep the slice marker-bound so authority additions in this block
+    remain covered by the real PostgreSQL N-1 test.
+    """
+
+    start_marker = "-- Each approval source scheduler owns one source projection boundary."
+    end_marker = "-- Public registration and background Tenant onboarding are separate"
+    start = current_role_sql.index(start_marker)
+    end = current_role_sql.index(end_marker, start)
+    source_roles = ", ".join(SOURCE_ROLES.values())
+    platform_seed_tables = ", ".join(
+        (
+            "saas_global_users",
+            "saas_tenants",
+            "saas_tenant_memberships",
+            "saas_platform_staff_principals",
+            "saas_platform_role_assignments",
+            "saas_platform_admin_operations",
+            "saas_platform_support_grants",
+            "saas_platform_support_sessions",
+            "saas_notification_templates",
+        )
+    )
+    return (
+        f"GRANT USAGE ON SCHEMA public TO {source_roles};\n"
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {platform_seed_tables} TO saas_platform;\n"
+        f"{current_role_sql[start:end]}"
+    )
+
+
 def _postgres_url() -> str:
     url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
     if not url:
@@ -227,7 +261,9 @@ def _insert_delivery(
 def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
     root = Path(__file__).resolve().parents[2]
     base_url = make_url(_postgres_url())
-    role_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+    role_sql = _pc5c2_source_role_projection(
+        (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+    )
     login_suffix = uuid4().hex[:10]
     database_name = f"omnigent_notification_source_{login_suffix}"
     database_url = base_url.set(database=database_name)
