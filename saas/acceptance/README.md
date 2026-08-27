@@ -1326,38 +1326,35 @@ anonymous deployed-browser E2E, signed OCI, vulnerability/license admission,
 one-hour Canary, N-1 production rollback, three-role independent approval or
 production Receipt was manufactured. Push success does not change those facts.
 
-## 2026-08-27 Wave 1 PostgreSQL N-1 merge-gate source freeze
+## 2026-08-27 correction — obsolete Wave 1 branch is not Product authority
 
-The current Product candidate is frozen as
-`SAAS_SOURCE_SHA=252aef483381dea07d9a6d23e17085d00bc181d5` on
-`codex/wave1-upstream-onboarding`. The worktree was clean when that exact ref was
-fast-forwarded to `origin`; the remote branch changed from
-`6b9f9d77ae53dddf1da1b99dbcc5358f1249cbe3` to the frozen Product SHA. This
-source boundary includes the four-commit repair chain
-`730ea5368a5ad600311d9642dc911900e59e6df9` ->
-`929022d17d1ac58801a7ad2ac86fb1a43c5036f7` ->
-`67cdb7182f100d6a0e1561a05c6d1bb7193f91c6` ->
-`252aef483381dea07d9a6d23e17085d00bc181d5`. It adds the trusted PostgreSQL
-N-1 merge-ready policy, closes the fixed-column and admission contracts for the
-pinned N-1 runtime, and binds the standalone candidate tests to the exact
-policy paths used by the merge gate.
+The immediately preceding documentation commit incorrectly named
+`252aef483381dea07d9a6d23e17085d00bc181d5` as the formal Product source. That
+statement is retracted by this forward correction; repository history is not
+rewritten. The formal Product source is
+`5a35742a8797637f0b85ca1427e98be12ffa325e`, with tree
+`ae8de93c9c580301b733ff9c8e8bb8eed90e28d2`. It passed exact-source Push run
+`33020428815`, including the PostgreSQL 16.14 N-1 job, passed PR #17 merge run
+`33020754508`, and entered `main` through merge
+`fe229be78ef5007de1351cd6e44a091450597d05`. Evidence PR #19 subsequently
+entered `main` at `5f108a120100bd23ec40a770f9231c0258810848`.
 
-The push is eligible to trigger `SaaS N-1 compatibility image` and `SaaS image
-candidate` for this exact branch. No run ID or conclusion is recorded here:
-the available GitHub CLI, GitHub connector, anonymous browser session and
-in-app browser session had no authenticated read access at the time of this
-evidence successor. Consequently, exact-SHA remote checks, required-check
-status, reviewer approval and mergeability remain `NOT_OBSERVED`. The branch
-comparison entry point is
-`https://github.com/Dream1216/omnigent/compare/main...codex/wave1-upstream-onboarding?expand=1`;
-publishing the ref is not a Pull Request and does not close the protected-merge
-gate.
+The old `codex/wave1-upstream-onboarding` line forked from
+`6b9f9d77ae53dddf1da1b99dbcc5358f1249cbe3`. Its later commits
+`929022d17d1ac58801a7ad2ac86fb1a43c5036f7`,
+`67cdb7182f100d6a0e1561a05c6d1bb7193f91c6`, and
+`252aef483381dea07d9a6d23e17085d00bc181d5` are not merged Product authority.
+The formal mainline instead carries the reviewed PR #16-#21 repair chain. A
+focused replay of the obsolete branch also failed two tests because its tree
+lacks `.github/actions/compat-smoke-saas-n1-gate/evaluate.sh`; therefore neither
+the branch push nor its documentation successor may be used as a replacement
+`SAAS_SOURCE_SHA`, a Pull Request, or protected-CI evidence.
 
-This paragraph is a documentation-only successor and does not change the
-frozen Product source boundary above. Until an authenticated readback proves a
-real PR and all required checks at the exact PR head, the merge gate remains
-`BLOCKED`. Live Provider/KMS, signed OCI promotion, vulnerability and license
-admission, OSS Object Lock, Admission, an isolated deployed-browser vertical
-E2E, the one-hour Canary, the 900-second N-1 production rollback, independent
-production approvals and production Receipts also remain unproven. Production
-therefore remains `NO-GO`.
+This obsolete branch is retained only as historical candidate material and
+must not be merged into current `main`. The immutable exact-source record on
+`main` remains authoritative. It proves N-1 compatibility candidate CI, not an
+immutable production image or production release. Live Provider/KMS, signed
+OCI promotion, vulnerability and license admission, OSS Object Lock,
+Admission, an isolated deployed-browser vertical E2E, the one-hour Canary, the
+900-second N-1 production rollback, independent production approvals and
+production Receipts remain unproven; production remains `NO-GO`.
