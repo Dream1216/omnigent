@@ -26,18 +26,28 @@ def _repository() -> Path:
 
 
 def _require_n1_base_commit() -> None:
-    completed = subprocess.run(
+    object_probe = subprocess.run(
         ["git", "cat-file", "-e", f"{_N1_BASE_COMMIT}^{{commit}}"],
         cwd=_repository(),
         check=False,
         capture_output=True,
         text=True,
     )
-    if completed.returncode != 0:
+    if object_probe.returncode == 0:
+        return
+    shallow_probe = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=_repository(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if shallow_probe.returncode == 0 and shallow_probe.stdout.strip() == "true":
         pytest.skip(
             "the pinned N-1 base commit is unavailable in this shallow checkout; "
             "the full-history compatibility and N-1 lanes enforce this contract"
         )
+    pytest.fail("the pinned N-1 base commit is missing from a full-history checkout")
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
