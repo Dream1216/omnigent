@@ -18,9 +18,26 @@ import yaml
 
 from saas.scripts.build_n1_compat import build_n1_compat, materialize_n1_compat
 
+_N1_BASE_COMMIT = "9451a64c1affa06630b9105bf39b56bb89feba3b"
+
 
 def _repository() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _require_n1_base_commit() -> None:
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{_N1_BASE_COMMIT}^{{commit}}"],
+        cwd=_repository(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        pytest.skip(
+            "the pinned N-1 base commit is unavailable in this shallow checkout; "
+            "the full-history compatibility and N-1 lanes enforce this contract"
+        )
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -47,6 +64,7 @@ def _source_hashes(root: Path) -> dict[str, str]:
 
 
 def test_n1_compat_builder_applies_only_the_pinned_security_patch() -> None:
+    _require_n1_base_commit()
     report = build_n1_compat(_repository())
 
     assert report == {
@@ -234,6 +252,7 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
 def test_n1_compat_builder_materializes_deterministic_git_free_source(
     tmp_path: Path,
 ) -> None:
+    _require_n1_base_commit()
     first = tmp_path / "first"
     second = tmp_path / "second"
 
@@ -272,6 +291,7 @@ def test_n1_compat_builder_materializes_deterministic_git_free_source(
 
 
 def test_n1_compat_hides_provider_db_and_dsn_secrets(caplog: pytest.LogCaptureFixture) -> None:
+    _require_n1_base_commit()
     provider_secret = "provider-secret-must-never-appear"
     database_secret = "database-secret-must-never-appear"
     first_password = "first-password-must-never-appear"
@@ -373,6 +393,7 @@ def test_n1_compat_hides_provider_db_and_dsn_secrets(caplog: pytest.LogCaptureFi
 
 
 def test_n1_compat_launcher_modules_ship_and_load_from_isolated_wheel(tmp_path: Path) -> None:
+    _require_n1_base_commit()
     with materialize_n1_compat(_repository()) as (root, _):
         output = tmp_path / "dist"
         uv = shutil.which("uv")
