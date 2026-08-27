@@ -7,9 +7,11 @@
 set -euo pipefail
 
 POSTGRESQL_N1_CHECK="verify-postgresql-n1"
-POSTGRESQL_N1_WORKFLOW="SaaS N-1 compatibility image"
+POSTGRESQL_N1_WORKFLOW_NAME="SaaS N-1 compatibility image"
+POSTGRESQL_N1_WORKFLOW_ID="342012814"
 POSTGRESQL_N1_WORKFLOW_PATH=".github/workflows/saas-n1-compat-image.yml"
 POSTGRESQL_N1_WORKFLOW_SHA256="d2691ba340d0aa32451ca6c047d1c5f9c6a54d06223825a4eae26be575333eeb"
+POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
@@ -175,14 +177,25 @@ done
 # The latest exact workflow run is authoritative, including its rerun attempt.
 # This prevents an older successful check-run from surviving while a newer
 # attempt is queued, in progress, or failed.
+WORKFLOW_METADATA=$(gh api \
+  "repos/$REPO/actions/workflows/$POSTGRESQL_N1_WORKFLOW_ID" \
+  --jq '[(.id | tostring), .name, .path, .state] | @tsv')
+IFS=$'\t' read -r OBSERVED_WORKFLOW_ID OBSERVED_WORKFLOW_NAME \
+  OBSERVED_WORKFLOW_PATH OBSERVED_WORKFLOW_STATE <<<"$WORKFLOW_METADATA"
+[[ "$OBSERVED_WORKFLOW_ID" == "$POSTGRESQL_N1_WORKFLOW_ID" ]] && \
+  [[ "$OBSERVED_WORKFLOW_NAME" == "$POSTGRESQL_N1_WORKFLOW_NAME" ]] && \
+  [[ "$OBSERVED_WORKFLOW_PATH" == "$POSTGRESQL_N1_WORKFLOW_PATH" ]] && \
+  [[ "$OBSERVED_WORKFLOW_STATE" == "active" ]] || \
+  fail "PostgreSQL N-1 workflow registry identity drifted"
+
 N1_RUN_ROWS=$(gh api \
-  "repos/$REPO/actions/workflows/saas-n1-compat-image.yml/runs?event=pull_request&head_sha=$SHA&per_page=100" \
+  "repos/$REPO/actions/workflows/$POSTGRESQL_N1_WORKFLOW_ID/runs?event=pull_request&head_sha=$SHA&per_page=100" \
   --paginate \
-  --jq '.workflow_runs[] | [(.id | tostring), (.run_attempt | tostring), .status, (.conclusion // "null"), .name, .display_title, .path, .event, .head_sha] | @tsv')
+  --jq '.workflow_runs[] | [(.id | tostring), (.run_attempt | tostring), .status, (.conclusion // "null"), (.workflow_id | tostring), .display_title, .path, .event, .head_sha] | @tsv')
 LATEST_N1_RUN=$(printf '%s\n' "$N1_RUN_ROWS" \
-  | awk -F'\t' -v name="$POSTGRESQL_N1_WORKFLOW" \
+  | awk -F'\t' -v workflow_id="$POSTGRESQL_N1_WORKFLOW_ID" \
       -v path="$POSTGRESQL_N1_WORKFLOW_PATH" -v sha="$SHA" \
-      '$5 == name && $7 == path && $8 == "pull_request" && $9 == sha' \
+      '$5 == workflow_id && $7 == path && $8 == "pull_request" && $9 == sha' \
   | sort -t$'\t' -k1,1nr -k2,2nr | head -n1)
 [[ -n "$LATEST_N1_RUN" ]] || fail "exact PostgreSQL N-1 workflow run is missing"
 IFS=$'\t' read -r AUTHORITATIVE_RUN_ID AUTHORITATIVE_RUN_ATTEMPT \
@@ -196,12 +209,33 @@ if [[ "$AUTHORITATIVE_RUN_STATUS" != "completed" ]] || \
   fail "latest PostgreSQL N-1 workflow run $AUTHORITATIVE_RUN_ID attempt $AUTHORITATIVE_RUN_ATTEMPT is not successful"
 fi
 
+AUTHORITATIVE_RUN_METADATA=$(gh api \
+  "repos/$REPO/actions/runs/$AUTHORITATIVE_RUN_ID" \
+  --jq '[(.workflow_id | tostring), .display_title, .path, .event, .status, (.conclusion // "null"), .head_sha, (.id | tostring), (.run_attempt | tostring), (.check_suite_id | tostring)] | @tsv')
+IFS=$'\t' read -r RUN_WORKFLOW_ID RUN_DISPLAY_TITLE RUN_PATH RUN_EVENT \
+  RUN_STATUS RUN_CONCLUSION RUN_HEAD_SHA RUN_ID RUN_ATTEMPT \
+  AUTHORITATIVE_CHECK_SUITE_ID <<<"$AUTHORITATIVE_RUN_METADATA"
+[[ "$RUN_WORKFLOW_ID" == "$POSTGRESQL_N1_WORKFLOW_ID" ]] && \
+  [[ "$RUN_DISPLAY_TITLE" == "$EXPECTED_RUN_TITLE" ]] && \
+  [[ "$RUN_PATH" == "$POSTGRESQL_N1_WORKFLOW_PATH" ]] && \
+  [[ "$RUN_EVENT" == "pull_request" ]] && \
+  [[ "$RUN_STATUS" == "$AUTHORITATIVE_RUN_STATUS" ]] && \
+  [[ "$RUN_CONCLUSION" == "$AUTHORITATIVE_RUN_CONCLUSION" ]] && \
+  [[ "$RUN_HEAD_SHA" == "$SHA" ]] && \
+  [[ "$RUN_ID" == "$AUTHORITATIVE_RUN_ID" ]] && \
+  [[ "$RUN_ATTEMPT" == "$AUTHORITATIVE_RUN_ATTEMPT" ]] && \
+  [[ "$AUTHORITATIVE_CHECK_SUITE_ID" =~ ^[0-9]+$ ]] || \
+  fail "authoritative PostgreSQL N-1 workflow metadata drifted"
+
 N1_CANDIDATES=$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate \
-  --jq '.check_runs[] | select(.name == "verify-postgresql-n1") | [.id, .status, (.conclusion // "null"), .details_url, .app.slug] | @tsv')
+  --jq '.check_runs[] | select(.name == "verify-postgresql-n1") | [.id, .status, (.conclusion // "null"), .details_url, (.app.id | tostring), .app.slug, (.check_suite.id | tostring)] | @tsv')
 TRUSTED_RUNS=""
-while IFS=$'\t' read -r check_id check_status check_conclusion details_url app_slug; do
+while IFS=$'\t' read -r check_id check_status check_conclusion details_url \
+  app_id app_slug check_suite_id; do
   [[ -z "$check_id" ]] && continue
+  [[ "$app_id" == "$POSTGRESQL_N1_ACTIONS_APP_ID" ]] || continue
   [[ "$app_slug" == "github-actions" ]] || continue
+  [[ "$check_suite_id" == "$AUTHORITATIVE_CHECK_SUITE_ID" ]] || continue
   if ! [[ "$details_url" =~ ^https://github.com/$REPO/actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then
     continue
   fi
@@ -210,33 +244,23 @@ while IFS=$'\t' read -r check_id check_status check_conclusion details_url app_s
   [[ "$job_id" == "$check_id" ]] || continue
   [[ "$run_id" == "$AUTHORITATIVE_RUN_ID" ]] || continue
 
-  run_metadata=$(gh api "repos/$REPO/actions/runs/$run_id" \
-    --jq '[.name, .display_title, .path, .event, .status, (.conclusion // "null"), .head_sha, (.id | tostring), (.run_attempt | tostring)] | @tsv') || continue
-  IFS=$'\t' read -r run_name run_display_title run_path run_event run_status \
-    run_conclusion run_head_sha observed_run_id observed_run_attempt <<<"$run_metadata"
-  if [[ "$run_name" != "$POSTGRESQL_N1_WORKFLOW" ]] || \
-     [[ "$run_display_title" != "$EXPECTED_RUN_TITLE" ]] || \
-     [[ "$run_path" != "$POSTGRESQL_N1_WORKFLOW_PATH" ]] || \
-     [[ "$run_event" != "pull_request" ]] || \
-     [[ "$run_head_sha" != "$SHA" ]] || \
-     [[ "$observed_run_id" != "$run_id" ]] || \
-     [[ "$observed_run_attempt" != "$AUTHORITATIVE_RUN_ATTEMPT" ]] || \
-     [[ "$run_status" != "$check_status" ]] || \
-     [[ "$run_conclusion" != "$check_conclusion" ]]; then
+  if [[ "$run_id" != "$RUN_ID" ]] || \
+     [[ "$check_status" != "$RUN_STATUS" ]] || \
+     [[ "$check_conclusion" != "$RUN_CONCLUSION" ]]; then
     continue
   fi
 
   job_metadata=$(gh api "repos/$REPO/actions/jobs/$job_id" \
-    --jq '[.name, .status, (.conclusion // "null"), .head_sha, (.run_id | tostring), (.run_attempt | tostring), .workflow_name] | @tsv') || continue
-  IFS=$'\t' read -r job_name job_status job_conclusion job_head_sha \
-    observed_job_run_id observed_job_run_attempt job_workflow_name <<<"$job_metadata"
-  if [[ "$job_name" != "$POSTGRESQL_N1_CHECK" ]] || \
+    --jq '[(.id | tostring), .name, .status, (.conclusion // "null"), .head_sha, (.run_id | tostring), (.run_attempt | tostring)] | @tsv') || continue
+  IFS=$'\t' read -r observed_job_id job_name job_status job_conclusion \
+    job_head_sha observed_job_run_id observed_job_run_attempt <<<"$job_metadata"
+  if [[ "$observed_job_id" != "$check_id" ]] || \
+     [[ "$job_name" != "$POSTGRESQL_N1_CHECK" ]] || \
      [[ "$job_status" != "$check_status" ]] || \
      [[ "$job_conclusion" != "$check_conclusion" ]] || \
      [[ "$job_head_sha" != "$SHA" ]] || \
      [[ "$observed_job_run_id" != "$run_id" ]] || \
-     [[ "$observed_job_run_attempt" != "$AUTHORITATIVE_RUN_ATTEMPT" ]] || \
-     [[ "$job_workflow_name" != "$POSTGRESQL_N1_WORKFLOW" ]]; then
+     [[ "$observed_job_run_attempt" != "$AUTHORITATIVE_RUN_ATTEMPT" ]]; then
     continue
   fi
   TRUSTED_RUNS+="$run_id"$'\t'"$check_status"$'\t'"$check_conclusion"$'\n'
