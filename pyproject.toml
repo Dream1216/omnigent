@@ -313,6 +313,9 @@ lint = [
 ]
 test = [
     "pytest>=7.0",
+    # The catch-all test shard collects SaaS modules even when PostgreSQL-backed
+    # cases are skipped, so their driver must remain importable during collection.
+    "psycopg[binary]>=3.1,<4",
     # These clients are optional product capabilities, but their tests import
     # and execute the real packages against mocks.
     "hindsight-client>=0.4.0",
