@@ -1325,3 +1325,34 @@ aggregate gates and zero of eight admitted evidence kinds. No real Provider/KMS,
 anonymous deployed-browser E2E, signed OCI, vulnerability/license admission,
 one-hour Canary, N-1 production rollback, three-role independent approval or
 production Receipt was manufactured. Push success does not change those facts.
+
+## 2026-08-27 N-1 security compatibility source evidence
+
+Formal Product source `5a35742a8797637f0b85ca1427e98be12ffa325e`
+has tree `ae8de93c9c580301b733ff9c8e8bb8eed90e28d2`. Exact-source Push
+[run 33020428815](https://github.com/Dream1216/omnigent/actions/runs/33020428815)
+passed both the candidate job and the fixed PostgreSQL 16.14 N-1 job. The
+candidate job passed five patch tests and two real PostgreSQL 18 p0s3 contract
+tests; the N-1 job generated and validated JUnit cardinality 3 tests, 0 failures,
+0 errors and 0 skips. Artifact `9626551206` binds its candidate payload and OCI
+labels to that exact Product revision. Both repeated `linux/amd64` and
+`linux/arm64` builds have matching platform manifest/config facts within the run.
+
+PR [#17](https://github.com/Dream1216/omnigent/pull/17) independently passed
+[run 33020754508](https://github.com/Dream1216/omnigent/actions/runs/33020754508)
+against temporary merge revision `334cfe9c74f7eb7da4639da7868e0a1f5a6c5757`.
+That temporary revision has parents `3d4b0b55a1f78e1dde918162d174ace1e7dde2b5`
+and the exact Product source, and it has the same Product tree. Its artifact
+`9626753565` explicitly records the temporary merge as `product_revision`; it is
+not misrepresented as an exact-source Push. PR #17 was then merged as
+`fe229be78ef5007de1351cd6e44a091450597d05`, with the same two parents and tree.
+
+The immutable record
+`p0-n1-security-compat-image-candidate-ci-33020428815.json` stores both run/job
+identities, JUnit cardinalities, artifact archive and payload SHA-256 values, and
+the exact per-platform candidate digests. It proves N-1 compatibility candidate
+CI only. Neither run published an immutable production image. No production
+signature Receipt, vulnerability/license admission, one-hour Canary, 900-second
+production N-1 rollback, or production Receipt exists in this record. The P0
+image gate stays `pending`, P0 stays `in_progress`, and the release stays
+`NO-GO`.

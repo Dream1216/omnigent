@@ -16,6 +16,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/billing_metering_transport.py",
     "saas/acceptance/p0-p6-evidence.json",
     "saas/acceptance/p0-adr-approval-contract-ci-31276530223.json",
+    "saas/acceptance/p0-n1-security-compat-image-candidate-ci-33020428815.json",
     "saas/acceptance/pc1-platform-security-ci-31187073403.json",
     "saas/acceptance/pc1-platform-security-image-candidate-ci-31187141816.json",
     "saas/acceptance/pc2-p6-lifecycle-period-close-ci-31201598950.json",
