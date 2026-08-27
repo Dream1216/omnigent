@@ -348,11 +348,11 @@ def test_only_the_three_exact_post_paths_are_public_and_origin_guarded() -> None
     (
         ("/saas/onboarding/registrations", "registration.request"),
         (
-            f"/saas/onboarding/registrations/{uuid4()}/resend",
+            "/saas/onboarding/registrations/00000000-0000-4000-8000-000000000001/resend",
             "registration.resend",
         ),
         (
-            f"/saas/onboarding/registrations/{uuid4()}/verify",
+            "/saas/onboarding/registrations/00000000-0000-4000-8000-000000000002/verify",
             "registration.verify",
         ),
     ),

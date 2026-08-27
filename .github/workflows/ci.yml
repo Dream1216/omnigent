@@ -133,6 +133,7 @@ jobs:
               --ignore=tests/runner
               --ignore=tests/stores
             dist: worksteal
+            extra: saas
           # Databricks-coupled tests (Lakebase token engine, psycopg, the
           # router's ambient workspace-credential chain). This is the only lane
           # that installs the `databricks` extra; the @pytest.mark.databricks
