@@ -81,7 +81,7 @@ def test_n1_compat_builder_applies_only_the_pinned_security_patch() -> None:
         "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
         "contract_version": "p0s3-n1-outbox-security-compat-v1",
         "materialized_source": None,
-        "patch_sha256": "69fa096ab8244faa12f67406c371441ae9e6024e109a733e8f765a8370ff1469",
+        "patch_sha256": "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23",
         "patched_tree_hash": "git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73",
         "required_schema_revision": "p0s000000003",
         "schema_change_policy": {
@@ -205,7 +205,7 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b" in source
     assert (
         "N1_PATCH_SHA256: "
-        "69fa096ab8244faa12f67406c371441ae9e6024e109a733e8f765a8370ff1469" in source
+        "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23" in source
     )
     assert "N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source

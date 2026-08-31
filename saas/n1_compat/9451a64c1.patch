@@ -932,29 +932,29 @@ index ddede8f4..655d72e4 100644
 --- a/saas/outbox_worker.py
 +++ b/saas/outbox_worker.py
 @@ -2,6 +2,7 @@
- 
+
  from __future__ import annotations
- 
+
 +import hmac
  import importlib
  import logging
  import os
 @@ -15,9 +16,16 @@ from sqlalchemy.engine import Engine
  from sqlalchemy.orm import Session, sessionmaker
- 
+
  from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
 +from saas.n1_outbox_compat_admission import (
 +    catalog_fingerprint,
 +    dsn_coordinate_fingerprint,
 +)
  from saas.onboarding_composition import validate_production_outbox_publisher
- 
+
  _LOGGER = logging.getLogger("omnigent-saas-outbox")
 +_CATALOG_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_CATALOG_FINGERPRINT"
 +_DSN_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_DSN_FINGERPRINT"
 +_EXPECTED_LOGIN_ENV = "OMNIGENT_SAAS_N1_COMPAT_EXPECTED_LOGIN"
- 
- 
+
+
  class _Dispatcher(Protocol):
 @@ -75,14 +83,14 @@ class OutboxWorker:
          while not stop.is_set():
@@ -976,7 +976,7 @@ index ddede8f4..655d72e4 100644
 @@ -272,9 +280,22 @@ def main() -> int:
      if not publisher_reference:
          raise RuntimeError("OMNIGENT_SAAS_OUTBOX_PUBLISHER is required")
- 
+
 -    engine = sa.create_engine(database_url, pool_pre_ping=True)
 +    expected_login = os.environ.get(_EXPECTED_LOGIN_ENV, "").strip()
 +    expected_fingerprint = os.environ.get(_CATALOG_FINGERPRINT_ENV, "").strip()
