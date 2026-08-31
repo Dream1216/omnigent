@@ -172,18 +172,24 @@ def _verify_contract(root: Path) -> None:
         or "uv:0.12.1@sha256:cf4eedcaa816" not in n1_dockerfile
         or "FROM ${PYTHON_IMAGE} AS n1-compat-builder" not in n1_dockerfile
         or "OMNIGENT_SKIP_WEB_UI=true" not in n1_dockerfile
+        or "UV_NO_INSTALLER_METADATA=1" not in n1_dockerfile
         or "COPY pyproject.toml setup.py uv.lock README.md ./" not in n1_dockerfile
         or "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" not in n1_dockerfile
+        or "python -m venv --without-pip /opt/venv" not in n1_dockerfile
         or "/usr/local/bin/uv pip install --python /opt/venv/bin/python" not in n1_dockerfile
         or "/usr/local/bin/uv sync --frozen --active --package omnigent" not in n1_dockerfile
         or "--no-dev --no-editable --no-cache" not in n1_dockerfile
         or '[ "${installed}" = "3.3.4" ]' not in n1_dockerfile
+        or "/opt/venv/bin/python -B -I -c" not in n1_dockerfile
         or "import saas.n1_outbox_launcher as l, saas.outbox_worker as w" not in n1_dockerfile
         or 'p=Path("/opt/venv").resolve()' not in n1_dockerfile
         or "Path(m.__file__).resolve().is_relative_to(p)" not in n1_dockerfile
+        or "/usr/local/bin/uv pip check --python /opt/venv/bin/python" not in n1_dockerfile
+        or "find /opt/venv -type f -name '*.pyc' -print -quit" not in n1_dockerfile
+        or "find /opt/venv -type f -name 'uv_cache.json' -print -quit" not in n1_dockerfile
         or "FROM ${PYTHON_IMAGE} AS n1-compat-runtime" not in n1_dockerfile
         or "COPY --from=n1-compat-builder /opt/venv /opt/venv" not in n1_dockerfile
-        or 'CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]' not in n1_dockerfile
+        or 'CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]' not in n1_dockerfile
         or "ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT}" not in n1_dockerfile
         or "ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION}" not in n1_dockerfile
         or "ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256}" not in n1_dockerfile

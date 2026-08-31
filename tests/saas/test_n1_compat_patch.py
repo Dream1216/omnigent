@@ -81,8 +81,8 @@ def test_n1_compat_builder_applies_only_the_pinned_security_patch() -> None:
         "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
         "contract_version": "p0s3-n1-outbox-security-compat-v1",
         "materialized_source": None,
-        "patch_sha256": "ea66dacc4c6a2100bfa3497ff4213112074a13b8f23afafbf4e9fb78b4ca3409",
-        "patched_tree_hash": "git-sha1:f4f3f68b8ad18901fb974354d9102463af1c32cb",
+        "patch_sha256": "69fa096ab8244faa12f67406c371441ae9e6024e109a733e8f765a8370ff1469",
+        "patched_tree_hash": "git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73",
         "required_schema_revision": "p0s000000003",
         "schema_change_policy": {
             "outbox_ddl_requires_worker_drain": True,
@@ -199,9 +199,9 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b" in source
     assert (
         "N1_PATCH_SHA256: "
-        "ea66dacc4c6a2100bfa3497ff4213112074a13b8f23afafbf4e9fb78b4ca3409" in source
+        "69fa096ab8244faa12f67406c371441ae9e6024e109a733e8f765a8370ff1469" in source
     )
-    assert "N1_PATCHED_TREE_HASH: git-sha1:f4f3f68b8ad18901fb974354d9102463af1c32cb" in source
+    assert "N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
     assert workflow["env"]["N1_BUILDX_VERSION"] == "v0.36.1"
@@ -270,17 +270,23 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "FROM ${PYTHON_IMAGE} AS n1-compat-builder" in n1_dockerfile
     assert "uv:0.12.1@sha256:cf4eedcaa816" in n1_dockerfile
     assert "OMNIGENT_SKIP_WEB_UI=true" in n1_dockerfile
+    assert "UV_NO_INSTALLER_METADATA=1" in n1_dockerfile
     assert "COPY pyproject.toml setup.py uv.lock README.md ./" in n1_dockerfile
     assert "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" in n1_dockerfile
+    assert "python -m venv --without-pip /opt/venv" in n1_dockerfile
     assert "/usr/local/bin/uv sync --frozen --active --package omnigent" in n1_dockerfile
     assert "/usr/local/bin/uv pip install --python /opt/venv/bin/python" in n1_dockerfile
     assert "--require-hashes" in n1_dockerfile
     assert "--no-build-isolation" in n1_dockerfile
     assert "--no-dev --no-editable --no-cache" in n1_dockerfile
     assert '[ "${installed}" = "3.3.4" ]' in n1_dockerfile
+    assert "/opt/venv/bin/python -B -I -c" in n1_dockerfile
     assert "import saas.n1_outbox_launcher as l, saas.outbox_worker as w" in n1_dockerfile
     assert 'p=Path("/opt/venv").resolve()' in n1_dockerfile
     assert "Path(m.__file__).resolve().is_relative_to(p)" in n1_dockerfile
+    assert "/usr/local/bin/uv pip check --python /opt/venv/bin/python" in n1_dockerfile
+    assert "find /opt/venv -type f -name '*.pyc' -print -quit" in n1_dockerfile
+    assert "find /opt/venv -type f -name 'uv_cache.json' -print -quit" in n1_dockerfile
     assert "FROM ${PYTHON_IMAGE} AS n1-compat-runtime" in n1_dockerfile
     assert "COPY --from=n1-compat-builder /opt/venv /opt/venv" in n1_dockerfile
     assert "COPY --from=n1-compat-builder /build" not in n1_dockerfile
@@ -289,7 +295,7 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "server-builder" not in n1_dockerfile
     assert "web-builder" not in n1_dockerfile
     assert "RUN pip install" not in n1_dockerfile
-    assert 'CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]' in patch_source
+    assert 'CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]' in patch_source
     assert "ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT}" in patch_source
     assert "ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION}" in patch_source
     assert "ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256}" in patch_source

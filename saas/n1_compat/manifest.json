@@ -3,8 +3,8 @@
   "contract_version": "p0s3-n1-outbox-security-compat-v1",
   "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
   "patch_file": "saas/n1_compat/9451a64c1.patch",
-  "patch_sha256": "ea66dacc4c6a2100bfa3497ff4213112074a13b8f23afafbf4e9fb78b4ca3409",
-  "dockerfile_sha256": "1c5c9b91a566fe334f90b6b14e62d378139f56214081157e591bce94f3930567",
+  "patch_sha256": "69fa096ab8244faa12f67406c371441ae9e6024e109a733e8f765a8370ff1469",
+  "dockerfile_sha256": "df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed",
   "dockerignore_sha256": "72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275",
   "build_requirements_sha256": "f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29",
   "allowed_paths": [
@@ -16,7 +16,7 @@
     "saas/n1_outbox_launcher.py",
     "saas/outbox_worker.py"
   ],
-  "patched_tree_hash": "git-sha1:f4f3f68b8ad18901fb974354d9102463af1c32cb",
+  "patched_tree_hash": "git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73",
   "required_schema_revision": "p0s000000003",
   "launcher_module": "saas.n1_outbox_launcher",
   "worker_module": "saas.outbox_worker",

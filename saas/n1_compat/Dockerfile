@@ -6,7 +6,8 @@ FROM ${PYTHON_IMAGE} AS n1-compat-builder
 ARG SOURCE_DATE_EPOCH
 ENV PYTHONDONTWRITEBYTECODE=1 \
     OMNIGENT_SKIP_WEB_UI=true \
-    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
+    UV_NO_INSTALLER_METADATA=1
 COPY --from=uv-bin /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md ./
@@ -17,14 +18,17 @@ COPY saas/ ./saas/
 COPY integrations/slack/ ./integrations/slack/
 COPY examples/ ./examples/
 RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
- && python -m venv /opt/venv \
+ && python -m venv --without-pip /opt/venv \
  && /usr/local/bin/uv pip install --python /opt/venv/bin/python --require-hashes \
       -r saas/n1_compat/build-requirements.txt \
  && VIRTUAL_ENV=/opt/venv /usr/local/bin/uv sync --frozen --active --package omnigent \
       --extra saas --no-dev --no-editable --no-cache --no-build-isolation \
- && installed="$(/opt/venv/bin/python -c 'import importlib.metadata as m; print(m.version("psycopg"))')" \
+ && installed="$(/opt/venv/bin/python -B -I -c 'import importlib.metadata as m; print(m.version("psycopg"))')" \
  && [ "${installed}" = "3.3.4" ] \
- && /opt/venv/bin/python -I -c 'from pathlib import Path; import saas.n1_outbox_launcher as l, saas.outbox_worker as w; p=Path("/opt/venv").resolve(); assert all(Path(m.__file__).resolve().is_relative_to(p) for m in (l, w))'
+ && /opt/venv/bin/python -B -I -c 'from pathlib import Path; import saas.n1_outbox_launcher as l, saas.outbox_worker as w; p=Path("/opt/venv").resolve(); assert all(Path(m.__file__).resolve().is_relative_to(p) for m in (l, w))' \
+ && /usr/local/bin/uv pip check --python /opt/venv/bin/python \
+ && test -z "$(find /opt/venv -type f -name '*.pyc' -print -quit)" \
+ && test -z "$(find /opt/venv -type f -name 'uv_cache.json' -print -quit)"
 
 FROM ${PYTHON_IMAGE} AS n1-compat-runtime
 ARG SOURCE_REVISION
@@ -49,4 +53,4 @@ LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
 COPY --from=n1-compat-builder /opt/venv /opt/venv
 WORKDIR /app
 HEALTHCHECK NONE
-CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]
+CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]
