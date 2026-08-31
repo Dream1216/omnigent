@@ -24,11 +24,11 @@ from pathlib import Path
 
 from omnigent.host.connect import (
     HARNESS_CREDENTIAL_ENV_VARS,
-    RUNNER_ENTRY_MODULE_ENV_VAR,
     RUNNER_ENV_PASSTHROUGH_ENV_VAR,
     HostProcess,
     run_host_process,
 )
+from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.frames import HostLaunchRunnerFrame, HostLaunchRunnerResultFrame
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
@@ -116,7 +116,6 @@ def build_managed_host_environment(base: Mapping[str, str]) -> dict[str, str]:
     # Canonicalize every false spelling to the exact value used in deployment
     # evidence and ensure the upstream Host selects its direct-Popen path.
     environment[ZYGOTE_ENABLED_ENV_VAR] = _CANONICAL_ZYGOTE_DISABLED
-    environment[RUNNER_ENTRY_MODULE_ENV_VAR] = managed_runner_entry_module()
     environment.pop(RUNNER_ENV_PASSTHROUGH_ENV_VAR, None)
     for name in HARNESS_CREDENTIAL_ENV_VARS:
         if not environment.get(name, "").strip():
@@ -131,11 +130,6 @@ def require_managed_host_environment(environment: Mapping[str, str]) -> None:
         raise ManagedRunnerProcessPolicyError(
             "managed_runner_zygote_not_disabled",
             "managed Host must disable the upstream Runner zygote with the canonical value 0",
-        )
-    if environment.get(RUNNER_ENTRY_MODULE_ENV_VAR) != managed_runner_entry_module():
-        raise ManagedRunnerProcessPolicyError(
-            "managed_runner_entry_invalid",
-            "managed Host must use the reviewed downstream Runner entrypoint",
         )
     credentials = _ambient_credential_names(environment)
     if credentials or environment.get(RUNNER_ENV_PASSTHROUGH_ENV_VAR, "").strip():
@@ -164,14 +158,20 @@ class ManagedHostProcess(HostProcess):
         identity: HostIdentity,
         server_url: str,
         *,
+        lifecycle_lock: DaemonLifecycleLock | None = None,
         launch_authority: ManagedRunnerLaunchAuthority,
         envelope_directory: Path,
     ) -> None:
-        super().__init__(identity, server_url)
+        super().__init__(identity, server_url, lifecycle_lock=lifecycle_lock)
         self._launch_authority = launch_authority
         self._envelope_directory = envelope_directory
         self._pending_metering: dict[str, ManagedMeteringGrant] = {}
         self._metering_envelopes: dict[str, Path] = {}
+
+    def _runner_entry_module(self) -> str:
+        """Select the reviewed managed Runner entrypoint without ambient input."""
+
+        return managed_runner_entry_module()
 
     async def _handle_launch(self, frame: HostLaunchRunnerFrame) -> HostLaunchRunnerResultFrame:
         runner_id = token_bound_runner_id(frame.binding_token)
@@ -245,6 +245,7 @@ def run_managed_host_process(
     server_url: str,
     config_path: Path | None = None,
     *,
+    daemon_target: str | None = None,
     launch_authority: ManagedRunnerLaunchAuthority,
     envelope_directory: Path,
 ) -> None:
@@ -254,15 +255,26 @@ def run_managed_host_process(
 
     # HostProcess reads the zygote switch in its constructor, so activation
     # must precede the official composition root.
-    def factory(identity: HostIdentity, resolved_server_url: str) -> ManagedHostProcess:
+    def factory(
+        identity: HostIdentity,
+        resolved_server_url: str,
+        *,
+        lifecycle_lock: DaemonLifecycleLock | None = None,
+    ) -> ManagedHostProcess:
         return ManagedHostProcess(
             identity,
             resolved_server_url,
+            lifecycle_lock=lifecycle_lock,
             launch_authority=launch_authority,
             envelope_directory=envelope_directory,
         )
 
-    run_host_process(server_url, config_path, host_factory=factory)
+    run_host_process(
+        server_url,
+        config_path,
+        host_factory=factory,
+        daemon_target=daemon_target,
+    )
 
 
 __all__ = [

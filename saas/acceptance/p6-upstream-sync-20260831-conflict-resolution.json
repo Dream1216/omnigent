@@ -1,0 +1,71 @@
+{
+  "schema_version": "omnigent.saas.upstream-conflict-resolution.v1",
+  "downstream_base_revision": "5f108a120100bd23ec40a770f9231c0258810848",
+  "frozen_upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
+  "merge_base_revision": "14df304a8e958da36b8a606a2c825e3a6642247e",
+  "changed_in_both_file_count": 8,
+  "direct_intrusion_overlap_file_count": 7,
+  "text_conflict_file_count": 1,
+  "text_conflict_block_count": 3,
+  "changed_in_both_files": [
+    ".github/actions/compat-smoke-ui-run/action.yml",
+    ".pre-commit-config.yaml",
+    "deploy/docker/Dockerfile",
+    "omnigent/db/utils.py",
+    "omnigent/host/connect.py",
+    "pyproject.toml",
+    "setup.py",
+    "uv.lock"
+  ],
+  "conflicts": [
+    {
+      "file": "omnigent/host/connect.py",
+      "area": "run_host_process signature",
+      "upstream_semantics": "daemon_target binds the daemon lifetime to the official registry record",
+      "downstream_semantics": "host_factory is the permanent managed-SaaS composition seam",
+      "resolution": "retain both; host_factory receives the official lifecycle_lock keyword"
+    },
+    {
+      "file": "omnigent/host/connect.py",
+      "area": "run_host_process parameter contract",
+      "upstream_semantics": "document lifecycle ownership and historical no-lock behavior",
+      "downstream_semantics": "document the downstream-neutral factory seam",
+      "resolution": "document both parameters and require the managed adapter to preserve the lock"
+    },
+    {
+      "file": "omnigent/host/connect.py",
+      "area": "HostProcess construction",
+      "upstream_semantics": "construct HostProcess with DaemonLifecycleLock",
+      "downstream_semantics": "construct the reviewed ManagedHostProcess through a factory",
+      "resolution": "construct through the factory and pass the exact official lifecycle lock"
+    }
+  ],
+  "adapter_hardening": {
+    "official_default_runner_entry": "omnigent.runner._entry",
+    "managed_runner_entry": "saas.runner_adapter.managed_entry",
+    "ambient_runner_entry_override_allowed": false,
+    "reverse_dependency_added": false,
+    "daemon_target_forwarded_by_managed_adapter": true
+  },
+  "lockfile": {
+    "command": "uv lock",
+    "resolved_package_count": 288,
+    "check": "passed"
+  },
+  "targeted_tests": {
+    "command": ".venv/bin/python -m pytest -q tests/saas/test_managed_runner_process_policy.py tests/host/test_daemon_lifecycle.py tests/host/test_connect.py",
+    "passed": 168,
+    "failed": 0
+  },
+  "targeted_pre_commit": {
+    "status": "passed",
+    "includes": [
+      "ruff-format",
+      "ruff-check",
+      "pyrefly",
+      "merge-conflict-check",
+      "whitespace-and-eof"
+    ]
+  },
+  "status": "resolved"
+}
