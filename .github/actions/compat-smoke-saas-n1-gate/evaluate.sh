@@ -10,7 +10,7 @@ POSTGRESQL_N1_CHECK="verify-postgresql-n1"
 POSTGRESQL_N1_WORKFLOW_NAME="SaaS N-1 compatibility image"
 POSTGRESQL_N1_WORKFLOW_ID="342012814"
 POSTGRESQL_N1_WORKFLOW_PATH=".github/workflows/saas-n1-compat-image.yml"
-POSTGRESQL_N1_WORKFLOW_SHA256="fe0280ecb05facc4f5ac23a517fe70178a856cfc049efeade28bbcfe4b3da2d0"
+POSTGRESQL_N1_WORKFLOW_SHA256="6fdf5fe815d0954cd2d4fb78f400e13c92cd8bf5e22db67866ec32968903d3fd"
 POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 
 # Candidate inputs that can change pytest collection, dependency resolution,
@@ -24,7 +24,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/conftest.py|a7a137d49f0ac6664381d89a2e21ef56db2cb6918907460ed253045f9605a4d8"
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
-  "tests/saas/test_n1_compat_patch.py|fb113e2e7c23f284441c4ab5badaa1ad3841361b804fd4bd90824d9829652a9b"
+  "tests/saas/test_n1_compat_patch.py|8f586ecc90cd29dfe0198c982f6974baa7533f4147d751b9c83b24759b9d11ad"
   "tests/saas/test_n1_outbox_admission.py|852466d5c52d01a8832afabd1a135b715d27a23162efec95d4ce924fdf0ebfa1"
   "tests/saas/test_control_plane_migration.py|e1a3cdbe178d6a758cd813ada732cb0ab3320f7e40f20eb77de80c0b0798cee0"
 )
