@@ -70,6 +70,8 @@ concurrency:
 
 env:
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+  N1_BUILDX_VERSION: v0.36.1
+  N1_BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
   N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b
   N1_CONTRACT_VERSION: p0s3-n1-outbox-security-compat-v1
   N1_PATCH_SHA256: ea66dacc4c6a2100bfa3497ff4213112074a13b8f23afafbf4e9fb78b4ca3409
@@ -143,6 +145,9 @@ jobs:
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: ${{ env.N1_BUILDX_VERSION }}
+          driver-opts: image=${{ env.N1_BUILDKIT_IMAGE }}
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
@@ -231,6 +236,8 @@ jobs:
             --arg schema "$N1_SCHEMA_REVISION" \
             --arg revision "$CANDIDATE_REVISION" \
             --arg upstream "$UPSTREAM_REVISION" \
+            --arg buildx "$N1_BUILDX_VERSION" \
+            --arg buildkit "$N1_BUILDKIT_IMAGE" \
             '. + {
               evidence_kind: "n1_security_compat_oci_candidate",
               product_revision: $revision,
@@ -242,6 +249,7 @@ jobs:
               required_schema_revision: $schema,
               upstream_revision: $upstream,
               adapter_contract_version: $adapter,
+              approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit},
               outbox_schema_change: {
                 compat_worker_drain_required: true,
                 catalog_recheck_before_restart: true
@@ -471,6 +479,9 @@ jobs:
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: ${{ env.N1_BUILDX_VERSION }}
+          driver-opts: image=${{ env.N1_BUILDKIT_IMAGE }}
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
@@ -592,6 +603,8 @@ jobs:
             --arg schema "$N1_SCHEMA_REVISION" \
             --arg tree "$N1_PATCHED_TREE_HASH" \
             --arg upstream "$UPSTREAM_REVISION" \
+            --arg buildx "$N1_BUILDX_VERSION" \
+            --arg buildkit "$N1_BUILDKIT_IMAGE" \
             --arg verified_archive_sha256 "${{ steps.publish.outputs.verified_archive_sha256 }}" \
             --arg publication_archive_sha256 "${{ steps.publish.outputs.publication_archive_sha256 }}" \
             --arg comparison_sha256 "${{ steps.publish.outputs.comparison_sha256 }}" \
@@ -607,6 +620,7 @@ jobs:
               required_schema_revision: $schema,
               upstream_revision: $upstream,
               adapter_contract_version: $adapter,
+              approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit},
               outbox_schema_change: {
                 compat_worker_drain_required: true,
                 catalog_recheck_before_restart: true

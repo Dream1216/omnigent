@@ -204,6 +204,26 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_PATCHED_TREE_HASH: git-sha1:f4f3f68b8ad18901fb974354d9102463af1c32cb" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
+    assert workflow["env"]["N1_BUILDX_VERSION"] == "v0.36.1"
+    assert workflow["env"]["N1_BUILDKIT_IMAGE"] == (
+        "moby/buildkit:v0.32.2@"
+        "sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
+    )
+    buildx_steps = [
+        step
+        for job in (current_postgresql, jobs["publish-candidate"])
+        for step in job["steps"]
+        if step["name"] == "Set up Buildx"
+    ]
+    assert len(buildx_steps) == 2
+    assert all(step["with"]["version"] == "${{ env.N1_BUILDX_VERSION }}" for step in buildx_steps)
+    assert all(
+        step["with"]["driver-opts"] == "image=${{ env.N1_BUILDKIT_IMAGE }}"
+        for step in buildx_steps
+    )
+    assert (
+        source.count("approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit}") == 2
+    )
     assert source.count('      - "saas/**"') == 2
     assert source.count('      - "tests/saas/**"') == 2
     assert source.count('      - ".github/actions/compat-smoke-saas-n1-gate/**"') == 2
