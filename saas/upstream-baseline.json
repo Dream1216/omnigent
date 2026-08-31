@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-08-24",
+  "audit_verified_at": "2026-08-31",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/workflows/saas-",
@@ -48,6 +48,6 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "14df304a8e958da36b8a606a2c825e3a6642247e",
-  "upstream_version": "0.11.0.dev0"
+  "upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
+  "upstream_version": "0.12.0.dev0"
 }

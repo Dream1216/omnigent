@@ -1,9 +1,9 @@
 diff --git a/omnigent/db/utils.py b/omnigent/db/utils.py
-index db181ed30..a2b89bfc5 100644
+index d71b6c44..ffc26a92 100644
 --- a/omnigent/db/utils.py
 +++ b/omnigent/db/utils.py
 @@ -28,6 +28,25 @@ _logger = logging.getLogger(__name__)
-
+ 
  # A callable that returns a context manager yielding a Session.
  ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]
 +ManagedSessionInitializer = Callable[[Session], None]
@@ -25,13 +25,13 @@ index db181ed30..a2b89bfc5 100644
 +    finally:
 +        _managed_session_initializer.reset(token)
 +
-
+ 
  # A callable that requires a semantic query-name suffix for each transaction.
  NamedManagedSessionMaker = Callable[[str], AbstractContextManager[Session]]
-@@ -642,11 +661,13 @@ def make_managed_session_maker(
+@@ -679,11 +698,13 @@ def make_managed_session_maker(
          backends, enables foreign key enforcement and sets a
          busy timeout before yielding.
-
+ 
 -        Inside a :func:`shared_read_scope` (and only for read makers), the
 -        scope's per-engine session is reused instead of a fresh checkout;
 -        the scope — not this block — owns its commit/close.
@@ -46,7 +46,7 @@ index db181ed30..a2b89bfc5 100644
              shared = _shared_read_sessions.get()
              if shared is not None:
                  key = id(engine)
-@@ -674,6 +695,8 @@ def make_managed_session_maker(
+@@ -711,6 +732,8 @@ def make_managed_session_maker(
                          # Acquire write lock before any read to prevent
                          # concurrent check-then-insert races on SQLite.
                          session.execute(text("BEGIN IMMEDIATE"))
