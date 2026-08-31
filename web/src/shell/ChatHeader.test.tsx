@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -66,6 +66,7 @@ function renderHeader(props: {
   projectName?: string | null;
   titleLinkTo?: string;
   boundAgent?: Agent;
+  subAgentLabel?: string | null;
   wrapperLabel?: string | null;
   canShare?: boolean;
   shareDisabled?: boolean;
@@ -95,6 +96,7 @@ function renderHeader(props: {
             projectName={props.projectName ?? null}
             titleLinkTo={props.titleLinkTo}
             boundAgent={props.boundAgent}
+            subAgentLabel={props.subAgentLabel ?? null}
             wrapperLabel={props.wrapperLabel ?? null}
             canShare={props.canShare ?? false}
             shareDisabled={props.shareDisabled}
@@ -260,6 +262,21 @@ describe("ChatHeader — conversation breadcrumb", () => {
     expect(screen.getByText("check-account-eligibility")).toBeInTheDocument();
   });
 
+  it("prefers the child instance name over the bound agent name", () => {
+    renderHeader({
+      sidebarOpen: true,
+      conversationId: "child-9",
+      isChildSession: true,
+      conversationTitle: "Tell jokes",
+      titleLinkTo: "/c/parent-123",
+      boundAgent: { id: "a1", name: "joke_director" },
+      subAgentLabel: "comic_one",
+    });
+    const breadcrumb = screen.getByRole("navigation", { name: "Conversation" });
+    expect(within(breadcrumb).getByText("comic_one")).toBeInTheDocument();
+    expect(within(breadcrumb).queryByText("joke_director")).toBeNull();
+  });
+
   it("names the product, not the internal wrapper row, on a native sub-agent", () => {
     // A Claude Code Task child is bound to its parent's `claude-native-ui`
     // agent — an Omnigent internal the server hides everywhere else
@@ -271,6 +288,7 @@ describe("ChatHeader — conversation breadcrumb", () => {
       conversationTitle: "Fix the login bug",
       titleLinkTo: "/c/parent-123",
       boundAgent: { id: "a1", name: "claude-native-ui" },
+      subAgentLabel: "researcher-one",
       wrapperLabel: "claude-code-native-ui-subagent",
     });
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
@@ -367,6 +385,7 @@ function renderHeaderWithSession(ctx: TerminalFirstContextValue | null) {
                 conversationTitle={null}
                 projectName={null}
                 boundAgent={undefined}
+                subAgentLabel={null}
                 wrapperLabel={null}
                 canShare={false}
                 onShare={() => {}}
@@ -389,6 +408,7 @@ function renderHeaderWithSession(ctx: TerminalFirstContextValue | null) {
               conversationTitle={null}
               projectName={null}
               boundAgent={undefined}
+              subAgentLabel={null}
               wrapperLabel={null}
               canShare={false}
               onShare={() => {}}

@@ -73,6 +73,7 @@ export const FiledSessionWithPresence: Story = {
   args: {
     sidebarOpen: false,
     isChildSession: false,
+    subAgentLabel: null,
     conversationId: "conversation-story",
     conversationTitle: "Fix flaky login retries",
     projectName: "Payments",
@@ -103,6 +104,7 @@ export const ChildSessionShareDisabled: Story = {
   args: {
     sidebarOpen: true,
     isChildSession: true,
+    subAgentLabel: "researcher-one",
     conversationId: "conversation-child",
     conversationTitle: "Fix flaky login retries",
     projectName: null,

@@ -125,6 +125,8 @@ interface ChatHeaderProps {
   titleLinkTo?: string;
   /** The bound agent (mcp_servers + policies) for the info popover. */
   boundAgent: Agent | undefined;
+  /** Child-session instance label, separate from its bound agent configuration. */
+  subAgentLabel: string | null;
   /**
    * The session's ``omnigent.wrapper`` label, or ``null``. Names the vendor
    * in the sub-agent breadcrumb: a native sub-agent child reuses its
@@ -195,6 +197,7 @@ export function ChatHeader({
   projectName,
   titleLinkTo,
   boundAgent,
+  subAgentLabel,
   wrapperLabel,
   canShare,
   shareDisabled = false,
@@ -447,6 +450,7 @@ export function ChatHeader({
             titleLinkTo={titleLinkTo}
             isChildSession={isChildSession}
             boundAgent={boundAgent}
+            subAgentLabel={subAgentLabel}
             wrapperLabel={wrapperLabel}
             actions={isMobile ? undefined : (conversationMenu ?? undefined)}
             className="pr-1"

@@ -112,8 +112,8 @@ def test_two_joke_subagents_appear_and_navigate(
 
     # The header carries the back-to-parent affordance: a "Back to parent
     # session" link pointing at the parent conversation, beside the
-    # selected sub-agent's bound-agent name. ``Sub-agent`` is only the
-    # loading fallback before the child agent snapshot resolves.
+    # selected child-session instance name. The bound agent remains the
+    # child's execution configuration and may have a different name.
     breadcrumb = page.get_by_role("navigation", name="Conversation")
     back_link = breadcrumb.get_by_role("link", name="Back to parent session")
     expect(back_link).to_be_visible(timeout=30_000)

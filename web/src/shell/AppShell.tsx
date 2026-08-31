@@ -78,6 +78,7 @@ import {
 } from "@/lib/nativeCodingAgents";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isSingleUserMode } from "@/lib/capabilities";
+import { subAgentInstanceLabel } from "@/lib/subagentDisplay";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -476,6 +477,7 @@ export function AppShell() {
   // it lists the root's children plus a "main" entry, so the user
   // can move between siblings and back to the parent from one place.
   const isChildSession = activeSession?.parentSessionId != null;
+  const subAgentLabel = subAgentInstanceLabel(activeSession);
   // A sub-agent runs in its parent's working directory but records no
   // host/workspace of its own (the parent owns the tmux pane), which would drop
   // the fork dialog into its no-directory mode. The parent's sidebar row backs
@@ -1881,6 +1883,7 @@ export function AppShell() {
                   projectName={headerProjectName}
                   titleLinkTo={headerTitleLinkTo}
                   boundAgent={boundAgent}
+                  subAgentLabel={subAgentLabel}
                   wrapperLabel={wrapperLabel}
                   canShare={canShare}
                   shareDisabled={shareDisabled}

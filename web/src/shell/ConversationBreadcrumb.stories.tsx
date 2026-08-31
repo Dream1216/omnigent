@@ -36,6 +36,7 @@ export const FiledConversation: Story = {
     projectName: "Web application",
     isChildSession: false,
     boundAgent: undefined,
+    subAgentLabel: null,
     wrapperLabel: null,
     actions: (
       <Button variant="ghost" size="icon-xs" aria-label="Conversation actions">
@@ -52,6 +53,7 @@ export const NativeChildSession: Story = {
     titleLinkTo: "/c/conversation-parent",
     isChildSession: true,
     boundAgent: nativeAgent,
+    subAgentLabel: "researcher-one",
     wrapperLabel: "claude-code-native-ui-subagent",
   },
 };

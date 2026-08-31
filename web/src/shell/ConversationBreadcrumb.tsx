@@ -29,6 +29,7 @@ export function ConversationBreadcrumb({
   titleLinkTo,
   isChildSession,
   boundAgent,
+  subAgentLabel,
   wrapperLabel,
   actions,
   className,
@@ -54,8 +55,10 @@ export function ConversationBreadcrumb({
   titleLinkTo?: string;
   /** Whether the active session is a sub-agent (appends its identity). */
   isChildSession: boolean;
-  /** The bound agent — names the sub-agent segment. */
+  /** The bound agent — execution configuration and a final name fallback. */
   boundAgent: Agent | undefined;
+  /** The child session's human-facing instance name. */
+  subAgentLabel: string | null;
   /** The session's `omnigent.wrapper` label — names a native sub-agent's vendor. */
   wrapperLabel: string | null;
   /** Session-management menu rendered immediately after the title. */
@@ -63,14 +66,14 @@ export function ConversationBreadcrumb({
   /** Extra classes for the context (header vs title-bar strip). */
   className?: string;
 }) {
-  // A native sub-agent (a Claude Code Task, a Codex collab thread) is bound to
-  // its parent's `<vendor>-native-ui` row, so its agent name is an internal the
-  // server itself hides (`public_agent_name`). Name the product instead,
-  // matching the Agents rail and the composer. Every other sub-agent keeps its
-  // own agent name, which is already human-readable. Only the sub-agent segment
-  // reads this, so it stays behind `isChildSession`.
+  // Native children show their wrapper's product. Other children show their
+  // session instance, matching the composer and Agents rail; the bound agent
+  // is execution configuration and only a legacy display fallback.
   const subAgentName = isChildSession
-    ? (nativeCodingAgentForSubagentWrapper(wrapperLabel)?.displayName ?? boundAgent?.name ?? null)
+    ? (nativeCodingAgentForSubagentWrapper(wrapperLabel)?.displayName ??
+      subAgentLabel ??
+      boundAgent?.name ??
+      null)
     : null;
   // iOS/Android native chrome already identifies the session. Restore the
   // compact "< Back" climb-out there; web / Electron keep the parent name.

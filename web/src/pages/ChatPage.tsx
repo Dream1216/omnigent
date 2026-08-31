@@ -87,6 +87,7 @@ import {
 import { useConversations } from "@/hooks/useConversations";
 import { usePermissions } from "@/hooks/usePermissions";
 import type { NativeModelOption, Session, SessionStatus } from "@/lib/types";
+import { subAgentInstanceLabel } from "@/lib/subagentDisplay";
 import { usePromptHistory } from "@/hooks/usePromptHistory";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
@@ -1029,7 +1030,7 @@ export function ChatPage() {
   // Non-null only when the active session is a sub-agent (child): the
   // composer then peeks a "Chatting with sub-agent …" tray and the
   // scroll-pinned "Working…" tab is suppressed (the tray owns that slot).
-  const subAgentLabel = subAgentComposerLabel(activeSession);
+  const subAgentLabel = subAgentInstanceLabel(activeSession);
 
   // Hoisted above the early-return guards so the title-update effect can read them.
   const activeConv = urlConvId ? conversations?.find((c) => c.id === urlConvId) : null;
@@ -4083,23 +4084,7 @@ function ComposerStatusLine({
  *   for a top-level session (no ``parentSessionId``) or when no snapshot is
  *   loaded — both hide the tray.
  */
-export function subAgentComposerLabel(
-  session: Pick<Session, "parentSessionId" | "title" | "subAgentName" | "agentName"> | null,
-): string | null {
-  if (!session || session.parentSessionId == null) return null;
-  // Strip the user-added "ui:" sentinel so its "agent:name" suffix reads
-  // like an LLM-spawned title.
-  let title = session.title ?? null;
-  if (title?.startsWith("ui:")) title = title.slice(3);
-  if (title?.includes(":")) {
-    const suffix = title.split(":").slice(1).join(":");
-    if (suffix) return suffix;
-  }
-  // Last-resort display string: a sub-agent session always has a seeded
-  // title in practice, so the final "sub-agent" only guards a degenerate
-  // all-null snapshot (the tray still needs something to render).
-  return title ?? session.subAgentName ?? session.agentName ?? "sub-agent";
-}
+export { subAgentInstanceLabel as subAgentComposerLabel } from "@/lib/subagentDisplay";
 
 /**
  * Peeking tray tucked behind the composer's top edge while the active
