@@ -20,17 +20,27 @@ _PREDICATES = {
     "https://slsa.dev/provenance/v1": "slsa_provenance",
     "https://spdx.dev/Document": "spdx_sbom",
 }
-_ALLOWED_LABELS = {
-    "org.opencontainers.image.revision",
-    "ai.omnigent.upstream.revision",
-    "ai.omnigent.saas.schema-revision",
-    "ai.omnigent.saas.adapter-contract-version",
-    "ai.omnigent.saas.n1.base-commit",
-    "ai.omnigent.saas.n1.patch-source-revision",
-    "ai.omnigent.saas.n1.patch-sha256",
-    "ai.omnigent.saas.n1.patched-tree-hash",
-    "ai.omnigent.saas.n1.schema-revision",
-    "ai.omnigent.saas.n1.contract-version",
+_EXECUTABLE_LABELS = frozenset(
+    {
+        "org.opencontainers.image.revision",
+        "ai.omnigent.upstream.revision",
+        "ai.omnigent.saas.schema-revision",
+        "ai.omnigent.saas.adapter-contract-version",
+    }
+)
+_N1_LABELS = _EXECUTABLE_LABELS | frozenset(
+    {
+        "ai.omnigent.saas.n1.base-commit",
+        "ai.omnigent.saas.n1.patch-source-revision",
+        "ai.omnigent.saas.n1.patch-sha256",
+        "ai.omnigent.saas.n1.patched-tree-hash",
+        "ai.omnigent.saas.n1.schema-revision",
+        "ai.omnigent.saas.n1.contract-version",
+    }
+)
+_LABEL_PROFILES = {
+    "executable": _EXECUTABLE_LABELS,
+    "n1": _N1_LABELS,
 }
 
 _SAFE_DIAGNOSTIC_POLICY = {
@@ -139,9 +149,19 @@ def _layer_facts(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return facts
 
 
-def _inspect_oci_archive(path: Path) -> tuple[dict[str, Any], dict[str, list[str]]]:
+def _approved_labels(label_profile: str) -> frozenset[str]:
+    try:
+        return _LABEL_PROFILES[label_profile]
+    except KeyError as error:
+        raise ValueError(f"unsupported OCI label profile: {label_profile}") from error
+
+
+def _inspect_oci_archive(
+    path: Path, *, label_profile: str
+) -> tuple[dict[str, Any], dict[str, list[str]]]:
     """Return public facts plus process-local command strings for comparison only."""
 
+    approved_labels = _approved_labels(label_profile)
     with tempfile.TemporaryDirectory(prefix="omnigent-oci-inspect-") as temp_name:
         root = Path(temp_name)
         with tarfile.open(path) as archive:
@@ -199,10 +219,13 @@ def _inspect_oci_archive(path: Path) -> tuple[dict[str, Any], dict[str, list[str
             labels = config.get("config", {}).get("Labels", {})
             if (
                 not isinstance(labels, dict)
-                or set(labels) != _ALLOWED_LABELS
+                or set(labels) != approved_labels
                 or any(not isinstance(value, str) for value in labels.values())
             ):
-                raise ValueError("OCI config does not contain exactly the approved image labels")
+                raise ValueError(
+                    "OCI config does not contain exactly the approved "
+                    f"{label_profile} image labels"
+                )
             platforms[key] = {
                 "manifest_digest": descriptor["digest"],
                 "config_digest": config_digest,
@@ -334,18 +357,18 @@ def _inspect_oci_archive(path: Path) -> tuple[dict[str, Any], dict[str, list[str
         )
 
 
-def inspect_oci_archive(path: Path) -> dict[str, Any]:
+def inspect_oci_archive(path: Path, *, label_profile: str) -> dict[str, Any]:
     """Return public reproducibility facts without Docker history commands."""
 
-    facts, _ = _inspect_oci_archive(path)
+    facts, _ = _inspect_oci_archive(path, label_profile=label_profile)
     return facts
 
 
-def compare_archives(first: Path, second: Path) -> dict[str, Any]:
+def compare_archives(first: Path, second: Path, *, label_profile: str) -> dict[str, Any]:
     """Compare only executable platform facts; attestation timestamps may differ."""
 
-    left, left_commands = _inspect_oci_archive(first)
-    right, right_commands = _inspect_oci_archive(second)
+    left, left_commands = _inspect_oci_archive(first, label_profile=label_profile)
+    right, right_commands = _inspect_oci_archive(second, label_profile=label_profile)
     history_command_drift_ordinals = {
         platform: [
             index
@@ -360,6 +383,7 @@ def compare_archives(first: Path, second: Path) -> dict[str, Any]:
         history_command_drift_ordinals.values()
     )
     return {
+        "label_profile": label_profile,
         "matching_platform_manifest_and_config": matching,
         "history_created_by_equal": not any(history_command_drift_ordinals.values()),
         "history_created_by_drift_ordinals": history_command_drift_ordinals,
@@ -383,6 +407,12 @@ def main() -> int:
         metavar="NAME=FIRST,SECOND",
         help="two repeated OCI archives for one image",
     )
+    parser.add_argument(
+        "--label-profile",
+        choices=tuple(sorted(_LABEL_PROFILES)),
+        required=True,
+        help="exact approved label contract for every compared image",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     repo = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel"))
@@ -393,7 +423,9 @@ def main() -> int:
         try:
             name, archives = spec.split("=", 1)
             first, second = archives.split(",", 1)
-            comparison = compare_archives(Path(first), Path(second))
+            comparison = compare_archives(
+                Path(first), Path(second), label_profile=args.label_profile
+            )
         except (OSError, ValueError, KeyError, json.JSONDecodeError, tarfile.TarError) as error:
             violations.append(f"{spec}: {error}")
             continue
@@ -411,6 +443,7 @@ def main() -> int:
         "source_date_epoch": int(_git(repo, "show", "-s", "--format=%ct", "HEAD")),
         "upstream_revision": manifest["upstream_revision"],
         "adapter_contract_version": manifest["adapter_contract_version"],
+        "label_profile": args.label_profile,
         "images": images,
         "violations": violations,
         "production_ready": False,

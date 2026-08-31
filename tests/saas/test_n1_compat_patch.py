@@ -256,6 +256,7 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "test_real_postgresql_pinned_n1_outbox_compatibility_bridge" in source
     assert "test_real_postgresql_n1_compat_login_admission_and_roles_replay" in source
     assert "saas/scripts/compare_oci_rebuilds.py" in source
+    assert source.count("--label-profile n1") == 2
     assert ".candidate_evidence_version == 3" in source
     assert 'config_environment: "omitted"' in source
     assert 'history_created_by: "equality-and-ordinal-drift-only"' in source

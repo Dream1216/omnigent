@@ -200,6 +200,7 @@ jobs:
       - name: Compare repeated executable image facts
         run: >-
           uv run python -m saas.scripts.compare_oci_rebuilds
+          --label-profile executable
           --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/saas-image-candidate.json

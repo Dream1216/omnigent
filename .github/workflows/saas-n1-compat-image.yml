@@ -217,6 +217,7 @@ jobs:
         run: |
           set -euo pipefail
           python -I -S saas/scripts/compare_oci_rebuilds.py \
+            --label-profile n1 \
             --image "${N1_IMAGE_NAME}=${RUNNER_TEMP}/n1-runtime-1.tar,${RUNNER_TEMP}/n1-runtime-2.tar" \
             --output artifacts/n1-compat-rebuild.json
           jq -e \
@@ -542,6 +543,7 @@ jobs:
         run: |
           set -euo pipefail
           python -I -S saas/scripts/compare_oci_rebuilds.py \
+            --label-profile n1 \
             --image "${N1_IMAGE_NAME}=${RUNNER_TEMP}/verified-oci/n1-runtime-2.tar,${RUNNER_TEMP}/n1-runtime-publish.tar" \
             --output artifacts/n1-compat-publication-rebuild.json
           verified_archive_sha256=$(sha256sum "${RUNNER_TEMP}/verified-oci/n1-runtime-2.tar" | cut -d' ' -f1)

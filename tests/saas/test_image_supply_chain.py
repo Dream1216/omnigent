@@ -469,6 +469,37 @@ def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -
     assert "candidate workflow build coordinates must cover server and host twice" in violations
 
 
+def test_candidate_contract_rejects_implicit_or_cross_profile_label_validation(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "          --label-profile executable\n",
+            "          --label-profile n1\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    n1_workflow = repo / ".github/workflows/saas-n1-compat-image.yml"
+    n1_workflow.write_text(
+        n1_workflow.read_text(encoding="utf-8").replace(
+            "            --label-profile n1 \\\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "candidate workflow must select the executable label profile" in violations
+    assert (
+        "N-1 candidate and publication comparisons must select the N-1 label profile" in violations
+    )
+
+
 def test_candidate_contract_rejects_unprotected_or_unsigned_release(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     workflow = repo / ".github/workflows/saas-image-candidate.yml"
@@ -745,6 +776,9 @@ def _write_oci(
     path: Path,
     *,
     revision: str,
+    label_profile: str = "n1",
+    missing_label: str | None = None,
+    extra_label: str | None = None,
     nested: bool = False,
     history_command: str = "RUN stable",
     layer_payload: bytes = b"stable-layer",
@@ -761,26 +795,36 @@ def _write_oci(
     (root / "blobs/sha256" / layer_hex).write_bytes(
         b"corrupt-layer" if corrupt_layer else layer_payload
     )
+    labels = {
+        "org.opencontainers.image.revision": revision,
+        "ai.omnigent.upstream.revision": "u" * 40,
+        "ai.omnigent.saas.schema-revision": "p0s000000003",
+        "ai.omnigent.saas.adapter-contract-version": "adapter-v1",
+    }
+    if label_profile == "n1":
+        labels.update(
+            {
+                "ai.omnigent.saas.n1.base-commit": "b" * 40,
+                "ai.omnigent.saas.n1.patch-source-revision": revision,
+                "ai.omnigent.saas.n1.patch-sha256": "c" * 64,
+                "ai.omnigent.saas.n1.patched-tree-hash": "git-sha1:" + "d" * 40,
+                "ai.omnigent.saas.n1.schema-revision": "p0s000000003",
+                "ai.omnigent.saas.n1.contract-version": "contract-v1",
+            }
+        )
+    elif label_profile != "executable":
+        raise ValueError(f"unsupported test label profile: {label_profile}")
+    if missing_label is not None:
+        labels.pop(missing_label)
+    if extra_label is not None:
+        labels[extra_label] = "unexpected"
     descriptors = []
     for architecture in ("amd64", "arm64"):
         config = json.dumps(
             {
                 "architecture": architecture,
                 "created": "2026-08-31T10:52:21Z",
-                "config": {
-                    "Labels": {
-                        "org.opencontainers.image.revision": revision,
-                        "ai.omnigent.upstream.revision": "u" * 40,
-                        "ai.omnigent.saas.schema-revision": "p0s000000003",
-                        "ai.omnigent.saas.adapter-contract-version": "adapter-v1",
-                        "ai.omnigent.saas.n1.base-commit": "b" * 40,
-                        "ai.omnigent.saas.n1.patch-source-revision": revision,
-                        "ai.omnigent.saas.n1.patch-sha256": "c" * 64,
-                        "ai.omnigent.saas.n1.patched-tree-hash": "git-sha1:" + "d" * 40,
-                        "ai.omnigent.saas.n1.schema-revision": "p0s000000003",
-                        "ai.omnigent.saas.n1.contract-version": "contract-v1",
-                    }
-                },
+                "config": {"Labels": labels},
                 "history": [
                     {
                         "created": "2026-08-31T10:52:21Z",
@@ -936,10 +980,91 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     _write_oci(first, revision="a" * 40)
     _write_oci(second, revision="a" * 40)
 
-    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
+    assert (
+        compare_archives(first, second, label_profile="n1")[
+            "matching_platform_manifest_and_config"
+        ]
+        is True
+    )
 
     _write_oci(second, revision="b" * 40)
-    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is False
+    assert (
+        compare_archives(first, second, label_profile="n1")[
+            "matching_platform_manifest_and_config"
+        ]
+        is False
+    )
+
+
+@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
+    tmp_path: Path, label_profile: str
+) -> None:
+    first = tmp_path / f"first-{label_profile}.tar"
+    second = tmp_path / f"second-{label_profile}.tar"
+    _write_oci(first, revision="a" * 40, label_profile=label_profile)
+    _write_oci(second, revision="a" * 40, label_profile=label_profile)
+
+    comparison = compare_archives(first, second, label_profile=label_profile)
+
+    assert comparison["label_profile"] == label_profile
+    assert comparison["matching_platform_manifest_and_config"] is True
+
+
+@pytest.mark.parametrize(
+    ("label_profile", "missing_label"),
+    [
+        ("executable", "ai.omnigent.saas.adapter-contract-version"),
+        ("n1", "ai.omnigent.saas.n1.contract-version"),
+    ],
+)
+def test_oci_rebuild_rejects_a_missing_profile_label(
+    tmp_path: Path, label_profile: str, missing_label: str
+) -> None:
+    first = tmp_path / f"first-missing-{label_profile}.tar"
+    second = tmp_path / f"second-missing-{label_profile}.tar"
+    _write_oci(first, revision="a" * 40, label_profile=label_profile)
+    _write_oci(
+        second,
+        revision="a" * 40,
+        label_profile=label_profile,
+        missing_label=missing_label,
+    )
+
+    with pytest.raises(ValueError, match=f"approved {label_profile} image labels"):
+        compare_archives(first, second, label_profile=label_profile)
+
+
+@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
+    first = tmp_path / f"first-extra-{label_profile}.tar"
+    second = tmp_path / f"second-extra-{label_profile}.tar"
+    _write_oci(first, revision="a" * 40, label_profile=label_profile)
+    _write_oci(
+        second,
+        revision="a" * 40,
+        label_profile=label_profile,
+        extra_label="example.invalid/undeclared",
+    )
+
+    with pytest.raises(ValueError, match=f"approved {label_profile} image labels"):
+        compare_archives(first, second, label_profile=label_profile)
+
+
+@pytest.mark.parametrize(
+    ("archive_profile", "selected_profile"),
+    [("executable", "n1"), ("n1", "executable")],
+)
+def test_oci_rebuild_rejects_cross_profile_label_contracts(
+    tmp_path: Path, archive_profile: str, selected_profile: str
+) -> None:
+    first = tmp_path / f"first-{archive_profile}-as-{selected_profile}.tar"
+    second = tmp_path / f"second-{archive_profile}-as-{selected_profile}.tar"
+    _write_oci(first, revision="a" * 40, label_profile=archive_profile)
+    _write_oci(second, revision="a" * 40, label_profile=archive_profile)
+
+    with pytest.raises(ValueError, match=f"approved {selected_profile} image labels"):
+        compare_archives(first, second, label_profile=selected_profile)
 
 
 def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -> None:
@@ -948,7 +1073,7 @@ def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -
     _write_oci(first, revision="a" * 40, nested=True)
     _write_oci(second, revision="a" * 40, nested=True)
 
-    comparison = compare_archives(first, second)
+    comparison = compare_archives(first, second, label_profile="n1")
 
     assert comparison["matching_platform_manifest_and_config"] is True
     assert comparison["first"]["attestation_descriptor_count"] == 2
@@ -960,7 +1085,12 @@ def test_oci_rebuild_accepts_real_buildkit_image_attestation_config(tmp_path: Pa
     _write_oci(first, revision="a" * 40, buildkit_image_attestation_config=True)
     _write_oci(second, revision="a" * 40, buildkit_image_attestation_config=True)
 
-    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
+    assert (
+        compare_archives(first, second, label_profile="n1")[
+            "matching_platform_manifest_and_config"
+        ]
+        is True
+    )
 
 
 def test_oci_rebuild_accepts_in_toto_statement_v1(tmp_path: Path) -> None:
@@ -969,7 +1099,12 @@ def test_oci_rebuild_accepts_in_toto_statement_v1(tmp_path: Path) -> None:
     _write_oci(first, revision="a" * 40, statement_type="https://in-toto.io/Statement/v1")
     _write_oci(second, revision="a" * 40, statement_type="https://in-toto.io/Statement/v1")
 
-    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
+    assert (
+        compare_archives(first, second, label_profile="n1")[
+            "matching_platform_manifest_and_config"
+        ]
+        is True
+    )
 
 
 def test_oci_rebuild_comparison_rejects_header_only_attestation(tmp_path: Path) -> None:
@@ -979,7 +1114,7 @@ def test_oci_rebuild_comparison_rejects_header_only_attestation(tmp_path: Path) 
     _write_oci(second, revision="a" * 40, header_only_attestation=True)
 
     with pytest.raises(ValueError, match="predicate is incomplete"):
-        compare_archives(first, second)
+        compare_archives(first, second, label_profile="n1")
 
 
 def test_oci_rebuild_diagnostics_expose_only_command_drift_ordinals(
@@ -1002,7 +1137,7 @@ def test_oci_rebuild_diagnostics_expose_only_command_drift_ordinals(
         layer_payload=b"second-layer",
     )
 
-    comparison = compare_archives(first, second)
+    comparison = compare_archives(first, second, label_profile="n1")
     serialized = json.dumps(comparison, sort_keys=True)
     assert comparison["matching_platform_manifest_and_config"] is False
     assert comparison["history_created_by_equal"] is False
@@ -1034,7 +1169,7 @@ def test_oci_rebuild_comparison_rejects_tampered_layer_blob(tmp_path: Path) -> N
     )
 
     with pytest.raises(ValueError, match="OCI blob digest mismatch") as error:
-        compare_archives(first, second)
+        compare_archives(first, second, label_profile="n1")
     assert secret not in str(error.value)
 
 
@@ -1059,4 +1194,4 @@ def test_oci_rebuild_comparison_rejects_invalid_rootfs_contract(
     _write_oci(second, revision="a" * 40, **options)
 
     with pytest.raises(ValueError, match=expected):
-        compare_archives(first, second)
+        compare_archives(first, second, label_profile="n1")

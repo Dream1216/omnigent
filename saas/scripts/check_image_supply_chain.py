@@ -470,6 +470,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
         violations.append("candidate workflow must invoke four repeated composite builds")
+    if workflow.count("--label-profile executable") != 1:
+        violations.append("candidate workflow must select the executable label profile")
     coordinates = {
         ("server", "runtime", "1"),
         ("server", "runtime", "2"),
@@ -569,6 +571,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     )
     if n1_workflow is None:
         return violations
+    if n1_workflow.count("--label-profile n1") != 2:
+        violations.append(
+            "N-1 candidate and publication comparisons must select the N-1 label profile"
+        )
     n1_attempt_one = _named_workflow_step(
         n1_workflow,
         "Build dual-platform N-1 runtime candidate attempt 1",
