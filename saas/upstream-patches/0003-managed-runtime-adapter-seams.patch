@@ -5,7 +5,7 @@ index f6a39693..633d8dd1 100644
 @@ -1690,6 +1690,11 @@ class HostProcess:
              return None
          return zygote
- 
+
 +    def _runner_entry_module(self) -> str:
 +        """Return the installed Runner entrypoint for this Host composition."""
 +
@@ -15,7 +15,7 @@ index f6a39693..633d8dd1 100644
          self,
          env: dict[str, str],
 @@ -1764,10 +1769,14 @@ class HostProcess:
- 
+
              with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
 -                    # -P keeps cwd off sys.path: a workspace that is itself an
@@ -66,16 +66,16 @@ index 970fa7eb..04cd40c0 100644
 +++ b/omnigent/llms/_usage_observer.py
 @@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
      by_model: dict[str, _ModelUsage]
- 
- 
+
+
 +_REQUIRED_OBSERVERS: list[UsageObserver] = []
  _OBSERVERS: list[UsageObserver] = []
  _RECORDS: dict[str, _UsageBucket] = {}
  _CURRENT_NODEID: str | None = None
 @@ -138,6 +139,22 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
      return remove
- 
- 
+
+
 +def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
 +    """Register a fail-closed usage sink that runs before diagnostics.
 +

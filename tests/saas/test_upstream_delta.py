@@ -118,5 +118,5 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     report = check_patch_queue(repo)
 
     assert report["status"] == "pass"
-    assert report["patch_count"] == 2
+    assert report["patch_count"] == 3
     assert report["covered_paths"] == report["official_source_paths"]

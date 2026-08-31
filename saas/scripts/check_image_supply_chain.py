@@ -27,6 +27,7 @@ _APPROVED_PATHS = {
 _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
+_HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _APPROVED_UV_VERSION = "0.12.1"
@@ -595,6 +596,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     )
     if n1_workflow is None:
         return violations
+    trigger_path = '      - "saas/**"'
+    if workflow.count(trigger_path) != 2 or n1_workflow.count(trigger_path) != 2:
+        violations.append("candidate and N-1 workflows must trigger on SaaS-owned image inputs")
     if n1_workflow.count("--label-profile n1") != 2:
         violations.append(
             "N-1 candidate and publication comparisons must select the N-1 label profile"
@@ -663,12 +667,19 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="host CLI dependency manifest",
         violations=violations,
     )
-    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest):
+    host_cli_normalizer = _read_repository_contract(
+        repo,
+        _HOST_CLI_NORMALIZER,
+        label="host CLI filesystem normalizer",
+        violations=violations,
+    )
+    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest, host_cli_normalizer):
         return violations
     assert dockerfile is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
     assert cli_manifest is not None
+    assert host_cli_normalizer is not None
 
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
@@ -809,6 +820,39 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     }
     if any(fragment not in host_stage for fragment in host_cli_reproducibility_contract):
         violations.append("host CLI layer must normalize and remove volatile installer state")
+    host_hardlink_docker_contract = {
+        f"COPY {_HOST_CLI_NORMALIZER} /tmp/normalize_host_cli_tree.py",
+        "python -B /tmp/normalize_host_cli_tree.py --root node_modules",
+        "rm -f /tmp/normalize_host_cli_tree.py",
+    }
+    host_hardlink_script_contract = {
+        'sorted(root.rglob("*"), key=lambda candidate: candidate.as_posix())',
+        "if path.is_symlink()",
+        "stat.S_ISREG(metadata.st_mode)",
+        "current.st_nlink <= 1",
+        "shutil.copy2(path, temporary, follow_symlinks=False)",
+        "copied.st_nlink != 1",
+        "os.replace(temporary, path)",
+        "if path.stat(follow_symlinks=False).st_nlink != 1",
+        "hardlinked regular files remain after normalization",
+    }
+    hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py --root node_modules"
+    if (
+        any(fragment not in host_stage for fragment in host_hardlink_docker_contract)
+        or any(fragment not in host_cli_normalizer for fragment in host_hardlink_script_contract)
+        or "claude" in host_cli_normalizer.casefold()
+        or host_stage.count(hardlink_invocation) != 1
+        or "pnpm install --frozen-lockfile" not in host_stage
+        or "test -x .github/ci-deps/node_modules/.bin/claude" not in host_stage
+        or not (
+            host_stage.index("pnpm install --frozen-lockfile")
+            < host_stage.index(hardlink_invocation)
+            < host_stage.index("test -x .github/ci-deps/node_modules/.bin/claude")
+        )
+    ):
+        violations.append(
+            "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
+        )
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",

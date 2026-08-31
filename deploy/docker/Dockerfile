@@ -337,6 +337,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
 # pnpm records wall-clock validation fields and its store records access times.
 # Normalize the one runtime metadata field, remove the disposable state/store,
 # and isolate CLI version probes from the final root home.
@@ -358,6 +359,7 @@ RUN export npm_config_cache=/tmp/npm-cache; \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
       --store-dir /tmp/pnpm-store --package-import-method=copy \
  && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); source=modules.read_text(encoding="utf-8"); count=len(re.findall(r"(?m)^\s*\"prunedAt\"\s*:", source)); assert count == 1, f"expected exactly one pnpm JSON prunedAt field, found {count}"; data=json.loads(source); assert type(data) is dict and type(data.get("prunedAt")) is str and data["prunedAt"], "pnpm JSON prunedAt field missing or invalid"; data["prunedAt"]=email.utils.formatdate(epoch, usegmt=True); modules.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8"); print("pnpm prunedAt fields normalized: 1"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")); assert type(state_data.get("lastValidatedTimestamp")) is int and state_data["lastValidatedTimestamp"] >= 0, "pnpm validation timestamp missing or invalid"; state.unlink()' \
+ && python -B /tmp/normalize_host_cli_tree.py --root node_modules \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
@@ -371,6 +373,7 @@ RUN export npm_config_cache=/tmp/npm-cache; \
  && rm -rf /tmp/npm-cache /tmp/pnpm-store \
       /tmp/omnigent-cli-home /tmp/omnigent-cli-cache \
       /root/.npm /root/.cache /root/.local/share/pnpm \
+ && rm -f /tmp/normalize_host_cli_tree.py \
  && test ! -e node_modules/.pnpm-workspace-state-v1.json \
  && for path in /tmp/npm-cache /tmp/pnpm-store /tmp/omnigent-cli-home \
       /tmp/omnigent-cli-cache /root/.npm /root/.cache \

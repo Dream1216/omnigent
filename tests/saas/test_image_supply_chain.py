@@ -253,6 +253,7 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
         ".github/ci-deps/package.json",
+        "saas/scripts/normalize_host_cli_tree.py",
     ):
         target = repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -371,6 +372,113 @@ def test_host_pnpm_normalizer_rejects_invalid_workspace_timestamp(
     )
 
     assert result.returncode != 0
+
+
+def test_host_cli_hardlink_normalizer_detaches_all_regular_file_links(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "node_modules"
+    root.mkdir()
+    first = root / "a-native-binary"
+    second = root / "b-wrapper-binary"
+    third = root / "c-runtime-binary"
+    payload = b"pinned CLI binary\x00content"
+    first.write_bytes(payload)
+    first.chmod(0o755)
+    os.link(first, second)
+    os.link(first, third)
+    symlink = root / "cli"
+    symlink.symlink_to(second.name)
+    independent = root / "independent"
+    independent.write_text("stable", encoding="utf-8")
+
+    assert first.stat().st_nlink == 3
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
+            "--root",
+            str(root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "pnpm hardlinked regular files detached: 2"
+    assert {path.read_bytes() for path in (first, second, third)} == {payload}
+    assert len({path.stat().st_ino for path in (first, second, third)}) == 3
+    assert all(path.stat().st_nlink == 1 for path in (first, second, third, independent))
+    assert all(path.stat().st_mode & 0o777 == 0o755 for path in (first, second, third))
+    assert symlink.is_symlink()
+    assert os.readlink(symlink) == second.name
+
+
+def test_host_cli_hardlink_normalizer_fails_closed_on_temporary_collision(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "node_modules"
+    root.mkdir()
+    first = root / "a-binary"
+    first.write_bytes(b"binary")
+    os.link(first, root / "z-binary")
+    (root / ".a-binary.omnigent-detach").write_bytes(b"unexpected")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
+            "--root",
+            str(root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "hard-link detachment temporary path exists" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "target", "replacement"),
+    [
+        (
+            "deploy/docker/Dockerfile",
+            "python -B /tmp/normalize_host_cli_tree.py --root node_modules",
+            "true # hardlink normalization removed",
+        ),
+        (
+            "saas/scripts/normalize_host_cli_tree.py",
+            "shutil.copy2(path, temporary, follow_symlinks=False)",
+            "shutil.copyfile(path, temporary, follow_symlinks=False)",
+        ),
+        (
+            "saas/scripts/normalize_host_cli_tree.py",
+            "if path.stat(follow_symlinks=False).st_nlink != 1",
+            "if False",
+        ),
+    ],
+)
+def test_image_material_lock_rejects_host_hardlink_normalizer_drift(
+    tmp_path: Path,
+    relative: str,
+    target: str,
+    replacement: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    path = repo / relative
+    source = path.read_text(encoding="utf-8")
+    assert target in source
+    path.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    assert (
+        "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
+        in validate_image_material_lock(repo)
+    )
 
 
 @pytest.mark.parametrize(
@@ -692,6 +800,29 @@ def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -
 
     assert "candidate workflow must invoke four repeated composite builds" in violations
     assert "candidate workflow build coordinates must cover server and host twice" in violations
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/saas-image-candidate.yml",
+        ".github/workflows/saas-n1-compat-image.yml",
+    ],
+)
+def test_candidate_contract_requires_saas_owned_image_trigger_scope(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / relative
+    source = workflow.read_text(encoding="utf-8")
+    trigger = '      - "saas/**"\n'
+    assert source.count(trigger) == 2
+    workflow.write_text(source.replace(trigger, "", 1), encoding="utf-8")
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "candidate and N-1 workflows must trigger on SaaS-owned image inputs" in violations
 
 
 def test_candidate_contract_rejects_implicit_or_cross_profile_label_validation(
