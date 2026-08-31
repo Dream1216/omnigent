@@ -741,13 +741,56 @@ def test_policy_weakening_and_malformed_nested_lists_fail_without_crashing() -> 
     assert any("approved set" in item for item in report["violations"])
 
 
-def _write_oci(path: Path, *, revision: str, nested: bool = False) -> None:
+def _write_oci(
+    path: Path,
+    *,
+    revision: str,
+    nested: bool = False,
+    history_command: str = "RUN stable",
+    layer_payload: bytes = b"stable-layer",
+    corrupt_layer: bool = False,
+    rootfs_type: str = "layers",
+    include_diff_id: bool = True,
+    header_only_attestation: bool = False,
+    buildkit_image_attestation_config: bool = False,
+) -> None:
     root = path.parent / f"{path.stem}-layout"
     (root / "blobs/sha256").mkdir(parents=True, exist_ok=True)
+    layer_hex = hashlib.sha256(layer_payload).hexdigest()
+    (root / "blobs/sha256" / layer_hex).write_bytes(
+        b"corrupt-layer" if corrupt_layer else layer_payload
+    )
     descriptors = []
     for architecture in ("amd64", "arm64"):
         config = json.dumps(
-            {"config": {"Labels": {"org.opencontainers.image.revision": revision}}},
+            {
+                "architecture": architecture,
+                "created": "2026-08-31T10:52:21Z",
+                "config": {
+                    "Labels": {
+                        "org.opencontainers.image.revision": revision,
+                        "ai.omnigent.upstream.revision": "u" * 40,
+                        "ai.omnigent.saas.schema-revision": "p0s000000003",
+                        "ai.omnigent.saas.adapter-contract-version": "adapter-v1",
+                        "ai.omnigent.saas.n1.base-commit": "b" * 40,
+                        "ai.omnigent.saas.n1.patch-source-revision": revision,
+                        "ai.omnigent.saas.n1.patch-sha256": "c" * 64,
+                        "ai.omnigent.saas.n1.patched-tree-hash": "git-sha1:" + "d" * 40,
+                        "ai.omnigent.saas.n1.schema-revision": "p0s000000003",
+                        "ai.omnigent.saas.n1.contract-version": "contract-v1",
+                    }
+                },
+                "history": [
+                    {
+                        "created": "2026-08-31T10:52:21Z",
+                        "created_by": history_command,
+                    }
+                ],
+                "rootfs": {
+                    "type": rootfs_type,
+                    "diff_ids": [f"sha256:{layer_hex}"] if include_diff_id else [],
+                },
+            },
             sort_keys=True,
         ).encode()
         config_hex = hashlib.sha256(config).hexdigest()
@@ -756,24 +799,113 @@ def _write_oci(path: Path, *, revision: str, nested: bool = False) -> None:
             {
                 "schemaVersion": 2,
                 "config": {"digest": f"sha256:{config_hex}"},
-                "layers": [],
+                "layers": [
+                    {
+                        "digest": f"sha256:{layer_hex}",
+                        "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                        "size": len(layer_payload),
+                    }
+                ],
             },
             sort_keys=True,
         ).encode()
         manifest_hex = hashlib.sha256(manifest).hexdigest()
         (root / "blobs/sha256" / manifest_hex).write_bytes(manifest)
+        manifest_digest = f"sha256:{manifest_hex}"
         descriptors.append(
             {
-                "digest": f"sha256:{manifest_hex}",
+                "digest": manifest_digest,
+                "size": len(manifest),
                 "platform": {"os": "linux", "architecture": architecture},
             }
         )
-    descriptors.extend(
-        [
-            {"digest": _digest("e"), "platform": {"os": "unknown", "architecture": "unknown"}},
-            {"digest": _digest("f"), "platform": {"os": "unknown", "architecture": "unknown"}},
-        ]
-    )
+        attestation_layers = []
+        for predicate in (
+            "https://slsa.dev/provenance/v1",
+            "https://spdx.dev/Document",
+        ):
+            predicate_body = (
+                {}
+                if header_only_attestation
+                else (
+                    {"buildDefinition": {}, "runDetails": {}}
+                    if predicate == "https://slsa.dev/provenance/v1"
+                    else {
+                        "spdxVersion": "SPDX-2.3",
+                        "SPDXID": "SPDXRef-DOCUMENT",
+                        "dataLicense": "CC0-1.0",
+                        "documentNamespace": "https://example.invalid/spdx/test",
+                        "creationInfo": {},
+                    }
+                )
+            )
+            payload = json.dumps(
+                {
+                    "_type": "https://in-toto.io/Statement/v0.1",
+                    "predicateType": predicate,
+                    "subject": [],
+                    "predicate": predicate_body,
+                },
+                sort_keys=True,
+            ).encode()
+            payload_hex = hashlib.sha256(payload).hexdigest()
+            (root / "blobs/sha256" / payload_hex).write_bytes(payload)
+            attestation_layers.append(
+                {
+                    "digest": f"sha256:{payload_hex}",
+                    "size": len(payload),
+                    "mediaType": "application/vnd.in-toto+json",
+                    "annotations": {"in-toto.io/predicate-type": predicate},
+                }
+            )
+        empty_config = json.dumps(
+            (
+                {
+                    "architecture": "unknown",
+                    "os": "unknown",
+                    "config": {},
+                    "rootfs": {
+                        "type": "layers",
+                        "diff_ids": [layer["digest"] for layer in attestation_layers],
+                    },
+                }
+                if buildkit_image_attestation_config
+                else {}
+            ),
+            sort_keys=True,
+        ).encode()
+        empty_config_hex = hashlib.sha256(empty_config).hexdigest()
+        (root / "blobs/sha256" / empty_config_hex).write_bytes(empty_config)
+        attestation = json.dumps(
+            {
+                "schemaVersion": 2,
+                "config": {
+                    "digest": f"sha256:{empty_config_hex}",
+                    "size": len(empty_config),
+                    "mediaType": (
+                        "application/vnd.oci.image.config.v1+json"
+                        if buildkit_image_attestation_config
+                        else "application/vnd.oci.empty.v1+json"
+                    ),
+                },
+                "layers": attestation_layers,
+            },
+            sort_keys=True,
+        ).encode()
+        attestation_hex = hashlib.sha256(attestation).hexdigest()
+        (root / "blobs/sha256" / attestation_hex).write_bytes(attestation)
+        descriptors.append(
+            {
+                "digest": f"sha256:{attestation_hex}",
+                "size": len(attestation),
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "annotations": {
+                    "vnd.docker.reference.type": "attestation-manifest",
+                    "vnd.docker.reference.digest": manifest_digest,
+                },
+                "platform": {"os": "unknown", "architecture": "unknown"},
+            }
+        )
     if nested:
         nested_index = json.dumps(
             {"schemaVersion": 2, "manifests": descriptors}, sort_keys=True
@@ -819,3 +951,102 @@ def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -
 
     assert comparison["matching_platform_manifest_and_config"] is True
     assert comparison["first"]["attestation_descriptor_count"] == 2
+
+
+def test_oci_rebuild_accepts_real_buildkit_image_attestation_config(tmp_path: Path) -> None:
+    first = tmp_path / "first-real.tar"
+    second = tmp_path / "second-real.tar"
+    _write_oci(first, revision="a" * 40, buildkit_image_attestation_config=True)
+    _write_oci(second, revision="a" * 40, buildkit_image_attestation_config=True)
+
+    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
+
+
+def test_oci_rebuild_comparison_rejects_header_only_attestation(tmp_path: Path) -> None:
+    first = tmp_path / "first.tar"
+    second = tmp_path / "second.tar"
+    _write_oci(first, revision="a" * 40)
+    _write_oci(second, revision="a" * 40, header_only_attestation=True)
+
+    with pytest.raises(ValueError, match="predicate is incomplete"):
+        compare_archives(first, second)
+
+
+def test_oci_rebuild_diagnostics_expose_only_command_drift_ordinals(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first-safe.tar"
+    second = tmp_path / "second-safe.tar"
+    first_secret = "RUN --mount=type=secret secret-value-one"
+    second_secret = "RUN --mount=type=secret secret-value-two"
+    _write_oci(
+        first,
+        revision="a" * 40,
+        history_command=first_secret,
+        layer_payload=b"first-layer",
+    )
+    _write_oci(
+        second,
+        revision="a" * 40,
+        history_command=second_secret,
+        layer_payload=b"second-layer",
+    )
+
+    comparison = compare_archives(first, second)
+    serialized = json.dumps(comparison, sort_keys=True)
+    assert comparison["matching_platform_manifest_and_config"] is False
+    assert comparison["history_created_by_equal"] is False
+    assert comparison["history_created_by_drift_ordinals"]["linux/amd64"] == [0]
+    assert "created_by_sha256" not in serialized
+    assert "created_by_utf8_bytes" not in serialized
+    assert first_secret not in serialized
+    assert second_secret not in serialized
+    assert (
+        comparison["first"]["platforms"]["linux/amd64"]["rootfs_diff_ids"]
+        != (comparison["second"]["platforms"]["linux/amd64"]["rootfs_diff_ids"])
+    )
+    assert (
+        comparison["first"]["platforms"]["linux/amd64"]["layers"]
+        != (comparison["second"]["platforms"]["linux/amd64"]["layers"])
+    )
+
+
+def test_oci_rebuild_comparison_rejects_tampered_layer_blob(tmp_path: Path) -> None:
+    first = tmp_path / "first-valid.tar"
+    second = tmp_path / "second-corrupt.tar"
+    secret = "RUN --mount=type=secret raw-secret-must-not-leak"
+    _write_oci(first, revision="a" * 40)
+    _write_oci(
+        second,
+        revision="a" * 40,
+        history_command=secret,
+        corrupt_layer=True,
+    )
+
+    with pytest.raises(ValueError, match="OCI blob digest mismatch") as error:
+        compare_archives(first, second)
+    assert secret not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({"rootfs_type": "not-layers"}, "OCI config rootfs is invalid"),
+        (
+            {"include_diff_id": False},
+            "OCI layer and rootfs diff-id cardinality mismatch",
+        ),
+    ],
+)
+def test_oci_rebuild_comparison_rejects_invalid_rootfs_contract(
+    tmp_path: Path,
+    options: dict[str, object],
+    expected: str,
+) -> None:
+    first = tmp_path / "first-rootfs.tar"
+    second = tmp_path / "second-rootfs.tar"
+    _write_oci(first, revision="a" * 40)
+    _write_oci(second, revision="a" * 40, **options)
+
+    with pytest.raises(ValueError, match=expected):
+        compare_archives(first, second)

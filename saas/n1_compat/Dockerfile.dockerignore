@@ -1,0 +1,12 @@
+*
+!pyproject.toml
+!setup.py
+!uv.lock
+!README.md
+!LICENSE
+!NOTICE
+!sdks/**
+!omnigent/**
+!saas/**
+!integrations/slack/**
+!examples/**
