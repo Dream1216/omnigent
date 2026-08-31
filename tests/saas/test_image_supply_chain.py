@@ -310,6 +310,11 @@ def test_image_material_lock_contract_is_valid() -> None:
             "pnpm install --prod --filter e2e-ci-deps",
             "host CLI dependency graph must install from pnpm-lock.yaml",
         ),
+        (
+            'ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"',
+            'ENV PATH="/usr/local/bin:${PATH}"',
+            "host CLI wrappers must execute from their pnpm installation directory",
+        ),
     ],
 )
 def test_image_material_lock_rejects_dockerfile_drift(
@@ -396,6 +401,21 @@ def test_candidate_composite_build_contract_rejects_shared_rebuild_cache(
     assert "candidate attempt 2 must rebuild without shared cache" in violations
 
 
+def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    action = repo / "saas/actions/build-oci-candidate/action.yml"
+    action.write_text(
+        action.read_text(encoding="utf-8").replace(",rewrite-timestamp=true", "", 1),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "candidate composite build action weakens the approved build contract" in violations
+
+
 def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     workflow = repo / ".github/workflows/saas-n1-compat-image.yml"
@@ -413,7 +433,22 @@ def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path
 
     violations = validate_candidate_build_contract(repo)
 
-    assert "N-1 candidate attempt 2 must rebuild without shared cache" in violations
+    assert "N-1 candidate attempt 2 must reproducibly rebuild without shared cache" in violations
+
+
+def test_n1_candidate_build_contract_rejects_timestamp_rewrite_drift(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-n1-compat-image.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(",rewrite-timestamp=true", "", 1),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "N-1 candidate attempt 1 must retain the approved reproducible GHA build" in violations
 
 
 def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -> None:

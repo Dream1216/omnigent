@@ -150,26 +150,31 @@ CURL_RC=$?
 set -e
 
 if [[ $CURL_RC -ne 0 ]]; then
-  # Fail closed on infra error, but distinguish it from a real "missing test"
-  # so the author knows to retry or use the waiver rather than scramble to
-  # write a test. The skip label remains the escape hatch.
-  fail "Could not reach the e2e_ui judge (gateway error, exit $CURL_RC). Re-run the check; if it keeps failing, a maintainer can apply 'skip-e2e-ui-test'."
-fi
+  # Fail closed on infra error, but continue into the maintainer-effective
+  # waiver path below. Exiting here would make the documented escape hatch
+  # unreachable precisely when the judge is unavailable.
+  NEEDS_TEST=true
+  REASON="e2e_ui judge infrastructure unavailable (gateway exit $CURL_RC)"
+  echo "::warning::$REASON; requiring an effective maintainer waiver."
+else
+  CONTENT=$(echo "$RESP" | jq -r '.choices[0].message.content // empty')
+  # Strip any accidental markdown fencing, then pull the JSON object out.
+  VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1)
+  # NB: must not use `.needs_test // empty` -- the `//` operator treats the
+  # boolean `false` as absent, which would silently turn a legitimate "no test
+  # required" verdict into a fail-closed block. Map the boolean explicitly.
+  NEEDS_TEST=$(echo "$VERDICT_JSON" | jq -r 'if .needs_test == true then "true" elif .needs_test == false then "false" else "" end' 2>/dev/null || true)
+  REASON=$(echo "$VERDICT_JSON" | jq -r '.reason // empty' 2>/dev/null || true)
 
-CONTENT=$(echo "$RESP" | jq -r '.choices[0].message.content // empty')
-# Strip any accidental markdown fencing, then pull the JSON object out.
-VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1)
-# NB: must not use `.needs_test // empty` -- the `//` operator treats the
-# boolean `false` as absent, which would silently turn a legitimate "no test
-# required" verdict into a fail-closed block. Map the boolean explicitly.
-NEEDS_TEST=$(echo "$VERDICT_JSON" | jq -r 'if .needs_test == true then "true" elif .needs_test == false then "false" else "" end' 2>/dev/null || true)
-REASON=$(echo "$VERDICT_JSON" | jq -r '.reason // empty' 2>/dev/null || true)
-
-if [[ "$NEEDS_TEST" == "false" ]]; then
-  pass "PASS: e2e_ui judge -> no test required. $REASON"
-elif [[ "$NEEDS_TEST" != "true" ]]; then
-  # Unparseable verdict -> fail closed, same reasoning as the curl error.
-  fail "e2e_ui judge returned an unparseable verdict. Re-run the check; a maintainer can apply 'skip-e2e-ui-test' if this persists. Raw: ${CONTENT:0:200}"
+  if [[ "$NEEDS_TEST" == "false" ]]; then
+    pass "PASS: e2e_ui judge -> no test required. $REASON"
+  elif [[ "$NEEDS_TEST" != "true" ]]; then
+    # Fail closed on an unparseable verdict, but still permit the same
+    # maintainer-effective waiver as a transport failure.
+    NEEDS_TEST=true
+    REASON="e2e_ui judge returned an unparseable verdict"
+    echo "::warning::$REASON; requiring an effective maintainer waiver."
+  fi
 fi
 
 echo "e2e_ui judge -> test required: $REASON"

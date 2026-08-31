@@ -529,7 +529,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "sbom: true",
         (
             "outputs: type=oci,dest=${{ runner.temp }}/"
-            "${{ inputs.artifact }}-${{ inputs.attempt }}.tar"
+            "${{ inputs.artifact }}-${{ inputs.attempt }}.tar,rewrite-timestamp=true"
         ),
         "server:runtime|host:host",
         "1|2)",
@@ -582,16 +582,26 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         n1_attempt_one is None
         or n1_attempt_one.count(f"cache-from: {attempt_one_cache}") != 1
         or n1_attempt_one.count(f"cache-to: {attempt_one_cache},mode=max") != 1
+        or n1_attempt_one.count(
+            "outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar,rewrite-timestamp=true"
+        )
+        != 1
         or "no-cache:" in n1_attempt_one
     ):
-        violations.append("N-1 candidate attempt 1 must retain the approved GHA cache")
+        violations.append(
+            "N-1 candidate attempt 1 must retain the approved reproducible GHA build"
+        )
     if (
         n1_attempt_two is None
         or n1_attempt_two.count("no-cache: true") != 1
+        or n1_attempt_two.count(
+            "outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar,rewrite-timestamp=true"
+        )
+        != 1
         or "cache-from:" in n1_attempt_two
         or "cache-to:" in n1_attempt_two
     ):
-        violations.append("N-1 candidate attempt 2 must rebuild without shared cache")
+        violations.append("N-1 candidate attempt 2 must reproducibly rebuild without shared cache")
     return violations
 
 
@@ -679,6 +689,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append("host image must copy the committed pnpm lock")
     if "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps" not in dockerfile:
         violations.append("host CLI dependency graph must install from pnpm-lock.yaml")
+    cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
+    if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
+        rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",
+        dockerfile,
+    ):
+        violations.append("host CLI wrappers must execute from their pnpm installation directory")
 
     try:
         cli_dependencies = json.loads(cli_manifest).get("dependencies", {})

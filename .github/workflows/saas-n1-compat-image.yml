@@ -192,7 +192,7 @@ jobs:
           target: n1-compat-runtime
           push: false
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar
+          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar,rewrite-timestamp=true
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=saas-n1-compat-candidate
@@ -217,7 +217,7 @@ jobs:
           target: n1-compat-runtime
           push: false
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar
+          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar,rewrite-timestamp=true
           provenance: mode=max
           sbom: true
           no-cache: true

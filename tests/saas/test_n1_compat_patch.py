@@ -204,8 +204,10 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     )["with"]
     assert attempt_one["cache-from"] == "type=gha,scope=saas-n1-compat-candidate"
     assert attempt_one["cache-to"] == "type=gha,scope=saas-n1-compat-candidate,mode=max"
+    assert attempt_one["outputs"].endswith(",rewrite-timestamp=true")
     assert "no-cache" not in attempt_one
     assert attempt_two["no-cache"] == "true"
+    assert attempt_two["outputs"].endswith(",rewrite-timestamp=true")
     assert "cache-from" not in attempt_two
     assert "cache-to" not in attempt_two
     assert '--output-directory "${RUNNER_TEMP}/n1-source"' in source

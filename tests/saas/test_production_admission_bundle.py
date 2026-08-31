@@ -170,6 +170,7 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
     assert options["platforms"] == "linux/amd64,linux/arm64"
     assert options["provenance"] == "mode=max"
     assert options["sbom"] == "true"
+    assert options["outputs"].endswith(",rewrite-timestamp=true")
     assert options["no-cache"] == "${{ inputs.attempt == '2' }}"
     assert "inputs.attempt == '1'" in options["cache-from"]
     assert "inputs.attempt == '1'" in options["cache-to"]
@@ -183,3 +184,13 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
         "ADAPTER_CONTRACT_VERSION",
     ):
         assert f"{name}=${{{{ env.{name} }}}}" in options["build-args"]
+
+
+def test_e2e_ui_gate_keeps_maintainer_waiver_reachable_when_judge_fails() -> None:
+    source = (_repo() / ".github/scripts/e2e-ui-required/check.sh").read_text(encoding="utf-8")
+
+    transport_failure = source.split("if [[ $CURL_RC -ne 0 ]]; then", 1)[1].split("else", 1)[0]
+    assert "NEEDS_TEST=true" in transport_failure
+    assert "REASON=" in transport_failure
+    assert "fail " not in transport_failure
+    assert 'HAS_LABEL=$(gh api "repos/$REPO/pulls/$PR"' in source

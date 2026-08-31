@@ -303,6 +303,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 # that tiny importer from the exact build args below; --frozen-lockfile then
 # fails closed if either the importer or any transitive material drifts.
 WORKDIR /opt/omnigent-host-cli
+ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 RUN npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
@@ -322,9 +323,6 @@ RUN npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
- && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/claude /usr/local/bin/claude \
- && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/codex /usr/local/bin/codex \
- && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/pi /usr/local/bin/pi \
  && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
       *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
