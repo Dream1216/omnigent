@@ -46,6 +46,10 @@ from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOper
 
 _AUDIENCE = "omnigent-platform-admin"
 _COOKIE = "__Host-omnigent_platform_session"
+# Governed Privacy submissions wait for the synchronous, atomic server transaction.
+# Keep the post-success UI assertion bounded without relying on Playwright's generic
+# five-second actionability budget, which is too narrow under a loaded SaaS shard.
+_GOVERNED_COMMAND_COMPLETION_TIMEOUT_MS = 15_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,7 +617,7 @@ def _privacy_governed_action_matrix(browser: Browser, fixture: PlatformAdminFixt
         expect(dialog).to_contain_text("CONTENT-BLIND BINDING")
         requester.locator("#privacy-case-reference").fill("DSR-BROWSER-GOVERNED-001")
         requester.get_by_test_id("privacy-dialog-confirm").click()
-        expect(dialog).to_be_hidden()
+        expect(dialog).to_be_hidden(timeout=_GOVERNED_COMMAND_COMPLETION_TIMEOUT_MS)
         expect(requester.get_by_test_id("privacy-operation-list")).to_contain_text(
             "PENDING STAFF APPROVAL"
         )
@@ -643,7 +647,7 @@ def _privacy_governed_action_matrix(browser: Browser, fixture: PlatformAdminFixt
         expect(decision).to_be_visible()
         expect(decision).to_contain_text("SEPARATION OF DUTIES")
         approver.get_by_test_id("privacy-dialog-confirm").click()
-        expect(decision).to_be_hidden()
+        expect(decision).to_be_hidden(timeout=_GOVERNED_COMMAND_COMPLETION_TIMEOUT_MS)
         expect(approver.get_by_test_id("privacy-operation-list")).to_contain_text("SUCCEEDED")
         expect(approver.get_by_test_id("privacy-manifests-list")).to_contain_text("MANIFEST")
         expect(approver.locator("#privacy-work-count")).to_have_text("15 ITEMS")
