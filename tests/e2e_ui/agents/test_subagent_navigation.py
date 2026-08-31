@@ -102,7 +102,9 @@ def test_two_joke_subagents_appear_and_navigate(
     expect(agents_tab).to_contain_text("3")
 
     # (2) Clicking a sub-agent row swaps the chat to that child's session.
-    target_row = rows.first
+    target_agent_name = "comic_one"
+    target_row = rows.filter(has_text=target_agent_name)
+    expect(target_row).to_have_count(1)
     child_session_id = target_row.get_attribute("data-child-session-id")
     assert child_session_id, "subagent row is missing data-child-session-id"
     target_row.click()
@@ -110,11 +112,13 @@ def test_two_joke_subagents_appear_and_navigate(
 
     # The header carries the back-to-parent affordance: a "Back to parent
     # session" link pointing at the parent conversation, beside the
-    # "Sub-agent" identity caption.
-    back_link = page.get_by_role("link", name="Back to parent session")
+    # selected sub-agent's bound-agent name. ``Sub-agent`` is only the
+    # loading fallback before the child agent snapshot resolves.
+    breadcrumb = page.get_by_role("navigation", name="Conversation")
+    back_link = breadcrumb.get_by_role("link", name="Back to parent session")
     expect(back_link).to_be_visible(timeout=30_000)
     expect(back_link).to_have_attribute("href", re.compile(re.escape(f"/c/{chat.session_id}")))
-    expect(page.get_by_text("Sub-agent", exact=True)).to_be_visible()
+    expect(breadcrumb.get_by_text(target_agent_name, exact=True)).to_be_visible()
 
     # Following it returns to the parent session.
     back_link.click()
