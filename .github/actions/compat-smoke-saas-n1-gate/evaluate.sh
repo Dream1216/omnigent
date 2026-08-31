@@ -16,12 +16,12 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "pyproject.toml|8d213db7f936abfe0b1ec9a394bb82d67352d1b24b9c1a056378fada1921b16e"
-  "uv.lock|65b38d9f8ea9914e28f160070aa5f662e6c28f350aa16ef6625b64adc7f90eb9"
+  "pyproject.toml|dd8a302d7f87dd7e5d4b6fa7220820ba0751c885e4628db33e423dbafed444e0"
+  "uv.lock|5f4577d6500fc70e02ad8efe4608f5071318d6a82893ecea52cd77bf4b3c9505"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
   "tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8"
-  "tests/conftest.py|366d658c3cc67dca4c02f32e36c2424c57377f534c9ea03efcca21f294ff4104"
+  "tests/conftest.py|a7a137d49f0ac6664381d89a2e21ef56db2cb6918907460ed253045f9605a4d8"
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
   "tests/saas/test_n1_compat_patch.py|fb113e2e7c23f284441c4ab5badaa1ad3841361b804fd4bd90824d9829652a9b"
