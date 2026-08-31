@@ -144,11 +144,11 @@ def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
     )
 
 
-def test_new_schema_head_requires_successor_architecture_approval() -> None:
+def test_current_schema_head_is_the_successor_architecture_review_target() -> None:
     require_current_approval_history(_repo())
     baseline = _baseline()
 
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000001"  # type: ignore[index]
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000006"  # type: ignore[index]
     assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000006"  # type: ignore[index]
     assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
     assert validate_approval_contract(_repo(), baseline)["status"] == "pass"

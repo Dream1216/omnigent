@@ -14,7 +14,7 @@
     "mode": "sole-owner-risk-waiver",
     "governance_classification": "degraded",
     "scope": "p0-architectural-decision-bundle",
-    "approved_control_plane_schema_revision": "p0s000000001",
+    "approved_control_plane_schema_revision": "p0s000000006",
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",
