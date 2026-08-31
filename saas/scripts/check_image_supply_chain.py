@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import tomllib
+
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -27,6 +29,14 @@ _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
+_APPROVED_UV_VERSION = "0.12.1"
+_APPROVED_PNPM_VERSION = "11.15.1"
+_APPROVED_PSYCOPG_VERSION = "3.3.4"
+_APPROVED_HOST_CLI_VERSIONS = {
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.212"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+}
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "NODE_IMAGE",
@@ -585,6 +595,119 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     return violations
 
 
+def validate_image_material_lock(repo: Path) -> list[str]:
+    """Require image dependency installs to consume the evidenced lockfiles."""
+
+    violations: list[str] = []
+    dockerfile = _read_repository_contract(
+        repo,
+        _APPROVED_PATHS["dockerfile"],
+        label="production Dockerfile",
+        violations=violations,
+    )
+    uv_lock = _read_repository_contract(
+        repo,
+        "uv.lock",
+        label="Python dependency lock",
+        violations=violations,
+    )
+    pnpm_lock = _read_repository_contract(
+        repo,
+        "pnpm-lock.yaml",
+        label="Node dependency lock",
+        violations=violations,
+    )
+    cli_manifest = _read_repository_contract(
+        repo,
+        ".github/ci-deps/package.json",
+        label="host CLI dependency manifest",
+        violations=violations,
+    )
+    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest):
+        return violations
+    assert dockerfile is not None
+    assert uv_lock is not None
+    assert pnpm_lock is not None
+    assert cli_manifest is not None
+
+    if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
+        r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
+    ):
+        violations.append("production Dockerfile must pin and install uv 0.12.1")
+    if 'case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*' not in dockerfile:
+        violations.append("production Dockerfile must verify the installed uv version")
+    if "COPY pyproject.toml setup.py uv.lock ./" not in dockerfile:
+        violations.append("production Dockerfile must copy the committed Python lock")
+    if "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" not in dockerfile:
+        violations.append(
+            "production Dockerfile must handle the excluded .github/triage_v2 workspace"
+        )
+    if (
+        "uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache"
+        not in dockerfile
+    ):
+        violations.append("production Dockerfile must frozen-sync the core runtime from uv.lock")
+    if "uv pip install" in dockerfile:
+        violations.append("production Dockerfile must not re-resolve Python dependencies")
+
+    try:
+        lock_packages = tomllib.loads(uv_lock).get("package", [])
+    except tomllib.TOMLDecodeError:
+        violations.append("Python dependency lock must contain valid TOML")
+        lock_packages = []
+    psycopg_versions = {
+        item.get("version")
+        for item in lock_packages
+        if isinstance(item, dict) and item.get("name") == "psycopg"
+    }
+    if psycopg_versions != {_APPROVED_PSYCOPG_VERSION}:
+        violations.append("uv.lock must resolve psycopg exactly to 3.3.4")
+    if (
+        f"ARG PSYCOPG_VERSION={_APPROVED_PSYCOPG_VERSION}" not in dockerfile
+        or "set -- --extra saas" not in dockerfile
+        or "installed=\"$(python -c 'import importlib.metadata as m; "
+        'print(m.version("psycopg"))\')"'
+        not in dockerfile
+    ):
+        violations.append("server image must frozen-sync saas and assert psycopg 3.3.4")
+
+    if f"ARG PNPM_VERSION={_APPROVED_PNPM_VERSION}" not in dockerfile or not re.search(
+        r'npm install -g[^\n]*"pnpm@\$\{PNPM_VERSION\}"', dockerfile
+    ):
+        violations.append("production Dockerfile must pin pnpm 11.15.1")
+    if "COPY pnpm-workspace.yaml pnpm-lock.yaml ./" not in dockerfile:
+        violations.append("host image must copy the committed pnpm lock")
+    if "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps" not in dockerfile:
+        violations.append("host CLI dependency graph must install from pnpm-lock.yaml")
+
+    try:
+        cli_dependencies = json.loads(cli_manifest).get("dependencies", {})
+    except json.JSONDecodeError:
+        violations.append("host CLI dependency manifest must contain valid JSON")
+        cli_dependencies = {}
+    expected_dependencies = {
+        package: version for package, (_, version) in _APPROVED_HOST_CLI_VERSIONS.items()
+    }
+    if cli_dependencies != expected_dependencies:
+        violations.append("host CLI dependency manifest does not match approved direct versions")
+    for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
+        if f"ARG {argument}={version}" not in dockerfile:
+            violations.append(f"host image must pin {package} to {version}")
+        importer = re.compile(
+            rf"'{re.escape(package)}':\n\s+specifier: {re.escape(version)}\n"
+            rf"\s+version: {re.escape(version)}(?:\n|\()"
+        )
+        if importer.search(pnpm_lock) is None:
+            violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
+    if re.search(
+        r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
+        r"@earendil-works/pi-coding-agent)",
+        dockerfile,
+    ):
+        violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")
+    return violations
+
+
 def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if set(policy) != _POLICY_FIELDS:
@@ -600,6 +723,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         if value != _APPROVED_PATHS[field] or not (repo / str(value)).is_file():
             violations.append(f"release policy {field} must reference the approved file")
     violations.extend(validate_candidate_build_contract(repo))
+    violations.extend(validate_image_material_lock(repo))
     production_evidence = policy.get("production_evidence")
     if production_evidence != _APPROVED_PATHS["production_evidence"]:
         violations.append("production_evidence must use the approved repository path")

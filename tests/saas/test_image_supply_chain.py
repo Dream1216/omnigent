@@ -7,10 +7,13 @@ import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from saas.scripts.check_image_supply_chain import (
     canonical_release_evidence_sha256,
     load_release_evidence,
     validate_candidate_build_contract,
+    validate_image_material_lock,
     validate_release,
 )
 from saas.scripts.compare_oci_rebuilds import compare_archives
@@ -239,6 +242,21 @@ def _candidate_contract_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _material_lock_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    for relative in (
+        "deploy/docker/Dockerfile",
+        "uv.lock",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        ".github/ci-deps/package.json",
+    ):
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((_repo() / relative).read_bytes())
+    return repo
+
+
 def test_candidate_composite_build_contract_is_valid() -> None:
     assert validate_candidate_build_contract(_repo()) == []
 
@@ -248,6 +266,95 @@ def test_generic_docker_build_has_reproducible_epoch_fallback() -> None:
 
     assert "ARG SOURCE_DATE_EPOCH=1580601600" in dockerfile
     assert "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" in dockerfile
+
+
+def test_image_material_lock_contract_is_valid() -> None:
+    assert validate_image_material_lock(_repo()) == []
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement", "expected"),
+    [
+        (
+            "ARG UV_VERSION=0.12.1",
+            "ARG UV_VERSION=0.12.2",
+            "production Dockerfile must pin and install uv 0.12.1",
+        ),
+        (
+            "uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache",
+            "uv sync --active --package omnigent --no-dev --no-editable --no-cache",
+            "production Dockerfile must frozen-sync the core runtime from uv.lock",
+        ),
+        (
+            "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml",
+            "true # workspace handling removed",
+            "production Dockerfile must handle the excluded .github/triage_v2 workspace",
+        ),
+        (
+            "ARG PSYCOPG_VERSION=3.3.4",
+            "ARG PSYCOPG_VERSION=3.3.5",
+            "server image must frozen-sync saas and assert psycopg 3.3.4",
+        ),
+        (
+            "ARG PNPM_VERSION=11.15.1",
+            "ARG PNPM_VERSION=11.15.2",
+            "production Dockerfile must pin pnpm 11.15.1",
+        ),
+        (
+            "ARG CLAUDE_CODE_VERSION=2.1.212",
+            "ARG CLAUDE_CODE_VERSION=2.1.213",
+            "host image must pin @anthropic-ai/claude-code to 2.1.212",
+        ),
+        (
+            "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",
+            "pnpm install --prod --filter e2e-ci-deps",
+            "host CLI dependency graph must install from pnpm-lock.yaml",
+        ),
+    ],
+)
+def test_image_material_lock_rejects_dockerfile_drift(
+    tmp_path: Path,
+    target: str,
+    replacement: str,
+    expected: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    assert target in source
+    dockerfile.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    assert expected in validate_image_material_lock(repo)
+
+
+def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) -> None:
+    repo = _material_lock_repo(tmp_path)
+    uv_lock = repo / "uv.lock"
+    uv_source = uv_lock.read_text(encoding="utf-8")
+    uv_target = 'name = "psycopg"\nversion = "3.3.4"'
+    assert uv_target in uv_source
+    uv_lock.write_text(
+        uv_source.replace(uv_target, 'name = "psycopg"\nversion = "3.3.5"', 1),
+        encoding="utf-8",
+    )
+
+    pnpm_lock = repo / "pnpm-lock.yaml"
+    pnpm_source = pnpm_lock.read_text(encoding="utf-8")
+    pnpm_target = "'@openai/codex':\n        specifier: 0.139.0\n        version: 0.139.0"
+    assert pnpm_target in pnpm_source
+    pnpm_lock.write_text(
+        pnpm_source.replace(
+            pnpm_target,
+            "'@openai/codex':\n        specifier: 0.140.0\n        version: 0.140.0",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_image_material_lock(repo)
+
+    assert "uv.lock must resolve psycopg exactly to 3.3.4" in violations
+    assert "pnpm-lock.yaml must bind @openai/codex to 0.139.0" in violations
 
 
 def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:

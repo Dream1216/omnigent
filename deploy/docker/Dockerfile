@@ -56,6 +56,8 @@
 # Must satisfy pyproject requires-python (>=3.12); 3.11 fails dependency resolution.
 ARG PYTHON_VERSION=3.12
 ARG NODE_VERSION=22
+ARG UV_VERSION=0.12.1
+ARG PNPM_VERSION=11.15.1
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
 ARG SOURCE_DATE_EPOCH=1580601600
@@ -76,6 +78,7 @@ ARG ADAPTER_CONTRACT_VERSION=unknown
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
 FROM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
+ARG PNPM_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 WORKDIR /web
 
@@ -86,7 +89,8 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
 COPY web/electron/package.json ./web/electron/
 
-RUN npm install -g pnpm@11.15.1
+RUN npm install -g "pnpm@${PNPM_VERSION}" \
+ && test "$(pnpm --version)" = "${PNPM_VERSION}"
 RUN pnpm install --frozen-lockfile --filter web
 
 COPY web/ ./web/
@@ -102,6 +106,7 @@ FROM ${PYTHON_IMAGE} AS builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_DATE_EPOCH
+ARG UV_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -111,13 +116,15 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --index-url ${PYPI_INDEX_URL} --no-cache-dir uv
+RUN pip install --index-url ${PYPI_INDEX_URL} --no-cache-dir "uv==${UV_VERSION}" \
+ && case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*) ;; \
+      *) echo "ERROR: uv version mismatch" >&2; exit 1 ;; esac
 
 WORKDIR /build
 
 # Manifests + SDK path-deps first so the install layer caches across
 # pure source edits.
-COPY pyproject.toml setup.py ./
+COPY pyproject.toml setup.py uv.lock ./
 # License + third-party attribution travel into the published images (the host
 # and runtime targets COPY /build below), since the image redistributes the
 # dependency bytes baked in by the install step.
@@ -125,6 +132,7 @@ COPY LICENSE NOTICE ./
 COPY sdks/ ./sdks/
 COPY omnigent/ ./omnigent/
 COPY saas/ ./saas/
+COPY integrations/slack/ ./integrations/slack/
 # The built-in polly agent's packaged bundle (omnigent/resources/examples/
 # polly) is a symlink into the top-level examples/ tree. Ship examples/ so the
 # symlink resolves at boot; without it the new-session picker silently drops
@@ -139,11 +147,19 @@ RUN python -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}"
 
-# Install omnigent. Editable install (-e) is required because
-# pyproject.toml declares the sibling SDKs as editable path deps via
-# [tool.uv.sources]. The runtime stages preserve /build/ so the venv's
-# .pth references stay valid.
-RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e .
+# The Dockerfile-specific context intentionally excludes ``.github/``. The
+# repository uv workspace declares ``.github/triage_v2`` there, so blindly
+# invoking uv would fail workspace discovery even though that automation
+# package is not part of either runtime image. Remove only the workspace
+# discovery stanza from the copied (image-local) manifest; the committed lock
+# remains authoritative and ``--package omnigent`` selects the root package.
+RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml
+
+# Consume the committed lock without resolution. ``--active`` binds the sync
+# to /opt/venv and ``--no-editable`` makes the root package and SDK path deps
+# self-contained, so the host image never needs a second dependency-resolving
+# pip install to escape /build/*.pth references.
+RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache
 
 # ── Server builder ──────────────────────────────────────
 # Server-only additions on top of the shared builder: the SPA bundle
@@ -151,6 +167,7 @@ RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e .
 FROM builder AS server-builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
+ARG PSYCOPG_VERSION=3.3.4
 
 # Overlay the SPA bundle built in the web-builder stage, so a clean
 # checkout (with no prebuilt bundle on the host) still produces a
@@ -159,18 +176,30 @@ COPY --from=web-builder /web/omnigent/server/static/web-ui ./omnigent/server/sta
 RUN test -f ./omnigent/server/static/web-ui/index.html \
     || (echo "ERROR: SPA bundle missing after web-builder stage — check the web build." && exit 1)
 
-# psycopg[binary] is not a baseline dep — pulled in by the
-# [databricks] extra in pyproject — so add it explicitly here.
-RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} 'psycopg[binary]>=3.1,<4'
-
 # Optional managed-sandbox provider extras for the SERVER (the launcher imports
 # the provider SDK — e.g. the kubernetes client for `sandbox.provider:
 # kubernetes`). Off by default; the runner host image needs none of these. Build
 # with `--build-arg OMNIGENT_EXTRAS=kubernetes` (comma-separate for several).
 ARG OMNIGENT_EXTRAS=
-RUN if [ -n "${OMNIGENT_EXTRAS}" ]; then \
-        uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e ".[${OMNIGENT_EXTRAS}]"; \
-    fi
+RUN set -eu; \
+    set -- --extra saas; \
+    if [ -n "${OMNIGENT_EXTRAS}" ]; then \
+        extras="$(printf '%s' "${OMNIGENT_EXTRAS}" | tr ',' ' ')"; \
+        for extra in ${extras}; do \
+            case "${extra}" in \
+              *[!A-Za-z0-9_-]*|'') \
+                echo "ERROR: invalid OMNIGENT_EXTRAS entry '${extra}'" >&2; exit 1 ;; \
+            esac; \
+            set -- "$@" --extra "${extra}"; \
+        done; \
+    fi; \
+    uv sync --frozen --active --package omnigent --no-dev --no-editable \
+      --no-cache --reinstall-package omnigent "$@"; \
+    installed="$(python -c 'import importlib.metadata as m; print(m.version("psycopg"))')"; \
+    [ "${installed}" = "${PSYCOPG_VERSION}" ] || { \
+      echo "ERROR: uv.lock installed psycopg ${installed}, expected ${PSYCOPG_VERSION}." >&2; \
+      exit 1; \
+    }
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
@@ -205,6 +234,10 @@ FROM ${NODE_IMAGE} AS node-runtime
 #     never reference it.
 FROM ${PYTHON_IMAGE} AS host
 ARG NPM_CONFIG_REGISTRY=
+ARG PNPM_VERSION
+ARG CLAUDE_CODE_VERSION=2.1.212
+ARG CODEX_CLI_VERSION=0.139.0
+ARG PI_CODING_AGENT_VERSION=0.84.2
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -263,14 +296,41 @@ COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
-# The harness CLI set mirrors omnigent/onboarding/harness_install.py
-# (the binary/package map `omnigent setup` installs from) — keep the
-# two in sync. Unpinned on purpose: the official image is rebuilt by
-# CI, so it tracks the same "latest" a laptop install would get.
-RUN npm install -g --no-audit --no-fund \
-      @anthropic-ai/claude-code \
-      @openai/codex \
-      @earendil-works/pi-coding-agent \
+# The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
+# repository's ``.github/ci-deps`` importer already records the independently
+# tested direct versions and their full transitive graph in pnpm-lock.yaml.
+# ``.github`` is excluded from this Docker build context, so materialize only
+# that tiny importer from the exact build args below; --frozen-lockfile then
+# fails closed if either the importer or any transitive material drifts.
+WORKDIR /opt/omnigent-host-cli
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+RUN npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+ && test "$(pnpm --version)" = "${PNPM_VERSION}" \
+ && mkdir -p .github/ci-deps \
+ && printf '%s\n' \
+      '{' \
+      '  "name": "e2e-ci-deps",' \
+      '  "version": "0.0.0",' \
+      '  "private": true,' \
+      '  "dependencies": {' \
+      "    \"@anthropic-ai/claude-code\": \"${CLAUDE_CODE_VERSION}\"," \
+      "    \"@earendil-works/pi-coding-agent\": \"${PI_CODING_AGENT_VERSION}\"," \
+      "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"" \
+      '  }' \
+      '}' > .github/ci-deps/package.json \
+ && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
+ && test -x .github/ci-deps/node_modules/.bin/claude \
+ && test -x .github/ci-deps/node_modules/.bin/codex \
+ && test -x .github/ci-deps/node_modules/.bin/pi \
+ && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/claude /usr/local/bin/claude \
+ && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/codex /usr/local/bin/codex \
+ && ln -s /opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin/pi /usr/local/bin/pi \
+ && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
+      *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
+      *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
+      *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
  && npm cache clean --force
 
 # Kiro CLI is not published as an npm package, and its installer has NO version
@@ -361,8 +421,7 @@ RUN set -eu; \
 # site-packages and imports no longer require /build at runtime.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build /build
-RUN pip install --no-cache-dir /build /build/sdks/python-client /build/sdks/ui \
- && ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
+RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
 
 # Sandbox launchers exec commands through `bash -lc`, and Debian's
 # /etc/profile unconditionally resets PATH for login shells — the ENV
