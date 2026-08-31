@@ -108,6 +108,22 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch pinned official release tag
+        shell: bash
+        env:
+          RUNNER_VERSION_INPUT: ${{ needs.resolve-latest.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+          tag="$RUNNER_VERSION_INPUT"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((rc[0-9]+)|(\.dev[0-9]+))?$ ]] || {
+            echo "Invalid release tag: '$tag'" >&2
+            exit 1
+          }
+          git fetch --force --no-tags --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            "refs/tags/$tag:refs/tags/$tag"
+          git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null
       - name: Run compat smoke (Config 1)
         uses: ./.github/actions/compat-smoke-run
         with:
@@ -125,6 +141,22 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch pinned official release tag
+        shell: bash
+        env:
+          SERVER_VERSION_INPUT: ${{ needs.resolve-latest.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+          tag="$SERVER_VERSION_INPUT"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((rc[0-9]+)|(\.dev[0-9]+))?$ ]] || {
+            echo "Invalid release tag: '$tag'" >&2
+            exit 1
+          }
+          git fetch --force --no-tags --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            "refs/tags/$tag:refs/tags/$tag"
+          git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null
       - name: Run compat smoke (Config 2)
         uses: ./.github/actions/compat-smoke-run
         with:
@@ -142,6 +174,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Run UI compat smoke (Config A)
         uses: ./.github/actions/compat-smoke-ui-run
         with:
@@ -159,6 +192,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Run UI compat smoke (Config B)
         uses: ./.github/actions/compat-smoke-ui-run
         with:
@@ -223,6 +257,26 @@ jobs:
           # fetch-depth 0 so the action can `git worktree add` the old tags.
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch pinned official release tags
+        shell: bash
+        env:
+          SERVER_VERSION_INPUT: ${{ matrix.server != 'main' && matrix.server || '' }}
+          RUNNER_VERSION_INPUT: ${{ matrix.runner != 'main' && matrix.runner || '' }}
+        run: |
+          set -euo pipefail
+          for tag in "$SERVER_VERSION_INPUT" "$RUNNER_VERSION_INPUT"; do
+            [ -z "$tag" ] && continue
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((rc[0-9]+)|(\.dev[0-9]+))?$ ]] || {
+              echo "Invalid release tag: '$tag'" >&2
+              exit 1
+            }
+            git fetch --force --no-tags --no-recurse-submodules \
+              https://github.com/omnigent-ai/omnigent.git \
+              "refs/tags/$tag:refs/tags/$tag"
+            git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null
+          done
 
       - name: Run e2e suite for this cell
         uses: ./.github/actions/e2e-run
@@ -257,6 +311,26 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch pinned official release tags
+        shell: bash
+        env:
+          SERVER_VERSION_INPUT: ${{ matrix.server != 'main' && matrix.server || '' }}
+          RUNNER_VERSION_INPUT: ${{ matrix.runner != 'main' && matrix.runner || '' }}
+        run: |
+          set -euo pipefail
+          for tag in "$SERVER_VERSION_INPUT" "$RUNNER_VERSION_INPUT"; do
+            [ -z "$tag" ] && continue
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((rc[0-9]+)|(\.dev[0-9]+))?$ ]] || {
+              echo "Invalid release tag: '$tag'" >&2
+              exit 1
+            }
+            git fetch --force --no-tags --no-recurse-submodules \
+              https://github.com/omnigent-ai/omnigent.git \
+              "refs/tags/$tag:refs/tags/$tag"
+            git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null
+          done
 
       - name: Run integration suite for this cell
         uses: ./.github/actions/integration-run
@@ -315,6 +389,7 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Run e2e-ui suite for this cell
         uses: ./.github/actions/compat-smoke-ui-run
         with:
