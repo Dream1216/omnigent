@@ -186,7 +186,8 @@ BEGIN
         'p0s000000003',
         'p0s000000004',
         'p0s000000005',
-        'p0s000000006'
+        'p0s000000006',
+        'p0s000000007'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -605,8 +606,10 @@ BEGIN
               )), 'hex') = CASE schema_revision
                   WHEN 'p0s000000005' THEN
                       '5e56381f6058e96322e5bf27cde7f5add1fdfb70415095f4f65a9c5f169243a6'
-                  ELSE
+                  WHEN 'p0s000000006' THEN
                       '84edaf917bdde5521267880561cb83d9b6099530dc8d76b3d07d26eb32867a8b'
+                  WHEN 'p0s000000007' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -690,7 +693,7 @@ BEGIN
              'a712a6bb5fa0f0b66ce8102486e8d51bcc11382fb5397ab5043b17e5689efda5'
        )
        OR (
-          schema_revision = 'p0s000000006'
+          schema_revision IN ('p0s000000006', 'p0s000000007')
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
           AND rate_constraint_contract_hash IS DISTINCT FROM

@@ -242,6 +242,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p0s000000004_runtime_provider_journal.py",
     "saas/control_plane/migrations/versions/p0s000000005_registration_rate_limits.py",
     "saas/control_plane/migrations/versions/p0s000000006_registration_network_rate_limits.py",
+    "saas/control_plane/migrations/versions/p0s000000007_registration_subject_lock_budget.py",
     "saas/notification_bootstrap.py",
     "saas/notification_runtime.py",
     "saas/notification_worker.py",

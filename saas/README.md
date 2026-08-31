@@ -63,7 +63,7 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000006` has 111 control-plane FORCE-RLS
+- candidate schema revision `p0s000000007` has 111 control-plane FORCE-RLS
   tables, including the shared public-registration abuse counters, Outbox
   Quarantine ledger and durable Runtime Provider operation journal.
 

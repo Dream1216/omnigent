@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
-from time import monotonic
+from threading import Barrier, Event
+from time import monotonic, sleep
 from uuid import uuid4
 
 import pytest
@@ -186,6 +186,26 @@ def _consume_result(limiter: SharedRegistrationRateLimiter, subject: str) -> str
     except OnboardingError as error:
         return error.code
     return "allowed"
+
+
+def _subject_advisory_lock_key(
+    keyring: RegistrationRateLimitSubjectKeyring,
+    subject: str,
+) -> str:
+    aliases = keyring.aliases(
+        action="registration.request",
+        subject_kind="email",
+        subject=subject,
+    )
+    anchor_hmac = (
+        aliases.active_subject_hmac
+        if aliases.anchor_key_id == aliases.active_key_id
+        else aliases.previous_subject_hmac
+    )
+    assert anchor_hmac is not None
+    return (
+        f"registration-rate-limit|registration.request|email|{aliases.anchor_key_id}|{anchor_hmac}"
+    )
 
 
 def test_catalog_seals_tables_and_security_definer_entrypoints(
@@ -508,6 +528,242 @@ def test_concurrent_same_subject_saturates_one_shared_quota(
         )
     assert counter == (5, 12)
     assert current_rows == 1
+
+
+def test_same_subject_contention_waits_past_policy_lock_timeout(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    keyring = _keyring()
+    limiter = _limiter(rate_limit_postgresql_engine, keyring)
+    subject = f"subject-lock-wait-{uuid4()}@example.test"
+    blocker = rate_limit_postgresql_engine.connect()
+    transaction = blocker.begin()
+    consume_started = Event()
+
+    def observe_consume(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "public.saas_consume_registration_rate_limit" in statement:
+            consume_started.set()
+
+    try:
+        blocker.scalar(
+            sa.text("SELECT pg_catalog.pg_advisory_xact_lock(:lock_id)"),
+            {
+                "lock_id": blocker.scalar(
+                    sa.text("SELECT pg_catalog.hashtextextended(:lock_key, 0)"),
+                    {"lock_key": _subject_advisory_lock_key(keyring, subject)},
+                )
+            },
+        )
+        sa.event.listen(
+            rate_limit_postgresql_engine,
+            "before_cursor_execute",
+            observe_consume,
+        )
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            future = workers.submit(_consume_result, limiter, subject)
+            assert consume_started.wait(timeout=3)
+            sleep(0.35)
+            transaction.commit()
+            assert future.result(timeout=3) == "allowed"
+    finally:
+        sa.event.remove(
+            rate_limit_postgresql_engine,
+            "before_cursor_execute",
+            observe_consume,
+        )
+        if transaction.is_active:
+            transaction.rollback()
+        blocker.close()
+
+    with rate_limit_postgresql_engine.connect() as connection:
+        assert connection.execute(
+            sa.text("SELECT request_count, version FROM public.saas_registration_rate_limits")
+        ).one() == (1, 1)
+
+
+def test_caller_transaction_holds_same_subject_quota_lock_until_commit(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    limiter = _limiter(rate_limit_postgresql_engine)
+    subject = f"caller-transaction-lock-{uuid4()}@example.test"
+    sessions = _role_sessions(rate_limit_postgresql_engine, "saas_registration")
+    first_consumed = Event()
+    release_first_transaction = Event()
+    second_consume_started = Event()
+
+    def consume_then_hold_transaction() -> str:
+        with sessions.begin() as db:
+            decision = limiter.consume(
+                db,
+                action="registration.request",
+                subject_kind="email",
+                subject=subject,
+            )
+            first_consumed.set()
+            assert release_first_transaction.wait(timeout=3)
+        return "allowed" if decision.allowed else "rate_limited"
+
+    def observe_second_consume(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "public.saas_consume_registration_rate_limit" in statement:
+            second_consume_started.set()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(consume_then_hold_transaction)
+        assert first_consumed.wait(timeout=3)
+        sa.event.listen(
+            rate_limit_postgresql_engine,
+            "before_cursor_execute",
+            observe_second_consume,
+        )
+        try:
+            second = workers.submit(_consume_result, limiter, subject)
+            assert second_consume_started.wait(timeout=3)
+            sleep(0.35)
+            assert not second.done()
+            release_first_transaction.set()
+            assert first.result(timeout=3) == "allowed"
+            assert second.result(timeout=3) == "allowed"
+        finally:
+            release_first_transaction.set()
+            sa.event.remove(
+                rate_limit_postgresql_engine,
+                "before_cursor_execute",
+                observe_second_consume,
+            )
+
+    with rate_limit_postgresql_engine.connect() as connection:
+        assert connection.execute(
+            sa.text("SELECT request_count, version FROM public.saas_registration_rate_limits")
+        ).one() == (2, 2)
+
+
+def test_same_subject_wait_refreshes_database_clock_before_window_decision(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    keyring = _keyring()
+    limiter = _limiter(rate_limit_postgresql_engine, keyring)
+    subject = f"subject-window-boundary-{uuid4()}@example.test"
+    _set_policy(rate_limit_postgresql_engine, limit_count=5, window_seconds=60)
+    limiter.require(
+        action="registration.request",
+        subject_kind="email",
+        subject=subject,
+    )
+    with rate_limit_postgresql_engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE public.saas_registration_rate_limits "
+                "SET request_count = 5, "
+                "window_started_at = pg_catalog.clock_timestamp() - interval '59.5 seconds'"
+            )
+        )
+
+    blocker = rate_limit_postgresql_engine.connect()
+    transaction = blocker.begin()
+    consume_started = Event()
+
+    def observe_consume(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "public.saas_consume_registration_rate_limit" in statement:
+            consume_started.set()
+
+    try:
+        blocker.scalar(
+            sa.text("SELECT pg_catalog.pg_advisory_xact_lock(:lock_id)"),
+            {
+                "lock_id": blocker.scalar(
+                    sa.text("SELECT pg_catalog.hashtextextended(:lock_key, 0)"),
+                    {"lock_key": _subject_advisory_lock_key(keyring, subject)},
+                )
+            },
+        )
+        sa.event.listen(
+            rate_limit_postgresql_engine,
+            "before_cursor_execute",
+            observe_consume,
+        )
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            future = workers.submit(_consume_result, limiter, subject)
+            assert consume_started.wait(timeout=3)
+            sleep(0.75)
+            transaction.commit()
+            assert future.result(timeout=3) == "allowed"
+    finally:
+        sa.event.remove(
+            rate_limit_postgresql_engine,
+            "before_cursor_execute",
+            observe_consume,
+        )
+        if transaction.is_active:
+            transaction.rollback()
+        blocker.close()
+
+    with rate_limit_postgresql_engine.connect() as connection:
+        assert connection.execute(
+            sa.text("SELECT request_count, version FROM public.saas_registration_rate_limits")
+        ).one() == (1, 2)
+
+
+def test_same_subject_lock_deadline_fails_closed(
+    rate_limit_postgresql_engine: Engine,
+) -> None:
+    keyring = _keyring()
+    limiter = _limiter(rate_limit_postgresql_engine, keyring)
+    subject = f"subject-lock-deadline-{uuid4()}@example.test"
+    blocker = rate_limit_postgresql_engine.connect()
+    transaction = blocker.begin()
+    try:
+        blocker.scalar(
+            sa.text("SELECT pg_catalog.pg_advisory_xact_lock(:lock_id)"),
+            {
+                "lock_id": blocker.scalar(
+                    sa.text("SELECT pg_catalog.hashtextextended(:lock_key, 0)"),
+                    {"lock_key": _subject_advisory_lock_key(keyring, subject)},
+                )
+            },
+        )
+        started = monotonic()
+        with pytest.raises(OnboardingError) as denied:
+            limiter.require(
+                action="registration.request",
+                subject_kind="email",
+                subject=subject,
+            )
+        elapsed = monotonic() - started
+    finally:
+        transaction.rollback()
+        blocker.close()
+
+    assert denied.value.code == "registration_rate_limit_unavailable"
+    cause = denied.value.__cause__
+    assert isinstance(cause, DBAPIError)
+    assert getattr(cause.orig, "sqlstate", None) == "55P03"
+    assert 1.5 <= elapsed < 4.0
+    with rate_limit_postgresql_engine.connect() as connection:
+        assert (
+            connection.scalar(sa.text("SELECT count(*) FROM public.saas_registration_rate_limits"))
+            == 0
+        )
 
 
 def test_rotation_overlap_and_promotion_never_double_quota(
@@ -956,7 +1212,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            "p0s000000006"
+            "p0s000000007"
         )
         assert (
             connection.scalar(
