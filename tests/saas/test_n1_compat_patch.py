@@ -110,6 +110,14 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "python -m saas" not in secure_image_commands
     assert "python -I -S saas/scripts/build_n1_compat.py" in secure_image_commands
     assert "python -I -S saas/scripts/compare_oci_rebuilds.py" in secure_image_commands
+    assert workflow["env"]["CANDIDATE_REVISION"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
+    checkout = current_postgresql["steps"][0]
+    assert checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in secure_image_commands
+    assert '--arg revision "$CANDIDATE_REVISION"' in secure_image_commands
+    assert "n1-compat-candidate-${{ env.CANDIDATE_REVISION }}" in source
     assert "services" not in current_postgresql
     current_contract = jobs["verify-postgresql-current"]
     current_contract_commands = "\n".join(

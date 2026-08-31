@@ -69,6 +69,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
   N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b
   N1_CONTRACT_VERSION: p0s3-n1-outbox-security-compat-v1
   N1_PATCH_SHA256: ea66dacc4c6a2100bfa3497ff4213112074a13b8f23afafbf4e9fb78b4ca3409
@@ -86,6 +87,7 @@ jobs:
       - name: Checkout immutable patch source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ env.CANDIDATE_REVISION }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
@@ -95,7 +97,8 @@ jobs:
       - name: Verify fixed source and manifest coordinates
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
           jq -e \
             --arg base "$N1_BASE_COMMIT" \
             --arg contract "$N1_CONTRACT_VERSION" \
@@ -148,12 +151,12 @@ jobs:
         run: |
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
-          source_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
           upstream_revision=$(jq -r .upstream_revision "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           adapter_contract=$(jq -r .adapter_contract_version "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
-          printf '%s\n' "SOURCE_REVISION=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          printf '%s\n' "SOURCE_REVISION=${CANDIDATE_REVISION}" >> "$GITHUB_ENV"
           printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           printf '%s\n' "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
       - name: Build dual-platform N-1 runtime candidate attempt 1
@@ -226,7 +229,7 @@ jobs:
             --arg patch "$N1_PATCH_SHA256" \
             --arg tree "$N1_PATCHED_TREE_HASH" \
             --arg schema "$N1_SCHEMA_REVISION" \
-            --arg revision "$GITHUB_SHA" \
+            --arg revision "$CANDIDATE_REVISION" \
             --arg upstream "$UPSTREAM_REVISION" \
             '. + {
               evidence_kind: "n1_security_compat_oci_candidate",
@@ -264,7 +267,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: n1-compat-candidate-${{ github.sha }}
+          name: n1-compat-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
             artifacts-n1-builder.json
             artifacts/n1-compat-rebuild.json
@@ -277,7 +280,7 @@ jobs:
           github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: n1-compat-verified-oci-${{ github.sha }}
+          name: n1-compat-verified-oci-${{ env.CANDIDATE_REVISION }}
           path: ${{ runner.temp }}/n1-runtime-2.tar
           if-no-files-found: error
           retention-days: 1

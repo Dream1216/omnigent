@@ -276,7 +276,11 @@ def _inspect_oci_archive(path: Path) -> tuple[dict[str, Any], dict[str, list[str
                     raise ValueError("OCI attestation predicate is invalid or repeated")
                 statement = json.loads(layer_path.read_text(encoding="utf-8"))
                 if (
-                    statement.get("_type") != "https://in-toto.io/Statement/v0.1"
+                    statement.get("_type")
+                    not in {
+                        "https://in-toto.io/Statement/v0.1",
+                        "https://in-toto.io/Statement/v1",
+                    }
                     or statement.get("predicateType") != predicate
                 ):
                     raise ValueError("OCI attestation statement does not match its predicate")
@@ -299,6 +303,8 @@ def _inspect_oci_archive(path: Path) -> tuple[dict[str, Any], dict[str, list[str
                 subjects = statement.get("subject", [])
                 if not isinstance(subjects, list):
                     raise ValueError("OCI attestation subject is invalid")
+                if not isinstance(reference, str):
+                    raise ValueError("OCI attestation reference digest is invalid")
                 if subjects and not any(
                     isinstance(subject, dict)
                     and subject.get("digest", {}).get("sha256")

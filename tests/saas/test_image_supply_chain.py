@@ -753,6 +753,7 @@ def _write_oci(
     include_diff_id: bool = True,
     header_only_attestation: bool = False,
     buildkit_image_attestation_config: bool = False,
+    statement_type: str = "https://in-toto.io/Statement/v0.1",
 ) -> None:
     root = path.parent / f"{path.stem}-layout"
     (root / "blobs/sha256").mkdir(parents=True, exist_ok=True)
@@ -841,7 +842,7 @@ def _write_oci(
             )
             payload = json.dumps(
                 {
-                    "_type": "https://in-toto.io/Statement/v0.1",
+                    "_type": statement_type,
                     "predicateType": predicate,
                     "subject": [],
                     "predicate": predicate_body,
@@ -958,6 +959,15 @@ def test_oci_rebuild_accepts_real_buildkit_image_attestation_config(tmp_path: Pa
     second = tmp_path / "second-real.tar"
     _write_oci(first, revision="a" * 40, buildkit_image_attestation_config=True)
     _write_oci(second, revision="a" * 40, buildkit_image_attestation_config=True)
+
+    assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
+
+
+def test_oci_rebuild_accepts_in_toto_statement_v1(tmp_path: Path) -> None:
+    first = tmp_path / "first-v1.tar"
+    second = tmp_path / "second-v1.tar"
+    _write_oci(first, revision="a" * 40, statement_type="https://in-toto.io/Statement/v1")
+    _write_oci(second, revision="a" * 40, statement_type="https://in-toto.io/Statement/v1")
 
     assert compare_archives(first, second)["matching_platform_manifest_and_config"] is True
 
