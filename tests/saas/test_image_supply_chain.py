@@ -339,6 +339,14 @@ def test_image_material_lock_contract_is_valid() -> None:
             ),
         ),
         (
+            "unexpected additional apt sources",
+            "extra apt sources ignored",
+            (
+                "builder, host and server apt layers must use a fixed snapshot and remove "
+                "volatile state"
+            ),
+        ),
+        (
             "expected two Debian snapshot sources",
             "rolling Debian mirrors are allowed",
             (

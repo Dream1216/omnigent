@@ -760,6 +760,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "/etc/apt/sources.list.d/debian.sources",
         "snapshot[.]debian[.]org/archive/",
         "expected two Debian snapshot sources",
+        "unexpected additional apt sources",
+        "rolling Debian mirror remains enabled",
         "len(uris) == 2",
         "all(re.fullmatch",
         'sum("/archive/debian/" in uri for uri in uris) == 1',

@@ -123,6 +123,9 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     current_contract_commands = "\n".join(
         str(step.get("run", "")) for step in current_contract["steps"]
     )
+    current_contract_checkout = current_contract["steps"][0]
+    assert current_contract_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in current_contract_commands
     assert current_contract["services"]["postgres"]["image"] == "postgres:18"
     assert "--no-install-local --no-config" in current_contract_commands
     n1_postgresql = jobs["verify-postgresql-n1"]
@@ -132,6 +135,9 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     )
     n1_postgresql_steps = n1_postgresql["steps"]
     n1_postgresql_commands = "\n".join(str(step.get("run", "")) for step in n1_postgresql_steps)
+    n1_postgresql_checkout = n1_postgresql_steps[0]
+    assert n1_postgresql_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in n1_postgresql_commands
     assert workflow["run-name"] == (
         "SaaS N-1 ${{ github.event_name }} "
         "pr=${{ github.event.pull_request.number || 'none' }} "
