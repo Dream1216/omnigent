@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -28,13 +29,16 @@ from saas.control_plane import (
 )
 from saas.control_plane.db_models import ProjectRecord
 
-COMPATIBILITY_POLICY = RuntimeCompatibilityPolicy(
-    runtime_type="omnigent",
-    allowed_runtime_versions=frozenset(("0.11.0.dev0",)),
-    allowed_source_revisions=frozenset(("14df304a8e958da36b8a606a2c825e3a6642247e",)),
-    allowed_schema_revisions=frozenset(("e5d9bc8ac650",)),
-    adapter_contract_version="0.2.0",
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+REVIEWED_UPSTREAM_MANIFEST_PATH = REPOSITORY_ROOT / "saas/upstream-baseline.json"
+REVIEWED_UPSTREAM_MANIFEST = json.loads(
+    REVIEWED_UPSTREAM_MANIFEST_PATH.read_text(encoding="utf-8")
 )
+COMPATIBILITY_POLICY = load_runtime_compatibility_policy(REVIEWED_UPSTREAM_MANIFEST_PATH)
+REVIEWED_RUNTIME_VERSION = str(REVIEWED_UPSTREAM_MANIFEST["upstream_version"])
+REVIEWED_SOURCE_REVISION = str(REVIEWED_UPSTREAM_MANIFEST["upstream_revision"])
+REVIEWED_SCHEMA_REVISION = str(REVIEWED_UPSTREAM_MANIFEST["official_schema_heads"][0])
+REVIEWED_ADAPTER_CONTRACT_VERSION = str(REVIEWED_UPSTREAM_MANIFEST["adapter_contract_version"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +170,7 @@ def control_plane() -> tuple[sessionmaker[Session], SeededScope]:
                 database_cluster_ref="db-cluster-a",
                 object_store_ref="object-store-a",
                 kms_key_ref="kms-key-a",
-                official_schema_revision="e5d9bc8ac650",
+                official_schema_revision=REVIEWED_SCHEMA_REVISION,
                 capacity_class="shared-medium",
                 status="active",
             )
@@ -179,11 +183,11 @@ def control_plane() -> tuple[sessionmaker[Session], SeededScope]:
                 space_id=scope.space_id,
                 placement_id=scope.placement_id,
                 runtime_type="omnigent",
-                runtime_version="0.11.0.dev0",
+                runtime_version=REVIEWED_RUNTIME_VERSION,
                 physical_partition_key="41",
                 placement_generation=4,
-                source_revision="14df304a8e958da36b8a606a2c825e3a6642247e",
-                adapter_contract_version="0.2.0",
+                source_revision=REVIEWED_SOURCE_REVISION,
+                adapter_contract_version=REVIEWED_ADAPTER_CONTRACT_VERSION,
                 status="active",
             )
         )
@@ -225,10 +229,17 @@ def _resolver(
 
 
 def test_runtime_policy_loads_from_reviewed_upstream_manifest() -> None:
-    root = Path(__file__).resolve().parents[2]
-    policy = load_runtime_compatibility_policy(root / "saas/upstream-baseline.json")
+    policy = load_runtime_compatibility_policy(REVIEWED_UPSTREAM_MANIFEST_PATH)
 
-    assert policy == COMPATIBILITY_POLICY
+    assert policy == RuntimeCompatibilityPolicy(
+        runtime_type="omnigent",
+        allowed_runtime_versions=frozenset((REVIEWED_RUNTIME_VERSION,)),
+        allowed_source_revisions=frozenset((REVIEWED_SOURCE_REVISION,)),
+        allowed_schema_revisions=frozenset(
+            str(revision) for revision in REVIEWED_UPSTREAM_MANIFEST["official_schema_heads"]
+        ),
+        adapter_contract_version=REVIEWED_ADAPTER_CONTRACT_VERSION,
+    )
 
 
 def test_server_resolves_membership_versions_and_runtime_placement(control_plane) -> None:
