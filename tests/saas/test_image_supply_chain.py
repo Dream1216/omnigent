@@ -360,6 +360,26 @@ def test_image_material_lock_contract_is_valid() -> None:
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
+            "count in (0, 1)",
+            "count == 1",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            r'r"(?m)^prunedAt:[^\r\n]*$"',
+            r'r"(?m)^prunedAt: .*$"',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'modules.write_text(normalized, encoding="utf-8") if count else None',
+            'modules.write_text(normalized, encoding="utf-8")',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'type(state_data.get("lastValidatedTimestamp")) is int',
+            'isinstance(state_data.get("lastValidatedTimestamp"), int)',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
             "--package-import-method=copy",
             "--package-import-method=auto",
             "host CLI layer must normalize and remove volatile installer state",
