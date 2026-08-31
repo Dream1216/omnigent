@@ -220,7 +220,7 @@ jobs:
           outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=saas-n1-compat-candidate
+          no-cache: true
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}

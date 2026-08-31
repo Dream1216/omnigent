@@ -170,6 +170,8 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
     assert options["platforms"] == "linux/amd64,linux/arm64"
     assert options["provenance"] == "mode=max"
     assert options["sbom"] == "true"
+    assert options["no-cache"] == "${{ inputs.attempt == '2' }}"
+    assert "inputs.attempt == '1'" in options["cache-from"]
     assert "inputs.attempt == '1'" in options["cache-to"]
     for name in (
         "PYTHON_IMAGE",

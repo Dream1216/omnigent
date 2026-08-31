@@ -24,6 +24,7 @@ _APPROVED_PATHS = {
 }
 _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
+_N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _REQUIRED_BUILD_ARGS = {
@@ -410,6 +411,13 @@ def _read_repository_contract(
         return None
 
 
+def _named_workflow_step(source: str, name: str) -> str | None:
+    marker = f"      - name: {name}\n"
+    if source.count(marker) != 1:
+        return None
+    return source.split(marker, 1)[1].split("\n      - name:", 1)[0]
+
+
 def validate_candidate_build_contract(repo: Path) -> list[str]:
     """Validate the workflow and its fixed local composite build action together."""
 
@@ -520,10 +528,60 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("candidate composite build action weakens the approved build contract")
     if action.count(f"uses: {_BUILD_PUSH_ACTION}") != 1:
         violations.append("candidate composite build action must use the pinned builder once")
+    candidate_cache_contract = [
+        "no-cache: ${{ inputs.attempt == '2' }}",
+        (
+            "cache-from: ${{ inputs.attempt == '1' && "
+            "format('type=gha,scope=saas-{0}-candidate', inputs.artifact) || '' }}"
+        ),
+        (
+            "cache-to: ${{ inputs.attempt == '1' && "
+            "format('type=gha,scope=saas-{0}-candidate,mode=max', inputs.artifact) || '' }}"
+        ),
+    ]
+    action_cache_lines = [
+        line.strip()
+        for line in action.splitlines()
+        if line.strip().startswith(("no-cache:", "cache-from:", "cache-to:"))
+    ]
+    if action_cache_lines != candidate_cache_contract:
+        violations.append("candidate attempt 2 must rebuild without shared cache")
     for build_arg in _REQUIRED_BUILD_ARGS:
         binding = f"{build_arg}=${{{{ env.{build_arg} }}}}"
         if action.count(binding) != 1:
             violations.append(f"candidate composite build action must bind resolved {build_arg}")
+
+    n1_workflow = _read_repository_contract(
+        repo,
+        _N1_CANDIDATE_WORKFLOW,
+        label="N-1 candidate workflow",
+        violations=violations,
+    )
+    if n1_workflow is None:
+        return violations
+    n1_attempt_one = _named_workflow_step(
+        n1_workflow,
+        "Build dual-platform N-1 runtime candidate attempt 1",
+    )
+    n1_attempt_two = _named_workflow_step(
+        n1_workflow,
+        "Build dual-platform N-1 runtime candidate attempt 2",
+    )
+    attempt_one_cache = "type=gha,scope=saas-n1-compat-candidate"
+    if (
+        n1_attempt_one is None
+        or n1_attempt_one.count(f"cache-from: {attempt_one_cache}") != 1
+        or n1_attempt_one.count(f"cache-to: {attempt_one_cache},mode=max") != 1
+        or "no-cache:" in n1_attempt_one
+    ):
+        violations.append("N-1 candidate attempt 1 must retain the approved GHA cache")
+    if (
+        n1_attempt_two is None
+        or n1_attempt_two.count("no-cache: true") != 1
+        or "cache-from:" in n1_attempt_two
+        or "cache-to:" in n1_attempt_two
+    ):
+        violations.append("N-1 candidate attempt 2 must rebuild without shared cache")
     return violations
 
 

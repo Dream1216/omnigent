@@ -230,6 +230,7 @@ def _candidate_contract_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     for relative in (
         ".github/workflows/saas-image-candidate.yml",
+        ".github/workflows/saas-n1-compat-image.yml",
         "saas/actions/build-oci-candidate/action.yml",
     ):
         target = repo / relative
@@ -265,6 +266,47 @@ def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path)
     assert (
         "candidate composite build action must bind resolved CONTROL_PLANE_SCHEMA_REVISION"
     ) in violations
+
+
+def test_candidate_composite_build_contract_rejects_shared_rebuild_cache(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    action = repo / "saas/actions/build-oci-candidate/action.yml"
+    action.write_text(
+        action.read_text(encoding="utf-8").replace(
+            (
+                "cache-from: ${{ inputs.attempt == '1' && "
+                "format('type=gha,scope=saas-{0}-candidate', inputs.artifact) || '' }}"
+            ),
+            "cache-from: type=gha,scope=saas-${{ inputs.artifact }}-candidate",
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "candidate attempt 2 must rebuild without shared cache" in violations
+
+
+def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-n1-compat-image.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "          no-cache: true\n          build-args: |",
+            (
+                "          cache-from: type=gha,scope=saas-n1-compat-candidate\n"
+                "          build-args: |"
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "N-1 candidate attempt 2 must rebuild without shared cache" in violations
 
 
 def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -> None:

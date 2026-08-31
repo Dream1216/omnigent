@@ -192,6 +192,22 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert source.count("platforms: linux/amd64,linux/arm64") == 3
     assert source.count("provenance: mode=max") == 3
     assert source.count("sbom: true") == 3
+    attempt_one = next(
+        step
+        for step in current_postgresql["steps"]
+        if step["name"] == "Build dual-platform N-1 runtime candidate attempt 1"
+    )["with"]
+    attempt_two = next(
+        step
+        for step in current_postgresql["steps"]
+        if step["name"] == "Build dual-platform N-1 runtime candidate attempt 2"
+    )["with"]
+    assert attempt_one["cache-from"] == "type=gha,scope=saas-n1-compat-candidate"
+    assert attempt_one["cache-to"] == "type=gha,scope=saas-n1-compat-candidate,mode=max"
+    assert "no-cache" not in attempt_one
+    assert attempt_two["no-cache"] == "true"
+    assert "cache-from" not in attempt_two
+    assert "cache-to" not in attempt_two
     assert '--output-directory "${RUNNER_TEMP}/n1-source"' in source
     assert "test_real_postgresql_pinned_n1_outbox_compatibility_bridge" in source
     assert "test_real_postgresql_n1_compat_login_admission_and_roles_replay" in source
