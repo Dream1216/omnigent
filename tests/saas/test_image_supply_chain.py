@@ -315,6 +315,57 @@ def test_image_material_lock_contract_is_valid() -> None:
             'ENV PATH="/usr/local/bin:${PATH}"',
             "host CLI wrappers must execute from their pnpm installation directory",
         ),
+        (
+            "UV_NO_INSTALLER_METADATA=1",
+            "UV_NO_INSTALLER_METADATA=0",
+            "production Python installs must disable nondeterministic uv installer metadata",
+        ),
+        (
+            "> /tmp/venv-core-pyc.sha256",
+            "> /tmp/venv-core-pyc-unchecked.sha256",
+            "production venv must preserve seed bytecode and reject uv installer metadata",
+        ),
+        (
+            "> /tmp/venv-server-pyc.sha256",
+            "> /tmp/venv-server-pyc-unchecked.sha256",
+            "server venv must preserve the deterministic seed bytecode manifest",
+        ),
+        (
+            "rm -f /var/cache/ldconfig/aux-cache",
+            "true # volatile apt state retained",
+            (
+                "builder, host and server apt layers must use a fixed snapshot and remove "
+                "volatile state"
+            ),
+        ),
+        (
+            "expected two Debian snapshot sources",
+            "rolling Debian mirrors are allowed",
+            (
+                "builder, host and server apt layers must use a fixed snapshot and remove "
+                "volatile state"
+            ),
+        ),
+        (
+            "--store-dir /tmp/pnpm-store",
+            "--store-dir /root/.local/share/pnpm/store",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "--package-import-method=copy",
+            "--package-import-method=auto",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "state.unlink()",
+            'state_data["lastValidatedTimestamp"]=epoch*1000',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "/root/.npm /root/.cache /root/.local/share/pnpm",
+            "/root/.npm",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
     ],
 )
 def test_image_material_lock_rejects_dockerfile_drift(
@@ -378,6 +429,46 @@ def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path)
     assert (
         "candidate composite build action must bind resolved CONTROL_PLANE_SCHEMA_REVISION"
     ) in violations
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement"),
+    [
+        (
+            "CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}",
+            "CANDIDATE_REVISION: ${{ github.sha }}",
+        ),
+        (
+            "ref: ${{ env.CANDIDATE_REVISION }}",
+            "ref: ${{ github.sha }}",
+        ),
+        (
+            'source_revision="$CANDIDATE_REVISION"',
+            "source_revision=$(git rev-parse HEAD)",
+        ),
+        (
+            "name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}",
+            "name: saas-image-candidate-${{ github.sha }}",
+        ),
+    ],
+)
+def test_candidate_contract_rejects_merge_sha_binding(
+    tmp_path: Path,
+    target: str,
+    replacement: str,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text(encoding="utf-8")
+    assert target in source
+    workflow.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert (
+        "candidate workflow must bind builds and evidence to the exact pull-request head"
+        in violations
+    )
 
 
 def test_candidate_composite_build_contract_rejects_shared_rebuild_cache(

@@ -84,6 +84,9 @@ concurrency:
   group: saas-image-candidate-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   build-candidate:
     runs-on: ubuntu-latest
@@ -108,7 +111,14 @@ jobs:
       - name: Checkout immutable candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ env.CANDIDATE_REVISION }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate revision
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -161,8 +171,8 @@ jobs:
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
           node_digest=$(crane digest node:22-slim)
-          source_epoch=$(git show -s --format=%ct HEAD)
-          source_revision=$(git rev-parse HEAD)
+          source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
+          source_revision="$CANDIDATE_REVISION"
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
           schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
@@ -208,7 +218,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: saas-image-candidate-${{ github.sha }}
+          name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: artifacts/saas-image-candidate.json
           if-no-files-found: error
           retention-days: 30

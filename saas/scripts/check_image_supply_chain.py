@@ -441,11 +441,35 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if workflow is None:
         return violations
 
+    candidate_checkout = _named_workflow_step(workflow, "Checkout immutable candidate")
+    candidate_verification = _named_workflow_step(workflow, "Verify exact candidate revision")
+    exact_head_verification = {
+        '[[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]',
+        '[[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]',
+    }
+    if (
+        workflow.count(
+            "CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}"
+        )
+        != 1
+        or candidate_checkout is None
+        or candidate_checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
+        or candidate_checkout.count("persist-credentials: false") != 1
+        or candidate_verification is None
+        or any(fragment not in candidate_verification for fragment in exact_head_verification)
+        or workflow.count('source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")') != 1
+        or workflow.count('source_revision="$CANDIDATE_REVISION"') != 1
+        or workflow.count("name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}") != 1
+    ):
+        violations.append(
+            "candidate workflow must bind builds and evidence to the exact pull-request head"
+        )
+
     material_sources = {
         "python_digest=$(crane digest python:3.12-slim)",
         "node_digest=$(crane digest node:22-slim)",
-        "source_epoch=$(git show -s --format=%ct HEAD)",
-        "source_revision=$(git rev-parse HEAD)",
+        'source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")',
+        'source_revision="$CANDIDATE_REVISION"',
         "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
         ("adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)"),
         (
@@ -665,6 +689,29 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append("production Dockerfile must frozen-sync the core runtime from uv.lock")
     if "uv pip install" in dockerfile:
         violations.append("production Dockerfile must not re-resolve Python dependencies")
+    if "UV_NO_INSTALLER_METADATA=1" not in dockerfile:
+        violations.append(
+            "production Python installs must disable nondeterministic uv installer metadata"
+        )
+    core_bytecode_contract = {
+        "> /tmp/venv-seed-pyc.sha256",
+        "> /tmp/venv-core-pyc.sha256",
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
+    }
+    if (
+        any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
+        or dockerfile.count('root.rglob("uv_cache.json")') != 2
+        or dockerfile.count("python -B -I -c") < 3
+    ):
+        violations.append(
+            "production venv must preserve seed bytecode and reject uv installer metadata"
+        )
+    server_bytecode_contract = {
+        "> /tmp/venv-server-pyc.sha256",
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
+    }
+    if any(dockerfile.count(fragment) != 1 for fragment in server_bytecode_contract):
+        violations.append("server venv must preserve the deterministic seed bytecode manifest")
 
     try:
         lock_packages = tomllib.loads(uv_lock).get("package", [])
@@ -695,6 +742,65 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append("host image must copy the committed pnpm lock")
     if "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps" not in dockerfile:
         violations.append("host CLI dependency graph must install from pnpm-lock.yaml")
+    host_marker = "FROM ${PYTHON_IMAGE} AS host"
+    runtime_marker = "FROM ${PYTHON_IMAGE} AS runtime"
+    builder_marker = "FROM ${PYTHON_IMAGE} AS builder"
+    server_builder_marker = "FROM builder AS server-builder"
+    stage_markers = (builder_marker, server_builder_marker, host_marker, runtime_marker)
+    if any(dockerfile.count(marker) != 1 for marker in stage_markers):
+        violations.append("production Dockerfile must retain the approved executable stages")
+        builder_stage = host_stage = runtime_stage = ""
+    else:
+        builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
+        host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
+        runtime_stage = dockerfile.split(runtime_marker, 1)[1]
+    apt_reproducibility_contract = {
+        "ARG SOURCE_DATE_EPOCH",
+        "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
+        "/etc/apt/sources.list.d/debian.sources",
+        "snapshot[.]debian[.]org/archive/",
+        "expected two Debian snapshot sources",
+        "len(uris) == 2",
+        "all(re.fullmatch",
+        'sum("/archive/debian/" in uri for uri in uris) == 1',
+        "VERSION_CODENAME",
+        "Debian snapshot coordinates",
+        "Acquire::Check-Valid-Until=false",
+        "export DEBIAN_FRONTEND=noninteractive;",
+        "apt-get clean",
+        "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
+        "rm -f /var/cache/ldconfig/aux-cache",
+        "/var/log/alternatives.log",
+        "/var/log/dpkg.log",
+        "/var/log/apt/eipp.log.xz",
+        "/var/log/apt/history.log",
+        "/var/log/apt/term.log",
+    }
+    if any(
+        fragment not in stage
+        for stage in (builder_stage, host_stage, runtime_stage)
+        for fragment in apt_reproducibility_contract
+    ):
+        violations.append(
+            "builder, host and server apt layers must use a fixed snapshot "
+            "and remove volatile state"
+        )
+    host_cli_reproducibility_contract = {
+        "ARG SOURCE_DATE_EPOCH",
+        "npm_config_cache=/tmp/npm-cache",
+        "--store-dir /tmp/pnpm-store",
+        "--package-import-method=copy",
+        'modules=Path("node_modules/.modules.yaml")',
+        "prunedAt:",
+        'state=Path("node_modules/.pnpm-workspace-state-v1.json")',
+        "state.unlink()",
+        "HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache",
+        "rm -rf /tmp/npm-cache /tmp/pnpm-store",
+        "/root/.npm /root/.cache /root/.local/share/pnpm",
+        "test ! -e node_modules/.pnpm-workspace-state-v1.json",
+    }
+    if any(fragment not in host_stage for fragment in host_cli_reproducibility_contract):
+        violations.append("host CLI layer must normalize and remove volatile installer state")
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",

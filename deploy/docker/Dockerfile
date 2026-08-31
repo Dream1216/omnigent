@@ -109,12 +109,24 @@ ARG SOURCE_DATE_EPOCH
 ARG UV_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
+    UV_NO_INSTALLER_METADATA=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential \
- && rm -rf /var/lib/apt/lists/*
+# Docker Official Images records the exact Debian archive snapshots used to
+# assemble python-slim as comments beside its rolling URIs. Activate only those
+# base-matched snapshots and fail closed if that two-archive contract changes.
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
+      build-essential \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
 RUN pip install --index-url ${PYPI_INDEX_URL} --no-cache-dir "uv==${UV_VERSION}" \
  && case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*) ;; \
@@ -143,7 +155,11 @@ COPY examples/ ./examples/
 # tells uv to install into this venv (not the slim image's system
 # Python) — without it, uv falls back to system Python and the
 # copied /opt/venv lands in the runtime stage empty.
-RUN python -m venv /opt/venv
+# Keep ensurepip's deterministic seed bytecode, then prove neither uv nor any
+# isolated smoke import adds timestamp-based bytecode to the copied venv.
+RUN python -m venv /opt/venv \
+ && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-seed-pyc.sha256
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}"
 
@@ -159,7 +175,10 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml
 # to /opt/venv and ``--no-editable`` makes the root package and SDK path deps
 # self-contained, so the host image never needs a second dependency-resolving
 # pip install to escape /build/*.pth references.
-RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache
+RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
+ && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-core-pyc.sha256 \
+ && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256
 
 # ── Server builder ──────────────────────────────────────
 # Server-only additions on top of the shared builder: the SPA bundle
@@ -199,7 +218,10 @@ RUN set -eu; \
     [ "${installed}" = "${PSYCOPG_VERSION}" ] || { \
       echo "ERROR: uv.lock installed psycopg ${installed}, expected ${PSYCOPG_VERSION}." >&2; \
       exit 1; \
-    }
+    }; \
+    python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-server-pyc.sha256; \
+    cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
@@ -235,6 +257,7 @@ FROM ${NODE_IMAGE} AS node-runtime
 FROM ${PYTHON_IMAGE} AS host
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
+ARG SOURCE_DATE_EPOCH
 ARG CLAUDE_CODE_VERSION=2.1.212
 ARG CODEX_CLI_VERSION=0.139.0
 ARG PI_CODING_AGENT_VERSION=0.84.2
@@ -260,11 +283,18 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     IS_SANDBOX=1
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
       git tmux procps lsof bubblewrap curl ca-certificates unzip \
       iproute2 nftables \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
 # OpenShell-required non-root user (see the header note). UID/GID in the high
 # range per OpenShell's bring-your-own-container guidance, so that without
@@ -305,7 +335,11 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+# pnpm records wall-clock validation fields and its store records access times.
+# Normalize the one runtime metadata field, remove the disposable state/store,
+# and isolate CLI version probes from the final root home.
+RUN export npm_config_cache=/tmp/npm-cache; \
+    npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \
@@ -320,16 +354,25 @@ RUN npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
       '  }' \
       '}' > .github/ci-deps/package.json \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
+      --store-dir /tmp/pnpm-store --package-import-method=copy \
+ && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); normalized,count=re.subn(r"(?m)^prunedAt: .*$", f"prunedAt: {email.utils.formatdate(epoch, usegmt=True)}", modules.read_text(encoding="utf-8")); assert count == 1, f"expected one pnpm prunedAt field, found {count}"; modules.write_text(normalized, encoding="utf-8"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")); assert isinstance(state_data.get("lastValidatedTimestamp"), int), "pnpm validation timestamp missing"; state.unlink()' \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
- && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
+ && mkdir -p /tmp/omnigent-cli-home /tmp/omnigent-cli-cache \
+ && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
       *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
- && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
+ && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
       *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
- && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
+ && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
       *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
- && npm cache clean --force
+ && rm -rf /tmp/npm-cache /tmp/pnpm-store \
+      /tmp/omnigent-cli-home /tmp/omnigent-cli-cache \
+      /root/.npm /root/.cache /root/.local/share/pnpm \
+ && test ! -e node_modules/.pnpm-workspace-state-v1.json \
+ && for path in /tmp/npm-cache /tmp/pnpm-store /tmp/omnigent-cli-home \
+      /tmp/omnigent-cli-cache /root/.npm /root/.cache \
+      /root/.local/share/pnpm; do test ! -e "$path"; done
 
 # Kiro CLI is not published as an npm package, and its installer has NO version
 # flag — `curl …/install | bash` always fetches `latest`, so the image was
@@ -439,6 +482,7 @@ CMD ["sleep", "infinity"]
 # ── Server runtime (default target) ─────────────────────
 FROM ${PYTHON_IMAGE} AS runtime
 
+ARG SOURCE_DATE_EPOCH
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -455,9 +499,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 # curl + ca-certificates only — for the HEALTHCHECK and for outbound
 # HTTPS to LLM gateways / external services.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
+      curl ca-certificates \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
 # Preserve /build/ in the runtime stage — the venv's editable install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute
