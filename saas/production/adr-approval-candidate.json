@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "omnigent-saas-upstream-sync-3369b36c-2026-08-31",
-  "implementation_revision": "412b4ae3e11161be53a78080d87d5af3b660dd72",
-  "evidence_revision": "412b4ae3e11161be53a78080d87d5af3b660dd72",
+  "implementation_revision": "5bc49287c6ff9ff971171e995ef86f467c362242",
+  "evidence_revision": "5bc49287c6ff9ff971171e995ef86f467c362242",
   "upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
   "adapter_contract_version": "0.2.0",
   "control_plane_schema_revision": "p0s000000006",
@@ -21,5 +21,5 @@
     "saas/production/adrs/ADR-010-identity-and-management-web-security.md",
     "saas/production/adrs/ADR-011-feature-flag-and-configuration.md"
   ],
-  "decision_bundle_sha256": "c0ada9ccedb5dd365e372f876e93a41d370acfb45de336dea54b9c8dd8cbc84a"
+  "decision_bundle_sha256": "a548df0dc6408817eb3c66a58148941af7c1ee4e1c72d136d0860cfe8291622a"
 }
