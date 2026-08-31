@@ -3,6 +3,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -257,6 +260,37 @@ def _material_lock_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _host_pnpm_normalizer() -> str:
+    dockerfile = (_repo() / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+    marker = 'SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c \''
+    start = dockerfile.index(marker) + len(marker)
+    end = dockerfile.index("' \\\n", start)
+    return dockerfile[start:end]
+
+
+def _run_host_pnpm_normalizer(
+    root: Path,
+    *,
+    modules_source: str,
+    state: object | None = None,
+) -> subprocess.CompletedProcess[str]:
+    node_modules = root / "node_modules"
+    node_modules.mkdir(parents=True)
+    (node_modules / ".modules.yaml").write_text(modules_source, encoding="utf-8")
+    (node_modules / ".pnpm-workspace-state-v1.json").write_text(
+        json.dumps({"lastValidatedTimestamp": 1788208533731} if state is None else state),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [sys.executable, "-B", "-c", _host_pnpm_normalizer()],
+        cwd=root,
+        env={**os.environ, "SOURCE_DATE_EPOCH": "0"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_candidate_composite_build_contract_is_valid() -> None:
     assert validate_candidate_build_contract(_repo()) == []
 
@@ -270,6 +304,73 @@ def test_generic_docker_build_has_reproducible_epoch_fallback() -> None:
 
 def test_image_material_lock_contract_is_valid() -> None:
     assert validate_image_material_lock(_repo()) == []
+
+
+def test_host_pnpm_normalizer_canonicalizes_json_wall_clock(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first_result = _run_host_pnpm_normalizer(
+        first,
+        modules_source=json.dumps(
+            {"z": {"value": 1}, "prunedAt": "Mon, 31 Aug 2026 20:35:21 GMT", "a": []},
+            indent=2,
+        ),
+    )
+    second_result = _run_host_pnpm_normalizer(
+        second,
+        modules_source=json.dumps(
+            {"a": [], "prunedAt": "Mon, 31 Aug 2026 20:36:09 GMT", "z": {"value": 1}},
+            indent=2,
+        ),
+    )
+
+    assert first_result.returncode == 0, first_result.stderr
+    assert second_result.returncode == 0, second_result.stderr
+    expected = (
+        json.dumps(
+            {"a": [], "prunedAt": "Thu, 01 Jan 1970 00:00:00 GMT", "z": {"value": 1}},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    assert (first / "node_modules/.modules.yaml").read_text(encoding="utf-8") == expected
+    assert (second / "node_modules/.modules.yaml").read_text(encoding="utf-8") == expected
+    assert not (first / "node_modules/.pnpm-workspace-state-v1.json").exists()
+    assert not (second / "node_modules/.pnpm-workspace-state-v1.json").exists()
+    assert first_result.stdout.strip() == "pnpm prunedAt fields normalized: 1"
+
+
+@pytest.mark.parametrize(
+    "modules_source",
+    [
+        '{"other": true}',
+        '{"prunedAt": "first", "prunedAt": "second"}',
+        '{"prunedAt": true}',
+    ],
+)
+def test_host_pnpm_normalizer_rejects_missing_duplicate_or_non_string_timestamp(
+    tmp_path: Path,
+    modules_source: str,
+) -> None:
+    result = _run_host_pnpm_normalizer(tmp_path, modules_source=modules_source)
+
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize("timestamp", [True, -1, "1788208533731", None])
+def test_host_pnpm_normalizer_rejects_invalid_workspace_timestamp(
+    tmp_path: Path,
+    timestamp: object,
+) -> None:
+    result = _run_host_pnpm_normalizer(
+        tmp_path,
+        modules_source='{"prunedAt": "Mon, 31 Aug 2026 20:35:21 GMT"}',
+        state={"lastValidatedTimestamp": timestamp},
+    )
+
+    assert result.returncode != 0
 
 
 @pytest.mark.parametrize(
@@ -360,18 +461,23 @@ def test_image_material_lock_contract_is_valid() -> None:
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "count in (0, 1)",
             "count == 1",
+            "count in (0, 1)",
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
+            r'r"(?m)^\s*\"prunedAt\"\s*:"',
             r'r"(?m)^prunedAt:[^\r\n]*$"',
-            r'r"(?m)^prunedAt: .*$"',
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            'modules.write_text(normalized, encoding="utf-8") if count else None',
-            'modules.write_text(normalized, encoding="utf-8")',
+            'type(data.get("prunedAt")) is str',
+            'type(data.get("prunedAt")) in (str, type(None))',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\\n"',
+            'json.dumps(data, ensure_ascii=False, indent=2)+"\\n"',
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
