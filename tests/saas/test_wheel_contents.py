@@ -17,6 +17,15 @@ def test_missing_wheel_artifact_is_reported() -> None:
     assert find_missing_paths(names) == ["saas/control_plane/alembic.ini"]
 
 
+def test_current_adr_approval_and_ci_evidence_are_required_wheel_artifacts() -> None:
+    assert "saas/acceptance/p0-adr-approval-evidence-ci-33468247922.json" in REQUIRED_WHEEL_PATHS
+    assert (
+        "saas/production/adr-approvals/"
+        "omnigent-saas-upstream-sync-3369b36c-2026-08-31-2500a820699ccb24.json"
+        in REQUIRED_WHEEL_PATHS
+    )
+
+
 def test_privacy_worker_is_a_required_wheel_artifact_and_console_entrypoint() -> None:
     project = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
