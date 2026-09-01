@@ -1356,3 +1356,38 @@ signature Receipt, vulnerability/license admission, one-hour Canary, 900-second
 production N-1 rollback, or production Receipt exists in this record. The P0
 image gate stays `pending`, P0 stays `in_progress`, and the release stays
 `NO-GO`.
+
+## 2026-09-01 upstream-sync ADR approval evidence successor
+
+Decision PR [#22](https://github.com/Dream1216/omnigent/pull/22) merged exact
+reviewed Head `5b4d0ff223313edfc774b55934555a7552776bd2` as merge commit
+`918e2d9295c909bff48c2937225bcaa75e3cc04b`. Successor PR
+[#23](https://github.com/Dream1216/omnigent/pull/23) generated the append-only
+approval record at exact source
+`e6172495448f8c1c70ee433aac10d9d8d0fbc7b6`. Its temporary merge tree is
+byte-identical to the source tree.
+
+Exact-source Push Compatibility
+[run 33468201793](https://github.com/Dream1216/omnigent/actions/runs/33468201793)
+and PR Compatibility attached to exact PR Head `e6172495...`
+[run 33468247922](https://github.com/Dream1216/omnigent/actions/runs/33468247922)
+completed successfully. The PR run executed temporary merge revision `9a2bd6fc...`;
+its tree is byte-identical to the PR Head tree, so it is recorded as same-tree
+temporary-merge evidence rather than exact-source execution. PR job `99732483988`
+re-fetched the merged decision PR, exact reviewed-Head check and authenticated sole
+Owner/Admin facts, then validated the append-only approval record with all eleven
+technical-owner acceptances. PR artifact
+`9785898142`, named `upstream-delta-report`, has GitHub archive digest
+`sha256:daf74fe80dbcb33211d122e091fc28418d22ad1e53936210a09663f454f9079c`.
+
+The committed machine evidence record
+`p0-adr-approval-evidence-ci-33468247922.json` closes only
+`p0-approved-production-adrs-and-owners`. The ledger advances to 41/51 with ten
+pending gates; P0 remains `in_progress` and release remains `NO-GO`. The
+explicit `sole-owner-risk-waiver` remains governance-degraded and does not
+pretend independent Reviews exist. The final evidence successor still requires
+its own exact-Head Compatibility plus Push/PR N-1 and reproducible-image judgments
+before merge, and it proves no signed publication, deployment, Canary, rollback or
+production admission. Only the approval record under `adr-approvals/` is protected
+by the append-only verifier; this acceptance evidence may be superseded by a later
+revision-bound record.
