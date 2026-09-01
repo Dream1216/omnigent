@@ -6,8 +6,10 @@ import importlib
 import logging
 import os
 import signal
+import stat
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, cast
 
 import sqlalchemy as sa
@@ -834,18 +836,71 @@ def _positive_number(name: str, default: str, *, integer: bool = False) -> float
     return value
 
 
+def _load_dispatcher_database_url() -> str:
+    """Load one dispatcher DSN without requiring secret material in the environment.
+
+    The direct variable remains supported for existing downstream consumers,
+    but deployments must select exactly one source.  The production onboarding
+    manifest uses the file form staged as an owner-only regular file.
+    """
+
+    direct = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", "")
+    file_name = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE", "")
+    if bool(direct.strip()) == bool(file_name.strip()):
+        raise RuntimeError("exactly one Outbox control-plane database URL source is required")
+    if direct.strip():
+        if direct != direct.strip() or "\x00" in direct or "\n" in direct or "\r" in direct:
+            raise RuntimeError("Outbox control-plane database URL is malformed")
+        return direct
+    if file_name != file_name.strip() or "\x00" in file_name:
+        raise RuntimeError("Outbox control-plane database URL file is malformed")
+    path = Path(file_name)
+    if not path.is_absolute():
+        raise RuntimeError("Outbox control-plane database URL file must be absolute")
+    try:
+        metadata = path.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o400
+            or not 0 < metadata.st_size <= 16 * 1024
+        ):
+            raise RuntimeError("Outbox control-plane database URL file is unsafe")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            observed = os.fstat(descriptor)
+            if (
+                observed.st_dev != metadata.st_dev
+                or observed.st_ino != metadata.st_ino
+                or stat.S_IMODE(observed.st_mode) != 0o400
+            ):
+                raise RuntimeError("Outbox control-plane database URL file changed")
+            raw = os.read(descriptor, 16 * 1024 + 1)
+        finally:
+            os.close(descriptor)
+        value = raw.decode("utf-8").rstrip("\r\n")
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError):
+        raise RuntimeError("Outbox control-plane database URL file cannot be read") from None
+    if not value or value != value.strip() or "\x00" in value or "\n" in value or "\r" in value:
+        raise RuntimeError("Outbox control-plane database URL file is malformed")
+    return value
+
+
 def main() -> int:
     """Load a publisher adapter and run one RLS-constrained worker process."""
 
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-    database_url = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", "").strip()
     publisher_reference = os.environ.get("OMNIGENT_SAAS_OUTBOX_PUBLISHER", "").strip()
-    if not database_url:
-        raise RuntimeError("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL is required")
     if not publisher_reference:
         raise RuntimeError("OMNIGENT_SAAS_OUTBOX_PUBLISHER is required")
+    database_url = _load_dispatcher_database_url()
 
     engine = sa.create_engine(database_url, pool_pre_ping=True)
+    publisher: OutboxPublisher | None = None
     try:
         verify_dispatcher_database_role(engine)
         sessions = sessionmaker(engine, expire_on_commit=False, class_=Session)
@@ -855,11 +910,8 @@ def main() -> int:
         )
         if max_attempts > 32:
             raise RuntimeError("OMNIGENT_SAAS_OUTBOX_MAX_ATTEMPTS must not exceed 32")
-        dispatcher = OutboxDispatcher(
-            sessions,
-            _load_publisher(publisher_reference),
-            max_attempts=max_attempts,
-        )
+        publisher = _load_publisher(publisher_reference)
+        dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
         stop = threading.Event()
 
         def _stop(_signum: int, _frame: object) -> None:
@@ -890,6 +942,12 @@ def main() -> int:
         _LOGGER.info("Outbox worker stopped: %s", stats)
         return 0
     finally:
+        close = getattr(publisher, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - never disclose adapter shutdown details.
+                _LOGGER.error("Outbox publisher shutdown failed")
         engine.dispose()
 
 
