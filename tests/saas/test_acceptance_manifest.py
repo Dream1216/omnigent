@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from saas.scripts.check_acceptance_manifest import validate_manifest
 
 
@@ -37,7 +39,9 @@ def test_acceptance_manifest_rejects_premature_go() -> None:
     )
 
 
-def test_acceptance_manifest_rejects_stale_adr_approval_status() -> None:
+def test_acceptance_manifest_rejects_stale_adr_approval_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads(
         (repo / "saas/acceptance/p0-p6-evidence.json").read_text(encoding="utf-8")
@@ -49,6 +53,10 @@ def test_acceptance_manifest_rejects_stale_adr_approval_status() -> None:
         if gate["id"] == "p0-approved-production-adrs-and-owners"
     )
     gate["status"] = "passed"
+    monkeypatch.setattr(
+        "saas.scripts.check_acceptance_manifest._adr_bundle_is_approved",
+        lambda _repo: False,
+    )
 
     assert (
         "p0-approved-production-adrs-and-owners cannot pass before the current ADR "
