@@ -36,30 +36,6 @@ const RegisterPage = withPageView(
   "register",
   lazy(() => import("@/pages/RegisterPage").then((m) => ({ default: m.RegisterPage }))),
 );
-const SaasLoginPage = withPageView(
-  "saas_login",
-  lazy(() => import("@/pages/SaasLoginPage").then((m) => ({ default: m.SaasLoginPage }))),
-);
-const SaasSignupPage = withPageView(
-  "saas_signup",
-  lazy(() => import("@/pages/SaasSignupPage").then((m) => ({ default: m.SaasSignupPage }))),
-);
-const SaasVerificationPage = withPageView(
-  "saas_signup_verify",
-  lazy(() =>
-    import("@/pages/SaasVerificationPage").then((m) => ({
-      default: m.SaasVerificationPage,
-    })),
-  ),
-);
-const SaasOnboardingStatusPage = withPageView(
-  "saas_signup_status",
-  lazy(() =>
-    import("@/pages/SaasOnboardingStatusPage").then((m) => ({
-      default: m.SaasOnboardingStatusPage,
-    })),
-  ),
-);
 const SetupPage = withPageView(
   "setup",
   lazy(() => import("@/pages/SetupPage").then((m) => ({ default: m.SetupPage }))),
@@ -114,7 +90,7 @@ interface AppProps {
  * `chatStore.switchTo(...)` to mirror the URL into store state when
  * needed.
  *
- * **Authentication routes are CONDITIONAL** on the ``/v1/info`` probe
+ * **Accounts routes are CONDITIONAL** on the ``/v1/info`` probe
  * (see ``main.tsx`` + ``lib/CapabilitiesContext.tsx``). When
  * ``accounts_enabled`` is false — every header / OIDC deploy,
  * including the internal hosted product that syncs from this repo
@@ -122,16 +98,13 @@ interface AppProps {
  * table at all. Navigating to any of those paths lands on
  * ``<NotFoundPage />``. The bundle still ships those components as
  * separate chunks (via ``React.lazy``) but they're never downloaded.
- * The SaaS provider deliberately reports ``accounts_enabled: false`` while
- * advertising ``login_url: "/saas/login"``. Only that exact capability value
- * registers the SaaS login and onboarding routes; header/OIDC/single-user
- * deployments therefore cannot accidentally expose the SaaS surfaces.
  *
- * All login, registration, and onboarding routes sit OUTSIDE the AppShell
- * tree on purpose — the shell loads sidebar / conversations / runner health
- * hooks which require an authed identity; mounting them on an unauthed page
- * is at best wasted fetches, at worst an infinite loop with ``identity.ts``'s
- * 401 redirect. These pages own their own minimal layout (no app chrome).
+ * ``/login`` and ``/register`` sit OUTSIDE the AppShell tree on
+ * purpose — the shell loads sidebar / conversations / runner health
+ * hooks which require an authed identity; mounting them on an
+ * unauthed page is at best wasted fetches, at worst an infinite
+ * loop with ``identity.ts``'s 401 redirect. Both pages own their
+ * own minimal layout (centered card, no chrome).
  *
  * The wildcard route renders `<NotFoundPage />` for anything else. The
  * server's SPA fallback (`_SPAStaticFiles`) hands any extensionless URL
@@ -149,11 +122,6 @@ function App({ basename }: AppProps = {}) {
   // immediately tear down once the probe returns is worse than a
   // tiny blank moment.
   if (info === "loading") return null;
-
-  // The SaaS provider intentionally remains separate from the OSS accounts
-  // provider. Match the exact advertised login URL so OIDC providers (which
-  // also expose a non-null login_url) never receive SaaS-only routes.
-  const saasAuthEnabled = info.login_url === "/saas/login";
 
   // First-run: accounts on but no admin claimed yet. Route EVERY path to
   // the Create-admin form so the first visitor lands on it no matter how
@@ -178,14 +146,6 @@ function App({ basename }: AppProps = {}) {
           <>
             <Route path={`${prefix}/login`} element={<LoginPage />} />
             <Route path={`${prefix}/register`} element={<RegisterPage />} />
-          </>
-        )}
-        {saasAuthEnabled && (
-          <>
-            <Route path={`${prefix}/saas/login`} element={<SaasLoginPage />} />
-            <Route path={`${prefix}/signup`} element={<SaasSignupPage />} />
-            <Route path={`${prefix}/signup/verify`} element={<SaasVerificationPage />} />
-            <Route path={`${prefix}/signup/status`} element={<SaasOnboardingStatusPage />} />
           </>
         )}
         <Route path={`${prefix}/approve/:sessionId/:elicitationId`} element={<ApprovePage />} />

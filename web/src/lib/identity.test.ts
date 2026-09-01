@@ -23,7 +23,6 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
-  window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -207,55 +206,6 @@ describe("authenticatedFetch", () => {
     const init = fetchMock.mock.calls[1][1] as RequestInit;
     expect(init.method).toBe("DELETE");
     expect(init.signal).toBe(controller.signal);
-  });
-
-  it("injects the tab-scoped SaaS CSRF token on unsafe same-origin requests", async () => {
-    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-token");
-    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
-    const { authenticatedFetch } = await import("./identity");
-
-    await authenticatedFetch("/v1/sessions", { method: "POST", body: "{}" });
-
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-token");
-  });
-
-  it("does not inject SaaS CSRF on safe or cross-origin requests", async () => {
-    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-token");
-    fetchMock.mockResolvedValue(mockJsonResponse({}));
-    const { authenticatedFetch } = await import("./identity");
-
-    await authenticatedFetch("/v1/sessions");
-    await authenticatedFetch("https://other.example/v1/sessions", { method: "POST" });
-
-    for (const call of fetchMock.mock.calls) {
-      const init = call[1] as RequestInit;
-      expect(new Headers(init.headers).has("X-CSRF-Token")).toBe(false);
-    }
-  });
-
-  it("preserves a caller-supplied CSRF header", async () => {
-    window.sessionStorage.setItem("omnigent.saas.csrf", "stored-token");
-    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
-    const { authenticatedFetch } = await import("./identity");
-
-    await authenticatedFetch("/saas/context/snapshots", {
-      method: "POST",
-      headers: { "X-CSRF-Token": "explicit-token" },
-    });
-
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("explicit-token");
-  });
-
-  it("clears a stale SaaS CSRF token after a 401", async () => {
-    window.sessionStorage.setItem("omnigent.saas.csrf", "stale-token");
-    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 401 }));
-    const { authenticatedFetch } = await import("./identity");
-
-    await authenticatedFetch("/auth/password", { method: "POST" });
-
-    expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBeNull();
   });
 
   describe("slice-key routing (host sharding)", () => {
@@ -468,24 +418,6 @@ describe("login redirect", () => {
 
     expect(hrefWrites).toEqual(["/auth/login?return_to=%2Fc%2Fabc%3Ftab%3Ddiff"]);
   });
-
-  it.each(["/saas/login", "/signup", "/signup/verify"])(
-    "does not redirect over the anonymous SaaS entry path %s",
-    async (pathname) => {
-      stubLocation(pathname, "");
-      window.sessionStorage.setItem("omnigent.saas.csrf", "stale-token");
-      fetchMock.mockResolvedValueOnce(
-        mockJsonResponse({ user_id: null, login_url: "/saas/login" }, { ok: false, status: 401 }),
-      );
-      const { resolveIdentity, isLoginRedirectPending } = await import("./identity");
-
-      await resolveIdentity();
-
-      expect(hrefWrites).toEqual([]);
-      expect(isLoginRedirectPending()).toBe(false);
-      expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBeNull();
-    },
-  );
 
   it("never redirects in header mode, where there is no login page", async () => {
     // login_url null → the proxy owns identity, so a stray 401 must surface to

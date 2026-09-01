@@ -123,6 +123,7 @@ class SaasHttpIntegration:
     availability_gate: ControlPlaneAvailabilityGate | None = None
     degraded_read_paths: frozenset[str] = frozenset()
     public_api_router: APIRouter | None = None
+    onboarding_ui_router: APIRouter | None = None
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -137,6 +138,8 @@ class SaasHttpIntegration:
         routers = [self.extra_router]
         if self.public_api_router is not None:
             routers.append((self.public_api_router, "/api/v1", ["saas-public-v1"]))
+        if self.onboarding_ui_router is not None:
+            routers.append((self.onboarding_ui_router, "", ["saas-onboarding-ui"]))
         return tuple(routers)
 
     def install_middleware(self, app: FastAPI) -> None:
@@ -1226,7 +1229,10 @@ def create_saas_http_integration(
         and onboarding_status is not None
         and onboarding_client_network is not None
     ):
-        from saas.control_plane.onboarding_http import create_onboarding_router
+        from saas.control_plane.onboarding_http import (
+            create_onboarding_router,
+            create_onboarding_ui_router,
+        )
 
         router.include_router(
             create_onboarding_router(
@@ -1236,6 +1242,9 @@ def create_saas_http_integration(
                 client_network=onboarding_client_network,
             )
         )
+        onboarding_ui_router = create_onboarding_ui_router()
+    else:
+        onboarding_ui_router = None
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
     if project_admin is not None and project_authorizer is not None:
@@ -1375,6 +1384,7 @@ def create_saas_http_integration(
         availability_gate=availability_gate,
         degraded_read_paths=degraded_read_paths,
         public_api_router=public_api_router,
+        onboarding_ui_router=onboarding_ui_router,
     )
 
 

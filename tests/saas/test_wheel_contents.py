@@ -52,6 +52,9 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
     assert "saas/control_plane/onboarding_status.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/runtime_provider.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/runtime_provider_journal.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/onboarding_ui/onboarding.html" in REQUIRED_WHEEL_PATHS
+    assert "saas/onboarding_ui/onboarding.css" in REQUIRED_WHEEL_PATHS
+    assert "saas/onboarding_ui/onboarding.js" in REQUIRED_WHEEL_PATHS
     assert (
         "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
         in REQUIRED_WHEEL_PATHS
