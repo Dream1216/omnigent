@@ -1,7 +1,7 @@
-"""E2E: self-service SaaS registration through workspace readiness.
+"""Browser E2E: packaged self-service UI through workspace readiness.
 
 The production mail provider and control plane are deliberately not used here.
-The real SPA is served by the suite's isolated ``live_server`` fixture, while
+The real packaged FastAPI UI is served by an isolated local server, while
 same-origin routes return deterministic catalog, registration, verification,
 login, and provisioning responses. This keeps the journey browser-real without
 credentials or mutable production state.
@@ -11,11 +11,21 @@ from __future__ import annotations
 
 import os
 import re
+import socket
+import threading
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, Route, expect
+import pytest
+import uvicorn
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from playwright.sync_api import Page, Request, Route, expect, sync_playwright
+
+from saas.control_plane.onboarding_http import create_onboarding_ui_router
 
 _REGISTRATION_ID = "11111111-1111-4111-8111-111111111111"
 _ONBOARDING_ID = "22222222-2222-4222-8222-222222222222"
@@ -28,6 +38,35 @@ _PROJECT_ID = "88888888-8888-4888-8888-888888888888"
 _VERIFICATION_TOKEN = "e2e-fragment-only-token"
 _CSRF_TOKEN = "e2e-tab-scoped-csrf"
 _EMAIL = "founder@example.test"
+
+
+@pytest.fixture
+def onboarding_ui_page() -> Iterator[tuple[Page, str]]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    port = listener.getsockname()[1]
+    app = FastAPI()
+    app.include_router(create_onboarding_ui_router())
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    if not server.started:
+        raise RuntimeError("onboarding browser server failed to start")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        try:
+            yield page, f"http://127.0.0.1:{port}"
+        finally:
+            browser.close()
+            server.should_exit = True
+            thread.join(timeout=10)
+            listener.close()
 
 
 @dataclass
@@ -69,16 +108,40 @@ def _catalog() -> dict[str, Any]:
     }
 
 
+def test_packaged_pages_and_assets_have_locked_down_headers() -> None:
+    app = FastAPI()
+    app.include_router(create_onboarding_ui_router())
+
+    with TestClient(app) as client:
+        for path in ("/signup", "/signup/verify", "/signup/status", "/saas/login"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.headers["cache-control"] == "no-store"
+            assert response.headers["referrer-policy"] == "no-referrer"
+            assert "default-src 'none'" in response.headers["content-security-policy"]
+            assert "script-src 'self'" in response.headers["content-security-policy"]
+            assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+            assert response.headers["x-content-type-options"] == "nosniff"
+        assert (
+            client.get("/saas/onboarding-assets/onboarding.css")
+            .headers["content-type"]
+            .startswith("text/css")
+        )
+        assert (
+            client.get("/saas/onboarding-assets/onboarding.js")
+            .headers["content-type"]
+            .startswith("text/javascript")
+        )
+
+
 def _install_saas_routes(page: Page) -> _SaasRequests:
     captured = _SaasRequests()
 
-    page.on(
-        "request",
-        lambda request: (
-            captured.urls.append(request.url),
-            captured.referers.append(request.headers.get("referer", "")),
-        ),
-    )
+    def capture_request(request: Request) -> None:
+        captured.urls.append(request.url)
+        captured.referers.append(request.headers.get("referer", ""))
+
+    page.on("request", capture_request)
 
     page.route(
         "**/v1/info",
@@ -194,10 +257,10 @@ def _screenshot(page: Page, name: str) -> None:
 
 
 def test_registration_journey_reaches_ready_workspace(
-    page: Page,
-    live_server: str,
+    onboarding_ui_page: tuple[Page, str],
 ) -> None:
     """Register, consume the fragment token, sign in, and observe readiness."""
+    page, live_server = onboarding_ui_page
     captured = _install_saas_routes(page)
 
     page.goto(f"{live_server}/saas/login")
@@ -222,7 +285,7 @@ def test_registration_journey_reaches_ready_workspace(
     page.get_by_label("First space").fill("Product Engineering")
     expect(page.get_by_label("Space URL")).to_have_value("product-engineering")
     team_plan = page.get_by_role("radio", name=re.compile(r"Team"))
-    page.get_by_text("Team", exact=True).click()
+    team_plan.check()
     expect(team_plan).to_be_checked()
     region.select_option("eu-west-1")
     _screenshot(page, "saas-registration-catalog.png")
