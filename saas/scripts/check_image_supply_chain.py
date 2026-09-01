@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import tomllib
+
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -24,8 +26,18 @@ _APPROVED_PATHS = {
 }
 _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
+_N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
+_HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
+_APPROVED_UV_VERSION = "0.12.1"
+_APPROVED_PNPM_VERSION = "11.15.1"
+_APPROVED_PSYCOPG_VERSION = "3.3.4"
+_APPROVED_HOST_CLI_VERSIONS = {
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.212"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+}
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "NODE_IMAGE",
@@ -410,6 +422,13 @@ def _read_repository_contract(
         return None
 
 
+def _named_workflow_step(source: str, name: str) -> str | None:
+    marker = f"      - name: {name}\n"
+    if source.count(marker) != 1:
+        return None
+    return source.split(marker, 1)[1].split("\n      - name:", 1)[0]
+
+
 def validate_candidate_build_contract(repo: Path) -> list[str]:
     """Validate the workflow and its fixed local composite build action together."""
 
@@ -423,11 +442,35 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if workflow is None:
         return violations
 
+    candidate_checkout = _named_workflow_step(workflow, "Checkout immutable candidate")
+    candidate_verification = _named_workflow_step(workflow, "Verify exact candidate revision")
+    exact_head_verification = {
+        '[[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]',
+        '[[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]',
+    }
+    if (
+        workflow.count(
+            "CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}"
+        )
+        != 1
+        or candidate_checkout is None
+        or candidate_checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
+        or candidate_checkout.count("persist-credentials: false") != 1
+        or candidate_verification is None
+        or any(fragment not in candidate_verification for fragment in exact_head_verification)
+        or workflow.count('source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")') != 1
+        or workflow.count('source_revision="$CANDIDATE_REVISION"') != 1
+        or workflow.count("name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}") != 1
+    ):
+        violations.append(
+            "candidate workflow must bind builds and evidence to the exact pull-request head"
+        )
+
     material_sources = {
         "python_digest=$(crane digest python:3.12-slim)",
         "node_digest=$(crane digest node:22-slim)",
-        "source_epoch=$(git show -s --format=%ct HEAD)",
-        "source_revision=$(git rev-parse HEAD)",
+        'source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")',
+        'source_revision="$CANDIDATE_REVISION"',
         "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
         ("adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)"),
         (
@@ -452,6 +495,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
         violations.append("candidate workflow must invoke four repeated composite builds")
+    if workflow.count("--label-profile executable") != 1:
+        violations.append("candidate workflow must select the executable label profile")
     coordinates = {
         ("server", "runtime", "1"),
         ("server", "runtime", "2"),
@@ -511,7 +556,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "sbom: true",
         (
             "outputs: type=oci,dest=${{ runner.temp }}/"
-            "${{ inputs.artifact }}-${{ inputs.attempt }}.tar"
+            "${{ inputs.artifact }}-${{ inputs.attempt }}.tar,rewrite-timestamp=true"
         ),
         "server:runtime|host:host",
         "1|2)",
@@ -520,10 +565,390 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("candidate composite build action weakens the approved build contract")
     if action.count(f"uses: {_BUILD_PUSH_ACTION}") != 1:
         violations.append("candidate composite build action must use the pinned builder once")
+    candidate_cache_contract = [
+        "no-cache: ${{ inputs.attempt == '2' }}",
+        (
+            "cache-from: ${{ inputs.attempt == '1' && "
+            "format('type=gha,scope=saas-{0}-candidate', inputs.artifact) || '' }}"
+        ),
+        (
+            "cache-to: ${{ inputs.attempt == '1' && "
+            "format('type=gha,scope=saas-{0}-candidate,mode=max', inputs.artifact) || '' }}"
+        ),
+    ]
+    action_cache_lines = [
+        line.strip()
+        for line in action.splitlines()
+        if line.strip().startswith(("no-cache:", "cache-from:", "cache-to:"))
+    ]
+    if action_cache_lines != candidate_cache_contract:
+        violations.append("candidate attempt 2 must rebuild without shared cache")
     for build_arg in _REQUIRED_BUILD_ARGS:
         binding = f"{build_arg}=${{{{ env.{build_arg} }}}}"
         if action.count(binding) != 1:
             violations.append(f"candidate composite build action must bind resolved {build_arg}")
+
+    n1_workflow = _read_repository_contract(
+        repo,
+        _N1_CANDIDATE_WORKFLOW,
+        label="N-1 candidate workflow",
+        violations=violations,
+    )
+    if n1_workflow is None:
+        return violations
+    trigger_path = '      - "saas/**"'
+    if workflow.count(trigger_path) != 2 or n1_workflow.count(trigger_path) != 2:
+        violations.append("candidate and N-1 workflows must trigger on SaaS-owned image inputs")
+    if n1_workflow.count("--label-profile n1") != 2:
+        violations.append(
+            "N-1 candidate and publication comparisons must select the N-1 label profile"
+        )
+    n1_attempt_one = _named_workflow_step(
+        n1_workflow,
+        "Build dual-platform N-1 runtime candidate attempt 1",
+    )
+    n1_attempt_two = _named_workflow_step(
+        n1_workflow,
+        "Build dual-platform N-1 runtime candidate attempt 2",
+    )
+    attempt_one_cache = "type=gha,scope=saas-n1-compat-candidate"
+    if (
+        n1_attempt_one is None
+        or n1_attempt_one.count(f"cache-from: {attempt_one_cache}") != 1
+        or n1_attempt_one.count(f"cache-to: {attempt_one_cache},mode=max") != 1
+        or n1_attempt_one.count(
+            "outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar,rewrite-timestamp=true"
+        )
+        != 1
+        or "no-cache:" in n1_attempt_one
+    ):
+        violations.append(
+            "N-1 candidate attempt 1 must retain the approved reproducible GHA build"
+        )
+    if (
+        n1_attempt_two is None
+        or n1_attempt_two.count("no-cache: true") != 1
+        or n1_attempt_two.count(
+            "outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar,rewrite-timestamp=true"
+        )
+        != 1
+        or "cache-from:" in n1_attempt_two
+        or "cache-to:" in n1_attempt_two
+    ):
+        violations.append("N-1 candidate attempt 2 must reproducibly rebuild without shared cache")
+    return violations
+
+
+def validate_image_material_lock(repo: Path) -> list[str]:
+    """Require image dependency installs to consume the evidenced lockfiles."""
+
+    violations: list[str] = []
+    dockerfile = _read_repository_contract(
+        repo,
+        _APPROVED_PATHS["dockerfile"],
+        label="production Dockerfile",
+        violations=violations,
+    )
+    uv_lock = _read_repository_contract(
+        repo,
+        "uv.lock",
+        label="Python dependency lock",
+        violations=violations,
+    )
+    pnpm_lock = _read_repository_contract(
+        repo,
+        "pnpm-lock.yaml",
+        label="Node dependency lock",
+        violations=violations,
+    )
+    cli_manifest = _read_repository_contract(
+        repo,
+        ".github/ci-deps/package.json",
+        label="host CLI dependency manifest",
+        violations=violations,
+    )
+    host_cli_normalizer = _read_repository_contract(
+        repo,
+        _HOST_CLI_NORMALIZER,
+        label="host CLI filesystem normalizer",
+        violations=violations,
+    )
+    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest, host_cli_normalizer):
+        return violations
+    assert dockerfile is not None
+    assert uv_lock is not None
+    assert pnpm_lock is not None
+    assert cli_manifest is not None
+    assert host_cli_normalizer is not None
+
+    if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
+        r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
+    ):
+        violations.append("production Dockerfile must pin and install uv 0.12.1")
+    if 'case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*' not in dockerfile:
+        violations.append("production Dockerfile must verify the installed uv version")
+    if "COPY pyproject.toml setup.py uv.lock ./" not in dockerfile:
+        violations.append("production Dockerfile must copy the committed Python lock")
+    if "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" not in dockerfile:
+        violations.append(
+            "production Dockerfile must handle the excluded .github/triage_v2 workspace"
+        )
+    if (
+        "uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache"
+        not in dockerfile
+    ):
+        violations.append("production Dockerfile must frozen-sync the core runtime from uv.lock")
+    if "uv pip install" in dockerfile:
+        violations.append("production Dockerfile must not re-resolve Python dependencies")
+    if "UV_NO_INSTALLER_METADATA=1" not in dockerfile:
+        violations.append(
+            "production Python installs must disable nondeterministic uv installer metadata"
+        )
+    core_bytecode_contract = {
+        "> /tmp/venv-seed-pyc.sha256",
+        "> /tmp/venv-core-pyc.sha256",
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
+    }
+    if (
+        any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
+        or dockerfile.count('root.rglob("uv_cache.json")') != 2
+        or dockerfile.count("python -B -I -c") < 3
+    ):
+        violations.append(
+            "production venv must preserve seed bytecode and reject uv installer metadata"
+        )
+    server_bytecode_contract = {
+        "> /tmp/venv-server-pyc.sha256",
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
+    }
+    if any(dockerfile.count(fragment) != 1 for fragment in server_bytecode_contract):
+        violations.append("server venv must preserve the deterministic seed bytecode manifest")
+
+    try:
+        lock_packages = tomllib.loads(uv_lock).get("package", [])
+    except tomllib.TOMLDecodeError:
+        violations.append("Python dependency lock must contain valid TOML")
+        lock_packages = []
+    psycopg_versions = {
+        item.get("version")
+        for item in lock_packages
+        if isinstance(item, dict) and item.get("name") == "psycopg"
+    }
+    if psycopg_versions != {_APPROVED_PSYCOPG_VERSION}:
+        violations.append("uv.lock must resolve psycopg exactly to 3.3.4")
+    if (
+        f"ARG PSYCOPG_VERSION={_APPROVED_PSYCOPG_VERSION}" not in dockerfile
+        or "set -- --extra saas" not in dockerfile
+        or "installed=\"$(python -c 'import importlib.metadata as m; "
+        'print(m.version("psycopg"))\')"'
+        not in dockerfile
+    ):
+        violations.append("server image must frozen-sync saas and assert psycopg 3.3.4")
+
+    if f"ARG PNPM_VERSION={_APPROVED_PNPM_VERSION}" not in dockerfile or not re.search(
+        r'npm install -g[^\n]*"pnpm@\$\{PNPM_VERSION\}"', dockerfile
+    ):
+        violations.append("production Dockerfile must pin pnpm 11.15.1")
+    if "COPY pnpm-workspace.yaml pnpm-lock.yaml ./" not in dockerfile:
+        violations.append("host image must copy the committed pnpm lock")
+    if "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps" not in dockerfile:
+        violations.append("host CLI dependency graph must install from pnpm-lock.yaml")
+    host_marker = "FROM ${PYTHON_IMAGE} AS host"
+    runtime_marker = "FROM ${PYTHON_IMAGE} AS runtime"
+    builder_marker = "FROM ${PYTHON_IMAGE} AS builder"
+    server_builder_marker = "FROM builder AS server-builder"
+    stage_markers = (builder_marker, server_builder_marker, host_marker, runtime_marker)
+    if any(dockerfile.count(marker) != 1 for marker in stage_markers):
+        violations.append("production Dockerfile must retain the approved executable stages")
+        builder_stage = host_stage = runtime_stage = ""
+    else:
+        builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
+        host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
+        runtime_stage = dockerfile.split(runtime_marker, 1)[1]
+    apt_reproducibility_contract = {
+        "ARG SOURCE_DATE_EPOCH",
+        "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
+        "/etc/apt/sources.list.d/debian.sources",
+        "snapshot[.]debian[.]org/archive/",
+        "expected two Debian snapshot sources",
+        "unexpected additional apt sources",
+        "rolling Debian mirror remains enabled",
+        "len(uris) == 2",
+        "all(re.fullmatch",
+        'sum("/archive/debian/" in uri for uri in uris) == 1',
+        "VERSION_CODENAME",
+        "Debian snapshot coordinates",
+        "Acquire::Check-Valid-Until=false",
+        "export DEBIAN_FRONTEND=noninteractive;",
+        "apt-get clean",
+        "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
+        "rm -f /var/cache/ldconfig/aux-cache",
+        "/var/log/alternatives.log",
+        "/var/log/dpkg.log",
+        "/var/log/apt/eipp.log.xz",
+        "/var/log/apt/history.log",
+        "/var/log/apt/term.log",
+    }
+    if any(
+        fragment not in stage
+        for stage in (builder_stage, host_stage, runtime_stage)
+        for fragment in apt_reproducibility_contract
+    ):
+        violations.append(
+            "builder, host and server apt layers must use a fixed snapshot "
+            "and remove volatile state"
+        )
+    host_cli_reproducibility_contract = {
+        "ARG SOURCE_DATE_EPOCH",
+        "OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state",
+        "HOME=/tmp/omnigent-cli-state/home",
+        "TMPDIR=/tmp/omnigent-cli-state/tmp",
+        "XDG_CACHE_HOME=/tmp/omnigent-cli-state/xdg-cache",
+        "XDG_CONFIG_HOME=/tmp/omnigent-cli-state/xdg-config",
+        "XDG_DATA_HOME=/tmp/omnigent-cli-state/xdg-data",
+        "XDG_STATE_HOME=/tmp/omnigent-cli-state/xdg-state",
+        "XDG_RUNTIME_DIR=/tmp/omnigent-cli-state/xdg-runtime",
+        "CODEX_HOME=/tmp/omnigent-cli-state/codex",
+        "CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude",
+        "PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi",
+        "npm_config_cache=/tmp/omnigent-cli-state/npm-cache",
+        'export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"',
+        'install -d -m 0700 "$XDG_RUNTIME_DIR"',
+        'npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global',
+        'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
+        'test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
+        "test -x /usr/local/bin/pnpm",
+        'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
+        "--store-dir /tmp/pnpm-store",
+        "--package-import-method=copy",
+        'modules=Path("node_modules/.modules.yaml")',
+        r'r"(?m)^\s*\"prunedAt\"\s*:"',
+        "count == 1",
+        'type(data.get("prunedAt")) is str',
+        'json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\\n"',
+        "pnpm prunedAt fields normalized: 1",
+        'state=Path("node_modules/.pnpm-workspace-state-v1.json")',
+        'type(state_data.get("lastValidatedTimestamp")) is int',
+        'state_data["lastValidatedTimestamp"] >= 0',
+        "state.unlink()",
+        'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
+        'test ! -e "$OMNIGENT_CLI_STATE"',
+        "/root/.npm /root/.cache /root/.local/share/pnpm",
+        "test ! -e node_modules/.pnpm-workspace-state-v1.json",
+    }
+    if any(fragment not in host_stage for fragment in host_cli_reproducibility_contract):
+        violations.append("host CLI layer must normalize and remove volatile installer state")
+    host_hardlink_docker_contract = {
+        f"COPY {_HOST_CLI_NORMALIZER} /tmp/normalize_host_cli_tree.py",
+        "python -B /tmp/normalize_host_cli_tree.py",
+        '--source-date-epoch "$SOURCE_DATE_EPOCH"',
+        "--root /opt/omnigent-host-cli",
+        "--root /usr/local/lib/node_modules/pnpm",
+        "rm -f /tmp/normalize_host_cli_tree.py",
+        'touch -h -d "@${SOURCE_DATE_EPOCH}"',
+        "/usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx",
+        "/usr/local/bin /usr/local/lib/node_modules /tmp /root",
+    }
+    host_hardlink_script_contract = {
+        'sorted(root.rglob("*"), key=lambda candidate: candidate.as_posix())',
+        "if path.is_symlink()",
+        "stat.S_ISREG(metadata.st_mode)",
+        "current.st_nlink <= 1",
+        "shutil.copy2(path, temporary, follow_symlinks=False)",
+        "copied.st_nlink != 1",
+        "os.replace(temporary, path)",
+        "if path.stat(follow_symlinks=False).st_nlink != 1",
+        "hardlinked regular files remain after normalization",
+        "os.utime(path, ns=(timestamp_ns, timestamp_ns), follow_symlinks=False)",
+        "Host CLI normalized manifest sha256",
+    }
+    hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py"
+    host_cli_order_contract = {
+        "pnpm install --frozen-lockfile",
+        "test -x .github/ci-deps/node_modules/.bin/claude",
+        'case "$(claude --version 2>&1)"',
+        'case "$(codex --version 2>&1)"',
+        'case "$(pi --version 2>&1)"',
+        'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+        'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
+        'test ! -e "$OMNIGENT_CLI_STATE"',
+        "rm -f /tmp/normalize_host_cli_tree.py",
+        'touch -h -d "@${SOURCE_DATE_EPOCH}"',
+    }
+    if (
+        any(fragment not in host_stage for fragment in host_hardlink_docker_contract)
+        or any(fragment not in host_cli_normalizer for fragment in host_hardlink_script_contract)
+        or "claude" in host_cli_normalizer.casefold()
+        or host_stage.count(hardlink_invocation) != 1
+        or any(fragment not in host_stage for fragment in host_cli_order_contract)
+        or host_stage.count('rm -rf "$OMNIGENT_CLI_STATE"') != 2
+        or not (
+            host_stage.index("pnpm install --frozen-lockfile")
+            < host_stage.index("test -x .github/ci-deps/node_modules/.bin/claude")
+            < host_stage.index('case "$(claude --version 2>&1)"')
+            < host_stage.index('case "$(codex --version 2>&1)"')
+            < host_stage.index('case "$(pi --version 2>&1)"')
+            < host_stage.index('cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"')
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn")
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx")
+            < host_stage.index('rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store')
+            < host_stage.index(
+                'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"'
+            )
+            < host_stage.index('test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"')
+            < host_stage.rindex('rm -rf "$OMNIGENT_CLI_STATE"')
+            < host_stage.index('test ! -e "$OMNIGENT_CLI_STATE"')
+            < host_stage.index(hardlink_invocation)
+            < host_stage.index("rm -f /tmp/normalize_host_cli_tree.py")
+            < host_stage.index('touch -h -d "@${SOURCE_DATE_EPOCH}"')
+        )
+    ):
+        violations.append(
+            "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
+        )
+    cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
+    if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
+        rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",
+        dockerfile,
+    ):
+        violations.append("host CLI wrappers must execute from their pnpm installation directory")
+
+    try:
+        cli_dependencies = json.loads(cli_manifest).get("dependencies", {})
+    except json.JSONDecodeError:
+        violations.append("host CLI dependency manifest must contain valid JSON")
+        cli_dependencies = {}
+    expected_dependencies = {
+        package: version for package, (_, version) in _APPROVED_HOST_CLI_VERSIONS.items()
+    }
+    if cli_dependencies != expected_dependencies:
+        violations.append("host CLI dependency manifest does not match approved direct versions")
+    for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
+        if f"ARG {argument}={version}" not in dockerfile:
+            violations.append(f"host image must pin {package} to {version}")
+        importer = re.compile(
+            rf"'{re.escape(package)}':\n\s+specifier: {re.escape(version)}\n"
+            rf"\s+version: {re.escape(version)}(?:\n|\()"
+        )
+        if importer.search(pnpm_lock) is None:
+            violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
+    if re.search(
+        r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
+        r"@earendil-works/pi-coding-agent)",
+        dockerfile,
+    ):
+        violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")
     return violations
 
 
@@ -542,6 +967,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         if value != _APPROVED_PATHS[field] or not (repo / str(value)).is_file():
             violations.append(f"release policy {field} must reference the approved file")
     violations.extend(validate_candidate_build_contract(repo))
+    violations.extend(validate_image_material_lock(repo))
     production_evidence = policy.get("production_evidence")
     if production_evidence != _APPROVED_PATHS["production_evidence"]:
         violations.append("production_evidence must use the approved repository path")

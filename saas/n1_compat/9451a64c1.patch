@@ -1,36 +1,5 @@
-diff --git a/deploy/docker/Dockerfile b/deploy/docker/Dockerfile
-index 041e82bb0..43dc45465 100644
---- a/deploy/docker/Dockerfile
-+++ b/deploy/docker/Dockerfile
-@@ -425,3 +425,26 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-     CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
- 
- CMD ["python", "/app/entrypoint.py"]
-+
-+# ── Pinned N-1 Outbox compatibility runtime ─────────────
-+# This stage is part of the fixed 9451 compatibility patch. It inherits the
-+# server runtime solely for its PostgreSQL-capable Python environment, removes
-+# the HTTP health check, and starts only the content-blind admission launcher.
-+FROM runtime AS n1-compat-runtime
-+
-+ARG SOURCE_REVISION
-+ARG CONTROL_PLANE_SCHEMA_REVISION
-+ARG N1_BASE_COMMIT
-+ARG N1_CONTRACT_VERSION
-+ARG N1_PATCH_SHA256
-+ARG N1_PATCHED_TREE_HASH
-+
-+LABEL ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT} \
-+      ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION} \
-+      ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256} \
-+      ai.omnigent.saas.n1.patched-tree-hash=${N1_PATCHED_TREE_HASH} \
-+      ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
-+      ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}
-+
-+HEALTHCHECK NONE
-+CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]
 diff --git a/saas/control_plane/outbox.py b/saas/control_plane/outbox.py
-index 9bac41efe..de81a1fb3 100644
+index 9bac41ef..de81a1fb 100644
 --- a/saas/control_plane/outbox.py
 +++ b/saas/control_plane/outbox.py
 @@ -98,9 +98,12 @@ class OutboxDispatcher:
@@ -67,9 +36,113 @@ index 9bac41efe..de81a1fb3 100644
 +                    last_error="n1_compat_delivery_error",
                  )
              )
+diff --git a/saas/n1_compat/Dockerfile b/saas/n1_compat/Dockerfile
+new file mode 100644
+index 00000000..1a40d810
+--- /dev/null
++++ b/saas/n1_compat/Dockerfile
+@@ -0,0 +1,56 @@
++ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded
++ARG PYTHON_IMAGE
++FROM ${UV_IMAGE} AS uv-bin
++
++FROM ${PYTHON_IMAGE} AS n1-compat-builder
++ARG SOURCE_DATE_EPOCH
++ENV PYTHONDONTWRITEBYTECODE=1 \
++    OMNIGENT_SKIP_WEB_UI=true \
++    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
++    UV_NO_INSTALLER_METADATA=1
++COPY --from=uv-bin /uv /usr/local/bin/uv
++WORKDIR /build
++COPY pyproject.toml setup.py uv.lock README.md ./
++COPY LICENSE NOTICE ./
++COPY sdks/ ./sdks/
++COPY omnigent/ ./omnigent/
++COPY saas/ ./saas/
++COPY integrations/slack/ ./integrations/slack/
++COPY examples/ ./examples/
++RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
++ && python -m venv --without-pip /opt/venv \
++ && /usr/local/bin/uv pip install --python /opt/venv/bin/python --require-hashes \
++      -r saas/n1_compat/build-requirements.txt \
++ && VIRTUAL_ENV=/opt/venv /usr/local/bin/uv sync --frozen --active --package omnigent \
++      --extra saas --no-dev --no-editable --no-cache --no-build-isolation \
++ && installed="$(/opt/venv/bin/python -B -I -c 'import importlib.metadata as m; print(m.version("psycopg"))')" \
++ && [ "${installed}" = "3.3.4" ] \
++ && /opt/venv/bin/python -B -I -c 'from pathlib import Path; import saas.n1_outbox_launcher as l, saas.outbox_worker as w; p=Path("/opt/venv").resolve(); assert all(Path(m.__file__).resolve().is_relative_to(p) for m in (l, w))' \
++ && /usr/local/bin/uv pip check --python /opt/venv/bin/python \
++ && test -z "$(find /opt/venv -type f -name '*.pyc' -print -quit)" \
++ && test -z "$(find /opt/venv -type f -name 'uv_cache.json' -print -quit)"
++
++FROM ${PYTHON_IMAGE} AS n1-compat-runtime
++ARG SOURCE_REVISION
++ARG UPSTREAM_REVISION
++ARG CONTROL_PLANE_SCHEMA_REVISION
++ARG ADAPTER_CONTRACT_VERSION
++ARG N1_BASE_COMMIT
++ARG N1_CONTRACT_VERSION
++ARG N1_PATCH_SHA256
++ARG N1_PATCHED_TREE_HASH
++ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/opt/venv/bin:${PATH}"
++LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
++      ai.omnigent.upstream.revision=${UPSTREAM_REVISION} \
++      ai.omnigent.saas.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
++      ai.omnigent.saas.adapter-contract-version=${ADAPTER_CONTRACT_VERSION} \
++      ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT} \
++      ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION} \
++      ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256} \
++      ai.omnigent.saas.n1.patched-tree-hash=${N1_PATCHED_TREE_HASH} \
++      ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION} \
++      ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}
++COPY --from=n1-compat-builder /opt/venv /opt/venv
++WORKDIR /app
++HEALTHCHECK NONE
++CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]
+diff --git a/saas/n1_compat/Dockerfile.dockerignore b/saas/n1_compat/Dockerfile.dockerignore
+new file mode 100644
+index 00000000..6849603f
+--- /dev/null
++++ b/saas/n1_compat/Dockerfile.dockerignore
+@@ -0,0 +1,12 @@
++*
++!pyproject.toml
++!setup.py
++!uv.lock
++!README.md
++!LICENSE
++!NOTICE
++!sdks/**
++!omnigent/**
++!saas/**
++!integrations/slack/**
++!examples/**
+diff --git a/saas/n1_compat/build-requirements.txt b/saas/n1_compat/build-requirements.txt
+new file mode 100644
+index 00000000..cdd6e750
+--- /dev/null
++++ b/saas/n1_compat/build-requirements.txt
+@@ -0,0 +1,18 @@
++hatchling==1.27.0 \
++    --hash=sha256:971c296d9819abb3811112fc52c7a9751c8d381898f36533bb16f9791e941fd6 \
++    --hash=sha256:d3a2f3567c4f926ea39849cdf924c7e99e6686c9c8e288ae1037c8fa2a5d937b
++packaging==26.3 \
++    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
++    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
++pathspec==1.1.1 \
++    --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
++    --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
++pluggy==1.6.0 \
++    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
++    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
++setuptools==83.0.0 \
++    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
++    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
++trove-classifiers==2026.6.1.19 \
++    --hash=sha256:ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3 \
++    --hash=sha256:c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745
 diff --git a/saas/n1_outbox_compat_admission.py b/saas/n1_outbox_compat_admission.py
 new file mode 100644
-index 000000000..760b0fc06
+index 00000000..760b0fc0
 --- /dev/null
 +++ b/saas/n1_outbox_compat_admission.py
 @@ -0,0 +1,712 @@
@@ -787,7 +860,7 @@ index 000000000..760b0fc06
 +    return sha256(encoded).hexdigest()
 diff --git a/saas/n1_outbox_launcher.py b/saas/n1_outbox_launcher.py
 new file mode 100644
-index 000000000..bf08d1f58
+index 00000000..bf08d1f5
 --- /dev/null
 +++ b/saas/n1_outbox_launcher.py
 @@ -0,0 +1,63 @@
@@ -855,33 +928,33 @@ index 000000000..bf08d1f58
 +if __name__ == "__main__":
 +    raise SystemExit(main())
 diff --git a/saas/outbox_worker.py b/saas/outbox_worker.py
-index ddede8f42..655d72e40 100644
+index ddede8f4..655d72e4 100644
 --- a/saas/outbox_worker.py
 +++ b/saas/outbox_worker.py
 @@ -2,6 +2,7 @@
- 
+
  from __future__ import annotations
- 
+
 +import hmac
  import importlib
  import logging
  import os
 @@ -15,9 +16,16 @@ from sqlalchemy.engine import Engine
  from sqlalchemy.orm import Session, sessionmaker
- 
+
  from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
 +from saas.n1_outbox_compat_admission import (
 +    catalog_fingerprint,
 +    dsn_coordinate_fingerprint,
 +)
  from saas.onboarding_composition import validate_production_outbox_publisher
- 
+
  _LOGGER = logging.getLogger("omnigent-saas-outbox")
 +_CATALOG_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_CATALOG_FINGERPRINT"
 +_DSN_FINGERPRINT_ENV = "OMNIGENT_SAAS_N1_COMPAT_DSN_FINGERPRINT"
 +_EXPECTED_LOGIN_ENV = "OMNIGENT_SAAS_N1_COMPAT_EXPECTED_LOGIN"
- 
- 
+
+
  class _Dispatcher(Protocol):
 @@ -75,14 +83,14 @@ class OutboxWorker:
          while not stop.is_set():
@@ -903,7 +976,7 @@ index ddede8f42..655d72e40 100644
 @@ -272,9 +280,22 @@ def main() -> int:
      if not publisher_reference:
          raise RuntimeError("OMNIGENT_SAAS_OUTBOX_PUBLISHER is required")
- 
+
 -    engine = sa.create_engine(database_url, pool_pre_ping=True)
 +    expected_login = os.environ.get(_EXPECTED_LOGIN_ENV, "").strip()
 +    expected_fingerprint = os.environ.get(_CATALOG_FINGERPRINT_ENV, "").strip()

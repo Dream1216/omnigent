@@ -44,10 +44,11 @@ runs:
         target: ${{ inputs.target }}
         push: false
         platforms: linux/amd64,linux/arm64
-        outputs: type=oci,dest=${{ runner.temp }}/${{ inputs.artifact }}-${{ inputs.attempt }}.tar
+        outputs: type=oci,dest=${{ runner.temp }}/${{ inputs.artifact }}-${{ inputs.attempt }}.tar,rewrite-timestamp=true
         provenance: mode=max
         sbom: true
-        cache-from: type=gha,scope=saas-${{ inputs.artifact }}-candidate
+        no-cache: ${{ inputs.attempt == '2' }}
+        cache-from: ${{ inputs.attempt == '1' && format('type=gha,scope=saas-{0}-candidate', inputs.artifact) || '' }}
         cache-to: ${{ inputs.attempt == '1' && format('type=gha,scope=saas-{0}-candidate,mode=max', inputs.artifact) || '' }}
         build-args: |
           PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}

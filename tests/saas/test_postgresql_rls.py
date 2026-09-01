@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -30,13 +29,6 @@ from saas.outbox_worker import verify_dispatcher_database_role
 _CONTROL_PLANE_RLS_TABLES = CONTROL_PLANE_RLS_TABLES
 
 
-def _postgres_url() -> str:
-    url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
-    if not url:
-        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required for real RLS acceptance")
-    return url
-
-
 def _migrate(connection: sa.Connection, root: Path) -> None:
     connection.exec_driver_sql(
         (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
@@ -47,9 +39,11 @@ def _migrate(connection: sa.Connection, root: Path) -> None:
     command.upgrade(config, "head")
 
 
-def test_real_postgresql_rls_denies_cross_tenant_and_missing_context() -> None:
+def test_real_postgresql_rls_denies_cross_tenant_and_missing_context(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     actor_a, actor_b, tenant_a, tenant_b, cross_tenant = (
         uuid4(),
         uuid4(),
@@ -245,9 +239,11 @@ def test_real_postgresql_rls_denies_cross_tenant_and_missing_context() -> None:
     engine.dispose()
 
 
-def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited() -> None:
+def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     tenant_a, tenant_b = uuid4(), uuid4()
     space_a, space_b = uuid4(), uuid4()
     owner_a, member_a, invitee_a, owner_b, member_b = (
@@ -655,9 +651,11 @@ def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed(
     engine.dispose()
 
 
-def test_real_postgresql_project_space_matrix_and_non_bypass_roles() -> None:
+def test_real_postgresql_project_space_matrix_and_non_bypass_roles(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     tenant_a, tenant_b = uuid4(), uuid4()
     spaces_a = (uuid4(), uuid4())
     spaces_b = (uuid4(), uuid4())
@@ -952,9 +950,11 @@ def test_real_postgresql_project_space_matrix_and_non_bypass_roles() -> None:
     engine.dispose()
 
 
-def test_real_postgresql_outbox_dispatcher_concurrent_claim_and_lease_recovery() -> None:
+def test_real_postgresql_outbox_dispatcher_concurrent_claim_and_lease_recovery(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=0)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     event_ids = (uuid4(), uuid4())
     stale_event_id = uuid4()
     dispatch_at = datetime(2026, 8, 4, 6, 0, tzinfo=timezone.utc)
@@ -1081,9 +1081,11 @@ def test_real_postgresql_outbox_dispatcher_concurrent_claim_and_lease_recovery()
     engine.dispose()
 
 
-def test_real_postgresql_owner_transfer_serializes_and_preserves_single_owner() -> None:
+def test_real_postgresql_owner_transfer_serializes_and_preserves_single_owner(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=0)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     owner_id, target_id, tenant_id = uuid4(), uuid4(), uuid4()
     changed_at = datetime(2026, 8, 4, 6, 30, tzinfo=timezone.utc)
 
@@ -1195,9 +1197,11 @@ def test_real_postgresql_owner_transfer_serializes_and_preserves_single_owner() 
     engine.dispose()
 
 
-def test_real_postgresql_concurrent_identity_revocation_preserves_login_method() -> None:
+def test_real_postgresql_concurrent_identity_revocation_preserves_login_method(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url(), pool_size=4, max_overflow=0)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     user_id, first_connection_id, second_connection_id = uuid4(), uuid4(), uuid4()
 
     with engine.begin() as connection:
@@ -1295,9 +1299,11 @@ def test_real_postgresql_concurrent_identity_revocation_preserves_login_method()
     engine.dispose()
 
 
-def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login() -> None:
+def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    owner_engine = sa.create_engine(_postgres_url())
+    owner_engine = sa.create_engine(isolated_postgres_url)
     suffix = uuid4().hex[:16]
     dispatcher_login = f"saas_dispatch_login_{suffix}"
     wrong_login = f"saas_wrong_login_{suffix}"
@@ -1339,7 +1345,7 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
             """
         )
 
-    base = sa.engine.make_url(_postgres_url())
+    base = sa.engine.make_url(isolated_postgres_url)
     dispatcher_engine = sa.create_engine(
         base.set(username=dispatcher_login, password=dispatcher_password),
         pool_pre_ping=True,

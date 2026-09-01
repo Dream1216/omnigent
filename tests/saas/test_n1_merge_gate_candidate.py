@@ -35,7 +35,7 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
     policy = EVALUATOR.read_text(encoding="utf-8")
     trusted_inputs = _array_values(policy, "POSTGRESQL_N1_TRUSTED_INPUTS")
 
-    assert len(trusted_inputs) == 11
+    assert len(trusted_inputs) == 20
     for trusted_input in trusted_inputs:
         path, expected_digest = trusted_input.split("|", 1)
         assert hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest() == expected_digest
@@ -51,5 +51,6 @@ def test_candidate_run_title_binds_pr_base_and_head() -> None:
     assert "verify-postgresql-n1" in workflow["jobs"]
     assert workflow["jobs"]["publish-candidate"]["needs"] == [
         "verify-candidate",
+        "verify-postgresql-current",
         "verify-postgresql-n1",
     ]

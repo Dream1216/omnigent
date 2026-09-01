@@ -1,17 +1,20 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 44947d123..7ee763fa6 100644
+index f6a39693..633d8dd1 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -135,6 +135,8 @@ from omnigent.version import VERSION
+@@ -1690,6 +1690,11 @@ class HostProcess:
+             return None
+         return zygote
 
- _logger = logging.getLogger(__name__)
-
-+RUNNER_ENTRY_MODULE_ENV_VAR = "OMNIGENT_RUNNER_ENTRY_MODULE"
++    def _runner_entry_module(self) -> str:
++        """Return the installed Runner entrypoint for this Host composition."""
 +
-
- class _WaitidInfo(Protocol):
-     si_pid: int
-@@ -1602,10 +1604,14 @@ class HostProcess:
++        return "omnigent.runner._entry"
++
+     def _spawn_runner_proc(
+         self,
+         env: dict[str, str],
+@@ -1764,10 +1769,14 @@ class HostProcess:
 
              with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
@@ -19,44 +22,46 @@ index 44947d123..7ee763fa6 100644
 -                    # omnigent checkout would otherwise shadow the installed
 -                    # package. _entry re-adds it for spec-declared local tools.
 -                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
-+                    # Keep cwd off sys.path while allowing the managed runtime
-+                    # to select its reviewed installed entry module.
++                    # Keep cwd off sys.path while allowing a reviewed Host
++                    # composition to select its installed Runner entry module.
 +                    [
 +                        sys.executable,
 +                        "-P",
 +                        "-m",
-+                        os.environ.get(RUNNER_ENTRY_MODULE_ENV_VAR, "omnigent.runner._entry"),
++                        self._runner_entry_module(),
 +                    ],
                      env=env,
                      # A daemon may outlive the checkout it started from.
                      cwd=str(workspace),
-@@ -3423,6 +3429,7 @@ class HostProcess:
+@@ -3844,6 +3853,7 @@ class HostProcess:
  def run_host_process(
      server_url: str,
      config_path: Path | None = None,
-+    host_factory: Callable[[HostIdentity, str], HostProcess] = HostProcess,
++    host_factory: Callable[..., HostProcess] = HostProcess,
+     *,
+     daemon_target: str | None = None,
  ) -> None:
-     """Entry point for ``omnigent host``.
-
-@@ -3433,6 +3440,7 @@ def run_host_process(
+@@ -3856,6 +3866,9 @@ def run_host_process(
          ``"https://omnigent-app.databricksapps.com"``.
      :param config_path: Optional path to ``config.yaml``.
          Defaults to ``~/.omnigent/config.yaml``.
-+    :param host_factory: Downstream-neutral HostProcess construction seam.
-     :raises SystemExit: With :data:`HOST_FATAL_EXIT_CODE` when the tunnel
-         fails permanently (auth / authorization / outdated server, or a
-         loopback server that is gone). The actionable cause is printed
-@@ -3467,7 +3475,7 @@ def run_host_process(
-     if _cli_log is not None and _cli_log != host_log_path:
-         print(f"CLI diagnostics: {display_log_path(_cli_log)}")
-
--    host = HostProcess(identity, server_url)
-+    host = host_factory(identity, server_url)
++    :param host_factory: Downstream-neutral HostProcess construction seam. The
++        factory receives ``lifecycle_lock`` as a keyword argument so managed
++        adapters retain the official daemon ownership guard.
+     :param daemon_target: Normalized registry target this process owns, e.g.
+         ``"local"`` or a server URL. When given, the daemon binds its lifetime
+         to that record (flock + self-terminate on delete/reassign). ``None``
+@@ -3911,7 +3924,7 @@ def run_host_process(
+     lifecycle_lock = (
+         DaemonLifecycleLock.for_target(daemon_target) if daemon_target is not None else None
+     )
+-    host = HostProcess(identity, server_url, lifecycle_lock=lifecycle_lock)
++    host = host_factory(identity, server_url, lifecycle_lock=lifecycle_lock)
      try:
          asyncio.run(host.run())
      except HostConnectError as exc:
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb5..04cd40c0e 100644
+index 970fa7eb..04cd40c0 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
 @@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):

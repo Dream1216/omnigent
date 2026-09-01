@@ -56,6 +56,8 @@
 # Must satisfy pyproject requires-python (>=3.12); 3.11 fails dependency resolution.
 ARG PYTHON_VERSION=3.12
 ARG NODE_VERSION=22
+ARG UV_VERSION=0.12.1
+ARG PNPM_VERSION=11.15.1
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
 ARG SOURCE_DATE_EPOCH=1580601600
@@ -76,6 +78,7 @@ ARG ADAPTER_CONTRACT_VERSION=unknown
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
 FROM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
+ARG PNPM_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 WORKDIR /web
 
@@ -86,7 +89,8 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
 COPY web/electron/package.json ./web/electron/
 
-RUN npm install -g pnpm@11.15.1
+RUN npm install -g "pnpm@${PNPM_VERSION}" \
+ && test "$(pnpm --version)" = "${PNPM_VERSION}"
 RUN pnpm install --frozen-lockfile --filter web
 
 COPY web/ ./web/
@@ -102,22 +106,38 @@ FROM ${PYTHON_IMAGE} AS builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_DATE_EPOCH
+ARG UV_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
+    UV_NO_INSTALLER_METADATA=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential \
- && rm -rf /var/lib/apt/lists/*
+# Docker Official Images records the exact Debian archive snapshots used to
+# assemble python-slim as comments beside its rolling URIs. Activate only those
+# base-matched snapshots and fail closed if that two-archive contract changes.
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
+      build-essential \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
-RUN pip install --index-url ${PYPI_INDEX_URL} --no-cache-dir uv
+RUN pip install --index-url ${PYPI_INDEX_URL} --no-cache-dir "uv==${UV_VERSION}" \
+ && case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*) ;; \
+      *) echo "ERROR: uv version mismatch" >&2; exit 1 ;; esac
 
 WORKDIR /build
 
 # Manifests + SDK path-deps first so the install layer caches across
 # pure source edits.
-COPY pyproject.toml setup.py ./
+COPY pyproject.toml setup.py uv.lock ./
 # License + third-party attribution travel into the published images (the host
 # and runtime targets COPY /build below), since the image redistributes the
 # dependency bytes baked in by the install step.
@@ -125,6 +145,7 @@ COPY LICENSE NOTICE ./
 COPY sdks/ ./sdks/
 COPY omnigent/ ./omnigent/
 COPY saas/ ./saas/
+COPY integrations/slack/ ./integrations/slack/
 # The built-in polly agent's packaged bundle (omnigent/resources/examples/
 # polly) is a symlink into the top-level examples/ tree. Ship examples/ so the
 # symlink resolves at boot; without it the new-session picker silently drops
@@ -135,15 +156,30 @@ COPY examples/ ./examples/
 # tells uv to install into this venv (not the slim image's system
 # Python) — without it, uv falls back to system Python and the
 # copied /opt/venv lands in the runtime stage empty.
-RUN python -m venv /opt/venv
+# Keep ensurepip's deterministic seed bytecode, then prove neither uv nor any
+# isolated smoke import adds timestamp-based bytecode to the copied venv.
+RUN python -m venv /opt/venv \
+ && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-seed-pyc.sha256
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}"
 
-# Install omnigent. Editable install (-e) is required because
-# pyproject.toml declares the sibling SDKs as editable path deps via
-# [tool.uv.sources]. The runtime stages preserve /build/ so the venv's
-# .pth references stay valid.
-RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e .
+# The Dockerfile-specific context intentionally excludes ``.github/``. The
+# repository uv workspace declares ``.github/triage_v2`` there, so blindly
+# invoking uv would fail workspace discovery even though that automation
+# package is not part of either runtime image. Remove only the workspace
+# discovery stanza from the copied (image-local) manifest; the committed lock
+# remains authoritative and ``--package omnigent`` selects the root package.
+RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml
+
+# Consume the committed lock without resolution. ``--active`` binds the sync
+# to /opt/venv and ``--no-editable`` makes the root package and SDK path deps
+# self-contained, so the host image never needs a second dependency-resolving
+# pip install to escape /build/*.pth references.
+RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
+ && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-core-pyc.sha256 \
+ && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256
 
 # ── Server builder ──────────────────────────────────────
 # Server-only additions on top of the shared builder: the SPA bundle
@@ -151,6 +187,7 @@ RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e .
 FROM builder AS server-builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
+ARG PSYCOPG_VERSION=3.3.4
 
 # Overlay the SPA bundle built in the web-builder stage, so a clean
 # checkout (with no prebuilt bundle on the host) still produces a
@@ -159,18 +196,33 @@ COPY --from=web-builder /web/omnigent/server/static/web-ui ./omnigent/server/sta
 RUN test -f ./omnigent/server/static/web-ui/index.html \
     || (echo "ERROR: SPA bundle missing after web-builder stage — check the web build." && exit 1)
 
-# psycopg[binary] is not a baseline dep — pulled in by the
-# [databricks] extra in pyproject — so add it explicitly here.
-RUN uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} 'psycopg[binary]>=3.1,<4'
-
 # Optional managed-sandbox provider extras for the SERVER (the launcher imports
 # the provider SDK — e.g. the kubernetes client for `sandbox.provider:
 # kubernetes`). Off by default; the runner host image needs none of these. Build
 # with `--build-arg OMNIGENT_EXTRAS=kubernetes` (comma-separate for several).
 ARG OMNIGENT_EXTRAS=
-RUN if [ -n "${OMNIGENT_EXTRAS}" ]; then \
-        uv pip install --no-cache-dir --index-url ${PYPI_INDEX_URL} -e ".[${OMNIGENT_EXTRAS}]"; \
-    fi
+RUN set -eu; \
+    set -- --extra saas; \
+    if [ -n "${OMNIGENT_EXTRAS}" ]; then \
+        extras="$(printf '%s' "${OMNIGENT_EXTRAS}" | tr ',' ' ')"; \
+        for extra in ${extras}; do \
+            case "${extra}" in \
+              *[!A-Za-z0-9_-]*|'') \
+                echo "ERROR: invalid OMNIGENT_EXTRAS entry '${extra}'" >&2; exit 1 ;; \
+            esac; \
+            set -- "$@" --extra "${extra}"; \
+        done; \
+    fi; \
+    uv sync --frozen --active --package omnigent --no-dev --no-editable \
+      --no-cache --reinstall-package omnigent "$@"; \
+    installed="$(python -c 'import importlib.metadata as m; print(m.version("psycopg"))')"; \
+    [ "${installed}" = "${PSYCOPG_VERSION}" ] || { \
+      echo "ERROR: uv.lock installed psycopg ${installed}, expected ${PSYCOPG_VERSION}." >&2; \
+      exit 1; \
+    }; \
+    python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
+      > /tmp/venv-server-pyc.sha256; \
+    cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
@@ -205,6 +257,11 @@ FROM ${NODE_IMAGE} AS node-runtime
 #     never reference it.
 FROM ${PYTHON_IMAGE} AS host
 ARG NPM_CONFIG_REGISTRY=
+ARG PNPM_VERSION
+ARG SOURCE_DATE_EPOCH
+ARG CLAUDE_CODE_VERSION=2.1.212
+ARG CODEX_CLI_VERSION=0.139.0
+ARG PI_CODING_AGENT_VERSION=0.84.2
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -227,11 +284,19 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     IS_SANDBOX=1
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
       git tmux procps lsof bubblewrap curl ca-certificates unzip \
       iproute2 nftables \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
 # OpenShell-required non-root user (see the header note). UID/GID in the high
 # range per OpenShell's bring-your-own-container guidance, so that without
@@ -263,15 +328,91 @@ COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
-# The harness CLI set mirrors omnigent/onboarding/harness_install.py
-# (the binary/package map `omnigent setup` installs from) — keep the
-# two in sync. Unpinned on purpose: the official image is rebuilt by
-# CI, so it tracks the same "latest" a laptop install would get.
-RUN npm install -g --no-audit --no-fund \
-      @anthropic-ai/claude-code \
-      @openai/codex \
-      @earendil-works/pi-coding-agent \
- && npm cache clean --force
+# The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
+# repository's ``.github/ci-deps`` importer already records the independently
+# tested direct versions and their full transitive graph in pnpm-lock.yaml.
+# ``.github`` is excluded from this Docker build context, so materialize only
+# that tiny importer from the exact build args below; --frozen-lockfile then
+# fails closed if either the importer or any transitive material drifts.
+WORKDIR /opt/omnigent-host-cli
+ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
+# npm/pnpm installers and CLI probes may write wall-clock or reify metadata.
+# Keep all installer state under one disposable prefix, retain only the pinned
+# pnpm package and project tree, then normalize both retained roots last.
+RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
+           HOME=/tmp/omnigent-cli-state/home \
+           TMPDIR=/tmp/omnigent-cli-state/tmp \
+           XDG_CACHE_HOME=/tmp/omnigent-cli-state/xdg-cache \
+           XDG_CONFIG_HOME=/tmp/omnigent-cli-state/xdg-config \
+           XDG_DATA_HOME=/tmp/omnigent-cli-state/xdg-data \
+           XDG_STATE_HOME=/tmp/omnigent-cli-state/xdg-state \
+           XDG_RUNTIME_DIR=/tmp/omnigent-cli-state/xdg-runtime \
+           CODEX_HOME=/tmp/omnigent-cli-state/codex \
+           CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude \
+           PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi \
+           npm_config_cache=/tmp/omnigent-cli-state/npm-cache; \
+    export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"; \
+    install -d "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" \
+      "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$CODEX_HOME" \
+      "$CLAUDE_CONFIG_DIR" "$PI_CODING_AGENT_DIR" \
+ && install -d -m 0700 "$XDG_RUNTIME_DIR" \
+ && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
+      --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+ && test "$(pnpm --version)" = "${PNPM_VERSION}" \
+ && mkdir -p .github/ci-deps \
+ && printf '%s\n' \
+      '{' \
+      '  "name": "e2e-ci-deps",' \
+      '  "version": "0.0.0",' \
+      '  "private": true,' \
+      '  "dependencies": {' \
+      "    \"@anthropic-ai/claude-code\": \"${CLAUDE_CODE_VERSION}\"," \
+      "    \"@earendil-works/pi-coding-agent\": \"${PI_CODING_AGENT_VERSION}\"," \
+      "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"" \
+      '  }' \
+      '}' > .github/ci-deps/package.json \
+ && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
+      --store-dir /tmp/pnpm-store --package-import-method=copy \
+ && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); source=modules.read_text(encoding="utf-8"); count=len(re.findall(r"(?m)^\s*\"prunedAt\"\s*:", source)); assert count == 1, f"expected exactly one pnpm JSON prunedAt field, found {count}"; data=json.loads(source); assert type(data) is dict and type(data.get("prunedAt")) is str and data["prunedAt"], "pnpm JSON prunedAt field missing or invalid"; data["prunedAt"]=email.utils.formatdate(epoch, usegmt=True); modules.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8"); print("pnpm prunedAt fields normalized: 1"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")); assert type(state_data.get("lastValidatedTimestamp")) is int and state_data["lastValidatedTimestamp"] >= 0, "pnpm validation timestamp missing or invalid"; state.unlink()' \
+ && test -x .github/ci-deps/node_modules/.bin/claude \
+ && test -x .github/ci-deps/node_modules/.bin/codex \
+ && test -x .github/ci-deps/node_modules/.bin/pi \
+ && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
+      *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
+      *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
+      *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
+ && mkdir -p /usr/local/lib/node_modules \
+ && cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm" \
+      /usr/local/lib/node_modules/pnpm \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx \
+ && rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store \
+      /root/.npm /root/.cache /root/.local/share/pnpm \
+ && test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
+ && test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
+ && test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
+ && test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
+ && test -x /usr/local/bin/pnpm \
+ && test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION" \
+ && rm -rf "$OMNIGENT_CLI_STATE" \
+ && test ! -e "$OMNIGENT_CLI_STATE" \
+ && test ! -e node_modules/.pnpm-workspace-state-v1.json \
+ && for path in /tmp/pnpm-store /root/.npm /root/.cache \
+      /root/.local/share/pnpm; do test ! -e "$path"; done \
+ && python -B /tmp/normalize_host_cli_tree.py \
+      --source-date-epoch "$SOURCE_DATE_EPOCH" \
+      --root /opt/omnigent-host-cli \
+      --root /usr/local/lib/node_modules/pnpm \
+ && rm -f /tmp/normalize_host_cli_tree.py \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" \
+      /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
+      /usr/local/bin /usr/local/lib/node_modules /tmp /root
 
 # Kiro CLI is not published as an npm package, and its installer has NO version
 # flag — `curl …/install | bash` always fetches `latest`, so the image was
@@ -321,7 +462,7 @@ RUN set -eu; \
 #
 # Version + integrity pin: the native harness is behaviorally coupled to a
 # specific agy build (out-of-order transcript writes, connect-RPC quirks, and TUI
-# injection are all verified against 1.0.10 — grep ``agy 1.0.10`` under
+# injection are all verified against 1.1.16 — grep ``agy 1.1.16`` under
 # omnigent/antigravity_native*). The official ``install.sh`` bootstrapper has NO
 # version flag — it always fetches the LATEST build from an auto-updater manifest
 # and old builds are not retained at any stable, reconstructable URL — so it
@@ -331,9 +472,9 @@ RUN set -eu; \
 # supply-chain control (a version-string check alone is not). To adopt a new agy:
 # re-verify the coupled behavior, then bump AGY_VERSION and both SHA256s (from
 # https://github.com/google-antigravity/antigravity-cli/releases).
-ARG AGY_VERSION=1.0.10
-ARG AGY_SHA256_AMD64=6547cf9a37227f26004fa4b805418b1df96f54c57b9723ca7d10864d2610bb0f
-ARG AGY_SHA256_ARM64=4674fabc3681221e54c90d15077c9a97a25ea71222001dabe44bf1576e888593
+ARG AGY_VERSION=1.1.16
+ARG AGY_SHA256_AMD64=7742953b7835b457e9102f1357a493913657dfd147435584f609d58356ec085a
+ARG AGY_SHA256_ARM64=c71599bb548cf72dfe7a8f6c411b3c7a3623cd4b0f6276bae89c69f769d6c92d
 RUN set -eu; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
@@ -361,8 +502,7 @@ RUN set -eu; \
 # site-packages and imports no longer require /build at runtime.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build /build
-RUN pip install --no-cache-dir /build /build/sdks/python-client /build/sdks/ui \
- && ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
+RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
 
 # Sandbox launchers exec commands through `bash -lc`, and Debian's
 # /etc/profile unconditionally resets PATH for login shells — the ENV
@@ -382,6 +522,7 @@ CMD ["sleep", "infinity"]
 # ── Server runtime (default target) ─────────────────────
 FROM ${PYTHON_IMAGE} AS runtime
 
+ARG SOURCE_DATE_EPOCH
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -398,9 +539,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 # curl + ca-certificates only — for the HEALTHCHECK and for outbound
 # HTTPS to LLM gateways / external services.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
+ && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false install -y --no-install-recommends \
+      curl ca-certificates \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
 # Preserve /build/ in the runtime stage — the venv's editable install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,9 @@ _MANIFEST_FIELDS = {
     "base_commit",
     "patch_file",
     "patch_sha256",
+    "dockerfile_sha256",
+    "dockerignore_sha256",
+    "build_requirements_sha256",
     "allowed_paths",
     "patched_tree_hash",
     "required_schema_revision",
@@ -74,11 +78,7 @@ def _validate_manifest(repository: Path, manifest: Mapping[str, Any]) -> Path:
         }
         or not isinstance(allowed, list)
         or allowed != sorted(set(allowed))
-        or any(
-            not isinstance(path, str)
-            or not (path.startswith("saas/") or path == "deploy/docker/Dockerfile")
-            for path in allowed
-        )
+        or any(not isinstance(path, str) or not path.startswith("saas/") for path in allowed)
     ):
         raise RuntimeError("N-1 compatibility manifest is invalid") from None
     patch_relative = manifest.get("patch_file")
@@ -91,6 +91,19 @@ def _validate_manifest(repository: Path, manifest: Mapping[str, Any]) -> Path:
         raise RuntimeError("N-1 compatibility patch is unavailable") from None
     if digest != manifest.get("patch_sha256"):
         raise RuntimeError("N-1 compatibility patch digest mismatch") from None
+    for filename, field in (
+        ("Dockerfile", "dockerfile_sha256"),
+        ("Dockerfile.dockerignore", "dockerignore_sha256"),
+        ("build-requirements.txt", "build_requirements_sha256"),
+    ):
+        try:
+            observed = hashlib.sha256(
+                (repository / "saas/n1_compat" / filename).read_bytes()
+            ).hexdigest()
+        except OSError:
+            raise RuntimeError("N-1 compatibility build input is unavailable") from None
+        if observed != manifest.get(field):
+            raise RuntimeError("N-1 compatibility build input digest mismatch") from None
     return patch
 
 
@@ -104,7 +117,10 @@ def _verify_contract(root: Path) -> None:
     worker = (root / "saas/outbox_worker.py").read_text(encoding="utf-8")
     launcher = (root / "saas/n1_outbox_launcher.py").read_text(encoding="utf-8")
     admission = (root / "saas/n1_outbox_compat_admission.py").read_text(encoding="utf-8")
-    dockerfile = (root / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+    n1_dockerfile = (root / "saas/n1_compat/Dockerfile").read_text(encoding="utf-8")
+    from_lines = re.findall(r"(?mi)^FROM\s+.*$", n1_dockerfile)
+    copies = re.findall(r"(?mi)^COPY\s+--from=([^\s]+)\s+([^\n]+)$", n1_dockerfile)
+    requirements = (root / "saas/n1_compat/build-requirements.txt").read_text(encoding="utf-8")
     forbidden = ("str(error)", "logger.exception", "exc_info=True")
     if (
         any(token in outbox or token in worker for token in forbidden)
@@ -134,14 +150,59 @@ def _verify_contract(root: Path) -> None:
         or '[sys.executable, "-I", "-m", "saas.outbox_worker"]' not in launcher
         or "url.password" in admission
         or "database_url.encode" in admission
-        or "FROM runtime AS n1-compat-runtime" not in dockerfile
-        or 'CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]' not in dockerfile
-        or "ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT}" not in dockerfile
-        or "ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION}" not in dockerfile
-        or "ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256}" not in dockerfile
-        or "ai.omnigent.saas.n1.patched-tree-hash=${N1_PATCHED_TREE_HASH}" not in dockerfile
-        or "ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION}" not in dockerfile
-        or "ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}" not in dockerfile
+        or from_lines
+        != [
+            "FROM ${UV_IMAGE} AS uv-bin",
+            "FROM ${PYTHON_IMAGE} AS n1-compat-builder",
+            "FROM ${PYTHON_IMAGE} AS n1-compat-runtime",
+        ]
+        or copies
+        != [("uv-bin", "/uv /usr/local/bin/uv"), ("n1-compat-builder", "/opt/venv /opt/venv")]
+        or "COPY --from=runtime" in n1_dockerfile
+        or "RUN --mount" in n1_dockerfile
+        or "setuptools==83.0.0" not in requirements
+        or "hatchling==1.27.0" not in requirements
+        or "pathspec==1.1.1" not in requirements
+        or "pluggy==1.6.0" not in requirements
+        or "trove-classifiers==2026.6.1.19" not in requirements
+        or "packaging==26.3" not in requirements
+        or "--require-hashes" not in n1_dockerfile
+        or "--no-build-isolation" not in n1_dockerfile
+        or "FROM ${UV_IMAGE} AS uv-bin" not in n1_dockerfile
+        or "uv:0.12.1@sha256:cf4eedcaa816" not in n1_dockerfile
+        or "FROM ${PYTHON_IMAGE} AS n1-compat-builder" not in n1_dockerfile
+        or "OMNIGENT_SKIP_WEB_UI=true" not in n1_dockerfile
+        or "UV_NO_INSTALLER_METADATA=1" not in n1_dockerfile
+        or "COPY pyproject.toml setup.py uv.lock README.md ./" not in n1_dockerfile
+        or "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" not in n1_dockerfile
+        or "python -m venv --without-pip /opt/venv" not in n1_dockerfile
+        or "/usr/local/bin/uv pip install --python /opt/venv/bin/python" not in n1_dockerfile
+        or "/usr/local/bin/uv sync --frozen --active --package omnigent" not in n1_dockerfile
+        or "--no-dev --no-editable --no-cache" not in n1_dockerfile
+        or '[ "${installed}" = "3.3.4" ]' not in n1_dockerfile
+        or "/opt/venv/bin/python -B -I -c" not in n1_dockerfile
+        or "import saas.n1_outbox_launcher as l, saas.outbox_worker as w" not in n1_dockerfile
+        or 'p=Path("/opt/venv").resolve()' not in n1_dockerfile
+        or "Path(m.__file__).resolve().is_relative_to(p)" not in n1_dockerfile
+        or "/usr/local/bin/uv pip check --python /opt/venv/bin/python" not in n1_dockerfile
+        or "find /opt/venv -type f -name '*.pyc' -print -quit" not in n1_dockerfile
+        or "find /opt/venv -type f -name 'uv_cache.json' -print -quit" not in n1_dockerfile
+        or "FROM ${PYTHON_IMAGE} AS n1-compat-runtime" not in n1_dockerfile
+        or "COPY --from=n1-compat-builder /opt/venv /opt/venv" not in n1_dockerfile
+        or 'CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]' not in n1_dockerfile
+        or "ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT}" not in n1_dockerfile
+        or "ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION}" not in n1_dockerfile
+        or "ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256}" not in n1_dockerfile
+        or "ai.omnigent.saas.n1.patched-tree-hash=${N1_PATCHED_TREE_HASH}" not in n1_dockerfile
+        or "ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION}"
+        not in n1_dockerfile
+        or "ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}" not in n1_dockerfile
+        or "apt-get" in n1_dockerfile
+        or "FROM runtime AS n1-compat-runtime" in n1_dockerfile
+        or "server-builder" in n1_dockerfile
+        or "web-builder" in n1_dockerfile
+        or "RUN pip install" in n1_dockerfile
+        or "COPY --from=n1-compat-builder /build" in n1_dockerfile
     ):
         raise RuntimeError("N-1 compatibility security contract is incomplete") from None
 

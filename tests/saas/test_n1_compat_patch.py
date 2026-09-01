@@ -81,8 +81,8 @@ def test_n1_compat_builder_applies_only_the_pinned_security_patch() -> None:
         "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
         "contract_version": "p0s3-n1-outbox-security-compat-v1",
         "materialized_source": None,
-        "patch_sha256": "810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35",
-        "patched_tree_hash": "git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac",
+        "patch_sha256": "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23",
+        "patched_tree_hash": "git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73",
         "required_schema_revision": "p0s000000003",
         "schema_change_policy": {
             "outbox_ddl_requires_worker_drain": True,
@@ -102,14 +102,42 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert isinstance(workflow, dict)
     jobs = workflow["jobs"]
     current_postgresql = jobs["verify-candidate"]
+    secure_image_commands = "\n".join(
+        str(step.get("run", "")) for step in current_postgresql["steps"]
+    )
+    assert "uv sync" not in secure_image_commands
+    assert "pytest" not in secure_image_commands
+    assert "python -m saas" not in secure_image_commands
+    assert "python -I -S saas/scripts/build_n1_compat.py" in secure_image_commands
+    assert "python -I -S saas/scripts/compare_oci_rebuilds.py" in secure_image_commands
+    assert workflow["env"]["CANDIDATE_REVISION"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
+    checkout = current_postgresql["steps"][0]
+    assert checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in secure_image_commands
+    assert '--arg revision "$CANDIDATE_REVISION"' in secure_image_commands
+    assert "n1-compat-candidate-${{ env.CANDIDATE_REVISION }}" in source
+    assert "services" not in current_postgresql
+    current_contract = jobs["verify-postgresql-current"]
+    current_contract_commands = "\n".join(
+        str(step.get("run", "")) for step in current_contract["steps"]
+    )
+    current_contract_checkout = current_contract["steps"][0]
+    assert current_contract_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in current_contract_commands
+    assert current_contract["services"]["postgres"]["image"] == "postgres:18"
+    assert "--no-install-local --no-config" in current_contract_commands
     n1_postgresql = jobs["verify-postgresql-n1"]
-    assert current_postgresql["services"]["postgres"]["image"] == "postgres:18"
     assert n1_postgresql["services"]["postgres"]["image"] == (
         "postgres:16.14-bookworm@"
         "sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8"
     )
     n1_postgresql_steps = n1_postgresql["steps"]
     n1_postgresql_commands = "\n".join(str(step.get("run", "")) for step in n1_postgresql_steps)
+    n1_postgresql_checkout = n1_postgresql_steps[0]
+    assert n1_postgresql_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
+    assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in n1_postgresql_commands
     assert workflow["run-name"] == (
         "SaaS N-1 ${{ github.event_name }} "
         "pr=${{ github.event.pull_request.number || 'none' }} "
@@ -177,11 +205,31 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b" in source
     assert (
         "N1_PATCH_SHA256: "
-        "810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35" in source
+        "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23" in source
     )
-    assert "N1_PATCHED_TREE_HASH: git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac" in source
+    assert "N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
+    assert workflow["env"]["N1_BUILDX_VERSION"] == "v0.36.1"
+    assert workflow["env"]["N1_BUILDKIT_IMAGE"] == (
+        "moby/buildkit:v0.32.2@"
+        "sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
+    )
+    buildx_steps = [
+        step
+        for job in (current_postgresql, jobs["publish-candidate"])
+        for step in job["steps"]
+        if step["name"] == "Set up Buildx"
+    ]
+    assert len(buildx_steps) == 2
+    assert all(step["with"]["version"] == "${{ env.N1_BUILDX_VERSION }}" for step in buildx_steps)
+    assert all(
+        step["with"]["driver-opts"] == "image=${{ env.N1_BUILDKIT_IMAGE }}"
+        for step in buildx_steps
+    )
+    assert (
+        source.count("approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit}") == 2
+    )
     assert source.count('      - "saas/**"') == 2
     assert source.count('      - "tests/saas/**"') == 2
     assert source.count('      - ".github/actions/compat-smoke-saas-n1-gate/**"') == 2
@@ -192,16 +240,68 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert source.count("platforms: linux/amd64,linux/arm64") == 3
     assert source.count("provenance: mode=max") == 3
     assert source.count("sbom: true") == 3
+    attempt_one = next(
+        step
+        for step in current_postgresql["steps"]
+        if step["name"] == "Build dual-platform N-1 runtime candidate attempt 1"
+    )["with"]
+    attempt_two = next(
+        step
+        for step in current_postgresql["steps"]
+        if step["name"] == "Build dual-platform N-1 runtime candidate attempt 2"
+    )["with"]
+    assert attempt_one["cache-from"] == "type=gha,scope=saas-n1-compat-candidate"
+    assert attempt_one["cache-to"] == "type=gha,scope=saas-n1-compat-candidate,mode=max"
+    assert attempt_one["outputs"].endswith(",rewrite-timestamp=true")
+    assert "no-cache" not in attempt_one
+    assert attempt_two["no-cache"] == "true"
+    assert attempt_two["outputs"].endswith(",rewrite-timestamp=true")
+    assert "cache-from" not in attempt_two
+    assert "cache-to" not in attempt_two
     assert '--output-directory "${RUNNER_TEMP}/n1-source"' in source
     assert "test_real_postgresql_pinned_n1_outbox_compatibility_bridge" in source
     assert "test_real_postgresql_n1_compat_login_admission_and_roles_replay" in source
-    assert "saas.scripts.compare_oci_rebuilds" in source
+    assert "saas/scripts/compare_oci_rebuilds.py" in source
+    assert source.count("--label-profile n1") == 2
+    assert ".candidate_evidence_version == 3" in source
+    assert 'config_environment: "omitted"' in source
+    assert 'history_created_by: "equality-and-ordinal-drift-only"' in source
+    assert 'layer_contents: "omitted"' in source
     assert "target: n1-compat-runtime" in source
     assert "cat >>" not in source
-    assert '"deploy/docker/Dockerfile"' in manifest_source
-    assert "diff --git a/deploy/docker/Dockerfile b/deploy/docker/Dockerfile" in patch_source
-    assert "FROM runtime AS n1-compat-runtime" in patch_source
-    assert 'CMD ["python", "-I", "-m", "saas.n1_outbox_launcher"]' in patch_source
+    assert '"saas/n1_compat/Dockerfile"' in manifest_source
+    assert "diff --git a/deploy/docker/Dockerfile b/deploy/docker/Dockerfile" not in patch_source
+    n1_dockerfile = (_repository() / "saas/n1_compat/Dockerfile").read_text(encoding="utf-8")
+    assert "FROM ${UV_IMAGE} AS uv-bin" in n1_dockerfile
+    assert "FROM ${PYTHON_IMAGE} AS n1-compat-builder" in n1_dockerfile
+    assert "uv:0.12.1@sha256:cf4eedcaa816" in n1_dockerfile
+    assert "OMNIGENT_SKIP_WEB_UI=true" in n1_dockerfile
+    assert "UV_NO_INSTALLER_METADATA=1" in n1_dockerfile
+    assert "COPY pyproject.toml setup.py uv.lock README.md ./" in n1_dockerfile
+    assert "sed -i '/^\\[tool\\.uv\\.workspace\\]$/,/^$/d' pyproject.toml" in n1_dockerfile
+    assert "python -m venv --without-pip /opt/venv" in n1_dockerfile
+    assert "/usr/local/bin/uv sync --frozen --active --package omnigent" in n1_dockerfile
+    assert "/usr/local/bin/uv pip install --python /opt/venv/bin/python" in n1_dockerfile
+    assert "--require-hashes" in n1_dockerfile
+    assert "--no-build-isolation" in n1_dockerfile
+    assert "--no-dev --no-editable --no-cache" in n1_dockerfile
+    assert '[ "${installed}" = "3.3.4" ]' in n1_dockerfile
+    assert "/opt/venv/bin/python -B -I -c" in n1_dockerfile
+    assert "import saas.n1_outbox_launcher as l, saas.outbox_worker as w" in n1_dockerfile
+    assert 'p=Path("/opt/venv").resolve()' in n1_dockerfile
+    assert "Path(m.__file__).resolve().is_relative_to(p)" in n1_dockerfile
+    assert "/usr/local/bin/uv pip check --python /opt/venv/bin/python" in n1_dockerfile
+    assert "find /opt/venv -type f -name '*.pyc' -print -quit" in n1_dockerfile
+    assert "find /opt/venv -type f -name 'uv_cache.json' -print -quit" in n1_dockerfile
+    assert "FROM ${PYTHON_IMAGE} AS n1-compat-runtime" in n1_dockerfile
+    assert "COPY --from=n1-compat-builder /opt/venv /opt/venv" in n1_dockerfile
+    assert "COPY --from=n1-compat-builder /build" not in n1_dockerfile
+    assert "apt-get" not in n1_dockerfile
+    assert "FROM runtime AS n1-compat-runtime" not in n1_dockerfile
+    assert "server-builder" not in n1_dockerfile
+    assert "web-builder" not in n1_dockerfile
+    assert "RUN pip install" not in n1_dockerfile
+    assert 'CMD ["python", "-B", "-I", "-m", "saas.n1_outbox_launcher"]' in patch_source
     assert "ai.omnigent.saas.n1.base-commit=${N1_BASE_COMMIT}" in patch_source
     assert "ai.omnigent.saas.n1.patch-source-revision=${SOURCE_REVISION}" in patch_source
     assert "ai.omnigent.saas.n1.patch-sha256=${N1_PATCH_SHA256}" in patch_source
@@ -209,6 +309,8 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "ai.omnigent.saas.n1.schema-revision=${CONTROL_PLANE_SCHEMA_REVISION}" in patch_source
     assert "ai.omnigent.saas.n1.contract-version=${N1_CONTRACT_VERSION}" in patch_source
     assert source.count("N1_BASE_COMMIT=${{ env.N1_BASE_COMMIT }}") == 3
+    assert source.count("UV_IMAGE=${{ env.N1_UV_IMAGE }}") == 3
+    assert "NODE_IMAGE" not in source
     assert source.count("N1_PATCH_SHA256=${{ env.N1_PATCH_SHA256 }}") == 3
     assert source.count("N1_PATCHED_TREE_HASH=${{ env.N1_PATCHED_TREE_HASH }}") == 3
     assert "UPSTREAM_REVISION=${{ env.N1_BASE_COMMIT }}" not in source
@@ -223,7 +325,16 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     )
 
     publish = jobs["publish-candidate"]
-    assert publish["needs"] == ["verify-candidate", "verify-postgresql-n1"]
+    assert publish["needs"] == [
+        "verify-candidate",
+        "verify-postgresql-current",
+        "verify-postgresql-n1",
+    ]
+    publish_commands = "\n".join(str(step.get("run", "")) for step in publish["steps"])
+    assert "uv sync" not in publish_commands
+    assert "python -m saas" not in publish_commands
+    assert "python -I -S saas/scripts/build_n1_compat.py" in publish_commands
+    assert "python -I -S saas/scripts/compare_oci_rebuilds.py" in publish_commands
     publish_condition = publish["if"]
     assert "github.event_name == 'workflow_dispatch'" in publish_condition
     assert "github.ref == 'refs/heads/main'" in publish_condition

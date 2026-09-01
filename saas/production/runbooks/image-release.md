@@ -58,10 +58,13 @@ uv run python -m saas.scripts.check_image_supply_chain \
   --require-ready
 ```
 
-The current `saas-image-candidate.yml` only repeats local OCI builds and compares
-executable manifest/config facts. It does not publish, sign, scan, canary,
-rollback, or produce production evidence. Its success must remain classified as
-candidate reproducibility evidence only.
+The `build-candidate` job in `saas-image-candidate.yml` repeats local OCI builds
+and compares executable manifest/config facts. Its protected `publish-signed`
+job can publish the wheel plus Server and Host images and attach GitHub OIDC
+attestations to those artifacts. It still does not run vulnerability or license
+admission scans, a one-hour Canary, an N-1 rollback exercise, or write the final
+canonical production evidence object. Successful publication therefore proves
+a signed candidate exists; it does not authorize production deployment.
 
 ## Rollback
 

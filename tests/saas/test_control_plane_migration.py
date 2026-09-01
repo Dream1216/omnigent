@@ -105,7 +105,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000006"
+        assert revision == "p0s000000007"
         first_run_scope = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_tenant_onboardings")
@@ -405,6 +405,125 @@ def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> No
     engine.dispose()
 
 
+def test_registration_subject_lock_budget_migration_is_exact_and_reversible(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    signature = (
+        "public.saas_consume_registration_rate_limit(text,text,text,text,text,text,text,text)"
+    )
+
+    def contract(
+        connection: sa.Connection,
+    ) -> tuple[str, str, list[str], str, list[str] | None]:
+        row = connection.execute(
+            sa.text(
+                "SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to("
+                "pg_catalog.btrim(procedure.prosrc, E' \\n\\r\\t'), 'UTF8')), 'hex'), "
+                "pg_catalog.pg_get_functiondef(procedure.oid), procedure.proconfig, "
+                "procedure.proowner::pg_catalog.regrole::text, procedure.proacl "
+                "FROM pg_catalog.pg_proc AS procedure "
+                "WHERE procedure.oid = pg_catalog.to_regprocedure(:signature)"
+            ),
+            {"signature": signature},
+        ).one()
+        return (
+            str(row[0]),
+            str(row[1]),
+            list(row[2]),
+            str(row[3]),
+            None if row[4] is None else [str(value) for value in row[4]],
+        )
+
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000006")
+            (
+                p0s6_hash,
+                p0s6_definition,
+                p0s6_config,
+                p0s6_owner,
+                p0s6_acl,
+            ) = contract(connection)
+            assert p0s6_hash == (
+                "84edaf917bdde5521267880561cb83d9b6099530dc8d76b3d07d26eb32867a8b"
+            )
+            assert p0s6_config == ["search_path=pg_catalog", "lock_timeout=250ms"]
+
+            drifted_definition = p0s6_definition.replace(
+                "DECLARE\n",
+                "DECLARE\n    -- p0s7 exact-contract rejection probe\n",
+                1,
+            )
+            assert drifted_definition != p0s6_definition
+            connection.exec_driver_sql(drifted_definition)
+            with pytest.raises(RuntimeError, match="unexpected contract hash"):
+                command.upgrade(config, "p0s000000007")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM public.saas_alembic_version"))
+                == "p0s000000006"
+            )
+            connection.exec_driver_sql(p0s6_definition)
+
+            command.upgrade(config, "p0s000000007")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM public.saas_alembic_version"))
+                == "p0s000000007"
+            )
+            (
+                p0s7_hash,
+                p0s7_definition,
+                p0s7_config,
+                p0s7_owner,
+                p0s7_acl,
+            ) = contract(connection)
+            assert p0s7_hash == (
+                "8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112"
+            )
+            assert p0s7_config == ["search_path=pg_catalog", "lock_timeout=250ms"]
+            assert (p0s7_owner, p0s7_acl) == (p0s6_owner, p0s6_acl)
+            assert p0s7_definition.index("set_config('lock_timeout', '2s', true)") < (
+                p0s7_definition.index("pg_advisory_xact_lock")
+            )
+            assert p0s7_definition.index("pg_advisory_xact_lock") < p0s7_definition.index(
+                "set_config('lock_timeout', '250ms', true)"
+            )
+            assert p0s7_definition.index("set_config('lock_timeout', '250ms', true)") < (
+                p0s7_definition.index("v_now := pg_catalog.clock_timestamp()")
+            )
+
+            drifted_definition = p0s7_definition.replace(
+                "DECLARE\n",
+                "DECLARE\n    -- p0s7 downgrade rejection probe\n",
+                1,
+            )
+            assert drifted_definition != p0s7_definition
+            connection.exec_driver_sql(drifted_definition)
+            with pytest.raises(RuntimeError, match="unexpected contract hash"):
+                command.downgrade(config, "p0s000000006")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM public.saas_alembic_version"))
+                == "p0s000000007"
+            )
+            connection.exec_driver_sql(p0s7_definition)
+
+            command.downgrade(config, "p0s000000006")
+            (
+                downgraded_hash,
+                downgraded_definition,
+                downgraded_config,
+                downgraded_owner,
+                downgraded_acl,
+            ) = contract(connection)
+            assert downgraded_hash == p0s6_hash
+            assert downgraded_definition == p0s6_definition
+            assert downgraded_config == p0s6_config
+            assert (downgraded_owner, downgraded_acl) == (p0s6_owner, p0s6_acl)
+    finally:
+        engine.dispose()
+
+
 def test_registration_rate_limit_migration_declares_exact_force_rls_policies() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (
@@ -617,7 +736,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000006"
+                == "p0s000000007"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 

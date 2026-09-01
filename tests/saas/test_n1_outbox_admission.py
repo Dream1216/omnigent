@@ -747,6 +747,10 @@ def test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_mark
             "p0s000000006",
             "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
         ),
+        (
+            "p0s000000007",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
     ],
 )
 def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
@@ -770,7 +774,10 @@ def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
         engine.dispose()
 
 
-@pytest.mark.parametrize("schema_revision", ["p0s000000005", "p0s000000006"])
+@pytest.mark.parametrize(
+    "schema_revision",
+    ["p0s000000005", "p0s000000006", "p0s000000007"],
+)
 def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
     isolated_postgres_url: str,
     schema_revision: str,
@@ -825,7 +832,7 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         status_tamper,
         privacy_trigger_tamper,
     ]
-    if schema_revision == "p0s000000006":
+    if schema_revision in {"p0s000000006", "p0s000000007"}:
         drifts.append(
             "UPDATE public.saas_registration_rate_limit_policies "
             "SET limit_count = 61 WHERE action = 'registration.request' "
@@ -852,8 +859,10 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         engine.dispose()
 
 
+@pytest.mark.parametrize("schema_revision", ["p0s000000006", "p0s000000007"])
 def test_real_postgresql_rate_limit_authority_replay_removes_poisoned_acls(
     isolated_postgres_url: str,
+    schema_revision: str,
 ) -> None:
     engine = sa.create_engine(isolated_postgres_url)
     consume_signature = (
@@ -864,7 +873,7 @@ def test_real_postgresql_rate_limit_authority_replay_removes_poisoned_acls(
     rogue_role = f"rate_acl_rogue_{uuid4().hex[:12]}"
     try:
         with engine.begin() as connection:
-            command.upgrade(_migration_config(connection), "p0s000000006")
+            command.upgrade(_migration_config(connection), schema_revision)
             quoted_rogue = connection.dialect.identifier_preparer.quote(rogue_role)
             connection.exec_driver_sql(
                 f"CREATE ROLE {quoted_rogue} NOLOGIN INHERIT NOSUPERUSER NOCREATEDB "

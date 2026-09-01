@@ -1299,7 +1299,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
         with owner_engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000006"
+                == "p0s000000007"
             )
             assert (
                 connection.scalar(

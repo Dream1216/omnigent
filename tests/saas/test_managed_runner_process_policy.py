@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
+
 import pytest
 
-from omnigent.host.connect import RUNNER_ENTRY_MODULE_ENV_VAR, HostProcess
+import saas.runner_adapter.process_policy as process_policy_module
+from omnigent.host.connect import HostProcess
+from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.identity import HostIdentity
 from omnigent.runner._zygote import ZYGOTE_ENABLED_ENV_VAR
 from saas.runner_adapter import (
@@ -11,7 +17,11 @@ from saas.runner_adapter import (
     build_managed_host_environment,
     require_managed_host_environment,
 )
-from saas.runner_adapter.metering import managed_runner_entry_module
+from saas.runner_adapter.metering import (
+    ManagedRunnerLaunchAuthority,
+    managed_runner_entry_module,
+)
+from saas.runner_adapter.process_policy import run_managed_host_process
 
 
 def test_managed_environment_disables_upstream_zygote_without_mutating_base() -> None:
@@ -22,7 +32,6 @@ def test_managed_environment_disables_upstream_zygote_without_mutating_base() ->
     assert managed == {
         "PATH": "/usr/bin",
         ZYGOTE_ENABLED_ENV_VAR: "0",
-        RUNNER_ENTRY_MODULE_ENV_VAR: managed_runner_entry_module(),
     }
     assert base[ZYGOTE_ENABLED_ENV_VAR] == "false"
 
@@ -80,6 +89,50 @@ def test_activate_policy_makes_official_host_choose_direct_spawn(
 
     assert host._zygote_enabled is False
     assert host._zygote is None
+    monkeypatch.setenv("OMNIGENT_RUNNER_ENTRY_MODULE", "untrusted.module")
+    assert host._runner_entry_module() == "omnigent.runner._entry"
+
+
+def test_managed_host_factory_preserves_official_daemon_lifecycle_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+    lifecycle_lock = DaemonLifecycleLock.for_target(
+        "managed",
+        base_dir=tmp_path,
+        pid=1234,
+    )
+
+    def fake_run_host_process(
+        server_url: str,
+        config_path: Path | None = None,
+        **kwargs: object,
+    ) -> None:
+        factory = cast(Callable[..., HostProcess], kwargs["host_factory"])
+        captured["host"] = factory(
+            HostIdentity(host_id="0123456789abcdef0123456789abcdef", name="managed-test"),
+            server_url,
+            lifecycle_lock=lifecycle_lock,
+        )
+        captured["config_path"] = config_path
+        captured["daemon_target"] = kwargs["daemon_target"]
+
+    monkeypatch.setattr(process_policy_module, "activate_managed_host_environment", lambda: None)
+    monkeypatch.setattr(process_policy_module, "run_host_process", fake_run_host_process)
+
+    run_managed_host_process(
+        "https://control-plane.invalid",
+        tmp_path / "config.yaml",
+        daemon_target="managed",
+        launch_authority=cast(ManagedRunnerLaunchAuthority, object()),
+        envelope_directory=tmp_path / "envelopes",
+    )
+
+    host = cast(HostProcess, captured["host"])
+    assert host._lifecycle_lock is lifecycle_lock
+    assert host._runner_entry_module() == managed_runner_entry_module()
+    assert captured["config_path"] == tmp_path / "config.yaml"
+    assert captured["daemon_target"] == "managed"
 
 
 def test_require_policy_rejects_missing_or_noncanonical_switch() -> None:
@@ -88,19 +141,5 @@ def test_require_policy_rejects_missing_or_noncanonical_switch() -> None:
     assert missing.value.code == "managed_runner_zygote_not_disabled"
 
     with pytest.raises(ManagedRunnerProcessPolicyError) as noncanonical:
-        require_managed_host_environment(
-            {
-                ZYGOTE_ENABLED_ENV_VAR: "false",
-                RUNNER_ENTRY_MODULE_ENV_VAR: managed_runner_entry_module(),
-            }
-        )
+        require_managed_host_environment({ZYGOTE_ENABLED_ENV_VAR: "false"})
     assert noncanonical.value.code == "managed_runner_zygote_not_disabled"
-
-    with pytest.raises(ManagedRunnerProcessPolicyError) as wrong_entry:
-        require_managed_host_environment(
-            {
-                ZYGOTE_ENABLED_ENV_VAR: "0",
-                RUNNER_ENTRY_MODULE_ENV_VAR: "omnigent.runner._entry",
-            }
-        )
-    assert wrong_entry.value.code == "managed_runner_entry_invalid"

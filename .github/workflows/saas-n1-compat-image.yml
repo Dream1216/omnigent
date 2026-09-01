@@ -69,10 +69,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+  N1_BUILDX_VERSION: v0.36.1
+  N1_BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
   N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b
   N1_CONTRACT_VERSION: p0s3-n1-outbox-security-compat-v1
-  N1_PATCH_SHA256: 810d1ffdf97f46408b39eb81a56345bdf463c736bc19789c734c92ccfaffcc35
-  N1_PATCHED_TREE_HASH: git-sha1:87e56c8f1b7669c2028c62cf537eac97f1e027ac
+  N1_PATCH_SHA256: a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23
+  N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73
+  N1_UV_IMAGE: ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded
   N1_SCHEMA_REVISION: p0s000000003
   N1_IMAGE_NAME: omnigent-saas-n1-compat
   OMNIGENT_SKIP_WEB_UI: "true"
@@ -81,37 +85,22 @@ jobs:
   verify-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
-        postgresql+psycopg://postgres:postgres@localhost:5432/postgres
     steps:
       - name: Checkout immutable patch source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ env.CANDIDATE_REVISION }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Verify fixed source and manifest coordinates
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
           jq -e \
             --arg base "$N1_BASE_COMMIT" \
             --arg contract "$N1_CONTRACT_VERSION" \
@@ -128,12 +117,10 @@ jobs:
              .schema_change_policy.catalog_recheck_before_restart == true' \
             saas/n1_compat/manifest.json
           [[ "$(sha256sum saas/n1_compat/9451a64c1.patch | cut -d' ' -f1)" == "$N1_PATCH_SHA256" ]]
-      - name: Install locked N and N-1 test dependencies
-        run: uv sync --frozen --extra saas --group dev
       - name: Materialize the fixed N-1 patched source
         run: |
           set -euo pipefail
-          uv run python -m saas.scripts.build_n1_compat \
+          python -I -S saas/scripts/build_n1_compat.py \
             --repository . \
             --output-directory "${RUNNER_TEMP}/n1-source" \
             > artifacts-n1-builder.json
@@ -154,18 +141,13 @@ jobs:
              (.materialized_source | type == "string")' \
             artifacts-n1-builder.json
           test ! -e "${RUNNER_TEMP}/n1-source/.git"
-      - name: Run N-1 patch and PostgreSQL p0s3 schema contracts
-        run: |
-          set -euo pipefail
-          uv run python -I -m pytest -q -c pyproject.toml --confcutdir=tests \
-            tests/saas/test_n1_compat_patch.py
-          uv run python -I -m pytest -q -c pyproject.toml --confcutdir=tests \
-            tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge \
-            tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: ${{ env.N1_BUILDX_VERSION }}
+          driver-opts: image=${{ env.N1_BUILDKIT_IMAGE }}
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
@@ -174,32 +156,30 @@ jobs:
         run: |
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
-          node_digest=$(crane digest node:22-slim)
-          source_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
           upstream_revision=$(jq -r .upstream_revision "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           adapter_contract=$(jq -r .adapter_contract_version "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
-          printf '%s\n' "SOURCE_REVISION=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          printf '%s\n' "SOURCE_REVISION=${CANDIDATE_REVISION}" >> "$GITHUB_ENV"
           printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           printf '%s\n' "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
       - name: Build dual-platform N-1 runtime candidate attempt 1
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ${{ runner.temp }}/n1-source
-          file: ${{ runner.temp }}/n1-source/deploy/docker/Dockerfile
+          file: ${{ runner.temp }}/n1-source/saas/n1_compat/Dockerfile
           target: n1-compat-runtime
           push: false
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar
+          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-1.tar,rewrite-timestamp=true
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=saas-n1-compat-candidate
           cache-to: type=gha,scope=saas-n1-compat-candidate,mode=max
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
-            NODE_IMAGE=${{ env.NODE_IMAGE }}
+            UV_IMAGE=${{ env.N1_UV_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
@@ -213,17 +193,17 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ${{ runner.temp }}/n1-source
-          file: ${{ runner.temp }}/n1-source/deploy/docker/Dockerfile
+          file: ${{ runner.temp }}/n1-source/saas/n1_compat/Dockerfile
           target: n1-compat-runtime
           push: false
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar
+          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-2.tar,rewrite-timestamp=true
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=saas-n1-compat-candidate
+          no-cache: true
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
-            NODE_IMAGE=${{ env.NODE_IMAGE }}
+            UV_IMAGE=${{ env.N1_UV_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
@@ -236,9 +216,18 @@ jobs:
       - name: Compare repeated OCI runtime facts and record blocked evidence
         run: |
           set -euo pipefail
-          uv run python -m saas.scripts.compare_oci_rebuilds \
+          python -I -S saas/scripts/compare_oci_rebuilds.py \
+            --label-profile n1 \
             --image "${N1_IMAGE_NAME}=${RUNNER_TEMP}/n1-runtime-1.tar,${RUNNER_TEMP}/n1-runtime-2.tar" \
             --output artifacts/n1-compat-rebuild.json
+          jq -e \
+            '.candidate_evidence_version == 3 and
+             .diagnostic_policy == {
+               config_environment: "omitted",
+               history_created_by: "equality-and-ordinal-drift-only",
+               layer_contents: "omitted"
+             }' \
+            artifacts/n1-compat-rebuild.json
           jq \
             --arg adapter "$ADAPTER_CONTRACT_VERSION" \
             --arg base "$N1_BASE_COMMIT" \
@@ -246,8 +235,10 @@ jobs:
             --arg patch "$N1_PATCH_SHA256" \
             --arg tree "$N1_PATCHED_TREE_HASH" \
             --arg schema "$N1_SCHEMA_REVISION" \
-            --arg revision "$GITHUB_SHA" \
+            --arg revision "$CANDIDATE_REVISION" \
             --arg upstream "$UPSTREAM_REVISION" \
+            --arg buildx "$N1_BUILDX_VERSION" \
+            --arg buildkit "$N1_BUILDKIT_IMAGE" \
             '. + {
               evidence_kind: "n1_security_compat_oci_candidate",
               product_revision: $revision,
@@ -259,6 +250,7 @@ jobs:
               required_schema_revision: $schema,
               upstream_revision: $upstream,
               adapter_contract_version: $adapter,
+              approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit},
               outbox_schema_change: {
                 compat_worker_drain_required: true,
                 catalog_recheck_before_restart: true
@@ -284,13 +276,72 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: n1-compat-candidate-${{ github.sha }}
+          name: n1-compat-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
             artifacts-n1-builder.json
             artifacts/n1-compat-rebuild.json
             artifacts/n1-compat-candidate-evidence.json
           if-no-files-found: error
           retention-days: 30
+      - name: Upload verified clean OCI archive for protected publication
+        if: >-
+          github.event_name == 'workflow_dispatch' && inputs.publish_signed &&
+          github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: n1-compat-verified-oci-${{ env.CANDIDATE_REVISION }}
+          path: ${{ runner.temp }}/n1-runtime-2.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-postgresql-current:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
+        postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout exact contract source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact PostgreSQL current source
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Pin isolated PostgreSQL 18 environment
+        run: printf '%s\n' "UV_PROJECT_ENVIRONMENT=${RUNNER_TEMP}/postgresql-18-venv" >> "$GITHUB_ENV"
+      - name: Install locked contract test dependencies without candidate build hooks
+        run: uv sync --frozen --extra saas --group dev --no-install-local --no-config
+      - name: Run PG18 patch and p0s3 schema contracts
+        run: |
+          set -euo pipefail
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -m pytest -q -c pyproject.toml --confcutdir=tests \
+            tests/saas/test_n1_compat_patch.py
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -m pytest -q -c pyproject.toml --confcutdir=tests \
+            tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge \
+            tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
 
   verify-postgresql-n1:
     runs-on: ubuntu-latest
@@ -314,8 +365,14 @@ jobs:
       - name: Checkout exact N-1 contract source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ env.CANDIDATE_REVISION }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact PostgreSQL N-1 source
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -374,6 +431,7 @@ jobs:
       inputs.product_revision == github.sha
     needs:
       - verify-candidate
+      - verify-postgresql-current
       - verify-postgresql-n1
     environment: production-image
     runs-on: ubuntu-latest
@@ -407,14 +465,11 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Materialize exact fixed N-1 source for publication
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
-          uv sync --frozen --extra saas
-          uv run python -m saas.scripts.build_n1_compat \
+          python -I -S saas/scripts/build_n1_compat.py \
             --repository . \
             --output-directory "${RUNNER_TEMP}/n1-source" \
             > artifacts-n1-builder.json
@@ -437,10 +492,18 @@ jobs:
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: ${{ env.N1_BUILDX_VERSION }}
+          driver-opts: image=${{ env.N1_BUILDKIT_IMAGE }}
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
           version: v0.21.6
+      - name: Download verify-approved OCI archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: n1-compat-verified-oci-${{ github.sha }}
+          path: ${{ runner.temp }}/verified-oci
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
@@ -453,34 +516,31 @@ jobs:
           set -euo pipefail
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           python_digest=$(crane digest python:3.12-slim)
-          node_digest=$(crane digest node:22-slim)
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           upstream_revision=$(jq -r .upstream_revision "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           adapter_contract=$(jq -r .adapter_contract_version "${RUNNER_TEMP}/n1-source/saas/upstream-baseline.json")
           echo "image=ghcr.io/${owner}/${N1_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           printf '%s\n' "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
-      - name: Build and publish independent N-1 compatibility digest
+      - name: Rebuild publication archive from fixed materials
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ${{ runner.temp }}/n1-source
-          file: ${{ runner.temp }}/n1-source/deploy/docker/Dockerfile
+          file: ${{ runner.temp }}/n1-source/saas/n1_compat/Dockerfile
           target: n1-compat-runtime
-          push: true
+          push: false
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.tag }}
+          outputs: type=oci,dest=${{ runner.temp }}/n1-runtime-publish.tar,rewrite-timestamp=true
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=saas-n1-compat-publish
-          cache-to: type=gha,scope=saas-n1-compat-publish,mode=max
+          no-cache: true
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
-            NODE_IMAGE=${{ env.NODE_IMAGE }}
+            UV_IMAGE=${{ env.N1_UV_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.PRODUCT_REVISION }}
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
@@ -490,18 +550,43 @@ jobs:
             N1_CONTRACT_VERSION=${{ env.N1_CONTRACT_VERSION }}
             N1_PATCH_SHA256=${{ env.N1_PATCH_SHA256 }}
             N1_PATCHED_TREE_HASH=${{ env.N1_PATCHED_TREE_HASH }}
+      - name: Fail closed on publication platform/material drift and push approved archive
+        id: publish
+        run: |
+          set -euo pipefail
+          python -I -S saas/scripts/compare_oci_rebuilds.py \
+            --label-profile n1 \
+            --image "${N1_IMAGE_NAME}=${RUNNER_TEMP}/verified-oci/n1-runtime-2.tar,${RUNNER_TEMP}/n1-runtime-publish.tar" \
+            --output artifacts/n1-compat-publication-rebuild.json
+          verified_archive_sha256=$(sha256sum "${RUNNER_TEMP}/verified-oci/n1-runtime-2.tar" | cut -d' ' -f1)
+          publication_archive_sha256=$(sha256sum "${RUNNER_TEMP}/n1-runtime-publish.tar" | cut -d' ' -f1)
+          comparison_sha256=$(sha256sum artifacts/n1-compat-publication-rebuild.json | cut -d' ' -f1)
+          mkdir -p "${RUNNER_TEMP}/n1-runtime-publish-layout"
+          tar -xf "${RUNNER_TEMP}/n1-runtime-publish.tar" \
+            -C "${RUNNER_TEMP}/n1-runtime-publish-layout"
+          expected_digest=$(jq -er \
+            'select(.manifests | length == 1) | .manifests[0].digest' \
+            "${RUNNER_TEMP}/n1-runtime-publish-layout/index.json")
+          crane push "${RUNNER_TEMP}/n1-runtime-publish-layout" \
+            "${{ steps.release.outputs.image }}:${{ steps.release.outputs.tag }}"
+          digest=$(crane digest "${{ steps.release.outputs.image }}:${{ steps.release.outputs.tag }}")
+          [[ "$digest" == "$expected_digest" ]]
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "verified_archive_sha256=${verified_archive_sha256}" >> "$GITHUB_OUTPUT"
+          echo "publication_archive_sha256=${publication_archive_sha256}" >> "$GITHUB_OUTPUT"
+          echo "comparison_sha256=${comparison_sha256}" >> "$GITHUB_OUTPUT"
       - name: Attest published digest with GitHub OIDC
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
           subject-name: ${{ steps.release.outputs.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
       - name: Immediately verify registry digest and attestation identity
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ steps.release.outputs.image }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
           IMAGE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
@@ -516,7 +601,7 @@ jobs:
         env:
           ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
           IMAGE: ${{ steps.release.outputs.image }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
@@ -532,6 +617,11 @@ jobs:
             --arg schema "$N1_SCHEMA_REVISION" \
             --arg tree "$N1_PATCHED_TREE_HASH" \
             --arg upstream "$UPSTREAM_REVISION" \
+            --arg buildx "$N1_BUILDX_VERSION" \
+            --arg buildkit "$N1_BUILDKIT_IMAGE" \
+            --arg verified_archive_sha256 "${{ steps.publish.outputs.verified_archive_sha256 }}" \
+            --arg publication_archive_sha256 "${{ steps.publish.outputs.publication_archive_sha256 }}" \
+            --arg comparison_sha256 "${{ steps.publish.outputs.comparison_sha256 }}" \
             '{
               schema_version: 1,
               evidence_kind: "signed_n1_security_compat_candidate",
@@ -544,11 +634,16 @@ jobs:
               required_schema_revision: $schema,
               upstream_revision: $upstream,
               adapter_contract_version: $adapter,
+              approved_builder: {buildx_version: $buildx, buildkit_image: $buildkit},
               outbox_schema_change: {
                 compat_worker_drain_required: true,
                 catalog_recheck_before_restart: true
               },
               image: ($image + "@" + $digest),
+              registry_digest: $digest,
+              verified_archive_sha256: $verified_archive_sha256,
+              publication_archive_sha256: $publication_archive_sha256,
+              publication_comparison_sha256: $comparison_sha256,
               github_oidc_attestation: $attestation,
               external_hsm_receipt: null,
               vulnerability_scan: null,
@@ -572,6 +667,7 @@ jobs:
           name: signed-n1-compat-candidate-${{ inputs.product_revision }}
           path: |
             artifacts-n1-builder.json
+            artifacts/n1-compat-publication-rebuild.json
             artifacts/n1-compat-published-candidate.json
             ${{ steps.attest.outputs.bundle-path }}
           if-no-files-found: error
