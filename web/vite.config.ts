@@ -116,6 +116,14 @@ function createProxyConfig(target: string, useAuth: boolean): Record<string, Pro
       changeOrigin: true,
       configure,
     },
+    // Public onboarding catalog/registration plus cookie-authenticated SaaS
+    // login and status routes. Without this explicit prefix Vite serves the
+    // SPA fallback, so local registration appears to receive HTML as JSON.
+    "/saas": {
+      target: origin,
+      changeOrigin: true,
+      configure,
+    },
     "/health": {
       target: origin,
       changeOrigin: true,

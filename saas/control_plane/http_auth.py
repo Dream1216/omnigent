@@ -519,6 +519,8 @@ class SaasAuthContextMiddleware:
     def _is_public_request(self, path: str, method: str) -> bool:
         if path in self._public_paths:
             return True
+        if method == "GET" and path == "/saas/onboarding/catalog":
+            return True
         if method == "POST":
             if path == "/saas/onboarding/registrations":
                 return True
