@@ -31,8 +31,8 @@ import { useAppName } from "@/lib/branding";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getMe, login as loginRequest } from "@/lib/accountsApi";
+import { sanitizeAuthReturnTo } from "@/lib/authNavigation";
 
-const DEFAULT_RETURN_TO = "/";
 const LAST_USERNAME_KEY = "omnigent.lastLoginUsername";
 
 function readLastUsername(): string {
@@ -58,7 +58,7 @@ export function LoginPage() {
   // `return_to` is set by both identity.ts (on 401 redirect) and the
   // server-side magic-redeem 302 fallback. Trust only same-origin
   // paths — never a fully-qualified URL — to prevent open-redirect.
-  const returnTo = sanitizeReturnTo(params.get("return_to"));
+  const returnTo = sanitizeAuthReturnTo(params.get("return_to"));
   const magicError = params.get("magic"); // "expired" | "missing" | null
   // Forced re-authentication: the device-grant consent page bounces here with
   // ?reauth=1 to require a FRESH password submit before approving a delegated
@@ -214,41 +214,4 @@ export function LoginPage() {
       </div>
     </div>
   );
-}
-
-/**
- * Reject anything that isn't a relative path on the same origin.
- *
- * Defense against an open-redirect via crafted ``?return_to=`` —
- * an attacker who can get a victim to click a link to
- * ``/login?return_to=https://evil.com`` would otherwise have us
- * land them on the attacker's page after auth.
- *
- * Prefix checks alone are not enough: the value reaches us already
- * URL-decoded, so ``%2F%5Cevil.com`` becomes ``/\evil.com`` — which
- * passes a naive ``startsWith("/")`` + ``!startsWith("//")`` pair but
- * resolves to ``https://evil.com/`` because WHATWG URL parsing treats
- * backslashes as path separators for special schemes. So we require a
- * leading ``/`` (not ``//`` or ``/\``) and then resolve against the
- * current origin and confirm the result stays same-origin before
- * trusting it.
- */
-function sanitizeReturnTo(raw: string | null): string {
-  if (raw === null || raw === "") return DEFAULT_RETURN_TO;
-  // Must be an absolute path, not protocol-relative (`//host`) or a
-  // backslash variant (`/\host`) the URL parser rewrites to one.
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
-    return DEFAULT_RETURN_TO;
-  }
-  try {
-    const resolved = new URL(raw, window.location.origin);
-    if (resolved.origin !== window.location.origin) return DEFAULT_RETURN_TO;
-    // Re-serialize so the sink gets the parser's normalized path, never
-    // the raw backslash-laden input.
-    return resolved.pathname + resolved.search + resolved.hash;
-  } catch {
-    // `new URL` throws on malformed input — treat anything unparseable
-    // as untrusted and fall back to the safe default.
-    return DEFAULT_RETURN_TO;
-  }
 }

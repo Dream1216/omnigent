@@ -17,6 +17,7 @@
 
 import { getCachedServerInfo } from "./capabilities";
 import { getOmnigentHostConfig, hostFetch, isDatabricksWorkspace } from "./host";
+import { clearSaasCsrf, readSaasCsrf } from "./saasSession";
 import {
   clearHostKeyless,
   getSessionHost,
@@ -44,6 +45,7 @@ const SLICE_KEY_HEADER = "X-Databricks-Omnigent-Slice-Key";
 // Distinct from "runner_unavailable" (the runner is offline everywhere), which
 // no re-addressing can fix.
 const WRONG_REPLICA_CODE = "wrong_replica";
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
 /**
  * Classify a request URL for slice-key routing. A host-scoped request must key
@@ -296,7 +298,14 @@ export function isLoginRedirectPending(): boolean {
  */
 function isOnLoginPath(): boolean {
   const path = window.location.pathname;
-  return path === "/login" || path === "/register" || path.startsWith("/auth/login");
+  return (
+    path === "/login" ||
+    path === "/register" ||
+    path === "/saas/login" ||
+    path === "/signup" ||
+    path === "/signup/verify" ||
+    path.startsWith("/auth/login")
+  );
 }
 
 /**
@@ -313,6 +322,7 @@ export async function resolveIdentity(): Promise<string | null> {
     try {
       const res = await hostFetch("/v1/me");
       if (res.status === 401) {
+        clearSaasCsrf();
         // OIDC / accounts mode: server requires authentication.
         // Redirect to the login URL provided in the response body —
         // unless we're already there (avoid an infinite reload loop
@@ -418,7 +428,16 @@ export async function authenticatedFetch(
   // server — the embedded (managed) UI, or `npm run dev` pointed at a workspace URL.
   // A standalone/self-hosted server has no Dicer, so the key would just dirty
   // its logs (see isDatabricksWorkspace).
-  const url = typeof input === "string" ? input : input.toString();
+  const url = requestUrl(input);
+  const csrfToken = readSaasCsrf();
+  if (
+    csrfToken !== null &&
+    isUnsafeMethod(requestMethod(input, init)) &&
+    isSameOriginUrl(url) &&
+    !headers.has("X-CSRF-Token")
+  ) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
   // Resolve this session's host BEFORE deriving the slice key below, so a fresh
   // session sub-path request keys to the right replica on the first attempt
   // instead of guessing the modal host and self-healing via the keyless retry.
@@ -542,5 +561,32 @@ export async function authenticatedFetch(
     const loginUrl = getCachedServerInfo()?.login_url ?? serverLoginUrl;
     if (loginUrl) redirectToLogin(loginUrl);
   }
+  if (res.status === 401) clearSaasCsrf();
   return res;
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
+  if (init?.method) return init.method.toUpperCase();
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return input.method.toUpperCase();
+  }
+  return "GET";
+}
+
+function isUnsafeMethod(method: string): boolean {
+  return !SAFE_HTTP_METHODS.has(method);
+}
+
+function isSameOriginUrl(raw: string): boolean {
+  try {
+    return new URL(raw, window.location.origin).origin === window.location.origin;
+  } catch {
+    return false;
+  }
 }
