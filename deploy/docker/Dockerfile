@@ -338,11 +338,28 @@ WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
-# pnpm records wall-clock validation fields and its store records access times.
-# Normalize the one runtime metadata field, remove the disposable state/store,
-# and isolate CLI version probes from the final root home.
-RUN export npm_config_cache=/tmp/npm-cache; \
-    npm install -g --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+# npm/pnpm installers and CLI probes may write wall-clock or reify metadata.
+# Keep all installer state under one disposable prefix, retain only the pinned
+# pnpm package and project tree, then normalize both retained roots last.
+RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
+           HOME=/tmp/omnigent-cli-state/home \
+           TMPDIR=/tmp/omnigent-cli-state/tmp \
+           XDG_CACHE_HOME=/tmp/omnigent-cli-state/xdg-cache \
+           XDG_CONFIG_HOME=/tmp/omnigent-cli-state/xdg-config \
+           XDG_DATA_HOME=/tmp/omnigent-cli-state/xdg-data \
+           XDG_STATE_HOME=/tmp/omnigent-cli-state/xdg-state \
+           XDG_RUNTIME_DIR=/tmp/omnigent-cli-state/xdg-runtime \
+           CODEX_HOME=/tmp/omnigent-cli-state/codex \
+           CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude \
+           PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi \
+           npm_config_cache=/tmp/omnigent-cli-state/npm-cache; \
+    export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"; \
+    install -d "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" \
+      "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$CODEX_HOME" \
+      "$CLAUDE_CONFIG_DIR" "$PI_CODING_AGENT_DIR" \
+ && install -d -m 0700 "$XDG_RUNTIME_DIR" \
+ && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
+      --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \
@@ -359,25 +376,43 @@ RUN export npm_config_cache=/tmp/npm-cache; \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
       --store-dir /tmp/pnpm-store --package-import-method=copy \
  && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); source=modules.read_text(encoding="utf-8"); count=len(re.findall(r"(?m)^\s*\"prunedAt\"\s*:", source)); assert count == 1, f"expected exactly one pnpm JSON prunedAt field, found {count}"; data=json.loads(source); assert type(data) is dict and type(data.get("prunedAt")) is str and data["prunedAt"], "pnpm JSON prunedAt field missing or invalid"; data["prunedAt"]=email.utils.formatdate(epoch, usegmt=True); modules.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8"); print("pnpm prunedAt fields normalized: 1"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")); assert type(state_data.get("lastValidatedTimestamp")) is int and state_data["lastValidatedTimestamp"] >= 0, "pnpm validation timestamp missing or invalid"; state.unlink()' \
- && python -B /tmp/normalize_host_cli_tree.py --root node_modules \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
- && mkdir -p /tmp/omnigent-cli-home /tmp/omnigent-cli-cache \
- && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
+ && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
       *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
- && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
+ && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
       *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
- && case "$(HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
+ && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
       *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
- && rm -rf /tmp/npm-cache /tmp/pnpm-store \
-      /tmp/omnigent-cli-home /tmp/omnigent-cli-cache \
+ && mkdir -p /usr/local/lib/node_modules \
+ && cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm" \
+      /usr/local/lib/node_modules/pnpm \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx \
+ && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx \
+ && rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store \
       /root/.npm /root/.cache /root/.local/share/pnpm \
- && rm -f /tmp/normalize_host_cli_tree.py \
+ && test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
+ && test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
+ && test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
+ && test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
+ && test -x /usr/local/bin/pnpm \
+ && test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION" \
+ && rm -rf "$OMNIGENT_CLI_STATE" \
+ && test ! -e "$OMNIGENT_CLI_STATE" \
  && test ! -e node_modules/.pnpm-workspace-state-v1.json \
- && for path in /tmp/npm-cache /tmp/pnpm-store /tmp/omnigent-cli-home \
-      /tmp/omnigent-cli-cache /root/.npm /root/.cache \
-      /root/.local/share/pnpm; do test ! -e "$path"; done
+ && for path in /tmp/pnpm-store /root/.npm /root/.cache \
+      /root/.local/share/pnpm; do test ! -e "$path"; done \
+ && python -B /tmp/normalize_host_cli_tree.py \
+      --source-date-epoch "$SOURCE_DATE_EPOCH" \
+      --root /opt/omnigent-host-cli \
+      --root /usr/local/lib/node_modules/pnpm \
+ && rm -f /tmp/normalize_host_cli_tree.py \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" \
+      /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
+      /usr/local/bin /usr/local/lib/node_modules /tmp /root
 
 # Kiro CLI is not published as an npm package, and its installer has NO version
 # flag — `curl …/install | bash` always fetches `latest`, so the image was

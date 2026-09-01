@@ -1398,13 +1398,18 @@ uv run python -m saas.scripts.check_image_supply_chain \
 ADR approval is a two-PR evidence flow so generation of the record cannot alter
 the commit that people reviewed:
 
-1. Fill `saas/production/adr-approval-authorities.json` with authorized
-   corporate GitHub logins and set it to `active`. Four signing roles must map
-   to four distinct people; all technical-owner roles need at least one person.
+1. Treat `saas/production/adr-approval-policy.json` and
+   `adr-approval-authorities.json` as the authority. The active mode is the
+   explicitly degraded `sole-owner-risk-waiver`: repository Owner `Dream1216`
+   assumes all ADR-owner roles without fabricating independent GitHub Reviews.
+   The normal four-person signing rules remain the required replacement before
+   production GA or the policy review due date.
 2. Open the decision PR with the candidate, policy, authority map, baseline,
-   and all eleven ADR documents. Freeze its head and obtain an `APPROVED`
-   GitHub Review on that exact head from every ADR owner and from four distinct
-   non-author signers. Merge only after native branch protection is satisfied.
+   and all eleven ADR documents. Freeze its exact head. In waiver mode the PR
+   must be authored and merge-committed by the configured sole Owner, that
+   live GitHub identity must retain repository `admin`, and
+   `compatibility-gate` must succeed on the exact reviewed head. The waiver
+   does not bypass any technical or production verification gate.
 3. On a successor evidence branch, export a token with read access and run:
 
    ```bash
@@ -1415,8 +1420,10 @@ the commit that people reviewed:
 
 4. Reference the generated record from `baseline.json`, set approval to
    `approved`, set all eleven registry statuses to `accepted`, and open
-   the evidence PR. CI re-fetches every GitHub Review, checks exact commit and
-   authority binding, rejects dismissed Reviews and record mutation, and runs:
+   the evidence PR. CI re-fetches the merged PR, exact-head check run and live
+   sole-Owner/admin evidence, verifies all eleven generated technical-owner
+   acceptances, and rejects record mutation. Standard four-person mode instead
+   re-fetches and verifies every required GitHub Review. Run:
 
    ```bash
    uv run python -m saas.scripts.check_adr_approvals \

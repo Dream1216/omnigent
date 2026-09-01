@@ -800,7 +800,32 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         )
     host_cli_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
-        "npm_config_cache=/tmp/npm-cache",
+        "OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state",
+        "HOME=/tmp/omnigent-cli-state/home",
+        "TMPDIR=/tmp/omnigent-cli-state/tmp",
+        "XDG_CACHE_HOME=/tmp/omnigent-cli-state/xdg-cache",
+        "XDG_CONFIG_HOME=/tmp/omnigent-cli-state/xdg-config",
+        "XDG_DATA_HOME=/tmp/omnigent-cli-state/xdg-data",
+        "XDG_STATE_HOME=/tmp/omnigent-cli-state/xdg-state",
+        "XDG_RUNTIME_DIR=/tmp/omnigent-cli-state/xdg-runtime",
+        "CODEX_HOME=/tmp/omnigent-cli-state/codex",
+        "CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude",
+        "PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi",
+        "npm_config_cache=/tmp/omnigent-cli-state/npm-cache",
+        'export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"',
+        'install -d -m 0700 "$XDG_RUNTIME_DIR"',
+        'npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global',
+        'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
+        'test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
+        "test -x /usr/local/bin/pnpm",
+        'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
         "--store-dir /tmp/pnpm-store",
         "--package-import-method=copy",
         'modules=Path("node_modules/.modules.yaml")',
@@ -813,8 +838,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'type(state_data.get("lastValidatedTimestamp")) is int',
         'state_data["lastValidatedTimestamp"] >= 0',
         "state.unlink()",
-        "HOME=/tmp/omnigent-cli-home XDG_CACHE_HOME=/tmp/omnigent-cli-cache",
-        "rm -rf /tmp/npm-cache /tmp/pnpm-store",
+        'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
+        'test ! -e "$OMNIGENT_CLI_STATE"',
         "/root/.npm /root/.cache /root/.local/share/pnpm",
         "test ! -e node_modules/.pnpm-workspace-state-v1.json",
     }
@@ -822,8 +847,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append("host CLI layer must normalize and remove volatile installer state")
     host_hardlink_docker_contract = {
         f"COPY {_HOST_CLI_NORMALIZER} /tmp/normalize_host_cli_tree.py",
-        "python -B /tmp/normalize_host_cli_tree.py --root node_modules",
+        "python -B /tmp/normalize_host_cli_tree.py",
+        '--source-date-epoch "$SOURCE_DATE_EPOCH"',
+        "--root /opt/omnigent-host-cli",
+        "--root /usr/local/lib/node_modules/pnpm",
         "rm -f /tmp/normalize_host_cli_tree.py",
+        'touch -h -d "@${SOURCE_DATE_EPOCH}"',
+        "/usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx",
+        "/usr/local/bin /usr/local/lib/node_modules /tmp /root",
     }
     host_hardlink_script_contract = {
         'sorted(root.rglob("*"), key=lambda candidate: candidate.as_posix())',
@@ -835,19 +866,52 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "os.replace(temporary, path)",
         "if path.stat(follow_symlinks=False).st_nlink != 1",
         "hardlinked regular files remain after normalization",
+        "os.utime(path, ns=(timestamp_ns, timestamp_ns), follow_symlinks=False)",
+        "Host CLI normalized manifest sha256",
     }
-    hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py --root node_modules"
+    hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py"
+    host_cli_order_contract = {
+        "pnpm install --frozen-lockfile",
+        "test -x .github/ci-deps/node_modules/.bin/claude",
+        'case "$(claude --version 2>&1)"',
+        'case "$(codex --version 2>&1)"',
+        'case "$(pi --version 2>&1)"',
+        'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
+        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+        'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
+        'test ! -e "$OMNIGENT_CLI_STATE"',
+        "rm -f /tmp/normalize_host_cli_tree.py",
+        'touch -h -d "@${SOURCE_DATE_EPOCH}"',
+    }
     if (
         any(fragment not in host_stage for fragment in host_hardlink_docker_contract)
         or any(fragment not in host_cli_normalizer for fragment in host_hardlink_script_contract)
         or "claude" in host_cli_normalizer.casefold()
         or host_stage.count(hardlink_invocation) != 1
-        or "pnpm install --frozen-lockfile" not in host_stage
-        or "test -x .github/ci-deps/node_modules/.bin/claude" not in host_stage
+        or any(fragment not in host_stage for fragment in host_cli_order_contract)
+        or host_stage.count('rm -rf "$OMNIGENT_CLI_STATE"') != 2
         or not (
             host_stage.index("pnpm install --frozen-lockfile")
-            < host_stage.index(hardlink_invocation)
             < host_stage.index("test -x .github/ci-deps/node_modules/.bin/claude")
+            < host_stage.index('case "$(claude --version 2>&1)"')
+            < host_stage.index('case "$(codex --version 2>&1)"')
+            < host_stage.index('case "$(pi --version 2>&1)"')
+            < host_stage.index('cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"')
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn")
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx")
+            < host_stage.index('rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store')
+            < host_stage.index(
+                'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"'
+            )
+            < host_stage.index('test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"')
+            < host_stage.rindex('rm -rf "$OMNIGENT_CLI_STATE"')
+            < host_stage.index('test ! -e "$OMNIGENT_CLI_STATE"')
+            < host_stage.index(hardlink_invocation)
+            < host_stage.index("rm -f /tmp/normalize_host_cli_tree.py")
+            < host_stage.index('touch -h -d "@${SOURCE_DATE_EPOCH}"')
         )
     ):
         violations.append(

@@ -400,6 +400,8 @@ def test_host_cli_hardlink_normalizer_detaches_all_regular_file_links(
             str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
             "--root",
             str(root),
+            "--source-date-epoch",
+            "0",
         ],
         text=True,
         capture_output=True,
@@ -407,7 +409,10 @@ def test_host_cli_hardlink_normalizer_detaches_all_regular_file_links(
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "pnpm hardlinked regular files detached: 2"
+    output = result.stdout.strip().splitlines()
+    assert output[0] == "pnpm hardlinked regular files detached: 2"
+    assert output[1].startswith("Host CLI normalized manifest sha256: ")
+    assert len(output[1].rsplit(" ", 1)[1]) == 64
     assert {path.read_bytes() for path in (first, second, third)} == {payload}
     assert len({path.stat().st_ino for path in (first, second, third)}) == 3
     assert all(path.stat().st_nlink == 1 for path in (first, second, third, independent))
@@ -433,6 +438,8 @@ def test_host_cli_hardlink_normalizer_fails_closed_on_temporary_collision(
             str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
             "--root",
             str(root),
+            "--source-date-epoch",
+            "0",
         ],
         text=True,
         capture_output=True,
@@ -443,13 +450,56 @@ def test_host_cli_hardlink_normalizer_fails_closed_on_temporary_collision(
     assert "hard-link detachment temporary path exists" in result.stderr
 
 
+def test_host_cli_normalizer_canonicalizes_multiple_roots(tmp_path: Path) -> None:
+    manifests = []
+    for attempt, names in enumerate((("z", "a"), ("a", "z")), start=1):
+        roots = [tmp_path / f"attempt-{attempt}" / name for name in ("project", "pnpm")]
+        for root in roots:
+            root.mkdir(parents=True)
+            files = [root / name for name in names]
+            files[0].write_bytes(b"stable CLI payload")
+            os.link(files[0], files[1])
+            (root / "bin").symlink_to("a")
+            os.utime(files[0], (attempt, attempt))
+
+        command = [
+            sys.executable,
+            "-B",
+            str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
+            "--source-date-epoch",
+            "123",
+        ]
+        for root in roots:
+            command.extend(("--root", str(root)))
+        result = subprocess.run(command, text=True, capture_output=True, check=False)
+
+        assert result.returncode == 0, result.stderr
+        output = result.stdout.strip().splitlines()
+        assert output[0] == "pnpm hardlinked regular files detached: 2"
+        manifests.append(output[1])
+        assert all(path.stat().st_nlink == 1 for root in roots for path in root.glob("[az]"))
+        assert all(root.stat().st_mtime_ns == 123_000_000_000 for root in roots)
+
+    assert manifests[0] == manifests[1]
+
+
 @pytest.mark.parametrize(
     ("relative", "target", "replacement"),
     [
         (
             "deploy/docker/Dockerfile",
-            "python -B /tmp/normalize_host_cli_tree.py --root node_modules",
+            "--root /usr/local/lib/node_modules/pnpm",
             "true # hardlink normalization removed",
+        ),
+        (
+            "deploy/docker/Dockerfile",
+            '--source-date-epoch "$SOURCE_DATE_EPOCH"',
+            "--source-date-epoch 0",
+        ),
+        (
+            "deploy/docker/Dockerfile",
+            "/usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx",
+            "/usr/local/bin/pnpm",
         ),
         (
             "saas/scripts/normalize_host_cli_tree.py",
@@ -474,6 +524,31 @@ def test_image_material_lock_rejects_host_hardlink_normalizer_drift(
     source = path.read_text(encoding="utf-8")
     assert target in source
     path.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    assert (
+        "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
+        in validate_image_material_lock(repo)
+    )
+
+
+@pytest.mark.parametrize("cli", ["claude", "codex", "pi"])
+def test_image_material_lock_rejects_host_cli_probe_after_normalization(
+    tmp_path: Path,
+    cli: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    block_start = source.index(f' && case "$({cli} --version 2>&1)"')
+    block_end = source.index(" ;; esac \\\n", block_start) + len(" ;; esac \\\n")
+    probe = source[block_start:block_end]
+    source = source[:block_start] + source[block_end:]
+    insertion = " && rm -f /tmp/normalize_host_cli_tree.py \\\n"
+    assert insertion in source
+    dockerfile.write_text(
+        source.replace(insertion, probe + insertion, 1),
+        encoding="utf-8",
+    )
 
     assert (
         "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
@@ -566,6 +641,36 @@ def test_image_material_lock_rejects_host_hardlink_normalizer_drift(
         (
             "--store-dir /tmp/pnpm-store",
             "--store-dir /root/.local/share/pnpm/store",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "TMPDIR=/tmp/omnigent-cli-state/tmp",
+            "TMPDIR=/tmp",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "HOME=/tmp/omnigent-cli-state/home",
+            "HOME=/root",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'install -d -m 0700 "$XDG_RUNTIME_DIR"',
+            'install -d "$XDG_RUNTIME_DIR"',
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global',
+            "npm install --global",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+            "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpx",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
+            'test "$(pnpm --version)" = "$PNPM_VERSION"',
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
