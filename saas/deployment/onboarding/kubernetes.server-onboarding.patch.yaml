@@ -1,0 +1,49 @@
+# Kustomize strategic-merge patch for the downstream omnigent-saas-server
+# Deployment. It is intentionally not a standalone kubectl resource.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omnigent-saas-server
+  namespace: omnigent
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: stage-onboarding-http-secrets
+          image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              install -m 0400 /source/registration/value /runtime/registration-database-url
+              install -m 0400 /source/status/value /runtime/onboarding-status-database-url
+              install -m 0400 /source/keys/envelope.json /runtime/verification-envelope-keys.json
+              install -m 0400 /source/keys/rate-limit.json /runtime/registration-rate-limit-keys.json
+              install -m 0400 /source/policy/policy.json /runtime/onboarding-policy.json
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+          volumeMounts:
+            - {name: registration-source, mountPath: /source/registration, readOnly: true}
+            - {name: onboarding-status-source, mountPath: /source/status, readOnly: true}
+            - {name: onboarding-keys-source, mountPath: /source/keys, readOnly: true}
+            - {name: onboarding-policy-source, mountPath: /source/policy, readOnly: true}
+            - {name: runtime-secrets, mountPath: /runtime}
+      containers:
+        - name: server
+          env:
+            - {name: OMNIGENT_SAAS_TRUSTED_PROXY_CIDRS, value: replace-ingress-proxy-cidrs}
+            - {name: OMNIGENT_SAAS_REGISTRATION_DATABASE_URL_FILE, value: /runtime/registration-database-url}
+            - {name: OMNIGENT_SAAS_ONBOARDING_STATUS_DATABASE_URL_FILE, value: /runtime/onboarding-status-database-url}
+            - {name: OMNIGENT_SAAS_VERIFICATION_ENVELOPE_KEYS_FILE, value: /runtime/verification-envelope-keys.json}
+            - {name: OMNIGENT_SAAS_REGISTRATION_RATE_LIMIT_KEYS_FILE, value: /runtime/registration-rate-limit-keys.json}
+            - {name: OMNIGENT_SAAS_ONBOARDING_POLICY_FILE, value: /runtime/onboarding-policy.json}
+          volumeMounts:
+            - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+      volumes:
+        - {name: registration-source, secret: {secretName: omnigent-saas-registration-database, defaultMode: 0400}}
+        - {name: onboarding-status-source, secret: {secretName: omnigent-saas-onboarding-status-database, defaultMode: 0400}}
+        - {name: onboarding-keys-source, secret: {secretName: omnigent-saas-onboarding-keys, defaultMode: 0400}}
+        - {name: onboarding-policy-source, configMap: {name: omnigent-saas-onboarding-policy, defaultMode: 0400}}
