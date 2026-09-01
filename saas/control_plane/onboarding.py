@@ -9,6 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Protocol
@@ -49,6 +50,7 @@ from saas.control_plane.rls import (
     apply_onboarding_rls_context,
     apply_registration_rls_context,
 )
+from saas.onboarding_email import EmailVerificationDeliveryError
 
 _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _MIN_PASSWORD_LENGTH = 12
@@ -688,8 +690,8 @@ class SharedRegistrationRateLimitJanitor:
 class EmailVerificationMessage:
     registration_id: UUID
     challenge_id: UUID
-    email: str
-    verification_token: str
+    email: str = dataclass_field(repr=False)
+    verification_token: str = dataclass_field(repr=False)
     expires_at: datetime
 
 
@@ -2023,6 +2025,17 @@ class OnboardingOutboxPublisher:
                 return
             try:
                 self._email_sender.send_verification(event_id=event_id, message=message)
+            except EmailVerificationDeliveryError as error:
+                self._registrations.record_email_delivery(
+                    message=message,
+                    succeeded=False,
+                    error_code="delivery_unavailable",
+                )
+                raise OutboxPublishError(
+                    error.code,
+                    retryable=error.retryable,
+                    pre_side_effect=error.pre_side_effect,
+                ) from error
             except Exception as error:
                 self._registrations.record_email_delivery(
                     message=message,
