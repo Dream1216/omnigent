@@ -78,6 +78,7 @@ class _SaasRequests:
     registration: list[dict[str, Any]] = field(default_factory=list)
     registration_headers: list[dict[str, str]] = field(default_factory=list)
     verification: list[dict[str, Any]] = field(default_factory=list)
+    verification_headers: list[dict[str, str]] = field(default_factory=list)
     login: list[dict[str, Any]] = field(default_factory=list)
     status_cookies: list[str] = field(default_factory=list)
     status_calls: int = 0
@@ -134,8 +135,9 @@ def test_packaged_pages_and_assets_have_locked_down_headers() -> None:
         )
 
 
-def _install_saas_routes(page: Page) -> _SaasRequests:
+def _install_saas_routes(page: Page, *, fail_first_login: bool = False) -> _SaasRequests:
     captured = _SaasRequests()
+    login_failures_remaining = 1 if fail_first_login else 0
 
     def capture_request(request: Request) -> None:
         captured.urls.append(request.url)
@@ -177,6 +179,7 @@ def _install_saas_routes(page: Page) -> _SaasRequests:
         payload = route.request.post_data_json
         assert isinstance(payload, dict)
         captured.verification.append(payload)
+        captured.verification_headers.append(route.request.headers)
         route.fulfill(
             json={
                 "registration_id": _REGISTRATION_ID,
@@ -192,9 +195,14 @@ def _install_saas_routes(page: Page) -> _SaasRequests:
         )
 
     def login(route: Route) -> None:
+        nonlocal login_failures_remaining
         payload = route.request.post_data_json
         assert isinstance(payload, dict)
         captured.login.append(payload)
+        if login_failures_remaining:
+            login_failures_remaining -= 1
+            route.fulfill(status=503, json={"detail": {"message": "retry login"}})
+            return
         route.fulfill(
             headers={
                 "set-cookie": ("omnigent_saas_session=e2e-session; Path=/; HttpOnly; SameSite=Lax")
@@ -261,7 +269,7 @@ def test_registration_journey_reaches_ready_workspace(
 ) -> None:
     """Register, consume the fragment token, sign in, and observe readiness."""
     page, live_server = onboarding_ui_page
-    captured = _install_saas_routes(page)
+    captured = _install_saas_routes(page, fail_first_login=True)
 
     page.goto(f"{live_server}/saas/login")
     expect(page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible(
@@ -310,6 +318,9 @@ def test_registration_journey_reaches_ready_workspace(
     page.get_by_label("Confirm password").fill("correct-horse-battery")
     page.get_by_role("button", name="Verify and continue").click()
 
+    expect(page.get_by_text("retry login")).to_be_visible()
+    page.get_by_role("button", name="Verify and continue").click()
+
     expect(page).to_have_url(f"{live_server}/signup/status")
     expect(page.get_by_role("heading", name="Your workspace is taking shape")).to_be_visible()
     expect(page.get_by_role("heading", name="Your organization is ready")).to_be_visible(
@@ -332,13 +343,18 @@ def test_registration_journey_reaches_ready_workspace(
     ]
     idempotency_key = captured.registration_headers[0].get("idempotency-key", "")
     assert idempotency_key.startswith("signup-")
-    assert captured.verification == [
-        {
-            "verification_token": _VERIFICATION_TOKEN,
-            "password": "correct-horse-battery",
-        }
+    expected_verification = {
+        "verification_token": _VERIFICATION_TOKEN,
+        "password": "correct-horse-battery",
+    }
+    assert captured.verification == [expected_verification, expected_verification]
+    verify_keys = [headers.get("idempotency-key", "") for headers in captured.verification_headers]
+    assert verify_keys[0].startswith("verify-")
+    assert verify_keys[0] == verify_keys[1]
+    assert captured.login == [
+        {"email": _EMAIL, "password": "correct-horse-battery"},
+        {"email": _EMAIL, "password": "correct-horse-battery"},
     ]
-    assert captured.login == [{"email": _EMAIL, "password": "correct-horse-battery"}]
     assert captured.status_calls >= 2
     assert any("omnigent_saas_session=e2e-session" in value for value in captured.status_cookies)
     assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
@@ -348,3 +364,49 @@ def test_registration_journey_reaches_ready_workspace(
     # browser history before the form can submit.
     assert all(_VERIFICATION_TOKEN not in url for url in captured.urls)
     assert all(_VERIFICATION_TOKEN not in referer for referer in captured.referers)
+
+
+def test_login_rejects_backslash_cross_origin_return_target(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    _install_saas_routes(page)
+
+    page.goto(f"{live_server}/saas/login?return_to=%2F%5Cevil.example")
+    page.get_by_label("Work email").fill(_EMAIL)
+    page.get_by_label("Password").fill("correct-horse-battery")
+    page.get_by_role("button", name="Sign in").click()
+
+    expect(page).to_have_url(f"{live_server}/")
+
+
+def test_verification_link_does_not_reuse_another_registration_email(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.goto(f"{live_server}/saas/login")
+    page.evaluate(
+        """
+        sessionStorage.setItem(
+          "omnigent.saas.pending-registration",
+          JSON.stringify({
+            registrationId: "99999999-9999-4999-8999-999999999999",
+            email: "stale@example.test",
+            verifyKey: "verify-stale"
+          })
+        )
+        """
+    )
+
+    pending_url = f"{live_server}/signup/verify?registration_id={_REGISTRATION_ID}"
+    page.goto(f"{pending_url}#token={_VERIFICATION_TOKEN}")
+
+    expect(page.get_by_label("Work email")).to_have_value("")
+    expect(page).to_have_url(pending_url)
+    saved = page.evaluate(
+        "JSON.parse(sessionStorage.getItem('omnigent.saas.pending-registration'))"
+    )
+    assert saved["registrationId"] == _REGISTRATION_ID
+    assert saved["email"] == ""
+    assert saved["verifyKey"].startswith("verify-")
+    assert saved["verifyKey"] != "verify-stale"
