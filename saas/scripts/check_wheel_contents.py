@@ -236,6 +236,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/deployment/preview_gateway/omnigent-saas-preview-gateway@.service",
     "saas/outbox_worker.py",
     "saas/n1_outbox_admission.py",
+    "saas/onboarding_email.py",
     "saas/onboarding_composition.py",
     "saas/control_plane/onboarding_workflow.py",
     "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py",
