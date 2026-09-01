@@ -160,17 +160,7 @@ items:
           ports:
             - {protocol: UDP, port: 53}
             - {protocol: TCP, port: 53}
-        # HTTPS Provider egress excludes cluster, private, link-local and metadata ranges.
-        - to:
-            - ipBlock:
-                cidr: 0.0.0.0/0
-                except:
-                  - 10.0.0.0/8
-                  - 100.64.0.0/10
-                  - 127.0.0.0/8
-                  - 169.254.0.0/16
-                  - 172.16.0.0/12
-                  - 192.168.0.0/16
-                  - 224.0.0.0/4
-          ports:
-            - {protocol: TCP, port: 443}
+        # Provider egress is deliberately absent. The production overlay must
+        # add a CNI-native api.resend.com FQDN rule or a reviewed explicit mail
+        # relay after the Sender supports that fixed proxy. Arbitrary public
+        # TCP/443 is forbidden because this Pod holds multiple authorities.

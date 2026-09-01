@@ -70,11 +70,13 @@ slice does not copy or modify the uncommitted downstream production Server WIP.
 
 ## Network and rollout boundary
 
-The Worker has no ingress. Its egress is limited to DNS, the rendered
-PostgreSQL CIDR and public TCP/443; private/link-local/metadata ranges are
-excluded. If the production CNI supports FQDN policies, replace the public 443
-rule with an allowlist for `api.resend.com`. The Server retains its existing
-ingress policy and receives no Provider egress requirement.
+The Worker has no ingress. Its base egress is limited to DNS and the rendered
+PostgreSQL CIDR. Provider egress is intentionally absent: the production
+overlay must add a CNI-native FQDN allowlist for exactly `api.resend.com`, or a
+reviewed fixed mail relay after the Sender gains explicit proxy configuration.
+An arbitrary-public-`443` rule is forbidden because this Pod holds database,
+envelope, rate-limit, Provider and Runtime Provider authorities. The Server
+retains its existing ingress policy and receives no Provider egress requirement.
 
 Roll forward in this order: expand canonical role manifest, run migration and
 approve its new receipt, create immutable Secrets, deploy one Worker canary,

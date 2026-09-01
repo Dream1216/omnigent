@@ -372,6 +372,9 @@ def test_worker_manifest_keeps_provider_and_domain_authorities_out_of_server() -
     assert "OMNIGENT_SAAS_ONBOARDING_STATUS_DATABASE_URL_FILE" not in names
     assert "OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE" in names
     assert network["spec"]["ingress"] == []
+    rendered_network = json.dumps(network["spec"]["egress"], sort_keys=True)
+    assert "0.0.0.0/0" not in rendered_network
+    assert "443" not in rendered_network
 
 
 def test_server_patch_has_only_http_onboarding_authorities() -> None:
