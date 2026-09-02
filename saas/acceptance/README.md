@@ -1367,6 +1367,23 @@ approval record at exact source
 `e6172495448f8c1c70ee433aac10d9d8d0fbc7b6`. Its temporary merge tree is
 byte-identical to the source tree.
 
+For the P0S11 production-runtime bundle, decision PR
+[#24](https://github.com/Dream1216/omnigent/pull/24) was merged as
+`0a14dbb0...` after exact reviewed-Head Compatibility succeeded. The append-only
+waiver record binds all eleven ADR owner decisions to `d11ec974...` without
+fabricating independent Reviews. Evidence PR
+[#25](https://github.com/Dream1216/omnigent/pull/25) then received successful
+exact-source Push Compatibility
+[run 33667441010](https://github.com/Dream1216/omnigent/actions/runs/33667441010)
+and PR Compatibility
+[run 33667448251](https://github.com/Dream1216/omnigent/actions/runs/33667448251)
+on Head `6b4a2bd6...`; the temporary merge `e3cc1338...` has the same Git tree.
+`p0-adr-approval-evidence-ci-33667448251.json` therefore closes only the current
+ADR/Owner gate and advances the ledger to 41/51. Governance remains explicitly
+degraded, P0 remains `in_progress`, and release remains `NO-GO`; image signing,
+deployment, Canary, rollback, recovery and all other production gates remain
+independent.
+
 Exact-source Push Compatibility
 [run 33468201793](https://github.com/Dream1216/omnigent/actions/runs/33468201793)
 and PR Compatibility attached to exact PR Head `e6172495...`

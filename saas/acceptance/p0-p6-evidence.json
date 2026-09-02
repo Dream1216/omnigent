@@ -25,7 +25,7 @@
         },
         {
           "id": "p0-approved-production-adrs-and-owners",
-          "status": "pending",
+          "status": "passed",
           "evidence": [
             "saas/production/baseline.json",
             "saas/production/adr-approval-policy.json",
@@ -35,7 +35,9 @@
             "saas/production/adr-approvals/README.md",
             "saas/production/adr-approvals/omnigent-saas-upstream-sync-9303cc1c-2026-08-24-b1a4cf30e76f2728.json",
             "saas/production/adr-approvals/omnigent-saas-upstream-sync-3369b36c-2026-08-31-2500a820699ccb24.json",
+            "saas/production/adr-approvals/omnigent-saas-p0s11-production-runtime-2026-09-02-42167426f3706279.json",
             "saas/acceptance/p0-adr-approval-evidence-ci-33468247922.json",
+            "saas/acceptance/p0-adr-approval-evidence-ci-33667448251.json",
             "saas/scripts/check_adr_approvals.py",
             "saas/scripts/finalize_adr_approval.py",
             "saas/scripts/check_production_baseline.py",
