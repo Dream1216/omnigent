@@ -2188,12 +2188,13 @@ These contracts have local unit and disposable PostgreSQL 16/18 evidence. They d
 replace deployed NetworkPolicy, external PKI rotation, multi-replica failure drills,
 authenticated browser E2E, rollback, or protected exact-image admission evidence.
 
-## Official upstream synchronization candidate: `c724c574`
+## Official upstream synchronization candidate: `332daef5`
 
 The 2026-09-02 synchronization candidate merges official
-`c724c5744593a24130ce6e426f09ba78aa00b23c` into the frozen Runtime candidate
+`332daef59aa78517f2e920101dd364715aed87e6` into the frozen Runtime candidate
 `26ba2667833ca91cd047ac4a44576a67b4f31713`, then replays the self-service onboarding
-commits. Textual conflicts were limited to `omnigent/host/connect.py` and `uv.lock`.
+commits. The final `c724c574` to `332daef5` increment applied without textual conflicts;
+the earlier replay conflicts were limited to `omnigent/host/connect.py` and `uv.lock`.
 The resolved Host path preserves the official caller-provided lifecycle lock while
 retaining the managed Host factory seam. Dependency metadata keeps official 0.13.0
 groups and the downstream `saas` extra.
