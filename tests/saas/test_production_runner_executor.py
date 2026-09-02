@@ -1300,14 +1300,24 @@ async def test_cancel_keeps_worktree_heartbeat_until_terminal_preparation(
     active.prepared = cast(PreparedRunnerIsolation, _ImmediatePrepared(environment))
     original_heartbeat = context.executor._worktree_adapter.heartbeat
     heartbeat_count = 0
+    heartbeat_condition = threading.Condition()
     loop = asyncio.get_running_loop()
 
     def counted_heartbeat(*args, **kwargs):
         nonlocal heartbeat_count
         mutation = original_heartbeat(*args, **kwargs)
-        heartbeat_count += 1
+        with heartbeat_condition:
+            heartbeat_count += 1
+            heartbeat_condition.notify_all()
         loop.call_soon_threadsafe(heartbeat_seen.set)
         return mutation
+
+    def wait_for_heartbeat_after(previous_count: int) -> bool:
+        with heartbeat_condition:
+            return heartbeat_condition.wait_for(
+                lambda: heartbeat_count > previous_count,
+                timeout=1,
+            )
 
     def prepared(_lease: RunnerControlClientLease):
         with context.executor._lock:
@@ -1327,15 +1337,17 @@ async def test_cancel_keeps_worktree_heartbeat_until_terminal_preparation(
     await heartbeat_seen.wait()
     cancellation.set()
     assert await execution == "cancelled"
-    post_execute_count = heartbeat_count
-    await asyncio.sleep(0.04)
-    assert heartbeat_count > post_execute_count
+    with heartbeat_condition:
+        post_execute_count = heartbeat_count
+    assert await asyncio.to_thread(wait_for_heartbeat_after, post_execute_count)
 
     result = await context.executor.prepare_finalization(context.lease, result="cancelled")
     await context.executor.prepare_terminal_transition(context.lease)
-    stopped_count = heartbeat_count
+    with heartbeat_condition:
+        stopped_count = heartbeat_count
     await asyncio.sleep(0.04)
-    assert heartbeat_count == stopped_count
+    with heartbeat_condition:
+        assert heartbeat_count == stopped_count
     context.fixture.execution.transition_run(
         run_id=context.lease.run_id,
         lease_token=context.lease.lease_token,
@@ -1508,7 +1520,7 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     execution = asyncio.create_task(
         context.executor.execute(context.lease, cancellation=asyncio.Event())
     )
-    await heartbeat_started.wait()
+    await asyncio.wait_for(heartbeat_started.wait(), timeout=2)
     expiry_before_late_response = active.worktree_lease.expires_at
     assert await asyncio.wait_for(execution, timeout=1) == "orphaned"
     release_response.set()
