@@ -32,7 +32,7 @@ def _write(path: Path, rendered: str, *, mode: int = 0o400) -> dict[str, str]:
     return {"OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE": str(path)}
 
 
-def test_loads_exact_ten_binding_canonical_profile(tmp_path: Path) -> None:
+def test_loads_exact_thirteen_binding_canonical_profile(tmp_path: Path) -> None:
     bindings = _bindings()
     rendered = render_production_service_role_bindings(tuple(reversed(bindings)))
     assert rendered == render_production_service_role_bindings(bindings)
@@ -40,10 +40,13 @@ def test_loads_exact_ten_binding_canonical_profile(tmp_path: Path) -> None:
         _write(tmp_path / "service-bindings.json", rendered)
     )
 
-    assert len(loaded.bindings) == 10
+    assert len(loaded.bindings) == 13
     assert loaded.login_for("runtime") == "prod_runtime"
     assert loaded.login_for("dispatcher") == "prod_dispatcher"
     assert loaded.login_for("executor") == "prod_executor"
+    assert loaded.login_for("registration") == "prod_registration"
+    assert loaded.login_for("onboarding") == "prod_onboarding"
+    assert loaded.login_for("onboarding_status") == "prod_onboarding_status"
     assert loaded.sha256 == hashlib.sha256(rendered.encode("ascii")).hexdigest()
     assert set(loaded.by_service) == set(EXPECTED_PRODUCTION_SERVICE_ROLES)
 

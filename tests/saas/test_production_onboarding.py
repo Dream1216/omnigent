@@ -22,6 +22,7 @@ from saas.production.onboarding import (
     load_production_onboarding_http_config,
     load_production_onboarding_worker_config,
 )
+from saas.production.service_bindings import EXPECTED_PRODUCTION_SERVICE_ROLES
 
 
 def _write(path: Path, value: str | bytes) -> Path:
@@ -43,25 +44,11 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         "schema_version": 1,
         "bindings": [
             {
-                "service": "executor",
-                "login": "login_executor",
-                "base_role": "saas_executor",
-            },
-            {
-                "service": "onboarding",
-                "login": "login_onboarding",
-                "base_role": "saas_onboarding",
-            },
-            {
-                "service": "onboarding_status",
-                "login": "login_onboarding_status",
-                "base_role": "saas_onboarding_status",
-            },
-            {
-                "service": "registration",
-                "login": "login_registration",
-                "base_role": "saas_registration",
-            },
+                "service": service,
+                "login": f"login_{service}",
+                "base_role": base_role,
+            }
+            for service, base_role in sorted(EXPECTED_PRODUCTION_SERVICE_ROLES.items())
         ],
     }
     policy = {

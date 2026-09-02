@@ -16,7 +16,6 @@ through owner-only files staged by the deployment.  The zero-argument
 from __future__ import annotations
 
 import base64
-import hashlib
 import importlib
 import inspect
 import ipaddress
@@ -62,13 +61,16 @@ from saas.onboarding_email import (
     ResendEmailVerificationConfig,
     ResendEmailVerificationSender,
 )
+from saas.production.service_bindings import (
+    ProductionServiceRoleBindingsError,
+    load_production_service_role_bindings,
+)
 
 _MAX_CONFIG_BYTES = 64 * 1024
 _MAX_SECRET_BYTES = 16 * 1024
 _FACTORY_REFERENCE = re.compile(
     r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*:[A-Za-z][A-Za-z0-9_]*$"
 )
-_ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _KEY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FORBIDDEN_LOGIN_FRAGMENTS = ("admin", "migration", "owner", "postgres", "root")
@@ -293,66 +295,21 @@ def _json_document(
 def load_production_onboarding_service_role_bindings(
     source: Mapping[str, str],
 ) -> ProductionOnboardingServiceRoleBindings:
-    """Require the shared service-role manifest to include all onboarding roles."""
+    """Project onboarding logins from the shared exact 13-service authority."""
 
     name = "OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE"
-    path, raw, document = _json_document(source, name, secret=False)
-    rows = document.get("bindings")
-    if set(document) != {"schema_version", "bindings"} or document.get("schema_version") != 1:
-        raise ProductionOnboardingConfigError(f"{name} has an invalid document shape")
-    if not isinstance(rows, list) or not rows:
-        raise ProductionOnboardingConfigError(f"{name} has an invalid binding list")
-    parsed: list[tuple[str, str, str]] = []
-    for row in rows:
-        if (
-            not isinstance(row, dict)
-            or set(row) != {"service", "login", "base_role"}
-            or not all(isinstance(row.get(key), str) for key in row)
-        ):
-            raise ProductionOnboardingConfigError(f"{name} has an invalid binding")
-        service = cast(str, row["service"])
-        login = cast(str, row["login"])
-        base_role = cast(str, row["base_role"])
-        if any(_ROLE_NAME.fullmatch(value) is None for value in (service, login, base_role)):
-            raise ProductionOnboardingConfigError(f"{name} has an invalid role name")
-        parsed.append((service, login, base_role))
-    ordered = sorted(parsed)
-    if (
-        len(ordered) != len({row[0] for row in ordered})
-        or len(ordered) != len({row[1] for row in ordered})
-        or len(ordered) != len({row[2] for row in ordered})
-    ):
-        raise ProductionOnboardingConfigError(f"{name} contains duplicate authority")
-    canonical = (
-        json.dumps(
-            {
-                "bindings": [
-                    {"base_role": role, "login": login, "service": service}
-                    for service, login, role in ordered
-                ],
-                "schema_version": 1,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        )
-        + "\n"
-    ).encode("ascii")
-    if raw != canonical:
-        raise ProductionOnboardingConfigError(f"{name} must contain canonical JSON")
-    by_service = {service: (login, role) for service, login, role in ordered}
-    if any(
-        by_service.get(service, (None, None))[1] != expected_role
-        for service, expected_role in _ONBOARDING_BASE_ROLES.items()
-    ):
+    try:
+        bindings = load_production_service_role_bindings(source)
+    except ProductionServiceRoleBindingsError as error:
         raise ProductionOnboardingConfigError(
-            f"{name} must contain registration, onboarding, onboarding_status, and executor roles"
-        )
+            f"{name} must contain the exact 13-service production profile, including "
+            "registration, onboarding, onboarding_status, and executor roles"
+        ) from error
     return ProductionOnboardingServiceRoleBindings(
-        path=path,
-        sha256=hashlib.sha256(raw).hexdigest(),
+        path=bindings.path,
+        sha256=bindings.sha256,
         logins=MappingProxyType(
-            {service: by_service[service][0] for service in _ONBOARDING_BASE_ROLES}
+            {service: bindings.login_for(service) for service in _ONBOARDING_BASE_ROLES}
         ),
     )
 

@@ -28,12 +28,12 @@ production profile:
 
 Keep the existing `executor -> saas_executor` entry. All login names must be
 unique. The downstream production profile must therefore contain exactly 13
-services: its 10 current services plus these three. The current draft's stale
-9-entry Kubernetes example (`preview_gateway` instead of `preview_edge` and
-`preview_owner`) is a deployment hard failure; it must not be published or
-used to mint a migration receipt. The policy file and full manifest must be canonical compact JSON with
-one trailing newline; the init containers stage them as uid-owned mode `0400`
-files before either process starts.
+services: its 10 current services plus these three. Server, migration, and
+onboarding now consume that same exact canonical authority; a reduced or
+superset manifest is a deployment hard failure and must not be used to mint a
+migration receipt. The policy file and full manifest must be canonical compact
+JSON with one trailing newline; the init containers stage them as uid-owned
+mode `0400` files before either process starts.
 
 `service-role-bindings.example.json` is the exact 13-service canonical shape.
 Only its `replace_*_login` values may be rendered; service and base-role names

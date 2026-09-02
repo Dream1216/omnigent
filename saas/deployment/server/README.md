@@ -67,13 +67,16 @@ replaced in a release copy before server-side apply. The image reference is alwa
    `context=postmaster`, `source=configuration file`, and
    `pending_restart=false`, and `pg_prepared_xacts` is empty. Then provision
    every long-lived service login that this release will deploy. At a minimum
-   this means the exact ten-entry service-role manifest. Its fixed
+   this means the exact thirteen-entry service-role manifest. Its fixed
    service-to-base-role profile is `runtime -> omnigent_runtime_app`,
    `authenticator -> saas_authenticator`, `app -> saas_app`,
    `governance -> saas_governance`, `public_api -> saas_public_api`,
    `dispatcher -> saas_dispatcher`, `executor -> saas_executor`,
+   `onboarding -> saas_onboarding`,
+   `onboarding_status -> saas_onboarding_status`,
    `secret_broker -> saas_secret_broker`, `preview_edge -> saas_preview_edge`,
-   and `preview_owner -> saas_preview_owner`; the ten unique login names are
+   `preview_owner -> saas_preview_owner`, and
+   `registration -> saas_registration`; the thirteen unique login names are
    release inputs. Each login must inherit exactly its one corresponding
    NOLOGIN base role with no creator/admin option edge, direct object grant,
    ownership, `SET ROLE` option, role setting, or bypass flag.

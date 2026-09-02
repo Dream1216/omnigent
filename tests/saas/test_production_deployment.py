@@ -248,7 +248,7 @@ def test_server_consumes_exact_artifact_admission_authority_and_rollout_bindings
     )
 
 
-def test_migration_and_runtime_share_one_canonical_ten_binding_profile() -> None:
+def test_migration_and_runtime_share_one_canonical_thirteen_binding_profile() -> None:
     migration_items = _items("kubernetes.migration.yaml")
     production_items = _items("kubernetes.production.yaml")
     manifests = []
@@ -271,7 +271,7 @@ def test_migration_and_runtime_share_one_canonical_ten_binding_profile() -> None
         )
         for row in document["bindings"]
     )
-    assert len(bindings) == 10
+    assert len(bindings) == 13
     assert manifests[0] == render_production_service_role_bindings(bindings)
 
 

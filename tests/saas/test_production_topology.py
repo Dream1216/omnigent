@@ -54,7 +54,7 @@ def test_release_enables_only_closed_p0s10_preview_profile() -> None:
     )
 
 
-def test_migration_and_runtime_share_one_immutable_exact_ten_role_authority() -> None:
+def test_migration_and_runtime_share_one_immutable_exact_thirteen_role_authority() -> None:
     manifests = []
     names = []
     for filename in ("kubernetes.migration.yaml", "kubernetes.production.yaml"):
@@ -77,7 +77,7 @@ def test_migration_and_runtime_share_one_immutable_exact_ten_role_authority() ->
         )
         for row in document["bindings"]
     )
-    assert len(bindings) == 10
+    assert len(bindings) == 13
     assert {binding.service for binding in bindings} == set(EXPECTED_PRODUCTION_SERVICE_ROLES)
     assert manifests[0] == render_production_service_role_bindings(bindings)
 
