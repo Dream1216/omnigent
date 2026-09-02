@@ -205,26 +205,26 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
-        "e5d9bc8ac650",
+        "ga1b2c3d4e5f",
         "p0s000000011",
-    ): "3cb5ec014f391ecd3ddd30af9d6372582bb70d4c2060f1782dcc6248bb719c2b",
+    ): "42cbe5e35ffc8eb607bbc3c2592f34ede975ef391fe10804f7f655f419427f21",
     (
         18,
-        "e5d9bc8ac650",
+        "ga1b2c3d4e5f",
         "p0s000000011",
-    ): "f48b8e306eedd550140e5d3ed956ad84ea4bf5b0649e779aff81bce749343d71",
+    ): "7d4597b46eebb96fd8e29bb3feeb6a91747ad6bb35520888cc9497ddcc2ae7b7",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
-        "e5d9bc8ac650",
+        "ga1b2c3d4e5f",
         "p0s000000011",
-    ): "61719e082be9d2567eb787e069652d8c8d43dcc51ceea3e8f595962b6417b519",
+    ): "e797644cd4eadbb8c87d4c48a9019add359165968d9ac5b2430853e44f24ea2c",
     (
         18,
-        "e5d9bc8ac650",
+        "ga1b2c3d4e5f",
         "p0s000000011",
-    ): "1c9cc53a884eee05ca28d55c76ad7ca1a104ddf2a7dfc9399b2b679bcba85995",
+    ): "a26afc73de1347dbb0f105548efb402e5583004049ee3b5553b5a86863d7c392",
 }
 _CAPABILITY_ROLES = (
     "saas_app",

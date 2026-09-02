@@ -15,6 +15,7 @@ from saas.compatibility import OmnigentStoreAdapter, RuntimeContext
 from saas.runtime_rls import (
     RUNTIME_RLS_POLICY_NAME,
     RuntimeRlsContractError,
+    RuntimeRlsTableContract,
     install_runtime_rls,
     load_runtime_rls_contract,
     remove_runtime_rls,
@@ -141,7 +142,13 @@ def production_runtime_engines(
 def test_runtime_rls_contract_covers_every_official_workspace_table() -> None:
     contracts = load_runtime_rls_contract()
 
-    assert len(contracts) == 17
+    assert len(contracts) == 18
+    assert next(contract for contract in contracts if contract.table_name == "connections") == (
+        RuntimeRlsTableContract(
+            table_name="connections",
+            primary_key_columns=("workspace_id", "user_id", "provider", "account_id"),
+        )
+    )
     assert all(contract.primary_key_columns[0] == "workspace_id" for contract in contracts)
 
 

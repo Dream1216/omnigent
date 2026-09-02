@@ -491,7 +491,7 @@ def _patch_execution_boundary(
             or migration._VerifiedState(
                 official_head="official-head",
                 saas_head="saas-head",
-                runtime_rls_table_count=17,
+                runtime_rls_table_count=18,
                 catalog_sha256="c" * 64,
             )
         ),
@@ -632,7 +632,8 @@ def test_database_and_runtime_sql_keep_cluster_and_object_authority_separate() -
         root / "saas/control_plane/postgresql_roles.sql"
     ).read_text(encoding="utf-8")
     control_roles = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
-    assert "grantee.rolname = 'saas_executor'" in control_roles
+    assert "grantee.rolname = ANY(target_roles)" in control_roles
+    assert "grantee.rolname IN ('saas_executor', 'saas_runner_agent')" not in control_roles
     assert "acl.grantor = database.datdba" in control_roles
     assert "acl.privilege_type = 'CONNECT'" in control_roles
     migration_source = Path(migration.__file__).read_text(encoding="utf-8")

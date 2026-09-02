@@ -579,7 +579,7 @@ def test_runner_agents_have_file_only_double_bound_independent_identities() -> N
 
     readme = (_DEPLOYMENT / "README.md").read_text(encoding="utf-8")
     assert "runner_<runner_uuid_without_hyphens>_g<connection_generation>" in readme
-    assert "outside the canonical exact-ten service-role binding manifest" in " ".join(
+    assert "outside the canonical exact-thirteen service-role binding manifest" in " ".join(
         readme.split()
     )
     collapsed_readme = " ".join(readme.split())

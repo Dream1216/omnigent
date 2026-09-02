@@ -844,7 +844,7 @@ exact upstream, adapter, schema, and downstream product revisions; measure T0-T2
 RPO/RTO; prove an encrypted deletion-protected backup outside the source failure
 domains; restore with traffic disabled into separately hashed account, network, KMS,
 object-prefix, search-index, and Runner-pool boundaries; pass the complete 50-table
-control-plane and 17-table runtime forced-RLS, cross-tenant, tombstone, revocation,
+control-plane and 18-table runtime forced-RLS, cross-tenant, tombstone, revocation,
 binding, ledger, object, key, and canary matrix; and reference a signed immutable
 artifact with independent SRE, security, and data-owner attestations. Both a current
 Tenant drill and a current cluster drill are required. The repository intentionally
@@ -866,7 +866,7 @@ the exact official and SaaS migration heads plus both forced-RLS layers, seeds t
 Tenant/workspace scopes, creates a custom-format logical backup, and restores it into
 a separately generated database. It then replays post-backup identity/session
 revocation, membership removal, and Tenant deletion-marker facts; reapplies
-least-privilege roles; verifies the canonical 50-table control-plane and 17-table
+least-privilege roles; verifies the canonical 50-table control-plane and 18-table
 runtime RLS inventories; runs cross-Tenant and cross-workspace negative probes; and
 compares canonical hashes and row counts across eleven selected tables before dropping
 both databases. Client credentials stay in the subprocess environment rather than

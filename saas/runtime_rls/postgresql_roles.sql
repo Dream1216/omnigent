@@ -18,6 +18,7 @@ DECLARE
         'conversation_items',
         'conversation_labels',
         'conversations',
+        'connections',
         'device_grants',
         'files',
         'hosts',
@@ -256,7 +257,7 @@ DECLARE
     official_tables constant text[] := ARRAY[
         'account_tokens', 'agents', 'alembic_version', 'comments',
         'conversation_items', 'conversation_labels', 'conversations',
-        'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
+        'connections', 'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
         'policies', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
         'session_permissions', 'user_daily_cost', 'users'
     ];
@@ -361,6 +362,7 @@ REVOKE ALL PRIVILEGES ON TABLE
     conversation_items,
     conversation_labels,
     conversations,
+    connections,
     device_grants,
     files,
     hosts,
@@ -381,6 +383,7 @@ REVOKE ALL PRIVILEGES ON TABLE
     conversation_items,
     conversation_labels,
     conversations,
+    connections,
     device_grants,
     files,
     hosts,
@@ -401,6 +404,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
     conversation_items,
     conversation_labels,
     conversations,
+    connections,
     device_grants,
     files,
     hosts,
@@ -424,7 +428,7 @@ DECLARE
     );
     expected_tables constant text[] := ARRAY[
         'account_tokens', 'agents', 'comments', 'conversation_items',
-        'conversation_labels', 'conversations', 'device_grants', 'files',
+        'conversation_labels', 'conversations', 'connections', 'device_grants', 'files',
         'hosts', 'omnigent_conversation_metadata', 'policies', 'projects',
         'scheduled_task_runs', 'scheduled_tasks', 'session_permissions',
         'user_daily_cost', 'users'
@@ -432,7 +436,7 @@ DECLARE
     official_tables constant text[] := ARRAY[
         'account_tokens', 'agents', 'alembic_version', 'comments',
         'conversation_items', 'conversation_labels', 'conversations',
-        'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
+        'connections', 'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
         'policies', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
         'session_permissions', 'user_daily_cost', 'users'
     ];

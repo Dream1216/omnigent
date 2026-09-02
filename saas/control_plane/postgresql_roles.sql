@@ -2104,8 +2104,7 @@ BEGIN
         WHERE database.datname = current_database()
           AND grantee.rolname = ANY(target_roles)
           AND NOT (
-              grantee.rolname IN ('saas_executor', 'saas_runner_agent')
-              AND acl.grantor = database.datdba
+              acl.grantor = database.datdba
               AND acl.privilege_type = 'CONNECT'
               AND NOT acl.is_grantable
           )

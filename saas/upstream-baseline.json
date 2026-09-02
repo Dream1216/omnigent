@@ -18,7 +18,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "e5d9bc8ac650"
+    "ga1b2c3d4e5f"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -29,6 +29,7 @@
     "conversation_items": ["workspace_id", "conversation_id", "id", "created_at"],
     "conversation_labels": ["workspace_id", "conversation_id", "key"],
     "conversations": ["workspace_id", "id"],
+    "connections": ["workspace_id", "user_id", "provider", "account_id"],
     "device_grants": ["workspace_id", "id"],
     "files": ["workspace_id", "id"],
     "hosts": ["workspace_id", "host_id"],
