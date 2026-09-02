@@ -32,7 +32,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/Dockerfile|df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed"
   "saas/n1_compat/Dockerfile.dockerignore|72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275"
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
-  "tests/saas/test_n1_merge_gate_candidate.py|9152d911ec1ccf11399c304961e57964c1a937e49584262c5ebcb7610189c967"
+  "tests/saas/test_n1_merge_gate_candidate.py|8685add5532b0b5395910f633b624b7a4040bf96da4e1dbba09da93347f7fed3"
   "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
   "tests/saas/test_n1_outbox_admission.py|d23a03d5fcabc06fe6546aa0bc01a5aae7d35ed34ded7eed66bdc1b908478492"
   "tests/saas/test_control_plane_migration.py|125e55c15783aa3c7fa163f218b363bedaae0d42fea66063fac2a2f8fff4232b"
