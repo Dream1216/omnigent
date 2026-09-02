@@ -19,7 +19,10 @@ concurrency:
 jobs:
   compatibility-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The official 5dd1735a suite plus PG18 restore and hard-sandbox gates
+    # measured 19m55s before runner teardown. Keep deterministic headroom so a
+    # fully successful exact-SHA run is not reclassified as cancelled at 20m.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
