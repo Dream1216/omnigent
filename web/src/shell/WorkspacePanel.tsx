@@ -40,8 +40,10 @@ import { useSessionAgent } from "@/hooks/useAgents";
 import type { SessionLiveness } from "@/hooks/useSessionLiveness";
 import { terminalTabKey, useCreateTerminal, useTerminals } from "@/hooks/useTerminals";
 import { SuppressBrowserView } from "@/hooks/useSuppressBrowserView";
+import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import { FilesPanel } from "./FilesPanel";
 import { FileViewer } from "./FileViewer";
+import { GithubPanel } from "./GithubPanel";
 import type { ChangedSort } from "./FlatFileList";
 import { SubagentsPanel } from "./SubagentsPanel";
 import { useTerminalStatuses } from "./useTerminalStatuses";
@@ -561,6 +563,8 @@ interface WorkspacePanelProps {
   onRightRailTabChange: (next: RightRailTab) => void;
   /** Whether the Files/Changes tabs are available (agent spec exposes an os_env). */
   showFilesPanel: boolean;
+  /** Whether the GitHub tab is available (same on-disk-workspace gate as Files). */
+  showGithubTab: boolean;
   /** Whether the Browser tab is available — Electron shell only (hidden in a
    *  plain web build, which has no embedded WebContentsView). */
   showBrowserTab: boolean;
@@ -659,6 +663,7 @@ export function WorkspacePanel({
   rightRailTab,
   onRightRailTabChange,
   showFilesPanel,
+  showGithubTab,
   showBrowserTab,
   changedCount,
   subagentsWorking,
@@ -805,6 +810,18 @@ export function WorkspacePanel({
                   <FileDiffIcon />
                   <span className="sr-only">Changes</span>
                   {changedCount > 0 && <span className="sr-only">{changedCount}</span>}
+                </TabsTrigger>
+              </WorkspaceTabTooltip>
+            )}
+            {showGithubTab && (
+              <WorkspaceTabTooltip label="GitHub">
+                <TabsTrigger
+                  value="github"
+                  aria-label="GitHub"
+                  className="size-6 shrink-0 p-0 hover:border-1 hover:border-muted rounded-md!"
+                >
+                  <GithubMono size={16} />
+                  <span className="sr-only">GitHub</span>
                 </TabsTrigger>
               </WorkspaceTabTooltip>
             )}
@@ -955,6 +972,8 @@ export function WorkspacePanel({
           // Embedded browser (Electron only) — BrowserPane self-gates and
           // measures this rail slot to position the native view over it.
           <BrowserPane conversationId={conversationId} className="min-h-0 flex-1" />
+        ) : rightRailTab === "github" && showGithubTab ? (
+          <GithubPanel conversationId={conversationId} />
         ) : rightRailTab === "subagents" && rootSessionId ? (
           <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
         ) : (

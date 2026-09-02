@@ -75,7 +75,10 @@ import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { TranscriptScrollbar } from "@/pages/TranscriptScrollbar";
 import { TurnRail, type Turn } from "@/pages/TurnRail";
 import { attachmentKey, validateAttachments } from "@/lib/attachments";
-import { useSurfaceFrontmost } from "@/hooks/useNativeServerSwitcher";
+import {
+  serverSwitcherHiddenForSurface,
+  useSurfaceFrontmost,
+} from "@/hooks/useNativeServerSwitcher";
 import { isIOSShell, onNativeSidebarDrag, setNativeServerSwitcherHidden } from "@/lib/nativeBridge";
 import { type Agent, useSessionAgent, useAgents } from "@/hooks/useAgents";
 import { agentDisplayLabel } from "@/components/AgentInfo";
@@ -142,7 +145,10 @@ import { getSessionDraft, setSessionDraft } from "@/lib/sessionDrafts";
 // after the pure helpers moved to the shared lib.
 export { detectMentionAt, mentionMarkerFor };
 export type { MentionItem, MentionState };
+import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import { useSession } from "@/hooks/useSession";
+import { useGithubInfo } from "@/hooks/useGithub";
+import { useOpenGithubTab } from "@/shell/FileViewerContext";
 import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useRefreshSessionStateOnRunnerOnline } from "@/hooks/useSessionOnlineRefresh";
 import {
@@ -1927,7 +1933,7 @@ function MainAgentSurface({
   );
   useEffect(() => {
     if (!isIOSShell()) return;
-    setNativeServerSwitcherHidden(!surfaceFrontmost);
+    setNativeServerSwitcherHidden(serverSwitcherHiddenForSurface(surfaceFrontmost));
   }, [surfaceFrontmost]);
   useEffect(() => {
     if (!isIOSShell()) return;
@@ -4009,6 +4015,13 @@ function ComposerStatusLine({
   const { session } = useSession(conversationId);
   const isHostBound = !!session?.hostId;
 
+  // PR link → opens the workspace rail's GitHub tab. Shares the info query's
+  // cache with the GitHub panel, so opening the tab is instant.
+  const github = useGithubInfo(conversationId ?? undefined);
+  const openGithubTab = useOpenGithubTab();
+  const prNumber = github.data?.pr?.number ?? null;
+  const showPr = !!conversationId && !isSubAgentSession && prNumber !== null && !!openGithubTab;
+
   const showBranch = !!conversationId && !!gitBranch;
   // Host indicator (green/red dot + host name), left of the worktree branch.
   // Hidden on sub-agent sessions — the header's child-session slot owns the
@@ -4028,7 +4041,8 @@ function ComposerStatusLine({
   // the badge is where it lives and an unreachable session often has no
   // branch/ring at all.
   const showHostBadge = showHost && isHostBound;
-  if (!showBranch && !showPlanMode && !showGoal && !showRing && !showHostBadge) return null;
+  if (!showBranch && !showPr && !showPlanMode && !showGoal && !showRing && !showHostBadge)
+    return null;
 
   return (
     <div
@@ -4051,6 +4065,18 @@ function ComposerStatusLine({
               {gitBranch}
             </span>
           </span>
+        )}
+        {showPr && (
+          <button
+            type="button"
+            data-testid="composer-pr-link"
+            onClick={() => openGithubTab?.()}
+            title="View this PR in the GitHub tab"
+            className="flex shrink-0 items-center gap-1.5 rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <GithubMono size={14} aria-hidden />
+            <span className="tabular-nums underline underline-offset-2">#{prNumber}</span>
+          </button>
         )}
       </div>
       {/* Right: model/effort and context ring, never shrinks. */}
