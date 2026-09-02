@@ -4052,8 +4052,15 @@ BEGIN
     WHERE namespace.nspname = 'public'
       AND (SELECT oid FROM pg_roles WHERE rolname = 'saas_runner_agent') =
           ANY(policy.polroles);
+    -- pg_dump/pg_restore reparses the three varchar-array predicates used by
+    -- Runner registration and Worktree selection into an equivalent text-array
+    -- AST.  Admit only the exact migrated or exact logical-roundtrip catalogs;
+    -- counts, owners, FORCE RLS, roles, commands, and every other expression
+    -- remain part of the digest above.
     IF policy_contract_hash IS DISTINCT FROM
        'd312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a'
+       AND policy_contract_hash IS DISTINCT FROM
+       '3ef7ef89c9dc74b75a3a22d8c6e31ac48d48d38f15aae1c17a9a654db9b5d325'
     THEN
         RAISE EXCEPTION 'P0S10 Runner RLS policy contract rejected';
     END IF;

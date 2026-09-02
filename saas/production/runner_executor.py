@@ -106,9 +106,19 @@ _RUNNER_FORBIDDEN_LIBPQ_ENV = frozenset(
         "PGUSER",
     }
 )
-_RUNNER_AGENT_POLICY_SHA256_BY_MAJOR = {
-    16: "d312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a",
-    18: "d312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a",
+_RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR = {
+    16: frozenset(
+        {
+            "d312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a",
+            "3ef7ef89c9dc74b75a3a22d8c6e31ac48d48d38f15aae1c17a9a654db9b5d325",
+        }
+    ),
+    18: frozenset(
+        {
+            "d312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a",
+            "3ef7ef89c9dc74b75a3a22d8c6e31ac48d48d38f15aae1c17a9a654db9b5d325",
+        }
+    ),
 }
 _RUNNER_AGENT_SUPPORT_POLICY_SHA256_BY_MAJOR = {
     16: "dc0b05ef2b6602113a0158cab27b3e787f39edd8b285ab40bc10aa5fd78bd65e",
@@ -682,7 +692,7 @@ def _verify_runner_agent_database_authority(
                     _RUNNER_AGENT_POLICY_RELATION_COUNT,
                     0,
                 )
-                or policy_contract[3] != _RUNNER_AGENT_POLICY_SHA256_BY_MAJOR[server_major]
+                or policy_contract[3] not in _RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR[server_major]
             ):
                 raise ValueError("runner policy contract")
 
@@ -1583,7 +1593,7 @@ def runner_agent_database_authority_contract_sha256(*, server_major: int = 18) -
         "pg_trgm_functions": sorted(_RUNNER_AGENT_PG_TRGM_FUNCTIONS),
         "policy_count": _RUNNER_AGENT_POLICY_COUNT,
         "policy_relation_count": _RUNNER_AGENT_POLICY_RELATION_COUNT,
-        "policy_sha256": _RUNNER_AGENT_POLICY_SHA256_BY_MAJOR[server_major],
+        "policy_sha256s": sorted(_RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR[server_major]),
         "role": _RUNNER_AGENT_DATABASE_ROLE,
         "schema_revision": "p0s000000011",
         "select_columns": sorted(_RUNNER_AGENT_SELECT_COLUMNS),

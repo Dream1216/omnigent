@@ -34,6 +34,7 @@ from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 _DATABASE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+_ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _SELECTED_HASH_TABLES = (
     "alembic_version",
     "saas_alembic_version",
@@ -170,13 +171,35 @@ class PostgreSqlEndpoint:
             database=database,
         )
 
+    def for_login(self, username: str, password: str) -> PostgreSqlEndpoint:
+        """Return the same TCP endpoint for one direct disposable login."""
+
+        _require_role_name(username)
+        return PostgreSqlEndpoint(
+            drivername=self.drivername,
+            username=username,
+            password=password,
+            host=self.host,
+            port=self.port,
+            admin_database=self.admin_database,
+        )
+
 
 def _require_database_name(database: str) -> None:
     if _DATABASE_NAME.fullmatch(database) is None:
         raise PostgreSqlRestoreContractError("unsafe generated database name")
 
 
+def _require_role_name(role: str) -> None:
+    if _ROLE_NAME.fullmatch(role) is None:
+        raise PostgreSqlRestoreContractError("unsafe generated role name")
+
+
 def _database_name(kind: str) -> str:
+    return f"omnigent_{kind}_{uuid4().hex[:20]}"
+
+
+def _role_name(kind: str) -> str:
     return f"omnigent_{kind}_{uuid4().hex[:20]}"
 
 
@@ -308,12 +331,66 @@ def _admin_engine(endpoint: PostgreSqlEndpoint) -> sa.Engine:
     )
 
 
-def _create_database(endpoint: PostgreSqlEndpoint, database: str) -> None:
-    _require_database_name(database)
+def _create_disposable_owner(
+    endpoint: PostgreSqlEndpoint,
+    role: str,
+    password: str,
+) -> None:
+    _require_role_name(role)
+    if re.fullmatch(r"[0-9a-f]{64}", password) is None:
+        raise PostgreSqlRestoreContractError("unsafe generated role password")
     engine = _admin_engine(endpoint)
     try:
         with engine.connect() as connection:
-            connection.exec_driver_sql(f'CREATE DATABASE "{database}"')
+            connection.exec_driver_sql(
+                f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT "
+                "NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1"
+            )
+    finally:
+        engine.dispose()
+
+
+def _drop_disposable_owner(endpoint: PostgreSqlEndpoint, role: str) -> None:
+    _require_role_name(role)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{role}"')
+    finally:
+        engine.dispose()
+
+
+def _set_disposable_owner_bypassrls(
+    endpoint: PostgreSqlEndpoint,
+    role: str,
+    *,
+    enabled: bool,
+) -> None:
+    _require_role_name(role)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            state = "BYPASSRLS" if enabled else "NOBYPASSRLS"
+            connection.exec_driver_sql(f'ALTER ROLE "{role}" {state}')
+    finally:
+        engine.dispose()
+
+
+def _create_database(
+    endpoint: PostgreSqlEndpoint,
+    database: str,
+    *,
+    owner: str | None = None,
+) -> None:
+    _require_database_name(database)
+    if owner is not None:
+        _require_role_name(owner)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            owner_clause = f' OWNER "{owner}"' if owner is not None else ""
+            connection.exec_driver_sql(f'CREATE DATABASE "{database}"{owner_clause}')
     finally:
         engine.dispose()
 
@@ -3142,7 +3219,7 @@ def run_logical_restore_contract(
         )
     if re.fullmatch(r"[0-9a-f]{40}", product_revision) is None:
         raise PostgreSqlRestoreContractError("product_revision must be a full Git SHA")
-    endpoint = PostgreSqlEndpoint.parse(admin_url)
+    admin_endpoint = PostgreSqlEndpoint.parse(admin_url)
     migration_config = Config(repo / "saas/control_plane/alembic.ini")
     migration_config.set_main_option(
         "script_location",
@@ -3151,7 +3228,7 @@ def run_logical_restore_contract(
     expected_saas_head = ScriptDirectory.from_config(migration_config).get_current_head()
     if expected_saas_head is None:
         raise PostgreSqlRestoreContractError("SaaS migration head is missing")
-    admin_engine = sa.create_engine(endpoint.sqlalchemy_url(endpoint.admin_database))
+    admin_engine = sa.create_engine(admin_endpoint.sqlalchemy_url(admin_endpoint.admin_database))
     try:
         with admin_engine.connect() as connection:
             server_version_num = int(
@@ -3166,19 +3243,29 @@ def run_logical_restore_contract(
         )
     source_database = _database_name("restore_source")
     target_database = _database_name("restore_target")
+    owner_role = _role_name("restore_owner")
+    owner_password = uuid4().hex + uuid4().hex
+    owner_endpoint = admin_endpoint.for_login(owner_role, owner_password)
     started = datetime.now(UTC)
     created: list[str] = []
+    owner_created = False
     try:
-        _create_database(endpoint, source_database)
+        _create_disposable_owner(admin_endpoint, owner_role, owner_password)
+        owner_created = True
+        _create_database(admin_endpoint, source_database, owner=owner_role)
         created.append(source_database)
-        _apply_database_authority(repo, endpoint, source_database)
-        _migrate_source(repo, endpoint, source_database)
-        identifiers = _seed_source(endpoint, source_database)
+        _apply_database_authority(repo, owner_endpoint, source_database)
+        _migrate_source(repo, owner_endpoint, source_database)
+        # Fixture creation and cross-Tenant backup inspection deliberately use
+        # the disposable cluster operator.  The schema owner remains a narrow
+        # direct login and is used only for the ownership-sensitive migration
+        # and authority phases.
+        identifiers = _seed_source(admin_endpoint, source_database)
         with tempfile.TemporaryDirectory(prefix="omnigent-logical-restore-") as temporary:
             archive = Path(temporary) / "backup.dump"
             dump_client = _run_pg_tool(
                 "pg_dump",
-                endpoint,
+                admin_endpoint,
                 source_database,
                 archive,
                 server_major=server_major,
@@ -3186,20 +3273,36 @@ def run_logical_restore_contract(
             if not archive.is_file() or archive.stat().st_size <= 0:
                 raise PostgreSqlRestoreContractError("pg_dump produced an empty archive")
             backup_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
-            _apply_post_backup_replay(endpoint, source_database, identifiers)
-            source_hash, source_counts = _database_digest(endpoint, source_database)
-            _create_database(endpoint, target_database)
+            _apply_post_backup_replay(admin_endpoint, source_database, identifiers)
+            source_hash, source_counts = _database_digest(admin_endpoint, source_database)
+            _create_database(admin_endpoint, target_database, owner=owner_role)
             created.append(target_database)
-            _apply_database_authority(repo, endpoint, target_database)
-            restore_client = _run_pg_tool(
-                "pg_restore",
-                endpoint,
-                target_database,
-                archive,
-                server_major=server_major,
+            _apply_database_authority(repo, owner_endpoint, target_database)
+            # pg_restore must replay rows from multiple forced-RLS scopes while
+            # also creating every object as the direct target owner.  Elevate
+            # only this disposable owner for the bounded load, then remove the
+            # bypass before applying or verifying either authority projection.
+            _set_disposable_owner_bypassrls(
+                admin_endpoint,
+                owner_role,
+                enabled=True,
             )
+            try:
+                restore_client = _run_pg_tool(
+                    "pg_restore",
+                    owner_endpoint,
+                    target_database,
+                    archive,
+                    server_major=server_major,
+                )
+            finally:
+                _set_disposable_owner_bypassrls(
+                    admin_endpoint,
+                    owner_role,
+                    enabled=False,
+                )
         target_engine = sa.create_engine(
-            endpoint.sqlalchemy_url(target_database), poolclass=sa.pool.NullPool
+            owner_endpoint.sqlalchemy_url(target_database), poolclass=sa.pool.NullPool
         )
         try:
             with target_engine.begin() as connection:
@@ -3211,14 +3314,14 @@ def run_logical_restore_contract(
                 )
         finally:
             target_engine.dispose()
-        _apply_post_backup_replay(endpoint, target_database, identifiers)
+        _apply_post_backup_replay(admin_endpoint, target_database, identifiers)
         restored_facts = _verify_restored_database(
-            endpoint,
+            admin_endpoint,
             target_database,
             identifiers,
             expected_saas_head=expected_saas_head,
         )
-        target_hash, target_counts = _database_digest(endpoint, target_database)
+        target_hash, target_counts = _database_digest(admin_endpoint, target_database)
         if target_hash != source_hash or target_counts != source_counts:
             raise PostgreSqlRestoreContractError("restored selected-table content hash drifted")
         completed = datetime.now(UTC)
@@ -3244,6 +3347,7 @@ def run_logical_restore_contract(
             **restored_facts,
             "source_and_restore_database_names_were_distinct": source_database != target_database,
             "database_authority_applied_to_source_and_restore": True,
+            "disposable_narrow_owner_applied_to_source_and_restore": True,
             "temporary_databases_dropped_after_report": True,
             "not_proven": [
                 "production data backup or restore",
@@ -3255,4 +3359,6 @@ def run_logical_restore_contract(
         }
     finally:
         for database in reversed(created):
-            _drop_database(endpoint, database)
+            _drop_database(admin_endpoint, database)
+        if owner_created:
+            _drop_disposable_owner(admin_endpoint, owner_role)
