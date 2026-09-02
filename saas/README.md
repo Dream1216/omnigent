@@ -2188,15 +2188,15 @@ These contracts have local unit and disposable PostgreSQL 16/18 evidence. They d
 replace deployed NetworkPolicy, external PKI rotation, multi-replica failure drills,
 authenticated browser E2E, rollback, or protected exact-image admission evidence.
 
-## Official upstream synchronization candidate: `9303cc1c`
+## Official upstream synchronization candidate: `5dd1735a`
 
-The 2026-08-24 synchronization candidate merges official
-`9303cc1cd12e2e5788f4e2b9dcde9308b474017a` into downstream implementation merge
-`8fada23f5fc0f50ccef10f2a3b03197ce61607e0`. The textual merge conflicts were limited
-to `omnigent/host/connect.py`, `pyproject.toml`, and `uv.lock`. The resolved Host command
-retains the official isolated-path `-P` flag while selecting the managed Runner entry
-module through the existing Runtime Partition environment seam. The dependency metadata
-keeps official PEP 735 dependency groups and the downstream `saas` extra.
+The 2026-09-02 synchronization candidate merges official
+`5dd1735a78579741623a809181e9c057f4447ff4` into the frozen Runtime candidate
+`26ba2667833ca91cd047ac4a44576a67b4f31713`, then replays the self-service onboarding
+commits. Textual conflicts were limited to `omnigent/host/connect.py` and `uv.lock`.
+The resolved Host path preserves the official caller-provided lifecycle lock while
+retaining the managed Host factory seam. Dependency metadata keeps official 0.13.0
+groups and the downstream `saas` extra.
 
 A separate semantic audit found that the new official shared read session could bypass
 the managed Store session initializer even though Git reported no conflict. Managed
@@ -2204,11 +2204,14 @@ execution now bypasses that shared session whenever an initializer is installed;
 single-user execution continues to use the official shared-read optimization. Focused
 SQLite and PostgreSQL tests cover the initializer boundary and cross-workspace denial.
 
-The regenerated two-entry Patch Replay covers exactly `omnigent/db/utils.py`,
-`omnigent/host/connect.py`, and `omnigent/llms/_usage_observer.py` and applies cleanly to
-the pinned official revision. The local Upstream Delta report passes with ten direct
-official files, 165 net-added official lines, two active patches, no forbidden file or
-reverse dependency, and a 0.999 isolated-code ratio.
+The regenerated three-entry Patch Replay covers exactly `omnigent/db/utils.py`,
+`omnigent/host/connect.py`, `omnigent/llms/_usage_observer.py`, and
+`omnigent/runtime/agent_cache.py` and applies cleanly to the pinned official revision.
+The local Upstream Delta report passes at the current intrusion ceiling with ten direct
+official files, 485 net-added official lines, three active patches, no forbidden file
+or reverse dependency, and a 0.998 isolated-code ratio. Any additional direct upstream
+file or more than 15 net-added official lines must first remove or reduce an existing
+intrusion; the budget may not be silently widened.
 
 Advancing the upstream revision invalidates the previous candidate approval binding. The
 new candidate is therefore deliberately `review_required`: all eleven ADRs remain

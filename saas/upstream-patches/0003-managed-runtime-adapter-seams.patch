@@ -1,8 +1,8 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index f6a39693..633d8dd1 100644
+index d25a9e2d5c0ebba4b3885278b97332ca07c56faf..44c0aaa74558dec4713baf1d65c8e6dd7ec62d8a 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -1690,6 +1690,11 @@ class HostProcess:
+@@ -1703,6 +1703,11 @@ class HostProcess:
              return None
          return zygote
 
@@ -14,7 +14,7 @@ index f6a39693..633d8dd1 100644
      def _spawn_runner_proc(
          self,
          env: dict[str, str],
-@@ -1764,10 +1769,14 @@ class HostProcess:
+@@ -1777,10 +1782,14 @@ class HostProcess:
 
              with child_logging_popen_kwargs(env) as logging_kwargs:
                  proc = subprocess.Popen(
@@ -33,15 +33,15 @@ index f6a39693..633d8dd1 100644
                      env=env,
                      # A daemon may outlive the checkout it started from.
                      cwd=str(workspace),
-@@ -3844,6 +3853,7 @@ class HostProcess:
+@@ -3873,6 +3882,7 @@ class HostProcess:
  def run_host_process(
      server_url: str,
      config_path: Path | None = None,
 +    host_factory: Callable[..., HostProcess] = HostProcess,
      *,
      daemon_target: str | None = None,
- ) -> None:
-@@ -3856,6 +3866,9 @@ def run_host_process(
+     lifecycle_lock: DaemonLifecycleLock | None = None,
+@@ -3886,6 +3896,9 @@ def run_host_process(
          ``"https://omnigent-app.databricksapps.com"``.
      :param config_path: Optional path to ``config.yaml``.
          Defaults to ``~/.omnigent/config.yaml``.
@@ -51,17 +51,17 @@ index f6a39693..633d8dd1 100644
      :param daemon_target: Normalized registry target this process owns, e.g.
          ``"local"`` or a server URL. When given, the daemon binds its lifetime
          to that record (flock + self-terminate on delete/reassign). ``None``
-@@ -3911,7 +3924,7 @@ def run_host_process(
-     lifecycle_lock = (
-         DaemonLifecycleLock.for_target(daemon_target) if daemon_target is not None else None
-     )
+@@ -3946,7 +3959,7 @@ def run_host_process(
+
+     if lifecycle_lock is None and daemon_target is not None:
+         lifecycle_lock = DaemonLifecycleLock.for_target(daemon_target)
 -    host = HostProcess(identity, server_url, lifecycle_lock=lifecycle_lock)
 +    host = host_factory(identity, server_url, lifecycle_lock=lifecycle_lock)
      try:
          asyncio.run(host.run())
      except HostConnectError as exc:
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb..04cd40c0 100644
+index 970fa7eb5427191e17cbb6afd53b4cee5377ab07..04cd40c0e9cb5638f7256c677d5ef953a6458e3f 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
 @@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
