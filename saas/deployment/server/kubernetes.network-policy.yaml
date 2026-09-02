@@ -1,0 +1,258 @@
+apiVersion: v1
+kind: List
+items:
+  # Apply this file only after the renderer has replaced every exact CIDR and
+  # ingress selector placeholder. The CIDR sentinels intentionally fail API
+  # validation; broad public egress is never a fallback.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-default-deny
+      namespace: omnigent
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress, Egress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-dns
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: Exists
+      policyTypes: [Egress]
+      egress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kube-system
+              podSelector:
+                matchLabels:
+                  k8s-app: kube-dns
+          ports:
+            - {protocol: UDP, port: 53}
+            - {protocol: TCP, port: 53}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-migration
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-postgresql-migration
+      policyTypes: [Egress]
+      egress:
+        - to: &postgres_cluster
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: omnigent-data
+              podSelector:
+                matchLabels:
+                  cnpg.io/cluster: omnigent-postgres
+          ports: &postgres_port
+            - {protocol: TCP, port: 5432}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-artifact-admission
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-artifact-admission
+      policyTypes: [Egress]
+      egress:
+        - to:
+            - ipBlock:
+                cidr: replace-with-artifact-endpoint-cidr
+          ports:
+            - {protocol: TCP, port: 443}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-server
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-server
+      policyTypes: [Ingress, Egress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: replace-with-ingress-namespace
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: replace-with-ingress-workload
+          ports:
+            - {protocol: TCP, port: 8000}
+      egress:
+        - to: *postgres_cluster
+          ports: *postgres_port
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-worker
+          ports:
+            - {protocol: TCP, port: 9445}
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-edge
+          ports:
+            - {protocol: TCP, port: 8443}
+        - to:
+            - ipBlock:
+                cidr: replace-with-artifact-endpoint-cidr
+          ports:
+            - {protocol: TCP, port: 443}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-worker
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-worker
+      policyTypes: [Ingress, Egress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-server
+          ports:
+            - {protocol: TCP, port: 9445}
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: runner-agent
+          ports:
+            - {protocol: TCP, port: 9444}
+      egress:
+        - to: *postgres_cluster
+          ports: *postgres_port
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-edge
+          ports:
+            - {protocol: TCP, port: 8443}
+        - to:
+            - ipBlock:
+                cidr: replace-with-artifact-endpoint-cidr
+          ports:
+            - {protocol: TCP, port: 443}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-runner-agent
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: runner-agent
+      policyTypes: [Ingress, Egress]
+      ingress: []
+      egress:
+        - to: *postgres_cluster
+          ports: *postgres_port
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-worker
+          ports:
+            - {protocol: TCP, port: 9444}
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-owner
+          ports:
+            - {protocol: TCP, port: 9442}
+        - to:
+            - ipBlock:
+                cidr: replace-with-artifact-endpoint-cidr
+          ports:
+            - {protocol: TCP, port: 443}
+        - to:
+            - ipBlock:
+                cidr: replace-with-repository-endpoint-cidr
+          ports:
+            - {protocol: TCP, port: 443}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-preview-edge
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-preview-edge
+      policyTypes: [Ingress, Egress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: replace-with-ingress-namespace
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: replace-with-ingress-workload
+          ports:
+            - {protocol: TCP, port: 8080}
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-server
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-worker
+          ports:
+            - {protocol: TCP, port: 8443}
+      egress:
+        - to: *postgres_cluster
+          ports: *postgres_port
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-owner
+          ports:
+            - {protocol: TCP, port: 9443}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-saas-preview-owner
+      namespace: omnigent
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-preview-owner
+      policyTypes: [Ingress, Egress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: runner-agent
+          ports:
+            - {protocol: TCP, port: 9442}
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-edge
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-owner
+          ports:
+            - {protocol: TCP, port: 9443}
+      egress:
+        - to: *postgres_cluster
+          ports: *postgres_port
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-owner
+          ports:
+            - {protocol: TCP, port: 9443}

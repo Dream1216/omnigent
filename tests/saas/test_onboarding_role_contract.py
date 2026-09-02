@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ROLE_SQL = (ROOT / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+DATABASE_SQL = (ROOT / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
 VERTICAL_MIGRATION = (
     ROOT / "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
 ).read_text(encoding="utf-8")
@@ -587,30 +588,78 @@ def test_onboarding_roles_revoke_historical_table_level_privileges_first() -> No
 
 
 def test_all_onboarding_authorities_converge_stale_catalog_acl_channels() -> None:
-    normalized = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
-    convergence = (
-        normalized.split("-- Every write below is constrained", 1)[0]
-        if "-- Every write below is constrained" in normalized
-        else normalized
+    convergence_start = ROLE_SQL.index("-- Public registration and background Tenant onboarding")
+    convergence_end = ROLE_SQL.index(
+        "-- Rate-limit state is reachable only through three content-blind routines.",
+        convergence_start,
     )
-    for role in (
+    convergence = " ".join(
+        re.sub(r"--[^\n]*", "", ROLE_SQL[convergence_start:convergence_end]).split()
+    )
+    database_authority = " ".join(re.sub(r"--[^\n]*", "", DATABASE_SQL).split())
+    target_roles = (
         "saas_registration",
         "saas_onboarding",
         "saas_executor",
+        "saas_runner_agent",
         "saas_onboarding_status",
-    ):
+    )
+    declared_roles = re.search(
+        r"target_roles constant text\[\] := ARRAY\[(.*?)\];",
+        convergence,
+    )
+    assert declared_roles is not None
+    assert tuple(re.findall(r"'([a-z0-9_]+)'", declared_roles.group(1))) == target_roles
+
+    for role in target_roles:
         assert f"'{role}'" in convergence
         assert "quote_ident(target_role)" in convergence
+
+    # The object owner walks every current relation and also revokes surviving
+    # column ACLs; a table-level REVOKE alone is not a complete convergence.
     assert "relation.relkind IN ('r', 'p', 'v', 'm', 'f')" in convergence
+    assert "relation.relowner = caller_role" in convergence
+    assert "REVOKE ALL PRIVILEGES ON TABLE public." in convergence
     assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in convergence
-    assert "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public" in convergence
-    assert "REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public" in convergence
-    assert "REVOKE ALL PRIVILEGES ON SCHEMA public" in convergence
-    assert "GRANT USAGE ON SCHEMA public" in convergence
-    assert "REVOKE CREATE, TEMPORARY ON DATABASE" in convergence
-    assert "quote_ident(current_database())" in convergence
-    for object_kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
-        assert f"REVOKE ALL PRIVILEGES ON {object_kind} FROM" in convergence
+    assert "REVOKE ' || target_privilege || ' (' || column_list" in convergence
+
+    # Sequences and overloaded functions are revoked one owned object at a
+    # time, so this phase never requires schema-wide ownership.
+    assert "relation.relkind = 'S'" in convergence
+    assert "REVOKE ALL PRIVILEGES ON SEQUENCE public." in convergence
+    assert "pg_get_function_identity_arguments(routine.oid)" in convergence
+    assert "routine.proowner = caller_role" in convergence
+    assert "REVOKE ALL PRIVILEGES ON FUNCTION ' || target_signature" in convergence
+    assert "foreign owner ACL drifted" in convergence
+    assert "defaults.defaclrole <> caller_role" in convergence
+    assert "defaults.defaclobjtype NOT IN ('r', 'S', 'f')" in convergence
+
+    default_acl_rows = re.findall(
+        r"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL PRIVILEGES ON "
+        r"(TABLES|SEQUENCES|FUNCTIONS) FROM ([a-z0-9_, ]+);",
+        convergence,
+    )
+    assert {
+        object_kind: tuple(re.findall(r"[a-z][a-z0-9_]+", recipients))
+        for object_kind, recipients in default_acl_rows
+    } == dict.fromkeys(("TABLES", "SEQUENCES", "FUNCTIONS"), target_roles)
+
+    # Database/schema ACLs belong to the separate database-owner transaction;
+    # the narrow object-owner phase must neither need nor silently take them.
+    assert "ON DATABASE" not in convergence
+    assert "ON SCHEMA public" not in convergence
+    assert "REVOKE ALL PRIVILEGES ON ALL" not in convergence
+    assert "current_user <> database_owner" in database_authority
+    assert "REVOKE CONNECT, TEMPORARY, CREATE ON DATABASE" in database_authority
+    assert "REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC" in database_authority
+    schema_usage = database_authority[
+        database_authority.index("GRANT USAGE ON SCHEMA public TO") : database_authority.index(
+            ";", database_authority.index("GRANT USAGE ON SCHEMA public TO")
+        )
+    ]
+    assert all(role in schema_usage for role in target_roles)
+
+    normalized = " ".join(re.sub(r"--[^\n]*", "", ROLE_SQL).split())
     assert (
         "GRANT SELECT (principal_id, role, status, expires_at) "
         "ON saas_platform_role_assignments TO saas_executor"

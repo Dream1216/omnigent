@@ -15,7 +15,13 @@ from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
-from saas.control_plane import RunnerTunnelPlacementAuthority
+from saas.control_plane import (
+    IsolationControlPlane,
+    RunnerTunnelPlacementAuthority,
+    SchedulingControlPlane,
+)
+from saas.control_plane.dispatch_binding import dispatch_requirements_hash
+from saas.control_plane.worktrees import WorktreeMaterializationGrant
 from tests.saas.test_worktree_postgresql import _seed_scope, _set_scope
 
 _ISOLATION_RLS_TABLES = {
@@ -120,6 +126,18 @@ def _seed_isolation_scope(
     tunnel_placement_id = scope["tunnel_placement"]
     connection.execute(
         sa.text(
+            "UPDATE saas_execution_profiles SET status = 'retired' "
+            "WHERE tenant_id = :tenant AND space_id = :space AND project_id = :project "
+            "AND status = 'active'"
+        ),
+        {
+            "tenant": scope["tenant"],
+            "space": scope["space"],
+            "project": scope["project"],
+        },
+    )
+    connection.execute(
+        sa.text(
             "UPDATE saas_runs SET status = 'leased', version = 2, lease_owner = :owner, "
             "lease_token = :lease_token, fence_token = 1, lease_expires_at = :expires, "
             "heartbeat_at = :now WHERE id = :run"
@@ -183,7 +201,12 @@ def _seed_isolation_scope(
             "run": scope["run"],
             "runner": runner_id,
             "actions": json.dumps(["preview.serve", "sandbox.launch"]),
-            "resource_scope": json.dumps({"worktree_id": str(worktree_id)}),
+            "resource_scope": json.dumps(
+                {
+                    "worktree_id": str(worktree_id),
+                    "change_set_id": str(scope["change_set"]),
+                }
+            ),
             "now": now,
             "expires": now + timedelta(minutes=20),
         },
@@ -260,6 +283,50 @@ def _seed_isolation_scope(
             "approval": json.dumps([]),
             "denied": json.dumps(["host.docker_socket"]),
             "hash": _digest(f"profile:{suffix}"),
+        },
+    )
+    required_capabilities = sorted(capabilities)
+    max_wait_at = now + timedelta(hours=1)
+    connection.execute(
+        sa.text(
+            "INSERT INTO saas_run_dispatches "
+            "(run_id, tenant_id, space_id, project_id, pool_id, execution_profile_id, "
+            "execution_profile_hash, egress_policy_id, egress_policy_hash, queue_class, "
+            "required_capabilities, requirements_hash, cost_units, eligible_at, max_wait_at, "
+            "status, selected_runner_id, selected_failure_domain, dispatch_generation) VALUES "
+            "(:run, :tenant, :space, :project, :pool, :profile, :profile_hash, :policy, "
+            ":policy_hash, 'interactive', CAST(:capabilities AS json), :requirements_hash, "
+            "1, :eligible_at, :max_wait_at, 'leased', :runner, 'cn-east-1a', 1)"
+        ),
+        {
+            "run": scope["run"],
+            "tenant": scope["tenant"],
+            "space": scope["space"],
+            "project": scope["project"],
+            "pool": pool_id,
+            "profile": profile_id,
+            "profile_hash": _digest(f"profile:{suffix}"),
+            "policy": policy_id,
+            "policy_hash": _digest(f"policy:{suffix}"),
+            "capabilities": json.dumps(required_capabilities),
+            "requirements_hash": dispatch_requirements_hash(
+                tenant_id=scope["tenant"],
+                space_id=scope["space"],
+                project_id=scope["project"],
+                pool_id=pool_id,
+                execution_profile_id=profile_id,
+                execution_profile_hash=_digest(f"profile:{suffix}"),
+                egress_policy_id=policy_id,
+                egress_policy_hash=_digest(f"policy:{suffix}"),
+                queue_class="interactive",
+                required_capabilities=required_capabilities,
+                cost_units=1,
+                eligible_at=now,
+                max_wait_at=max_wait_at,
+            ),
+            "eligible_at": now,
+            "max_wait_at": max_wait_at,
+            "runner": runner_id,
         },
     )
     connection.execute(
@@ -474,6 +541,8 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
                 project_id=scope["project"],
                 task_id=scope["task"],
                 run_id=scope["run"],
+                execution_profile_id=uuid4(),
+                execution_profile_hash=_digest(f"bootstrap-profile:{scope['suffix']}"),
                 repository_id=scope["repository"],
                 group_id=scope["group"],
                 change_set_id=scope["change_set"],
@@ -695,6 +764,178 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
                 {"id": first["binding"]},
             )
 
+    engine.dispose()
+
+
+def test_real_postgresql_isolation_issue_and_redeem_use_project_bound_dispatch(
+    isolated_postgres_url: str,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
+    placement_id = uuid4()
+    pool_id = uuid4()
+    replacement_profile_id = uuid4()
+    scope = _scope_record(f"project-{uuid4().hex[:10]}")
+    now = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=1)
+    with engine.begin() as connection:
+        _migrate(connection, root, "head")
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_runtime_placements "
+                "(id, runtime_type, data_region, failure_domain, database_cluster_ref, "
+                "object_store_ref, kms_key_ref, official_schema_revision, capacity_class, "
+                "status) VALUES (:id, 'omnigent', 'cn-east-1', 'cn-east-1a', :db, :objects, "
+                ":kms, 'runtime-schema-v1', 'shared-medium', 'active')"
+            ),
+            {
+                "id": placement_id,
+                "db": f"db-{scope['suffix']}",
+                "objects": f"objects-{scope['suffix']}",
+                "kms": f"kms-{scope['suffix']}",
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_runner_pools "
+                "(id, placement_id, failure_domain, name, queue_class, capacity_slots, "
+                "reserved_slots, status, protocol_version, source_revision, schema_revision, "
+                "adapter_contract_version) VALUES "
+                "(:id, :placement, 'cn-east-1a', :name, 'interactive', 1, 0, 'active', 2, "
+                "'upstream', 'runtime-schema-v1', '0.2.0')"
+            ),
+            {"id": pool_id, "placement": placement_id, "name": f"pool-{scope['suffix']}"},
+        )
+        _seed_scope(
+            connection,
+            actor_id=scope["actor"],
+            tenant_id=scope["tenant"],
+            space_id=scope["space"],
+            project_id=scope["project"],
+            task_id=scope["task"],
+            run_id=scope["run"],
+            execution_profile_id=uuid4(),
+            execution_profile_hash=_digest(f"bootstrap-profile:{scope['suffix']}"),
+            repository_id=scope["repository"],
+            group_id=scope["group"],
+            change_set_id=scope["change_set"],
+            quota_id=scope["quota"],
+            suffix=str(scope["suffix"]),
+        )
+        _seed_isolation_scope(
+            connection,
+            scope=scope,
+            pool_id=pool_id,
+            placement_id=placement_id,
+            now=now,
+        )
+        connection.execute(
+            sa.text("UPDATE saas_execution_profiles SET status = 'retired' WHERE id = :bound"),
+            {"bound": scope["profile"]},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_execution_profiles "
+                "(id, tenant_id, space_id, project_id, egress_policy_id, created_by, name, "
+                "sandbox_backend, network_mode, root_read_only, run_as_uid, run_as_gid, "
+                "no_new_privileges, host_socket_access, syscall_profile_ref, cpu_millis, "
+                "memory_bytes, pids_limit, allowed_tools, approval_required_tools, denied_tools, "
+                "config_hash, status, version) SELECT :replacement, tenant_id, space_id, "
+                "project_id, egress_policy_id, created_by, name || '-replacement', "
+                "sandbox_backend, network_mode, root_read_only, run_as_uid, run_as_gid, "
+                "no_new_privileges, host_socket_access, syscall_profile_ref, cpu_millis, "
+                "memory_bytes, pids_limit, allowed_tools, approval_required_tools, denied_tools, "
+                ":replacement_hash, 'active', 1 FROM saas_execution_profiles WHERE id = :bound"
+            ),
+            {
+                "bound": scope["profile"],
+                "replacement": replacement_profile_id,
+                "replacement_hash": "c" * 64,
+            },
+        )
+        connection.execute(
+            sa.text("UPDATE saas_egress_policies SET status = 'retired' WHERE id = :bound"),
+            {"bound": scope["policy"]},
+        )
+
+    executor_factory = _role_factory(engine, "saas_executor")
+    with executor_factory.begin() as db:
+        _set_scope(db.connection(), tenant_id=scope["tenant"], space_id=scope["space"])
+        db.execute(sa.text("SELECT set_config('app.project_id', '', true)"))
+        assert (
+            db.scalar(
+                sa.text("SELECT id FROM saas_execution_profiles WHERE id = :profile FOR SHARE"),
+                {"profile": scope["profile"]},
+            )
+            is None
+        )
+        db.execute(
+            sa.text("SELECT set_config('app.project_id', :project, true)"),
+            {"project": str(scope["project"])},
+        )
+        assert (
+            db.scalar(
+                sa.text("SELECT id FROM saas_execution_profiles WHERE id = :profile FOR SHARE"),
+                {"profile": scope["profile"]},
+            )
+            == scope["profile"]
+        )
+        assert (
+            db.scalar(
+                sa.text("SELECT status FROM saas_execution_profiles WHERE id = :profile"),
+                {"profile": scope["profile"]},
+            )
+            == "retired"
+        )
+        assert (
+            db.scalar(
+                sa.text("SELECT status FROM saas_egress_policies WHERE id = :policy"),
+                {"policy": scope["policy"]},
+            )
+            == "retired"
+        )
+
+    scheduler = SchedulingControlPlane(executor_factory)
+    isolation = IsolationControlPlane(executor_factory, scheduler=scheduler)
+    materialization = WorktreeMaterializationGrant(
+        worktree_id=scope["worktree"],
+        change_set_id=scope["change_set"],
+        run_id=scope["run"],
+        runner_id=scope["runner"],
+        opaque_runtime_key=f"wt-{scope['suffix']}-{scope['worktree']}",
+        access_mode="writer",
+        lease_generation=1,
+        run_fence_token=1,
+        runner_connection_generation=1,
+        reserved_bytes=1_000_000,
+        repository_source_binding_key="repository-source",
+        base_revision="base-revision",
+        head_revision=None,
+        branch_ref="refs/heads/main",
+        recovery_artifact_ref=None,
+        environment_snapshot_ref=None,
+    )
+    issued = isolation.issue_launch_grant(
+        capability_token=f"capability:{scope['suffix']}",
+        runner_id=scope["runner"],
+        run_id=scope["run"],
+        worktree_grant=materialization,
+        now=now + timedelta(minutes=1),
+    )
+    trusted = isolation.redeem_launch_grant(
+        token=issued.token,
+        runner_id=scope["runner"],
+        run_id=scope["run"],
+        now=now + timedelta(minutes=1, seconds=1),
+    )
+    assert trusted.project_id == scope["project"]
+    assert trusted.run_id == scope["run"]
+    assert trusted.runner_id == scope["runner"]
+    assert trusted.contract.allow_private_destinations is False
+    assert len(trusted.secret_leases) == 1
     engine.dispose()
 
 

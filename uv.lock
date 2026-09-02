@@ -3238,6 +3238,8 @@ s3 = [
     { name = "botocore" },
 ]
 saas = [
+    { name = "boto3" },
+    { name = "botocore" },
     { name = "psycopg", extra = ["binary"] },
 ]
 slack = [
@@ -3313,8 +3315,10 @@ requires-dist = [
     { name = "blaxel", marker = "extra == 'blaxel'", specifier = ">=0.4.1,<0.5" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.30,<2" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.30,<2" },
+    { name = "boto3", marker = "extra == 'saas'", specifier = ">=1.30,<2" },
     { name = "botocore", marker = "extra == 'bedrock'", specifier = ">=1.30,<2" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.30,<2" },
+    { name = "botocore", marker = "extra == 'saas'", specifier = ">=1.30,<2" },
     { name = "boxlite", marker = "extra == 'boxlite'", specifier = ">=0.9.5,<1" },
     { name = "cachetools", specifier = ">=5.0,<7" },
     { name = "cel-python", specifier = ">=0.5" },

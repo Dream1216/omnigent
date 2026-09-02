@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: omnigent-saas-migration
+      namespace: omnigent
+    automountServiceAccountToken: false
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-saas-migration-release-replace-release12
+      namespace: omnigent
+    immutable: true
+    data:
+      OMNIGENT_SAAS_PRODUCT_REVISION: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_SOURCE_SHA: "0000000000000000000000000000000000000000"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-saas-service-role-bindings-replace-bindings12
+      namespace: omnigent
+    immutable: true
+    data:
+      service-role-bindings.json: |
+        {"bindings":[{"base_role":"saas_app","login":"replace_app_login","service":"app"},{"base_role":"saas_authenticator","login":"replace_authenticator_login","service":"authenticator"},{"base_role":"saas_dispatcher","login":"replace_dispatcher_login","service":"dispatcher"},{"base_role":"saas_executor","login":"replace_executor_login","service":"executor"},{"base_role":"saas_governance","login":"replace_governance_login","service":"governance"},{"base_role":"saas_preview_edge","login":"replace_preview_edge_login","service":"preview_edge"},{"base_role":"saas_preview_owner","login":"replace_preview_owner_login","service":"preview_owner"},{"base_role":"saas_public_api","login":"replace_public_api_login","service":"public_api"},{"base_role":"omnigent_runtime_app","login":"replace_runtime_login","service":"runtime"},{"base_role":"saas_secret_broker","login":"replace_secret_broker_login","service":"secret_broker"}],"schema_version":1}
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: omnigent-saas-postgresql-migration
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-postgresql-migration
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-postgresql-migration
+        spec:
+          serviceAccountName: omnigent-saas-migration
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-authority-files
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/principal/value /authority/principal-operator-url
+                  install -m 0400 /source/database/value /authority/database-owner-url
+                  install -m 0400 /source/official/value /authority/official-owner-url
+                  install -m 0400 /source/saas/value /authority/saas-owner-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /authority/postgresql-ca.crt
+                  install -m 0400 /source/bindings/service-role-bindings.json /authority/service-role-bindings.json
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: principal-source, mountPath: /source/principal, readOnly: true}
+                - {name: database-source, mountPath: /source/database, readOnly: true}
+                - {name: official-source, mountPath: /source/official, readOnly: true}
+                - {name: saas-source, mountPath: /source/saas, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: authority-files, mountPath: /authority}
+          containers:
+            - name: migrate
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.scripts.run_postgresql_migration"]
+              args: ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-migration-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_PRINCIPAL_OPERATOR_DATABASE_URL_FILE, value: /authority/principal-operator-url}
+                - {name: OMNIGENT_SAAS_DATABASE_OWNER_DATABASE_URL_FILE, value: /authority/database-owner-url}
+                - {name: OMNIGENT_SAAS_OFFICIAL_MIGRATION_DATABASE_URL_FILE, value: /authority/official-owner-url}
+                - {name: OMNIGENT_SAAS_CONTROL_PLANE_MIGRATION_DATABASE_URL_FILE, value: /authority/saas-owner-url}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /authority/service-role-bindings.json}
+              resources:
+                requests: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: authority-files, mountPath: /authority, readOnly: true}
+          volumes:
+            - name: principal-source
+              secret: {secretName: omnigent-saas-principal-operator, defaultMode: 0400}
+            - name: database-source
+              secret: {secretName: omnigent-saas-database-owner, defaultMode: 0400}
+            - name: official-source
+              secret: {secretName: omnigent-saas-official-owner, defaultMode: 0400}
+            - name: saas-source
+              secret: {secretName: omnigent-saas-control-plane-owner, defaultMode: 0400}
+            - name: postgresql-ca-source
+              secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}
+            - name: bindings-source
+              configMap:
+                name: omnigent-saas-service-role-bindings-replace-bindings12
+                defaultMode: 0444
+            - name: authority-files
+              emptyDir: {medium: Memory, sizeLimit: 64Ki}

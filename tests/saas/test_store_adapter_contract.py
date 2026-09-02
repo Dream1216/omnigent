@@ -60,6 +60,35 @@ def test_store_adapter_binds_and_restores_both_runtime_contexts() -> None:
         current_runtime_context()
 
 
+def test_store_adapter_bind_initializes_every_real_managed_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = sa.create_engine("sqlite://")
+    managed_session = make_managed_session_maker(engine)
+    initialized: list[sa.orm.Session] = []
+
+    monkeypatch.setattr(
+        OmnigentStoreAdapter,
+        "_initialize_official_session",
+        staticmethod(initialized.append),
+    )
+    adapter = OmnigentStoreAdapter("0.2.0")
+    runtime = _runtime()
+    try:
+        with adapter.bind(runtime):
+            with managed_session() as database:
+                assert database.scalar(sa.select(sa.literal(1))) == 1
+                assert current_workspace_id() == runtime.physical_workspace_id
+                assert current_runtime_context() is runtime
+
+        assert initialized == [database]
+        assert current_workspace_id() == 0
+        with pytest.raises(RuntimeError, match="runtime context is not bound"):
+            current_runtime_context()
+    finally:
+        engine.dispose()
+
+
 def test_store_adapter_rejects_unreviewed_contract_before_invocation() -> None:
     called = False
 

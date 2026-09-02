@@ -67,14 +67,16 @@ def _record() -> dict[str, object]:
     policy = _policy()
     components = policy["required_components"]
     network_controls = policy["required_network_controls"]
+    database_controls = policy["required_database_controls"]
     drills = policy["required_drills"]
     roles = policy["required_attestation_roles"]
     assert isinstance(components, dict)
     assert isinstance(network_controls, list)
+    assert isinstance(database_controls, list)
     assert isinstance(drills, list)
     assert isinstance(roles, list)
     record: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_id": "production-deployment-20260809",
         "evidence_kind": "production_deployment_drill",
         "started_at": "2026-08-09T08:00:00Z",
@@ -101,6 +103,7 @@ def _record() -> dict[str, object]:
         },
         "components": {name: _component(name) for name in components},
         "network_controls": dict.fromkeys(network_controls, True),
+        "database_controls": dict.fromkeys(database_controls, True),
         "drills": {
             name: {
                 "result": "passed",
@@ -146,6 +149,7 @@ def test_empty_deployment_evidence_is_structurally_valid_but_blocked() -> None:
         "qualified_record_count": 0,
         "required_component_count": 5,
         "required_network_control_count": 10,
+        "required_database_control_count": 4,
         "required_drill_count": 10,
         "violation_count": 0,
         "readiness_blocker_count": 1,
@@ -189,15 +193,18 @@ def test_replica_hardening_network_and_drill_failures_block_promotion() -> None:
     record = _record()
     components = record["components"]
     network = record["network_controls"]
+    database = record["database_controls"]
     drills = record["drills"]
     assert isinstance(components, dict)
     assert isinstance(components["runner"], dict)
     assert isinstance(network, dict)
+    assert isinstance(database, dict)
     assert isinstance(drills, dict)
     assert isinstance(drills["n_minus_one_rollback"], dict)
     components["runner"]["ready_replicas"] = 1
     components["runner"]["privileged"] = True
     network["metadata_endpoint_denied"] = False
+    database["runner_transition_rpc_or_trigger_only"] = False
     drills["n_minus_one_rollback"]["result"] = "failed"
     drills["n_minus_one_rollback"]["completed_at"] = "2026-08-09T08:25:01Z"
     _resign(record)
@@ -209,6 +216,7 @@ def test_replica_hardening_network_and_drill_failures_block_promotion() -> None:
     assert any("required ready replicas" in item for item in report["blockers"])
     assert any("forbidden host or privilege" in item for item in report["blockers"])
     assert any("containment controls failed" in item for item in report["blockers"])
+    assert any("Runner database controls failed" in item for item in report["blockers"])
     assert any("n_minus_one_rollback drill did not pass" in item for item in report["blockers"])
     assert any("rollback exceeded policy" in item for item in report["blockers"])
 

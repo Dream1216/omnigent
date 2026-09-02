@@ -153,7 +153,10 @@ def _preflight_n1_compat_role_isolated() -> None:
         sa.text(
             "SELECT count(*) FROM pg_auth_members AS membership "
             "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
-            "WHERE granted.rolname = :role"
+            "WHERE granted.rolname = :role "
+            "AND (NOT membership.admin_option "
+            "OR COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true) "
+            "OR COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true))"
         ),
         {"role": _N1_OUTBOX_COMPAT_ROLE},
     ).scalar_one()

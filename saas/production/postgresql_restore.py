@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from alembic import command
@@ -29,6 +29,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL, make_url
 
+from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
@@ -64,6 +65,8 @@ _SELECTED_HASH_TABLES = (
     "saas_quota_reservations",
     "saas_runner_pools",
     "saas_runner_registrations",
+    "saas_egress_policies",
+    "saas_execution_profiles",
     "saas_run_dispatches",
     "saas_capability_tokens",
     "saas_runner_certificates",
@@ -409,6 +412,10 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "runner_pool": "96000000-0000-4000-8000-000000000001",
         "runner_a": "97000000-0000-4000-8000-000000000001",
         "runner_b": "97000000-0000-4000-8000-000000000002",
+        "egress_policy_a": "97500000-0000-4000-8000-000000000001",
+        "egress_policy_b": "97500000-0000-4000-8000-000000000002",
+        "execution_profile_a": "97600000-0000-4000-8000-000000000001",
+        "execution_profile_b": "97600000-0000-4000-8000-000000000002",
         "task_a": "98000000-0000-4000-8000-000000000001",
         "task_b": "98000000-0000-4000-8000-000000000002",
         "run_a": "99000000-0000-4000-8000-000000000001",
@@ -776,6 +783,49 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_egress_policies "
+                    "(id, tenant_id, space_id, project_id, created_by, name, rules, "
+                    "rules_hash, allow_private_destinations, status, version) VALUES "
+                    "(:egress_policy_a, :tenant_a, :space_a, :project_a, :actor_a, "
+                    "'recovery-default-deny-a', CAST('[]' AS jsonb), :egress_hash_a, "
+                    "false, 'active', 1), "
+                    "(:egress_policy_b, :tenant_b, :space_b, :project_b, :actor_b, "
+                    "'recovery-default-deny-b', CAST('[]' AS jsonb), :egress_hash_b, "
+                    "false, 'active', 1)"
+                ),
+                {
+                    **identifiers,
+                    "egress_hash_a": "a" * 64,
+                    "egress_hash_b": "b" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_execution_profiles "
+                    "(id, tenant_id, space_id, project_id, egress_policy_id, created_by, "
+                    "name, sandbox_backend, network_mode, root_read_only, run_as_uid, "
+                    "run_as_gid, no_new_privileges, host_socket_access, syscall_profile_ref, "
+                    "cpu_millis, memory_bytes, pids_limit, allowed_tools, "
+                    "approval_required_tools, denied_tools, config_hash, status, version) VALUES "
+                    "(:execution_profile_a, :tenant_a, :space_a, :project_a, "
+                    ":egress_policy_a, :actor_a, 'recovery-managed-a', 'linux_bwrap', "
+                    "'proxy_only', true, 65532, 65532, true, false, 'oci-default-v1', "
+                    "1000, 536870912, 128, CAST('[\"shell\"]' AS jsonb), "
+                    "CAST('[]' AS jsonb), CAST('[]' AS jsonb), :profile_hash_a, 'active', 1), "
+                    "(:execution_profile_b, :tenant_b, :space_b, :project_b, "
+                    ":egress_policy_b, :actor_b, 'recovery-managed-b', 'linux_bwrap', "
+                    "'proxy_only', true, 65532, 65532, true, false, 'oci-default-v1', "
+                    "1000, 536870912, 128, CAST('[\"shell\"]' AS jsonb), "
+                    "CAST('[]' AS jsonb), CAST('[]' AS jsonb), :profile_hash_b, 'active', 1)"
+                ),
+                {
+                    **identifiers,
+                    "profile_hash_a": "c" * 64,
+                    "profile_hash_b": "d" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_runtime_resource_bindings "
                     "(id, runtime_partition_id, tenant_id, space_id, project_id, "
                     "resource_type, runtime_resource_id, saas_resource_id, "
@@ -889,26 +939,57 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "cap_hash": "9" * 64,
                 },
             )
+            dispatch_eligible_at = datetime.now(UTC) - timedelta(minutes=1)
+            dispatch_max_wait_at = dispatch_eligible_at + timedelta(hours=1)
+            dispatch_hashes = {
+                suffix: dispatch_requirements_hash(
+                    tenant_id=UUID(str(identifiers[f"tenant_{suffix}"])),
+                    space_id=UUID(str(identifiers[f"space_{suffix}"])),
+                    project_id=UUID(str(identifiers[f"project_{suffix}"])),
+                    pool_id=UUID(str(identifiers["runner_pool"])),
+                    execution_profile_id=UUID(str(identifiers[f"execution_profile_{suffix}"])),
+                    execution_profile_hash=("c" if suffix == "a" else "d") * 64,
+                    egress_policy_id=UUID(str(identifiers[f"egress_policy_{suffix}"])),
+                    egress_policy_hash=("a" if suffix == "a" else "b") * 64,
+                    queue_class="interactive",
+                    required_capabilities=["shell"],
+                    cost_units=1,
+                    eligible_at=dispatch_eligible_at,
+                    max_wait_at=dispatch_max_wait_at,
+                )
+                for suffix in ("a", "b")
+            }
             connection.execute(
                 sa.text(
                     "INSERT INTO saas_run_dispatches "
-                    "(run_id, tenant_id, space_id, project_id, pool_id, queue_class, "
+                    "(run_id, tenant_id, space_id, project_id, pool_id, "
+                    "execution_profile_id, execution_profile_hash, "
+                    "egress_policy_id, egress_policy_hash, queue_class, "
                     "required_capabilities, requirements_hash, cost_units, eligible_at, "
                     "max_wait_at, status, selected_runner_id, selected_failure_domain, "
                     "dispatch_generation) VALUES "
-                    "(:run_a, :tenant_a, :space_a, :project_a, :runner_pool, 'interactive', "
-                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
-                    "'1 minute', now() + interval '1 hour', 'leased', :runner_a, "
+                    "(:run_a, :tenant_a, :space_a, :project_a, :runner_pool, "
+                    ":execution_profile_a, :profile_hash_a, :egress_policy_a, :egress_hash_a, "
+                    "'interactive', CAST(:capabilities AS jsonb), :requirements_hash_a, 1, "
+                    ":eligible_at, :max_wait_at, 'leased', :runner_a, "
                     "'region-a-1', 1), "
-                    "(:run_b, :tenant_b, :space_b, :project_b, :runner_pool, 'interactive', "
-                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
-                    "'1 minute', now() + interval '1 hour', 'leased', :runner_b, "
+                    "(:run_b, :tenant_b, :space_b, :project_b, :runner_pool, "
+                    ":execution_profile_b, :profile_hash_b, :egress_policy_b, :egress_hash_b, "
+                    "'interactive', CAST(:capabilities AS jsonb), :requirements_hash_b, 1, "
+                    ":eligible_at, :max_wait_at, 'leased', :runner_b, "
                     "'region-a-1', 1)"
                 ),
                 {
                     **identifiers,
                     "capabilities": json.dumps(["shell"]),
-                    "requirements_hash": "a" * 64,
+                    "profile_hash_a": "c" * 64,
+                    "profile_hash_b": "d" * 64,
+                    "egress_hash_a": "a" * 64,
+                    "egress_hash_b": "b" * 64,
+                    "requirements_hash_a": dispatch_hashes["a"],
+                    "requirements_hash_b": dispatch_hashes["b"],
+                    "eligible_at": dispatch_eligible_at,
+                    "max_wait_at": dispatch_max_wait_at,
                 },
             )
             connection.execute(

@@ -17,9 +17,59 @@ from saas.control_plane import (
     IsolationControlPlaneError,
     PreviewRouteGrant,
 )
+from saas.control_plane.preview_sessions import PreviewSessionError
 
 PREVIEW_COOKIE_NAME = "__Host-omnigent_preview"
 _EXCHANGE_PATH = "/__omnigent/authorize"
+_BOOTSTRAP_PATH = "/__omnigent/bootstrap"
+_BOOTSTRAP_SCRIPT_PATH = "/__omnigent/bootstrap.js"
+_INTERNAL_PATHS = frozenset({_EXCHANGE_PATH, _BOOTSTRAP_PATH, _BOOTSTRAP_SCRIPT_PATH})
+_BOOTSTRAP_CSP = (
+    "default-src 'none'; script-src 'self'; form-action 'self'; "
+    "connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'"
+)
+_BOOTSTRAP_HEADERS = {
+    "Cache-Control": "no-store, max-age=0",
+    "Pragma": "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": _BOOTSTRAP_CSP,
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
+_BOOTSTRAP_HTML = (
+    b"<!doctype html><html><head><meta charset=utf-8>"
+    b"<meta name=referrer content=no-referrer><title>Opening Preview</title>"
+    b"<script src=/__omnigent/bootstrap.js defer></script></head>"
+    b"<body><p id=status>Opening Preview...</p></body></html>"
+)
+_BOOTSTRAP_SCRIPT = b"""(() => {
+  'use strict';
+  const fragment = window.location.hash;
+  window.history.replaceState(null, '', window.location.pathname);
+  const fail = () => {
+    document.getElementById('status').textContent = 'Preview authorization failed.';
+  };
+  if (!fragment.startsWith('#token=')) { fail(); return; }
+  let token;
+  try { token = decodeURIComponent(fragment.slice(7)); }
+  catch (_error) { fail(); return; }
+  if (!/^[A-Za-z0-9_-]{32,512}$/.test(token)) { fail(); return; }
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = '/__omnigent/authorize';
+  form.autocomplete = 'off';
+  const field = document.createElement('input');
+  field.type = 'hidden';
+  field.name = 'token';
+  field.value = token;
+  form.appendChild(field);
+  document.body.appendChild(form);
+  form.submit();
+})();
+"""
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _HOP_BY_HOP = frozenset(
     {
@@ -49,6 +99,35 @@ class PreviewAuthority(Protocol):
         token: str,
         incoming_headers: dict[str, str],
     ) -> PreviewRouteGrant: ...
+
+
+class PreviewBrowserSessionGrantLike(Protocol):
+    @property
+    def route(self) -> PreviewRouteGrant: ...
+
+    @property
+    def session_token(self) -> str | None: ...
+
+
+class PreviewBrowserSessionAuthority(Protocol):
+    """One-use exchange plus independent rotating browser-session authority."""
+
+    def exchange(
+        self,
+        *,
+        host: str,
+        exchange_token: str,
+        now: datetime | None = None,
+    ) -> PreviewBrowserSessionGrantLike: ...
+
+    def authorize_and_rotate(
+        self,
+        *,
+        host: str,
+        session_token: str,
+        incoming_headers: dict[str, str],
+        now: datetime | None = None,
+    ) -> PreviewBrowserSessionGrantLike: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,5 +436,187 @@ def create_preview_gateway_app(
             status_code=upstream.status_code,
             headers=headers,
         )
+
+    return app
+
+
+def _set_session_cookie(response: Response, grant: PreviewBrowserSessionGrantLike) -> None:
+    token = grant.session_token
+    if token is None:
+        return
+    maximum_age = max(
+        1,
+        int((grant.route.expires_at - datetime.now(timezone.utc)).total_seconds()),
+    )
+    response.set_cookie(
+        PREVIEW_COOKIE_NAME,
+        token,
+        max_age=maximum_age,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+
+
+def create_preview_session_gateway_app(
+    *,
+    authority: PreviewBrowserSessionAuthority,
+    tunnel: PreviewTunnel,
+    maximum_request_bytes: int = 1_048_576,
+    maximum_response_bytes: int = 10_485_760,
+) -> FastAPI:
+    """Create the production P0S9 gateway without placing the URL bearer in a cookie."""
+
+    if maximum_request_bytes <= 0 or maximum_response_bytes <= 0:
+        raise ValueError("Preview gateway byte limits must be positive")
+    app = FastAPI(title="Omnigent Preview Gateway", docs_url=None, redoc_url=None)
+
+    def bootstrap_request(request: Request) -> Response | None:
+        try:
+            if request.url.query or request.cookies or request.headers.get("authorization"):
+                raise PreviewSessionError("preview_bootstrap_invalid")
+            _host(request)
+        except (IsolationControlPlaneError, PreviewSessionError) as error:
+            return _error(403, error.code, str(error))
+        return None
+
+    @app.get(_BOOTSTRAP_PATH, include_in_schema=False)
+    async def bootstrap(request: Request) -> Response:
+        denied = bootstrap_request(request)
+        if denied is not None:
+            return denied
+        return Response(
+            content=_BOOTSTRAP_HTML,
+            media_type="text/html",
+            headers=_BOOTSTRAP_HEADERS,
+        )
+
+    @app.get(_BOOTSTRAP_SCRIPT_PATH, include_in_schema=False)
+    async def bootstrap_script(request: Request) -> Response:
+        denied = bootstrap_request(request)
+        if denied is not None:
+            return denied
+        return Response(
+            content=_BOOTSTRAP_SCRIPT,
+            media_type="text/javascript",
+            headers=_BOOTSTRAP_HEADERS,
+        )
+
+    @app.post(_EXCHANGE_PATH, include_in_schema=False)
+    async def exchange(request: Request) -> Response:
+        try:
+            if request.cookies:
+                raise PreviewSessionError("preview_ambient_cookie_denied")
+            body = await _body(request, maximum=4096)
+            exchange_token = _exchange_token(request, body)
+            if not exchange_token:
+                raise PreviewSessionError("preview_exchange_required")
+            grant = await run_in_threadpool(
+                authority.exchange,
+                host=_host(request),
+                exchange_token=exchange_token,
+            )
+            if grant.session_token is None or grant.session_token == exchange_token:
+                raise PreviewSessionError("preview_session_invalid")
+        except (IsolationControlPlaneError, PreviewSessionError) as error:
+            return _error(403, error.code, str(error))
+        response = Response(
+            status_code=303,
+            headers={
+                "Location": "/",
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
+        _set_session_cookie(response, grant)
+        return response
+
+    @app.api_route(
+        "/{preview_path:path}",
+        methods=sorted(_METHODS),
+        include_in_schema=False,
+    )
+    async def proxy(preview_path: str, request: Request) -> Response:
+        del preview_path
+        if request.url.path in _INTERNAL_PATHS:
+            return _error(405, "preview_method_denied", "Preview internal method is denied")
+        session_token = request.cookies.get(PREVIEW_COOKIE_NAME, "")
+        if not session_token:
+            return _error(401, "preview_session_required", "Preview authorization is required")
+        if any(name != PREVIEW_COOKIE_NAME for name in request.cookies):
+            return _error(403, "preview_ambient_cookie_denied", "Ambient cookies are not accepted")
+        if request.headers.get("authorization"):
+            return _error(
+                403,
+                "preview_ambient_authorization_denied",
+                "Ambient authorization is not accepted",
+            )
+        try:
+            host = _host(request)
+            path, query = _path(request)
+            incoming_headers = _request_headers(request)
+            body = await _body(request, maximum=maximum_request_bytes)
+            grant = await run_in_threadpool(
+                authority.authorize_and_rotate,
+                host=host,
+                session_token=session_token,
+                incoming_headers=incoming_headers,
+            )
+        except (IsolationControlPlaneError, PreviewSessionError) as error:
+            return _error(403, error.code, str(error))
+
+        route = grant.route
+        try:
+            upstream = await tunnel.forward(
+                PreviewTunnelRequest(
+                    route=route,
+                    method=request.method,
+                    path=path,
+                    query=query,
+                    headers=route.upstream_request_headers,
+                    body=body,
+                )
+            )
+            if not 200 <= upstream.status_code <= 599:
+                raise ValueError("Preview tunnel returned an invalid status")
+            if isinstance(upstream.body, bytes) and len(upstream.body) > maximum_response_bytes:
+                raise ValueError("Preview tunnel response exceeded the byte limit")
+            content_length = next(
+                (
+                    value
+                    for key, value in upstream.headers.items()
+                    if key.lower() == "content-length"
+                ),
+                None,
+            )
+            if content_length is not None and (
+                not content_length.isdigit() or int(content_length) > maximum_response_bytes
+            ):
+                raise ValueError("Preview tunnel response exceeded the byte limit")
+        except Exception:  # noqa: BLE001 - tunnel details never cross the isolated origin.
+            response = _error(502, "preview_tunnel_unavailable", "Preview tunnel is unavailable")
+            _set_session_cookie(response, grant)
+            return response
+
+        headers = _response_headers(upstream, route)
+        if request.method == "HEAD":
+            try:
+                await _close_response_body(upstream.body)
+            except Exception:  # noqa: BLE001 - collapse transport details at the gateway.
+                response = _error(
+                    502, "preview_tunnel_unavailable", "Preview tunnel is unavailable"
+                )
+                _set_session_cookie(response, grant)
+                return response
+            response = Response(content=b"", status_code=upstream.status_code, headers=headers)
+        else:
+            response = StreamingResponse(
+                _bounded_response_body(upstream.body, maximum=maximum_response_bytes),
+                status_code=upstream.status_code,
+                headers=headers,
+            )
+        _set_session_cookie(response, grant)
+        return response
 
     return app

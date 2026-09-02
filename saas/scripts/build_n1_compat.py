@@ -139,6 +139,12 @@ def _verify_contract(root: Path) -> None:
         or "forbidden_column_acl" not in admission
         or "forbidden_relation_acl" not in admission
         or "direct_catalog_authority" not in admission
+        or "database_acl_facts" not in admission
+        or "database_ownership" not in admission
+        or "public_database_authority" not in admission
+        or "grantor.oid = database.datdba" not in admission
+        or "acldefault('d', database.datdba)" not in admission
+        or '[(str(identity[2]), _COMPAT_ROLE, "CONNECT", False, True, True)]' not in admission
         or "non_system_schema_ownership" not in admission
         or "executable_security_definers" not in admission
         or "effective_database_temp" not in admission

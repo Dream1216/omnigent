@@ -10,11 +10,11 @@ import re
 import stat
 import threading
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -110,6 +110,10 @@ class RunnerTunnelPlacementResolver(Protocol):
         preview_token_hash: str,
         now: datetime | None = None,
     ) -> RunnerTunnelPlacement: ...
+
+
+class PreviewGrantPlacementResolver(Protocol):
+    def resolve_preview_grant(self, route: PreviewRouteGrant) -> RunnerTunnelPlacement: ...
 
 
 class PreviewReplicaRelay(Protocol):
@@ -373,7 +377,7 @@ class PlacementRoutedPreviewTunnel:
         self,
         *,
         gateway_instance_id: str,
-        placements: RunnerTunnelPlacementResolver,
+        placements: RunnerTunnelPlacementResolver | PreviewGrantPlacementResolver,
         local_tunnel: OfficialRunnerPreviewTunnel,
         relay: PreviewReplicaRelay | None,
     ) -> None:
@@ -401,26 +405,74 @@ class PlacementRoutedPreviewTunnel:
         placement: RunnerTunnelPlacement,
         request: PreviewTunnelRequest,
     ) -> PreviewTunnelResponse:
-        """Re-authorize ownership on the receiver before touching its local session."""
+        """Re-authorize the full Preview grant on the receiving Owner.
+
+        Production Owners use ``PreviewSessionAuthority`` here.  That narrow
+        database authority rebuilds the route from the presented session hash
+        and canonical host, compares every durable grant field, and returns the
+        current Placement.  A relay peer therefore cannot turn an otherwise
+        valid Placement into authority for another Preview on the same Runner.
+        """
 
         route = request.route
         try:
-            await asyncio.to_thread(
-                self._placements.require_route_owner,
-                placement=placement,
-                runner_id=route.runner_id,
-                runner_connection_generation=route.runner_connection_generation,
-                preview_token_hash=route.preview_token_hash,
-            )
+            resolve_grant = getattr(self._placements, "resolve_preview_grant", None)
+            if callable(resolve_grant):
+                grant_resolver = cast(
+                    Callable[[PreviewRouteGrant], RunnerTunnelPlacement],
+                    resolve_grant,
+                )
+                current = await asyncio.to_thread(grant_resolver, route)
+                if self._stable_placement(current) != self._stable_placement(placement):
+                    raise RunnerTunnelPlacementError(
+                        "runner_tunnel_route_owner_changed",
+                        "Runner tunnel route owner changed",
+                    )
+            else:
+                # Kept only for the pre-P0S9 in-process compatibility adapter.
+                # Production Preview composition always supplies the full grant
+                # resolver above.
+                require_owner = getattr(self._placements, "require_route_owner", None)
+                if not callable(require_owner):
+                    raise RunnerTunnelPlacementError(
+                        "runner_tunnel_route_owner_unavailable",
+                        "Runner tunnel route owner is unavailable",
+                    )
+                await asyncio.to_thread(
+                    require_owner,
+                    placement=placement,
+                    runner_id=route.runner_id,
+                    runner_connection_generation=route.runner_connection_generation,
+                    preview_token_hash=route.preview_token_hash,
+                )
         except RunnerTunnelPlacementError as exc:
             raise PreviewTunnelAdapterError(
                 "preview_runner_placement_stale", "Runner tunnel placement is stale"
             ) from exc
         return await self._local_tunnel.forward(request)
 
+    @staticmethod
+    def _stable_placement(placement: RunnerTunnelPlacement) -> tuple[object, ...]:
+        return (
+            placement.placement_id,
+            placement.runner_id,
+            placement.runner_connection_generation,
+            placement.routing_generation,
+            placement.gateway_instance_id,
+            placement.relay_subject,
+        )
+
     def _resolve(self, route: PreviewRouteGrant) -> RunnerTunnelPlacement:
         try:
-            return self._placements.resolve_preview_route(
+            resolve_grant = getattr(self._placements, "resolve_preview_grant", None)
+            if callable(resolve_grant):
+                grant_resolver = cast(
+                    Callable[[PreviewRouteGrant], RunnerTunnelPlacement],
+                    resolve_grant,
+                )
+                return grant_resolver(route)
+            legacy_resolver = cast(RunnerTunnelPlacementResolver, self._placements)
+            return legacy_resolver.resolve_preview_route(
                 runner_id=route.runner_id,
                 runner_connection_generation=route.runner_connection_generation,
                 preview_token_hash=route.preview_token_hash,
@@ -841,6 +893,7 @@ __all__ = [
     "LocalRunnerTunnelBindings",
     "OfficialRunnerPreviewTunnel",
     "PlacementRoutedPreviewTunnel",
+    "PreviewGrantPlacementResolver",
     "PreviewReplicaRelay",
     "PreviewRunnerASGI",
     "PreviewTargetBinding",

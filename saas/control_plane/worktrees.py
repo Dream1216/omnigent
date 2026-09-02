@@ -9,6 +9,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from typing import NoReturn
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -38,6 +39,7 @@ from saas.control_plane.worktree_models import (
 )
 
 _OPAQUE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+_RUNNER_AGENT_LOGIN = re.compile(r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$")
 _RUN_WORKTREE_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
 )
@@ -123,6 +125,7 @@ class WorktreeMutation:
     status: str
     lease_generation: int
     event_sequence: int
+    lease_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +174,12 @@ class WorktreeControlPlane:
         self._session_factory = session_factory
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
         self._scheduler = scheduler or SchedulingControlPlane(session_factory)
+        bind = session_factory.kw.get("bind")
+        self._runner_rpc = bool(
+            bind is not None
+            and bind.dialect.name == "postgresql"
+            and _RUNNER_AGENT_LOGIN.fullmatch(bind.url.username or "")
+        )
 
     def register_repository(
         self,
@@ -387,6 +396,18 @@ class WorktreeControlPlane:
             )
         trace = _text(trace_id, field="trace_id", maximum=128)
         action = "worktree.write" if access_mode == "writer" else "worktree.read"
+        if self._runner_rpc:
+            return self._allocate_postgresql_runner(
+                capability_token=capability_token,
+                runner_id=runner_id,
+                run_id=run_id,
+                change_set_id=change_set_id,
+                access_mode=access_mode,
+                reserved_bytes=reserved_bytes,
+                lease_duration=lease_duration,
+                trace_id=trace,
+                rebuild_from_id=rebuild_from_id,
+            )
         try:
             capability = self._scheduler.verify_capability(
                 capability_token=capability_token,
@@ -409,34 +430,19 @@ class WorktreeControlPlane:
                     tenant_id=capability.tenant_id,
                     space_id=capability.space_id,
                 )
-                change_set = db.scalar(
-                    sa.select(ChangeSetRecord)
-                    .where(ChangeSetRecord.id == change_set_id)
+                # Match authenticated scheduler mutations and every existing
+                # Worktree mutation: Runner -> Capability -> Run -> ChangeSet
+                # -> Worktree -> Quota.  In particular, never retain the old
+                # allocation edge Run -> Runner while heartbeats use
+                # Runner -> Run.
+                runner = db.scalar(
+                    sa.select(RunnerRegistrationRecord)
+                    .where(RunnerRegistrationRecord.id == runner_id)
                     .with_for_update()
                 )
-                if (
-                    change_set is None
-                    or change_set.tenant_id != capability.tenant_id
-                    or change_set.space_id != capability.space_id
-                    or change_set.project_id != capability.project_id
-                    or change_set.status not in {"open", "checkpointed"}
-                ):
+                if runner is None or runner.status not in {"online", "draining"}:
                     raise WorktreeControlPlaneError(
-                        "changeset_unavailable", "ChangeSet is unavailable for allocation"
-                    )
-                run = db.scalar(
-                    sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update()
-                )
-                if (
-                    run is None
-                    or run.tenant_id != change_set.tenant_id
-                    or run.space_id != change_set.space_id
-                    or run.project_id != change_set.project_id
-                    or run.status not in _RUN_WORKTREE_STATUSES
-                    or run.fence_token != capability.fence_token
-                ):
-                    raise WorktreeControlPlaneError(
-                        "worktree_run_stale", "Run is not an active ChangeSet lease authority"
+                        "worktree_runner_unavailable", "Runner is unavailable"
                     )
                 capability_record = db.scalar(
                     sa.select(CapabilityTokenRecord)
@@ -451,11 +457,10 @@ class WorktreeControlPlane:
                     )
                     or capability_record.revoked_at is not None
                     or _aware(capability_record.expires_at) <= allocated_at
-                    or capability_record.run_id != run.id
+                    or capability_record.run_id != run_id
                     or capability_record.runner_id != runner_id
-                    or capability_record.fence_token != run.fence_token
                     or action not in capability_record.allowed_actions
-                    or capability_record.resource_scope.get("change_set_id") != str(change_set.id)
+                    or capability_record.resource_scope.get("change_set_id") != str(change_set_id)
                     or dispatch is None
                     or dispatch.status != "leased"
                     or dispatch.selected_runner_id != runner_id
@@ -465,19 +470,64 @@ class WorktreeControlPlane:
                         "worktree_capability_stale",
                         "Scheduling capability changed before Worktree allocation",
                     )
-                runner = db.scalar(
-                    sa.select(RunnerRegistrationRecord)
-                    .where(RunnerRegistrationRecord.id == runner_id)
-                    .with_for_update()
-                )
-                if runner is None or runner.status not in {"online", "draining"}:
-                    raise WorktreeControlPlaneError(
-                        "worktree_runner_unavailable", "Runner is unavailable"
-                    )
                 if runner.connection_generation != capability_record.runner_connection_generation:
                     raise WorktreeControlPlaneError(
                         "worktree_runner_stale", "Runner incarnation changed before allocation"
                     )
+                run = db.scalar(
+                    sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update()
+                )
+                if (
+                    run is None
+                    or run.tenant_id != capability.tenant_id
+                    or run.space_id != capability.space_id
+                    or run.project_id != capability.project_id
+                    or run.status not in _RUN_WORKTREE_STATUSES
+                    or run.fence_token != capability.fence_token
+                    or capability_record.fence_token != run.fence_token
+                ):
+                    raise WorktreeControlPlaneError(
+                        "worktree_run_stale", "Run is not an active ChangeSet lease authority"
+                    )
+                change_set = db.scalar(
+                    sa.select(ChangeSetRecord)
+                    .where(ChangeSetRecord.id == change_set_id)
+                    .with_for_update()
+                )
+                if (
+                    change_set is None
+                    or change_set.tenant_id != run.tenant_id
+                    or change_set.space_id != run.space_id
+                    or change_set.project_id != run.project_id
+                    or change_set.status not in {"open", "checkpointed", "committed"}
+                    or (change_set.status == "committed" and access_mode != "readonly")
+                    or (
+                        change_set.status == "committed"
+                        and (
+                            change_set.head_revision is None
+                            or change_set.recovery_artifact_ref is None
+                        )
+                    )
+                ):
+                    raise WorktreeControlPlaneError(
+                        "changeset_unavailable", "ChangeSet is unavailable for allocation"
+                    )
+                source: WorktreeInstanceRecord | None = None
+                if rebuild_from_id is not None:
+                    source = db.scalar(
+                        sa.select(WorktreeInstanceRecord)
+                        .where(WorktreeInstanceRecord.id == rebuild_from_id)
+                        .with_for_update()
+                    )
+                    if (
+                        source is None
+                        or source.change_set_id != change_set_id
+                        or source.status != "rebuild_pending"
+                        or source.recovery_artifact_ref is None
+                    ):
+                        raise WorktreeControlPlaneError(
+                            "worktree_rebuild_source_invalid", "Rebuild source is unavailable"
+                        )
                 quota = db.scalar(
                     sa.select(WorktreeQuotaRecord)
                     .where(
@@ -541,26 +591,12 @@ class WorktreeControlPlane:
                         )
                 recovery_ref = (
                     change_set.recovery_artifact_ref
-                    if change_set.status == "checkpointed"
+                    if change_set.status in {"checkpointed", "committed"}
                     else None
                 )
                 environment_ref: str | None = None
                 event_type = "worktree.created"
-                if rebuild_from_id is not None:
-                    source = db.scalar(
-                        sa.select(WorktreeInstanceRecord)
-                        .where(WorktreeInstanceRecord.id == rebuild_from_id)
-                        .with_for_update()
-                    )
-                    if (
-                        source is None
-                        or source.change_set_id != change_set_id
-                        or source.status != "rebuild_pending"
-                        or source.recovery_artifact_ref is None
-                    ):
-                        raise WorktreeControlPlaneError(
-                            "worktree_rebuild_source_invalid", "Rebuild source is unavailable"
-                        )
+                if source is not None:
                     recovery_ref = source.recovery_artifact_ref
                     environment_ref = source.environment_snapshot_ref
                     source.status = "released"
@@ -653,6 +689,17 @@ class WorktreeControlPlane:
         """Acknowledge that the adapter is creating the checkout for this exact fence."""
 
         changed_at = now or _utcnow()
+        trace = _text(trace_id, field="trace_id", maximum=128)
+        if self._runner_rpc:
+            return self._transition_postgresql_runner(
+                operation="begin_materialization",
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                trace_id=trace,
+            )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
                 db,
@@ -675,7 +722,7 @@ class WorktreeControlPlane:
                 record,
                 event_type="worktree.materializing",
                 payload={"lease_generation": record.lease_generation},
-                trace_id=_text(trace_id, field="trace_id", maximum=128),
+                trace_id=trace,
             )
             return self._mutation(record)
 
@@ -696,6 +743,18 @@ class WorktreeControlPlane:
         changed_at = now or _utcnow()
         if actual_bytes < 0:
             raise WorktreeControlPlaneError("worktree_size_invalid", "Worktree size is invalid")
+        trace = _text(trace_id, field="trace_id", maximum=128)
+        if self._runner_rpc:
+            return self._transition_postgresql_runner(
+                operation="acknowledge_ready",
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                actual_bytes=actual_bytes,
+                trace_id=trace,
+            )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
                 db,
@@ -724,7 +783,7 @@ class WorktreeControlPlane:
                 record,
                 event_type="worktree.mounted",
                 payload={"actual_bytes": actual_bytes},
-                trace_id=_text(trace_id, field="trace_id", maximum=128),
+                trace_id=trace,
             )
             return self._mutation(record)
 
@@ -741,6 +800,14 @@ class WorktreeControlPlane:
         """Resolve credential-free Git inputs only after materialization is fenced."""
 
         resolved_at = now or _utcnow()
+        if self._runner_rpc:
+            return self._materialization_grant_postgresql_runner(
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+            )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
                 db,
@@ -805,13 +872,32 @@ class WorktreeControlPlane:
         lease_token: str,
         actual_bytes: int,
         dirty: bool,
+        lease_duration: timedelta | None = None,
         now: datetime | None = None,
     ) -> WorktreeMutation:
-        """Refresh liveness and usage for a ready checkout; readonly instances stay clean."""
+        """Refresh a fenced checkout, optionally renewing it within durable bounds."""
 
         heartbeat_at = now or _utcnow()
+        _validate_time(heartbeat_at)
         if actual_bytes < 0:
             raise WorktreeControlPlaneError("worktree_size_invalid", "Worktree size is invalid")
+        if lease_duration is not None and lease_duration <= timedelta(0):
+            raise WorktreeControlPlaneError(
+                "worktree_lease_duration_invalid", "Worktree lease duration must be positive"
+            )
+        if self._runner_rpc:
+            return self._transition_postgresql_runner(
+                operation="heartbeat",
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                actual_bytes=actual_bytes,
+                dirty=dirty,
+                lease_duration=lease_duration,
+                trace_id="runner-heartbeat",
+            )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
                 db,
@@ -822,8 +908,10 @@ class WorktreeControlPlane:
                 lease_token=lease_token,
                 now=heartbeat_at,
             )
-            if record.status != "ready":
-                raise WorktreeControlPlaneError("worktree_not_ready", "Worktree is not ready")
+            if record.status not in ACTIVE_WORKTREE_STATUSES:
+                raise WorktreeControlPlaneError(
+                    "worktree_not_active", "Worktree is not heartbeat-eligible"
+                )
             if dirty and record.access_mode != "writer":
                 raise WorktreeControlPlaneError(
                     "worktree_readonly_write_denied", "Readonly Worktree cannot become dirty"
@@ -832,6 +920,51 @@ class WorktreeControlPlane:
                 raise WorktreeControlPlaneError(
                     "worktree_reservation_exceeded", "Worktree exceeds its storage reservation"
                 )
+            if lease_duration is not None:
+                current_expires_at = record.lease_expires_at
+                if current_expires_at is None:
+                    raise WorktreeControlPlaneError(
+                        "worktree_lease_stale", "Worktree lease is stale"
+                    )
+                # _require_active_lease already locked this Run before the
+                # ChangeSet and Worktree.  Reuse that transaction identity;
+                # never introduce a misleading Quota -> Run lock edge.
+                run = db.get(RunRecord, record.run_id)
+                quota = db.scalar(
+                    sa.select(WorktreeQuotaRecord)
+                    .where(
+                        WorktreeQuotaRecord.tenant_id == record.tenant_id,
+                        WorktreeQuotaRecord.space_id == record.space_id,
+                        WorktreeQuotaRecord.project_id == record.project_id,
+                    )
+                    .with_for_update()
+                )
+                if quota is None or lease_duration > timedelta(seconds=quota.max_lease_seconds):
+                    raise WorktreeControlPlaneError(
+                        "worktree_lease_too_long", "Worktree lease exceeds Project policy"
+                    )
+                if (
+                    run is None
+                    or run.status not in _RUN_WORKTREE_STATUSES
+                    or run.lease_expires_at is None
+                    or _aware(run.lease_expires_at) <= heartbeat_at
+                ):
+                    raise WorktreeControlPlaneError(
+                        "worktree_authority_stale", "Run lease is not active"
+                    )
+                renewed_until = min(
+                    max(
+                        _aware(current_expires_at),
+                        heartbeat_at + lease_duration,
+                    ),
+                    _aware(run.lease_expires_at),
+                    _aware(record.maximum_lifetime_at),
+                )
+                if renewed_until <= heartbeat_at:
+                    raise WorktreeControlPlaneError(
+                        "worktree_lease_stale", "Worktree lease cannot be renewed"
+                    )
+                record.lease_expires_at = renewed_until
             record.actual_bytes = actual_bytes
             record.dirty = dirty
             record.heartbeat_at = heartbeat_at
@@ -858,6 +991,21 @@ class WorktreeControlPlane:
         head = _text(head_revision, field="head_revision", maximum=128)
         recovery = _opaque_ref(recovery_artifact_ref, field="recovery_artifact_ref")
         environment = _opaque_ref(environment_snapshot_ref, field="environment_snapshot_ref")
+        trace = _text(trace_id, field="trace_id", maximum=128)
+        if self._runner_rpc:
+            return self._transition_postgresql_runner(
+                operation="checkpoint",
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                dirty=dirty_after,
+                head_revision=head,
+                recovery_artifact_ref=recovery,
+                environment_snapshot_ref=environment,
+                trace_id=trace,
+            )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
                 db,
@@ -909,7 +1057,7 @@ class WorktreeControlPlane:
                     "environment_snapshot_ref": environment,
                     "dirty_after": dirty_after,
                 },
-                trace_id=_text(trace_id, field="trace_id", maximum=128),
+                trace_id=trace,
             )
             return self._mutation(record)
 
@@ -935,6 +1083,17 @@ class WorktreeControlPlane:
         }:
             raise WorktreeControlPlaneError(
                 "changeset_status_invalid", "Final ChangeSet status is invalid"
+            )
+        trace = _text(trace_id, field="trace_id", maximum=128)
+        if self._runner_rpc:
+            return self._transition_postgresql_runner(
+                operation="release",
+                worktree_id=worktree_id,
+                runner_id=runner_id,
+                lease_generation=lease_generation,
+                run_fence_token=run_fence_token,
+                lease_token=lease_token,
+                trace_id=trace,
             )
         with self._session_factory.begin() as db:
             record = self._require_active_lease(
@@ -989,7 +1148,7 @@ class WorktreeControlPlane:
                     "checkpointed": record.recovery_artifact_ref is not None,
                     "final_change_set_status": final_change_set_status,
                 },
-                trace_id=_text(trace_id, field="trace_id", maximum=128),
+                trace_id=trace,
             )
             return self._mutation(record)
 
@@ -1005,38 +1164,51 @@ class WorktreeControlPlane:
         _validate_time(expired_at)
         if not 1 <= limit <= 1000:
             raise WorktreeControlPlaneError("worktree_sweep_invalid", "Sweep limit is invalid")
-        with self._session_factory.begin() as db:
-            query = (
-                sa.select(WorktreeInstanceRecord)
-                .where(
-                    WorktreeInstanceRecord.status.in_(ACTIVE_WORKTREE_STATUSES),
-                    sa.or_(
-                        WorktreeInstanceRecord.lease_expires_at <= expired_at,
-                        WorktreeInstanceRecord.maximum_lifetime_at <= expired_at,
-                    ),
+        # Discovery grants no authority and deliberately takes no row lock. Each
+        # candidate is recovered in its own transaction through the same global
+        # lifecycle order as a live Runner mutation. This avoids both the old
+        # Worktree -> ChangeSet inversion and cross-candidate lock accumulation.
+        with self._session_factory() as db:
+            candidate_ids = tuple(
+                db.scalars(
+                    sa.select(WorktreeInstanceRecord.id)
+                    .where(
+                        WorktreeInstanceRecord.status.in_(ACTIVE_WORKTREE_STATUSES),
+                        sa.or_(
+                            WorktreeInstanceRecord.lease_expires_at <= expired_at,
+                            WorktreeInstanceRecord.maximum_lifetime_at <= expired_at,
+                        ),
+                    )
+                    .order_by(
+                        WorktreeInstanceRecord.lease_expires_at,
+                        WorktreeInstanceRecord.id,
+                    )
+                    .limit(limit)
                 )
-                .order_by(WorktreeInstanceRecord.lease_expires_at, WorktreeInstanceRecord.id)
-                .limit(limit)
             )
-            if db.bind is not None and db.bind.dialect.name == "postgresql":
-                query = query.with_for_update(skip_locked=True)
-            records = tuple(db.scalars(query))
-            results: list[WorktreeMutation] = []
-            for record in records:
-                self._apply_scope(
-                    db,
-                    actor_id=None,
-                    tenant_id=record.tenant_id,
-                    space_id=record.space_id,
-                )
-                self._release_quota(db, record)
+        results: list[WorktreeMutation] = []
+        for worktree_id in candidate_ids:
+            with self._session_factory.begin() as db:
+                locked = self._lock_lifecycle_chain(db, worktree_id=worktree_id)
+                if locked is None:
+                    continue
+                record, change_set, quota = locked
+                if record.status not in ACTIVE_WORKTREE_STATUSES or not (
+                    (
+                        record.lease_expires_at is not None
+                        and _aware(record.lease_expires_at) <= expired_at
+                    )
+                    or _aware(record.maximum_lifetime_at) <= expired_at
+                ):
+                    continue
+                self._release_locked_quota(quota, record)
                 if record.dirty and record.recovery_artifact_ref is not None:
                     record.status = "rebuild_pending"
                     event_type = "worktree.rebuild_pending"
                 elif record.dirty:
                     record.status = "quarantined"
                     record.quarantine_reason = "expired_without_recovery_artifact"
-                    self._quarantine_change_set(db, record.change_set_id)
+                    self._quarantine_locked_change_set(change_set)
                     event_type = "worktree.quarantined"
                 else:
                     record.status = "released"
@@ -1057,7 +1229,7 @@ class WorktreeControlPlane:
                     trace_id="recovery:worktree-expired",
                 )
                 results.append(self._mutation(record))
-            return tuple(results)
+        return tuple(results)
 
     def mark_gc_eligible(
         self,
@@ -1071,52 +1243,51 @@ class WorktreeControlPlane:
         _validate_time(checked_at)
         if not 1 <= limit <= 1000:
             raise WorktreeControlPlaneError("worktree_gc_invalid", "GC limit is invalid")
-        with self._session_factory.begin() as db:
-            query = (
-                sa.select(WorktreeInstanceRecord, WorktreeQuotaRecord.gc_grace_seconds)
-                .join(
-                    WorktreeQuotaRecord,
-                    sa.and_(
-                        WorktreeQuotaRecord.tenant_id == WorktreeInstanceRecord.tenant_id,
-                        WorktreeQuotaRecord.space_id == WorktreeInstanceRecord.space_id,
-                        WorktreeQuotaRecord.project_id == WorktreeInstanceRecord.project_id,
-                    ),
+        with self._session_factory() as db:
+            candidate_ids = tuple(
+                db.scalars(
+                    sa.select(WorktreeInstanceRecord.id)
+                    .join(
+                        WorktreeQuotaRecord,
+                        sa.and_(
+                            WorktreeQuotaRecord.tenant_id == WorktreeInstanceRecord.tenant_id,
+                            WorktreeQuotaRecord.space_id == WorktreeInstanceRecord.space_id,
+                            WorktreeQuotaRecord.project_id == WorktreeInstanceRecord.project_id,
+                        ),
+                    )
+                    .where(
+                        WorktreeInstanceRecord.status == "released",
+                        WorktreeInstanceRecord.released_at.is_not(None),
+                    )
+                    .order_by(
+                        WorktreeInstanceRecord.released_at,
+                        WorktreeInstanceRecord.id,
+                    )
+                    .limit(limit)
                 )
-                .where(
-                    WorktreeInstanceRecord.status == "released",
-                    WorktreeInstanceRecord.released_at.is_not(None),
-                )
-                .order_by(WorktreeInstanceRecord.released_at, WorktreeInstanceRecord.id)
-                .limit(limit)
             )
-            if db.bind is not None and db.bind.dialect.name == "postgresql":
-                query = query.with_for_update(
-                    of=WorktreeInstanceRecord,
-                    skip_locked=True,
-                )
-            rows = tuple(db.execute(query))
-            results: list[WorktreeMutation] = []
-            for record, grace_seconds in rows:
+        results: list[WorktreeMutation] = []
+        for worktree_id in candidate_ids:
+            with self._session_factory.begin() as db:
+                locked = self._lock_lifecycle_chain(db, worktree_id=worktree_id)
+                if locked is None:
+                    continue
+                record, change_set, quota = locked
                 released_at = record.released_at
                 if (
-                    released_at is None
-                    or _aware(released_at) + timedelta(seconds=grace_seconds) > checked_at
+                    record.status != "released"
+                    or released_at is None
+                    or _aware(released_at) + timedelta(seconds=quota.gc_grace_seconds) > checked_at
                 ):
                     continue
                 if record.dirty and record.recovery_artifact_ref is None:
                     record.status = "quarantined"
                     record.quarantine_reason = "gc_dirty_without_recovery_artifact"
-                    self._quarantine_change_set(db, record.change_set_id)
+                    self._quarantine_locked_change_set(change_set)
                     event_type = "worktree.quarantined"
                 else:
                     record.status = "gc_eligible"
                     event_type = "worktree.gc_eligible"
-                self._apply_scope(
-                    db,
-                    actor_id=None,
-                    tenant_id=record.tenant_id,
-                    space_id=record.space_id,
-                )
                 self._append_worktree_event(
                     db,
                     record,
@@ -1125,7 +1296,7 @@ class WorktreeControlPlane:
                     trace_id="gc:worktree-eligible",
                 )
                 results.append(self._mutation(record))
-            return tuple(results)
+        return tuple(results)
 
     def confirm_deleted(
         self,
@@ -1264,6 +1435,118 @@ class WorktreeControlPlane:
                 )
             )
 
+    @staticmethod
+    def _lock_exact_capabilities(
+        db: Session,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        run_fence_token: int,
+        runner_connection_generation: int,
+    ) -> None:
+        """Lock every exact persisted capability before the Run row."""
+
+        tuple(
+            db.scalars(
+                sa.select(CapabilityTokenRecord)
+                .where(
+                    CapabilityTokenRecord.run_id == run_id,
+                    CapabilityTokenRecord.runner_id == runner_id,
+                    CapabilityTokenRecord.fence_token == run_fence_token,
+                    CapabilityTokenRecord.runner_connection_generation
+                    == runner_connection_generation,
+                )
+                .order_by(CapabilityTokenRecord.id)
+                .with_for_update()
+            )
+        )
+
+    def _lock_lifecycle_chain(
+        self,
+        db: Session,
+        *,
+        worktree_id: UUID,
+    ) -> tuple[WorktreeInstanceRecord, ChangeSetRecord, WorktreeQuotaRecord] | None:
+        """Lock one recovery candidate in the global lifecycle order.
+
+        The leading Worktree read is authority-free discovery. Immutable binding
+        values are copied before locking Runner -> Capability -> Run -> ChangeSet
+        -> Worktree -> Quota, and the final Worktree read forcibly refreshes the
+        identity-map object after any lock wait.
+        """
+
+        discovered = db.get(WorktreeInstanceRecord, worktree_id)
+        if discovered is None:
+            return None
+        tenant_id = discovered.tenant_id
+        space_id = discovered.space_id
+        project_id = discovered.project_id
+        runner_id = discovered.runner_id
+        run_id = discovered.run_id
+        change_set_id = discovered.change_set_id
+        run_fence_token = discovered.run_fence_token
+        runner_generation = discovered.runner_connection_generation
+        self._apply_scope(
+            db,
+            actor_id=None,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        runner = db.scalar(
+            sa.select(RunnerRegistrationRecord)
+            .where(RunnerRegistrationRecord.id == runner_id)
+            .with_for_update()
+        )
+        self._lock_exact_capabilities(
+            db,
+            run_id=run_id,
+            runner_id=runner_id,
+            run_fence_token=run_fence_token,
+            runner_connection_generation=runner_generation,
+        )
+        run = db.scalar(sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update())
+        change_set = db.scalar(
+            sa.select(ChangeSetRecord).where(ChangeSetRecord.id == change_set_id).with_for_update()
+        )
+        record = db.scalar(
+            sa.select(WorktreeInstanceRecord)
+            .where(WorktreeInstanceRecord.id == worktree_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            runner is None
+            or run is None
+            or change_set is None
+            or record is None
+            or record.tenant_id != tenant_id
+            or record.space_id != space_id
+            or record.project_id != project_id
+            or record.runner_id != runner_id
+            or record.run_id != run_id
+            or record.change_set_id != change_set_id
+            or record.run_fence_token != run_fence_token
+            or record.runner_connection_generation != runner_generation
+        ):
+            raise WorktreeControlPlaneError(
+                "worktree_authority_inconsistent",
+                "Worktree lifecycle authority is inconsistent",
+            )
+        quota = db.scalar(
+            sa.select(WorktreeQuotaRecord)
+            .where(
+                WorktreeQuotaRecord.tenant_id == tenant_id,
+                WorktreeQuotaRecord.space_id == space_id,
+                WorktreeQuotaRecord.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if quota is None:
+            raise WorktreeControlPlaneError(
+                "worktree_quota_inconsistent", "Worktree quota counters are inconsistent"
+            )
+        return record, change_set, quota
+
     def _require_active_lease(
         self,
         db: Session,
@@ -1277,23 +1560,59 @@ class WorktreeControlPlane:
         require_run_active: bool = True,
     ) -> WorktreeInstanceRecord:
         _validate_time(now)
+        # Discover immutable scope/Run identity without a row lock, then take
+        # locks in the same global order as authenticated Runner operations and
+        # Worktree allocation: Runner -> Capability -> Run -> ChangeSet ->
+        # Worktree. The final locked row is refreshed and fully rechecked, so
+        # discovery grants no authority.
+        discovered = db.get(WorktreeInstanceRecord, worktree_id)
+        if discovered is None:
+            raise WorktreeControlPlaneError("worktree_not_found", "Worktree is not accessible")
+        tenant_id = discovered.tenant_id
+        space_id = discovered.space_id
+        runner_binding_id = discovered.runner_id
+        run_id = discovered.run_id
+        change_set_id = discovered.change_set_id
+        discovered_fence_token = discovered.run_fence_token
+        runner_generation = discovered.runner_connection_generation
+        if runner_binding_id != runner_id:
+            raise WorktreeControlPlaneError("worktree_lease_stale", "Worktree lease is stale")
+        self._apply_scope(
+            db,
+            actor_id=None,
+            tenant_id=tenant_id,
+            space_id=space_id,
+        )
+        runner = db.scalar(
+            sa.select(RunnerRegistrationRecord)
+            .where(RunnerRegistrationRecord.id == runner_id)
+            .with_for_update()
+        )
+        self._lock_exact_capabilities(
+            db,
+            run_id=run_id,
+            runner_id=runner_binding_id,
+            run_fence_token=discovered_fence_token,
+            runner_connection_generation=runner_generation,
+        )
+        run = db.scalar(sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update())
+        change_set = db.scalar(
+            sa.select(ChangeSetRecord).where(ChangeSetRecord.id == change_set_id).with_for_update()
+        )
         record = db.scalar(
             sa.select(WorktreeInstanceRecord)
             .where(WorktreeInstanceRecord.id == worktree_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if record is None:
             raise WorktreeControlPlaneError("worktree_not_found", "Worktree is not accessible")
-        self._apply_scope(
-            db,
-            actor_id=None,
-            tenant_id=record.tenant_id,
-            space_id=record.space_id,
-        )
         digest = _token_hash(_text(lease_token, field="worktree_lease_token", maximum=512))
         if (
             record.status not in ACTIVE_WORKTREE_STATUSES
-            or record.runner_id != runner_id
+            or record.runner_id != runner_binding_id
+            or record.run_id != run_id
+            or record.change_set_id != change_set_id
             or record.lease_generation != lease_generation
             or record.run_fence_token != run_fence_token
             or record.lease_token_hash is None
@@ -1303,15 +1622,22 @@ class WorktreeControlPlane:
             or _aware(record.maximum_lifetime_at) <= now
         ):
             raise WorktreeControlPlaneError("worktree_lease_stale", "Worktree lease is stale")
-        run = db.get(RunRecord, record.run_id)
-        runner = db.get(RunnerRegistrationRecord, record.runner_id)
+        run_expires_at = None if run is None else run.lease_expires_at
         if (
             run is None
             or run.fence_token != record.run_fence_token
             or (require_run_active and run.status not in _RUN_WORKTREE_STATUSES)
+            or (require_run_active and run.lease_owner != str(record.runner_id))
+            or (require_run_active and run.lease_token is None)
+            or (require_run_active and run_expires_at is None)
+            or (
+                require_run_active and run_expires_at is not None and _aware(run_expires_at) <= now
+            )
             or runner is None
             or runner.connection_generation != record.runner_connection_generation
             or runner.status not in {"online", "draining"}
+            or change_set is None
+            or change_set.id != record.change_set_id
         ):
             raise WorktreeControlPlaneError(
                 "worktree_authority_stale", "Run or Runner authority is stale"
@@ -1329,6 +1655,13 @@ class WorktreeControlPlane:
             )
             .with_for_update()
         )
+        WorktreeControlPlane._release_locked_quota(quota, record)
+
+    @staticmethod
+    def _release_locked_quota(
+        quota: WorktreeQuotaRecord | None,
+        record: WorktreeInstanceRecord,
+    ) -> None:
         if (
             quota is None
             or quota.active_instances <= 0
@@ -1344,11 +1677,8 @@ class WorktreeControlPlane:
         quota.version += 1
 
     @staticmethod
-    def _quarantine_change_set(db: Session, change_set_id: UUID) -> None:
-        change_set = db.scalar(
-            sa.select(ChangeSetRecord).where(ChangeSetRecord.id == change_set_id).with_for_update()
-        )
-        if change_set is not None and change_set.status != "quarantined":
+    def _quarantine_locked_change_set(change_set: ChangeSetRecord) -> None:
+        if change_set.status != "quarantined":
             change_set.status = "quarantined"
             change_set.version += 1
 
@@ -1426,6 +1756,9 @@ class WorktreeControlPlane:
         payload: dict[str, object],
         idempotency_key: str,
     ) -> None:
+        # Runner RLS verifies the exact Worktree event/sequence before it
+        # admits the FK-free Outbox row; make that dependency explicit.
+        db.flush()
         db.add(
             ControlPlaneOutboxEvent(
                 tenant_id=tenant_id,
@@ -1439,6 +1772,218 @@ class WorktreeControlPlane:
                 available_at=_utcnow(),
             )
         )
+
+    def _allocate_postgresql_runner(
+        self,
+        *,
+        capability_token: str,
+        runner_id: UUID,
+        run_id: UUID,
+        change_set_id: UUID,
+        access_mode: str,
+        reserved_bytes: int,
+        lease_duration: timedelta,
+        trace_id: str,
+        rebuild_from_id: UUID | None,
+    ) -> WorktreeLease:
+        allocation_identity = json.dumps(
+            {
+                "access_mode": access_mode,
+                "change_set_id": str(change_set_id),
+                "lease_seconds": max(1, int(lease_duration.total_seconds())),
+                "rebuild_from_id": str(rebuild_from_id) if rebuild_from_id else None,
+                "reserved_bytes": reserved_bytes,
+                "run_id": str(run_id),
+                "runner_id": str(runner_id),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        identity_key = capability_token.encode()
+        requested_worktree_id = UUID(
+            bytes=hmac.new(
+                identity_key,
+                b"omnigent-worktree-id-v1\x00" + allocation_identity,
+                sha256,
+            ).digest()[:16],
+            version=4,
+        )
+        raw_lease_token = (
+            "wlt_"
+            + hmac.new(
+                identity_key,
+                b"omnigent-worktree-lease-v1\x00" + allocation_identity,
+                sha256,
+            ).hexdigest()
+        )
+        try:
+            with self._session_factory.begin() as db:
+                row = (
+                    db.execute(
+                        sa.text(
+                            "SELECT * FROM public.saas_runner_allocate_worktree_v1("
+                            ":capability_hash, :runner_id, :run_id, :change_set_id, "
+                            ":worktree_id, :access_mode, :reserved_bytes, :lease_seconds, "
+                            ":lease_hash, :trace_id, :rebuild_from_id)"
+                        ),
+                        {
+                            "capability_hash": _token_hash(capability_token),
+                            "runner_id": runner_id,
+                            "run_id": run_id,
+                            "change_set_id": change_set_id,
+                            "worktree_id": requested_worktree_id,
+                            "access_mode": access_mode,
+                            "reserved_bytes": reserved_bytes,
+                            "lease_seconds": max(1, int(lease_duration.total_seconds())),
+                            "lease_hash": _token_hash(raw_lease_token),
+                            "trace_id": trace_id,
+                            "rebuild_from_id": rebuild_from_id,
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        return WorktreeLease(
+            worktree_id=UUID(str(row["worktree_id"])),
+            change_set_id=UUID(str(row["change_set_id"])),
+            run_id=UUID(str(row["run_id"])),
+            runner_id=UUID(str(row["runner_id"])),
+            opaque_runtime_key=str(row["opaque_runtime_key"]),
+            access_mode=str(row["access_mode"]),
+            lease_generation=int(row["lease_generation"]),
+            run_fence_token=int(row["run_fence_token"]),
+            lease_token=raw_lease_token,
+            expires_at=_aware(row["lease_expires_at"]),
+        )
+
+    def _transition_postgresql_runner(
+        self,
+        *,
+        operation: str,
+        worktree_id: UUID,
+        runner_id: UUID,
+        lease_generation: int,
+        run_fence_token: int,
+        lease_token: str,
+        actual_bytes: int | None = None,
+        dirty: bool | None = None,
+        lease_duration: timedelta | None = None,
+        head_revision: str | None = None,
+        recovery_artifact_ref: str | None = None,
+        environment_snapshot_ref: str | None = None,
+        trace_id: str,
+    ) -> WorktreeMutation:
+        try:
+            with self._session_factory.begin() as db:
+                row = (
+                    db.execute(
+                        sa.text(
+                            "SELECT * FROM public.saas_runner_transition_worktree_v1("
+                            ":operation, :worktree_id, :runner_id, :lease_generation, "
+                            ":run_fence_token, :lease_hash, CAST(:actual_bytes AS bigint), "
+                            "CAST(:dirty AS boolean), CAST(:lease_seconds AS integer), "
+                            "CAST(:head_revision AS text), CAST(:recovery_ref AS text), "
+                            "CAST(:environment_ref AS text), CAST(NULL AS text), :trace_id)"
+                        ),
+                        {
+                            "operation": operation,
+                            "worktree_id": worktree_id,
+                            "runner_id": runner_id,
+                            "lease_generation": lease_generation,
+                            "run_fence_token": run_fence_token,
+                            "lease_hash": _token_hash(lease_token),
+                            "actual_bytes": actual_bytes,
+                            "dirty": dirty,
+                            "lease_seconds": (
+                                None
+                                if lease_duration is None
+                                else max(1, int(lease_duration.total_seconds()))
+                            ),
+                            "head_revision": head_revision,
+                            "recovery_ref": recovery_artifact_ref,
+                            "environment_ref": environment_snapshot_ref,
+                            "trace_id": trace_id,
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        return WorktreeMutation(
+            worktree_id=UUID(str(row["worktree_id"])),
+            status=str(row["status"]),
+            lease_generation=int(row["lease_generation"]),
+            event_sequence=int(row["event_sequence"]),
+            lease_expires_at=(
+                None if row["lease_expires_at"] is None else _aware(row["lease_expires_at"])
+            ),
+        )
+
+    def _materialization_grant_postgresql_runner(
+        self,
+        *,
+        worktree_id: UUID,
+        runner_id: UUID,
+        lease_generation: int,
+        run_fence_token: int,
+        lease_token: str,
+    ) -> WorktreeMaterializationGrant:
+        try:
+            with self._session_factory.begin() as db:
+                row = (
+                    db.execute(
+                        sa.text(
+                            "SELECT * FROM public.saas_runner_materialization_grant_v1("
+                            ":worktree_id, :runner_id, :lease_generation, "
+                            ":run_fence_token, :lease_hash)"
+                        ),
+                        {
+                            "worktree_id": worktree_id,
+                            "runner_id": runner_id,
+                            "lease_generation": lease_generation,
+                            "run_fence_token": run_fence_token,
+                            "lease_hash": _token_hash(lease_token),
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        return WorktreeMaterializationGrant(
+            worktree_id=UUID(str(row["worktree_id"])),
+            change_set_id=UUID(str(row["change_set_id"])),
+            run_id=UUID(str(row["run_id"])),
+            runner_id=UUID(str(row["runner_id"])),
+            opaque_runtime_key=str(row["opaque_runtime_key"]),
+            access_mode=str(row["access_mode"]),
+            lease_generation=int(row["lease_generation"]),
+            run_fence_token=int(row["run_fence_token"]),
+            runner_connection_generation=int(row["runner_connection_generation"]),
+            reserved_bytes=int(row["reserved_bytes"]),
+            repository_source_binding_key=str(row["repository_source_binding_key"]),
+            base_revision=str(row["base_revision"]),
+            head_revision=None if row["head_revision"] is None else str(row["head_revision"]),
+            branch_ref=str(row["branch_ref"]),
+            recovery_artifact_ref=(
+                None if row["recovery_artifact_ref"] is None else str(row["recovery_artifact_ref"])
+            ),
+            environment_snapshot_ref=(
+                None
+                if row["environment_snapshot_ref"] is None
+                else str(row["environment_snapshot_ref"])
+            ),
+        )
+
+    @staticmethod
+    def _raise_runner_rpc_error(error: sa.exc.DBAPIError) -> NoReturn:
+        detail = str(error.orig).splitlines()[0]
+        match = re.search(r"runner_[a-z0-9_]+", detail)
+        code = match.group(0) if match is not None else "runner_database_authority_rejected"
+        raise WorktreeControlPlaneError(code, "Runner database authority rejected") from None
 
     @staticmethod
     def _apply_request_context(db: Session, request: RequestContext) -> None:
@@ -1465,7 +2010,11 @@ class WorktreeControlPlane:
     @staticmethod
     def _mutation(record: WorktreeInstanceRecord) -> WorktreeMutation:
         return WorktreeMutation(
-            record.id, record.status, record.lease_generation, record.event_sequence
+            record.id,
+            record.status,
+            record.lease_generation,
+            record.event_sequence,
+            _aware(record.lease_expires_at) if record.lease_expires_at is not None else None,
         )
 
 

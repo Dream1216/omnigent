@@ -22,6 +22,7 @@ from saas.control_plane import (
     SecretBindingRecord,
 )
 from saas.control_plane.execution import ExecutionRevisionSet
+from saas.control_plane.scheduling_models import RunDispatchRecord
 from saas.runner_adapter import (
     PhysicalWorktree,
     RunnerIsolationAdapter,
@@ -92,6 +93,7 @@ def _lease_isolated_run(
     change_set_id: UUID,
     now: datetime,
     key: str,
+    execution_profile_id: UUID | None = None,
 ) -> LeasedRun:
     request = fixture.request
     fixture.execution.configure_quota(
@@ -134,10 +136,17 @@ def _lease_isolated_run(
         max_concurrent=2,
         burst_limit=2,
     )
+    selected_profile_id = execution_profile_id or fixture.execution_profile_id
+    with fixture.factory() as db:
+        selected_profile = db.get(ExecutionProfileRecord, selected_profile_id)
+        assert selected_profile is not None
+        selected_profile_hash = selected_profile.config_hash
     fixture.scheduling.prepare_dispatch(
         run_id=admitted.run_id,
         pool_id=pool_id,
         required_capabilities=list(_RUNNER_ISOLATION_CAPABILITIES),
+        execution_profile_id=selected_profile_id,
+        execution_profile_hash=selected_profile_hash,
         eligible_at=now,
         maximum_wait=timedelta(hours=1),
     )
@@ -325,6 +334,76 @@ def test_server_chosen_profile_rejects_soft_sandbox_private_egress_and_secret_mi
         assert profile.host_socket_access is False
 
 
+def test_launch_grant_uses_retired_bound_profile_and_egress_and_rejects_binding_drift(
+    worktree_fixture: WorktreeFixture,  # noqa: F811
+) -> None:
+    now = datetime.now(timezone.utc) + timedelta(minutes=1)
+    _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="profile-drift")
+    _configure_worktree_quota(worktree_fixture)
+    isolation = IsolationControlPlane(
+        worktree_fixture.factory, scheduler=worktree_fixture.scheduling
+    )
+    bound_policy_id, bound_profile_id, _ = _profile(worktree_fixture, isolation, bind_secret=False)
+    leased = _lease_isolated_run(
+        worktree_fixture,
+        change_set_id=change_set_id,
+        now=now,
+        key="profile-drift",
+        execution_profile_id=bound_profile_id,
+    )
+    _, materialization = _ready_worktree(
+        worktree_fixture,
+        leased,
+        change_set_id,
+        now=now,
+    )
+    with worktree_fixture.factory() as db:
+        bound = db.get(ExecutionProfileRecord, bound_profile_id)
+        assert bound is not None
+    _, alternate_profile_id, _ = _profile(worktree_fixture, isolation, bind_secret=False)
+    with worktree_fixture.factory.begin() as db:
+        bound_policy = db.get(EgressPolicyRecord, bound_policy_id)
+        assert bound_policy is not None
+        bound_policy.status = "retired"
+    issued = isolation.issue_launch_grant(
+        capability_token=leased.capability_token,
+        runner_id=leased.runner_id,
+        run_id=leased.run_id,
+        worktree_grant=materialization,
+        now=now + timedelta(seconds=6),
+    )
+    trusted = isolation.redeem_launch_grant(
+        token=issued.token,
+        runner_id=leased.runner_id,
+        run_id=leased.run_id,
+        now=now + timedelta(seconds=7),
+    )
+    assert trusted.contract.backend == "linux_bwrap"
+    with worktree_fixture.factory() as db:
+        persisted = db.get(RunIsolationGrantRecord, issued.grant_id)
+        bound = db.get(ExecutionProfileRecord, bound_profile_id)
+        bound_policy = db.get(EgressPolicyRecord, bound_policy_id)
+        assert persisted is not None and persisted.execution_profile_id == bound_profile_id
+        assert bound is not None and bound.status == "retired"
+        assert bound_policy is not None and bound_policy.status == "retired"
+    with worktree_fixture.factory.begin() as db:
+        dispatch = db.get(RunDispatchRecord, leased.run_id)
+        alternate = db.get(ExecutionProfileRecord, alternate_profile_id)
+        assert dispatch is not None and alternate is not None
+        dispatch.execution_profile_id = alternate.id
+        dispatch.execution_profile_hash = alternate.config_hash
+
+    with pytest.raises(IsolationControlPlaneError) as drifted:
+        isolation.issue_launch_grant(
+            capability_token=leased.capability_token,
+            runner_id=leased.runner_id,
+            run_id=leased.run_id,
+            worktree_grant=materialization,
+            now=now + timedelta(seconds=8),
+        )
+    assert drifted.value.code == "isolation_profile_or_runner_unavailable"
+
+
 def test_one_time_launch_secret_broker_and_official_credential_proxy_are_fenced_and_secretless(
     worktree_fixture: WorktreeFixture,  # noqa: F811
     tmp_path: Path,
@@ -332,26 +411,26 @@ def test_one_time_launch_secret_broker_and_official_credential_proxy_are_fenced_
     now = datetime.now(timezone.utc) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="isolation")
     _configure_worktree_quota(worktree_fixture)
-    leased = _lease_isolated_run(
-        worktree_fixture,
-        change_set_id=change_set_id,
-        now=now,
-        key="secretless",
-    )
-    worktree_lease, materialization = _ready_worktree(
-        worktree_fixture, leased, change_set_id, now=now
-    )
     isolation = IsolationControlPlane(
         worktree_fixture.factory, scheduler=worktree_fixture.scheduling
     )
     _, profile_id, binding_id = _profile(worktree_fixture, isolation)
     assert binding_id is not None
+    leased = _lease_isolated_run(
+        worktree_fixture,
+        change_set_id=change_set_id,
+        now=now,
+        key="secretless",
+        execution_profile_id=profile_id,
+    )
+    worktree_lease, materialization = _ready_worktree(
+        worktree_fixture, leased, change_set_id, now=now
+    )
     issued = isolation.issue_launch_grant(
         capability_token=leased.capability_token,
         runner_id=leased.runner_id,
         run_id=leased.run_id,
         worktree_grant=materialization,
-        execution_profile_id=profile_id,
         now=now + timedelta(seconds=6),
     )
     assert issued.token not in repr(issued)
@@ -407,6 +486,11 @@ def test_one_time_launch_secret_broker_and_official_credential_proxy_are_fenced_
     assert sandbox.cwd_hidden_scan_overflow == "error"
     assert sandbox.cwd_hidden_scan_recursive is True
     assert sandbox.mask_paths == [str(physical_root / ".git")]
+    assert not Path(prepared.os_env_spec.cwd or "/repository").is_relative_to(Path("/repository"))
+    assert all(
+        not Path(path).is_relative_to(Path("/repository"))
+        for path in (sandbox.read_paths or []) + (sandbox.write_paths or [])
+    )
     assert sandbox.credential_proxy is not None
     source_path = Path(sandbox.credential_proxy.entries[0].source.path or "")
     assert source_path.is_file()
@@ -466,23 +550,23 @@ def test_runner_reconnect_fences_unredeemed_isolation_grant(
     now = datetime.now(timezone.utc) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="reconnect")
     _configure_worktree_quota(worktree_fixture)
+    isolation = IsolationControlPlane(
+        worktree_fixture.factory, scheduler=worktree_fixture.scheduling
+    )
+    _, profile_id, _ = _profile(worktree_fixture, isolation, bind_secret=False)
     leased = _lease_isolated_run(
         worktree_fixture,
         change_set_id=change_set_id,
         now=now,
         key="reconnect",
+        execution_profile_id=profile_id,
     )
     _, materialization = _ready_worktree(worktree_fixture, leased, change_set_id, now=now)
-    isolation = IsolationControlPlane(
-        worktree_fixture.factory, scheduler=worktree_fixture.scheduling
-    )
-    _, profile_id, _ = _profile(worktree_fixture, isolation, bind_secret=False)
     issued = isolation.issue_launch_grant(
         capability_token=leased.capability_token,
         runner_id=leased.runner_id,
         run_id=leased.run_id,
         worktree_grant=materialization,
-        execution_profile_id=profile_id,
         now=now + timedelta(seconds=6),
     )
     worktree_fixture.scheduling.register_runner(

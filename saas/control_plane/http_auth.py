@@ -44,6 +44,7 @@ from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyC
 from saas.public_api_contract import ApiVersionPolicy
 
 if TYPE_CHECKING:
+    from saas.compatibility import OmnigentStoreAdapter
     from saas.control_plane.authorization import ProjectAuthorizer
     from saas.control_plane.billing import BillingControlPlane
     from saas.control_plane.bindings import RuntimeBindingService
@@ -119,6 +120,7 @@ class SaasHttpIntegration:
     router: APIRouter
     context_resolver: SqlAlchemyContextResolver
     cookie_config: SaasCookieConfig
+    runtime_store_adapter: OmnigentStoreAdapter | None = None
     context_snapshots: ContextSnapshotService | None = None
     availability_gate: ControlPlaneAvailabilityGate | None = None
     degraded_read_paths: frozenset[str] = frozenset()
@@ -147,6 +149,7 @@ class SaasHttpIntegration:
             auth_provider=self.auth_provider,
             context_resolver=self.context_resolver,
             cookie_config=self.cookie_config,
+            runtime_store_adapter=self.runtime_store_adapter,
             context_snapshots=self.context_snapshots,
             availability_gate=self.availability_gate,
             degraded_read_paths=self.degraded_read_paths,
@@ -299,6 +302,7 @@ class SaasAuthContextMiddleware:
         auth_provider: SaasAuthProvider,
         context_resolver: SqlAlchemyContextResolver,
         cookie_config: SaasCookieConfig,
+        runtime_store_adapter: OmnigentStoreAdapter | None = None,
         runtime_prefixes: tuple[str, ...] = ("/v1/",),
         runtime_exclusions: frozenset[str] = frozenset({"/v1/info", "/v1/me"}),
         public_paths: frozenset[str] = frozenset({"/saas/auth/login"}),
@@ -310,6 +314,7 @@ class SaasAuthContextMiddleware:
         self._auth = auth_provider
         self._resolver = context_resolver
         self._cookie = cookie_config
+        self._runtime_store_adapter = runtime_store_adapter
         self._runtime_prefixes = runtime_prefixes
         self._runtime_exclusions = runtime_exclusions
         self._public_paths = public_paths
@@ -404,8 +409,12 @@ class SaasAuthContextMiddleware:
                     raise
                 await self._reject_dependency(scope, receive, send)
             return
-        with bind_runtime_context(runtime_context):
-            await self._app(scope, receive, send)
+        if self._runtime_store_adapter is None:
+            with bind_runtime_context(runtime_context):
+                await self._app(scope, receive, send)
+        else:
+            with self._runtime_store_adapter.bind(runtime_context):
+                await self._app(scope, receive, send)
 
     async def _authenticate_machine(
         self,
@@ -489,8 +498,12 @@ class SaasAuthContextMiddleware:
                 message["headers"] = headers
             await send(message)
 
-        with bind_runtime_context(verified.runtime_context):
-            await self._app(scope, receive, degraded_send)
+        if self._runtime_store_adapter is None:
+            with bind_runtime_context(verified.runtime_context):
+                await self._app(scope, receive, degraded_send)
+        else:
+            with self._runtime_store_adapter.bind(verified.runtime_context):
+                await self._app(scope, receive, degraded_send)
 
     def _enforce_browser_request(
         self, connection: HTTPConnection, token: str, scope: Scope
@@ -1193,6 +1206,7 @@ def create_saas_http_integration(
     onboarding: SelfServiceOnboardingService | None = None,
     onboarding_status: OnboardingStatusService | None = None,
     onboarding_client_network: TrustedClientNetworkResolver | None = None,
+    runtime_store_adapter: OmnigentStoreAdapter | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1369,6 +1383,7 @@ def create_saas_http_integration(
         router=router,
         context_resolver=context_resolver,
         cookie_config=cookie_config,
+        runtime_store_adapter=runtime_store_adapter,
         context_snapshots=context_snapshots,
         availability_gate=availability_gate,
         degraded_read_paths=degraded_read_paths,

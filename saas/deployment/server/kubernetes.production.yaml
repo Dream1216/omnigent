@@ -1,0 +1,1308 @@
+apiVersion: v1
+kind: List
+items:
+  # This is a fail-closed release template. Replace every all-zero digest/SHA
+  # and every replace.* adapter before server-side apply.
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: omnigent-saas-runtime
+      namespace: omnigent
+    automountServiceAccountToken: false
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: omnigent-saas-preview-owner
+      namespace: omnigent
+    automountServiceAccountToken: false
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-saas-release-replace-release12
+      namespace: omnigent
+    immutable: true
+    data:
+      OMNIGENT_SAAS_PRODUCT_REVISION: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_SOURCE_SHA: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_UPSTREAM_REVISION: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_IMAGE_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_RELEASE_INCARNATION: "00000000000000000000000000000000"
+      OMNIGENT_SAAS_RUNTIME_VERSION: replace-with-runtime-version
+      OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION: replace-with-official-schema-head
+      OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION: p0s000000010
+      OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION: replace-with-adapter-contract
+      OMNIGENT_SAAS_PUBLIC_ORIGIN: https://next.jxhh.com
+      OMNIGENT_SAAS_CAPABILITIES: tenant,run,runner,preview
+      OMNIGENT_SAAS_ARTIFACT_STORE_URI: s3://replace-with-production-bucket/omnigent
+      OMNIGENT_SAAS_ARTIFACT_ENDPOINT_URL: https://replace-artifact-endpoint.example.invalid
+      OMNIGENT_SAAS_ARTIFACT_REGION: replace-with-artifact-region
+      OMNIGENT_SAAS_ARTIFACT_CREDENTIALS_PROFILE: omnigent-saas-artifacts
+      OMNIGENT_SAAS_ARTIFACT_CREDENTIAL_REVISION: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      OMNIGENT_SAAS_ARTIFACT_ADMISSION_RECEIPT_REVISION: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      OMNIGENT_SAAS_ARTIFACT_READINESS_KEY: readiness/omnigent-saas-canary-v1
+      OMNIGENT_SAAS_ARTIFACT_READINESS_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_RUNNER_ADAPTER_FACTORY: saas.production.runner_readiness:build_remote_tls_runner_control_readiness
+      OMNIGENT_SAAS_PREVIEW_ADAPTER_FACTORY: saas.production.preview_readiness:build_remote_tls_preview_readiness
+      OMNIGENT_SAAS_RUNNER_READINESS_HOST: omnigent-saas-runner-control.omnigent.svc
+      OMNIGENT_SAAS_RUNNER_READINESS_PORT: "9445"
+      OMNIGENT_SAAS_RUNNER_READINESS_SERVER_NAME: omnigent-saas-runner-control.omnigent.svc
+      OMNIGENT_SAAS_WORKER_RUNNER_READINESS_FACTORY: saas.production.runner_readiness:build_postgresql_runner_control_readiness
+      OMNIGENT_SAAS_WORKER_PREVIEW_READINESS_FACTORY: saas.production.preview_readiness:build_remote_tls_preview_readiness
+      OMNIGENT_SAAS_WORKTREE_RECOVERY_INTERVAL_SECONDS: "5"
+      OMNIGENT_SAAS_WORKTREE_GC_INTERVAL_SECONDS: "30"
+      OMNIGENT_SAAS_WORKTREE_RECOVERY_LIMIT: "100"
+      OMNIGENT_SAAS_RUNNER_CONTROL_CERTIFICATE_AUTHORIZER_FACTORY: saas.production.runner_control:build_durable_runner_control_certificate_authorizer
+      OMNIGENT_SAAS_RUNNER_CONTROL_TRUST_BUNDLE_VERSION: runner-control-v1
+      OMNIGENT_SAAS_RUNNER_CONTROL_BIND_HOST: 0.0.0.0
+      OMNIGENT_SAAS_RUNNER_CONTROL_BIND_PORT: "9444"
+      OMNIGENT_SAAS_RUNNER_CONTROL_READINESS_PORT: "9445"
+      OMNIGENT_SAAS_RUNNER_CONTROL_LEASE_SECONDS: "45"
+      OMNIGENT_SAAS_RUNNER_CONTROL_HEARTBEAT_TIMEOUT_SECONDS: "30"
+      OMNIGENT_SAAS_RUNNER_CONTROL_REQUEST_TIMEOUT_SECONDS: "5"
+      OMNIGENT_SAAS_RUNNER_CONTROL_HOST: omnigent-saas-runner-control.omnigent.svc
+      OMNIGENT_SAAS_RUNNER_CONTROL_PORT: "9444"
+      OMNIGENT_SAAS_RUNNER_CONTROL_SERVER_NAME: omnigent-saas-runner-control.omnigent.svc
+      OMNIGENT_SAAS_RUNNER_EXECUTOR_FACTORY: saas.production.runner_executor:build_production_host_isolation_executor
+      OMNIGENT_SAAS_RUNNER_POLL_SECONDS: "1"
+      OMNIGENT_SAAS_RUNNER_HEARTBEAT_SECONDS: "10"
+      OMNIGENT_SAAS_RUNNER_REQUEST_TIMEOUT_SECONDS: "5"
+      OMNIGENT_SAAS_RUNNER_SHUTDOWN_TIMEOUT_SECONDS: "10"
+      OMNIGENT_SAAS_RUNNER_PHYSICAL_GC_INTERVAL_SECONDS: "30"
+      OMNIGENT_SAAS_RUNNER_PHYSICAL_GC_LIMIT: "32"
+      OMNIGENT_SAAS_PREVIEW_ROOT_DOMAIN: replace-preview-root.example.net
+      OMNIGENT_SAAS_PREVIEW_LEASE_SECONDS: "300"
+      OMNIGENT_SAAS_PREVIEW_TUNNEL_FACTORY: saas.production.preview_relay:build_production_preview_tunnel
+      OMNIGENT_SAAS_PREVIEW_RELAY_TRUST_BUNDLE_VERSIONS: replace-with-preview-relay-trust-bundle-version
+      OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_DNS_SUFFIXES: omnigent.svc.cluster.local
+      OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_CIDRS: replace-with-cluster-pod-cidr
+      OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_PORTS: "9443"
+      OMNIGENT_SAAS_PREVIEW_EDGE_HOST: 0.0.0.0
+      OMNIGENT_SAAS_PREVIEW_EDGE_PORT: "8080"
+      OMNIGENT_SAAS_PREVIEW_READINESS_HOST: omnigent-saas-preview-edge.omnigent.svc.cluster.local
+      OMNIGENT_SAAS_PREVIEW_READINESS_PORT: "8443"
+      OMNIGENT_SAAS_PREVIEW_READINESS_SERVER_NAME: omnigent-saas-preview-edge.omnigent.svc.cluster.local
+      OMNIGENT_SAAS_PREVIEW_READINESS_BIND_HOST: 0.0.0.0
+      OMNIGENT_SAAS_PREVIEW_READINESS_ALLOWED_DNS_SUFFIXES: omnigent.svc.cluster.local
+      OMNIGENT_SAAS_PREVIEW_READINESS_ALLOWED_CIDRS: replace-with-cluster-service-cidr
+      OMNIGENT_SAAS_PREVIEW_READINESS_ALLOWED_PORTS: "8443"
+      OMNIGENT_SAAS_PREVIEW_MAX_REQUEST_BYTES: "1048576"
+      OMNIGENT_SAAS_PREVIEW_MAX_RESPONSE_BYTES: "10485760"
+      OMNIGENT_SAAS_HOST: 0.0.0.0
+      OMNIGENT_SAAS_PORT: "8000"
+      PYTHONDONTWRITEBYTECODE: "1"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-saas-service-role-bindings-replace-bindings12
+      namespace: omnigent
+    immutable: true
+    data:
+      service-role-bindings.json: |
+        {"bindings":[{"base_role":"saas_app","login":"replace_app_login","service":"app"},{"base_role":"saas_authenticator","login":"replace_authenticator_login","service":"authenticator"},{"base_role":"saas_dispatcher","login":"replace_dispatcher_login","service":"dispatcher"},{"base_role":"saas_executor","login":"replace_executor_login","service":"executor"},{"base_role":"saas_governance","login":"replace_governance_login","service":"governance"},{"base_role":"saas_preview_edge","login":"replace_preview_edge_login","service":"preview_edge"},{"base_role":"saas_preview_owner","login":"replace_preview_owner_login","service":"preview_owner"},{"base_role":"saas_public_api","login":"replace_public_api_login","service":"public_api"},{"base_role":"omnigent_runtime_app","login":"replace_runtime_login","service":"runtime"},{"base_role":"saas_secret_broker","login":"replace_secret_broker_login","service":"secret_broker"}],"schema_version":1}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-server
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-server
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-server
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-server
+          annotations:
+            omnigent.io/artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/artifact-admission-receipt-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/release-incarnation: "00000000000000000000000000000000"
+        spec:
+          serviceAccountName: omnigent-saas-runtime
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-server
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-server-secrets
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
+                  install -m 0400 /source/artifact-receipt/value /runtime/artifact-admission-receipt
+                  install -m 0400 /source/runtime/value /runtime/runtime-database-url
+                  install -m 0400 /source/authenticator/value /runtime/authenticator-database-url
+                  install -m 0400 /source/app/value /runtime/app-database-url
+                  install -m 0400 /source/governance/value /runtime/governance-database-url
+                  install -m 0400 /source/public-api/value /runtime/public-api-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/keys/api-credential-pepper /runtime/api-credential-pepper
+                  install -m 0400 /source/keys/cursor-hmac-key /runtime/cursor-hmac-key
+                  install -m 0400 /source/keys/idempotency-hmac-key /runtime/idempotency-hmac-key
+                  install -m 0400 /source/keys/context-snapshot-key /runtime/context-snapshot-key
+                  install -m 0400 /source/keys/preview-exchange-hmac-key /runtime/preview-exchange-hmac-key
+                  install -m 0400 /source/artifact-credentials/credentials /runtime/artifact-credentials
+                  install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
+                  install -m 0400 /source/runner-control-ca/ca.crt /runtime/runner-control-ca.crt
+                  install -m 0400 /source/preview-readiness-ca/ca.crt /runtime/preview-readiness-ca.crt
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
+                - {name: artifact-receipt-source, mountPath: /source/artifact-receipt, readOnly: true}
+                - {name: runtime-source, mountPath: /source/runtime, readOnly: true}
+                - {name: authenticator-source, mountPath: /source/authenticator, readOnly: true}
+                - {name: app-source, mountPath: /source/app, readOnly: true}
+                - {name: governance-source, mountPath: /source/governance, readOnly: true}
+                - {name: public-api-source, mountPath: /source/public-api, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: application-keys-source, mountPath: /source/keys, readOnly: true}
+                - {name: artifact-credentials-source, mountPath: /source/artifact-credentials, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: runner-control-ca-source, mountPath: /source/runner-control-ca, readOnly: true}
+                - {name: preview-readiness-ca-source, mountPath: /source/preview-readiness-ca, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+          containers:
+            - name: server
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.server"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
+                - {name: OMNIGENT_SAAS_ARTIFACT_ADMISSION_RECEIPT_FILE, value: /runtime/artifact-admission-receipt}
+                - {name: OMNIGENT_SAAS_RUNTIME_DATABASE_URL_FILE, value: /runtime/runtime-database-url}
+                - {name: OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE, value: /runtime/authenticator-database-url}
+                - {name: OMNIGENT_SAAS_APP_DATABASE_URL_FILE, value: /runtime/app-database-url}
+                - {name: OMNIGENT_SAAS_GOVERNANCE_DATABASE_URL_FILE, value: /runtime/governance-database-url}
+                - {name: OMNIGENT_SAAS_PUBLIC_API_DATABASE_URL_FILE, value: /runtime/public-api-database-url}
+                - {name: OMNIGENT_SAAS_API_CREDENTIAL_PEPPER_FILE, value: /runtime/api-credential-pepper}
+                - {name: OMNIGENT_SAAS_CURSOR_HMAC_KEY_FILE, value: /runtime/cursor-hmac-key}
+                - {name: OMNIGENT_SAAS_IDEMPOTENCY_HMAC_KEY_FILE, value: /runtime/idempotency-hmac-key}
+                - {name: OMNIGENT_SAAS_CONTEXT_SNAPSHOT_KEY_FILE, value: /runtime/context-snapshot-key}
+                - {name: OMNIGENT_SAAS_PREVIEW_EXCHANGE_HMAC_KEY_FILE, value: /runtime/preview-exchange-hmac-key}
+                - {name: OMNIGENT_SAAS_ARTIFACT_CREDENTIALS_FILE, value: /runtime/artifact-credentials}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /runtime/service-role-bindings.json}
+                - {name: OMNIGENT_SAAS_ARTIFACT_CACHE_DIR, value: /cache/artifacts}
+                - {name: OMNIGENT_SAAS_RUNNER_READINESS_CA_CERTIFICATE_FILE, value: /runtime/runner-control-ca.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_READINESS_CA_CERTIFICATE_FILE, value: /runtime/preview-readiness-ca.crt}
+                - {name: AWS_EC2_METADATA_DISABLED, value: "true"}
+              ports:
+                - name: http
+                  containerPort: 8000
+                  protocol: TCP
+              startupProbe:
+                httpGet: {path: /saas/readyz, port: http}
+                periodSeconds: 5
+                timeoutSeconds: 3
+                failureThreshold: 24
+              readinessProbe:
+                httpGet: {path: /saas/readyz, port: http}
+                periodSeconds: 10
+                timeoutSeconds: 3
+                failureThreshold: 3
+              livenessProbe:
+                httpGet: {path: /health, port: http}
+                initialDelaySeconds: 30
+                periodSeconds: 30
+                timeoutSeconds: 3
+                failureThreshold: 3
+              resources:
+                requests: {cpu: 500m, memory: 1Gi}
+                limits: {cpu: "2", memory: 4Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: cache, mountPath: /cache}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: receipt-source, secret: {secretName: omnigent-saas-migration-receipt, defaultMode: 0400}}
+            - {name: artifact-receipt-source, secret: {secretName: omnigent-artifact-receipt-replace-release12, defaultMode: 0400}}
+            - {name: runtime-source, secret: {secretName: omnigent-saas-runtime-database, defaultMode: 0400}}
+            - {name: authenticator-source, secret: {secretName: omnigent-saas-authenticator-database, defaultMode: 0400}}
+            - {name: app-source, secret: {secretName: omnigent-saas-app-database, defaultMode: 0400}}
+            - {name: governance-source, secret: {secretName: omnigent-saas-governance-database, defaultMode: 0400}}
+            - {name: public-api-source, secret: {secretName: omnigent-saas-public-api-database, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - {name: application-keys-source, secret: {secretName: omnigent-saas-application-keys, defaultMode: 0400}}
+            - {name: artifact-credentials-source, secret: {secretName: omnigent-artifact-creds-replace-credential12, defaultMode: 0400}}
+            - name: bindings-source
+              configMap: {name: omnigent-saas-service-role-bindings-replace-bindings12, defaultMode: 0444}
+            - {name: runner-control-ca-source, secret: {secretName: omnigent-saas-runner-control-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - {name: preview-readiness-ca-source, secret: {secretName: omnigent-saas-preview-readiness-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 128Ki}}
+            - {name: cache, emptyDir: {sizeLimit: 1Gi}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 256Mi}}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-worker
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-worker
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-worker
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-worker
+        spec:
+          serviceAccountName: omnigent-saas-runtime
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-worker
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-worker-secrets
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
+                  install -m 0400 /source/dispatcher/value /runtime/dispatcher-database-url
+                  install -m 0400 /source/executor/value /runtime/executor-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
+                  install -m 0400 /source/preview-readiness-ca/ca.crt /runtime/preview-readiness-ca.crt
+                  install -d -m 0700 /health/state
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
+                - {name: dispatcher-source, mountPath: /source/dispatcher, readOnly: true}
+                - {name: executor-source, mountPath: /source/executor, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: preview-readiness-ca-source, mountPath: /source/preview-readiness-ca, readOnly: true}
+                - {name: worker-runtime-secrets, mountPath: /runtime}
+                - {name: worker-health-state, mountPath: /health}
+            - name: stage-runner-control-secrets
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
+                  install -m 0400 /source/executor/value /runtime/executor-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
+                  install -m 0400 /source/runner-control/ca.crt /runtime/runner-control-ca.crt
+                  install -m 0400 /source/runner-control/tls.crt /runtime/runner-control-server.crt
+                  install -m 0400 /source/runner-control/tls.key /runtime/runner-control-server.key
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
+                - {name: executor-source, mountPath: /source/executor, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: runner-control-tls-source, mountPath: /source/runner-control, readOnly: true}
+                - {name: runner-control-runtime-secrets, mountPath: /runtime}
+          containers:
+            - name: worker
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.worker"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
+                - {name: OMNIGENT_SAAS_DISPATCHER_DATABASE_URL_FILE, value: /runtime/dispatcher-database-url}
+                - {name: OMNIGENT_SAAS_EXECUTOR_DATABASE_URL_FILE, value: /runtime/executor-database-url}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /runtime/service-role-bindings.json}
+                - {name: OMNIGENT_SAAS_PREVIEW_READINESS_CA_CERTIFICATE_FILE, value: /runtime/preview-readiness-ca.crt}
+                - {name: OMNIGENT_SAAS_WORKER_HEALTH_STATE_FILE, value: /health/state/worker-health.json}
+              startupProbe:
+                exec:
+                  command: ["omnigent-saas-worker-health", "--mode", "startup"]
+                periodSeconds: 3
+                timeoutSeconds: 2
+                failureThreshold: 30
+              readinessProbe:
+                exec:
+                  command: ["omnigent-saas-worker-health", "--mode", "readiness"]
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 3
+              livenessProbe:
+                exec:
+                  command: ["omnigent-saas-worker-health", "--mode", "liveness"]
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests: {cpu: 250m, memory: 256Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: worker-runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: worker-health-state, mountPath: /health}
+                - {name: temp, mountPath: /tmp}
+            - name: runner-control
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.runner_control"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
+                - {name: OMNIGENT_SAAS_EXECUTOR_DATABASE_URL_FILE, value: /runtime/executor-database-url}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /runtime/service-role-bindings.json}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CA_CERTIFICATE_FILE, value: /runtime/runner-control-ca.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_SERVER_CERTIFICATE_FILE, value: /runtime/runner-control-server.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_SERVER_KEY_FILE, value: /runtime/runner-control-server.key}
+              ports:
+                - name: runner-control
+                  containerPort: 9444
+                  protocol: TCP
+                - name: runner-ready
+                  containerPort: 9445
+                  protocol: TCP
+              startupProbe:
+                exec:
+                  command: ["omnigent-saas-runner-control-readiness"]
+                periodSeconds: 3
+                timeoutSeconds: 2
+                failureThreshold: 20
+              readinessProbe:
+                exec:
+                  command: ["omnigent-saas-runner-control-readiness"]
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 3
+              livenessProbe:
+                tcpSocket: {port: runner-control}
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runner-control-runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: receipt-source, secret: {secretName: omnigent-saas-migration-receipt, defaultMode: 0400}}
+            - {name: dispatcher-source, secret: {secretName: omnigent-saas-dispatcher-database, defaultMode: 0400}}
+            - {name: executor-source, secret: {secretName: omnigent-saas-executor-database, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: bindings-source
+              configMap: {name: omnigent-saas-service-role-bindings-replace-bindings12, defaultMode: 0444}
+            - {name: runner-control-tls-source, secret: {secretName: omnigent-saas-runner-control-tls, defaultMode: 0400}}
+            - {name: preview-readiness-ca-source, secret: {secretName: omnigent-saas-preview-readiness-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - {name: worker-runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: worker-health-state, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: runner-control-runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 64Mi}}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-runner-agent-a
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-runner-agent-a
+        app.kubernetes.io/component: runner-agent
+      annotations:
+        omnigent.io/runner-fleet-phase: admission
+        omnigent.io/production-blocker: runner-fleet-admission-pending
+    spec:
+      # One Pod is one pre-registered Runner incarnation. Fleet manifests must
+      # render distinct identity Secrets and Runner IDs, never scale this
+      # identity horizontally.
+      replicas: 0
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-runner-agent-a
+          app.kubernetes.io/component: runner-agent
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-runner-agent-a
+            app.kubernetes.io/component: runner-agent
+          annotations:
+            omnigent.io/runner-recovery-artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-fleet-phase: admission
+            omnigent.io/runner-database-fleet-namespace: replace-with-runner-fleet-namespace
+            omnigent.io/runner-database-fleet-admission-epoch: "0"
+            omnigent.io/runner-database-fleet-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-context-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-trust-pins-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-issuer: replace-with-runner-fleet-attestation-issuer
+            omnigent.io/runner-database-fleet-attestation-key-id: replace-with-runner-fleet-attestation-key-id
+            omnigent.io/runner-database-fleet-attestation-public-key-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-signature-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-issuer: replace-with-runner-fleet-receipt-issuer
+            omnigent.io/runner-database-fleet-receipt-key-id: replace-with-runner-fleet-receipt-key-id
+            omnigent.io/runner-database-fleet-receipt-public-key-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-signature-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-slot: a
+            # Isolated Beta profile: the canonical provisioning spec must set
+            # expected_binding_keys to exactly [primary]. Production fan-out
+            # requires an owner-rendered exact Secret items/copy projection or
+            # a separately admitted safe stager.
+            omnigent.io/runner-repository-expected-binding-keys: primary
+            omnigent.io/runner-repository-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-spec-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-bindings-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        spec:
+          serviceAccountName: omnigent-saas-runtime
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: app.kubernetes.io/component
+                        operator: In
+                        values: [runner-agent]
+                  topologyKey: kubernetes.io/hostname
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-runner-identity
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/identity/ca.crt /runtime/runner-control-ca.crt
+                  install -m 0400 /source/identity/tls.crt /runtime/runner-control-client.crt
+                  install -m 0400 /source/identity/tls.key /runtime/runner-control-client.key
+                  install -m 0400 /source/identity/connection-token /runtime/runner-connection-token
+                  install -m 0400 /source/runner-database/value /runtime/runner-agent-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/artifact-credentials/credentials /runtime/runner-recovery-artifact-credentials
+                  install -m 0400 /source/preview-runner-ca/ca.crt /runtime/preview-runner-ca.crt
+                  install -m 0400 /source/fleet/runner-database-fleet.json /runtime/runner-database-fleet.json
+                  install -m 0400 /source/fleet/evidence-context.json /runtime/runner-database-fleet-evidence-context.json
+                  install -m 0400 /source/fleet/trust-pins.json /runtime/runner-database-fleet-trust-pins.json
+                  install -m 0400 /source/fleet/environment-attestation.json /runtime/runner-database-fleet-environment-attestation.json
+                  install -m 0400 /source/fleet/environment-attestation.signature /runtime/runner-database-fleet-environment-attestation.signature
+                  install -m 0400 /source/fleet/environment-attestation-public.pem /runtime/runner-database-fleet-environment-attestation-public.pem
+                  install -m 0400 /source/fleet/admission-receipt.json /runtime/runner-database-fleet-admission-receipt.json
+                  install -m 0400 /source/fleet/admission-receipt.signature /runtime/runner-database-fleet-admission-receipt.signature
+                  install -m 0400 /source/fleet/admission-receipt-public.pem /runtime/runner-database-fleet-admission-receipt-public.pem
+                  install -d -m 0700 /provisioning-private/spec /provisioning-private/credentials /repository/state
+                  install -m 0400 /source/repository-spec/repository-provisioning.json /provisioning-private/spec/repository-provisioning.json
+                  install -m 0400 /source/repository-credentials/primary.credential /provisioning-private/credentials/primary.credential
+                  omnigent-saas-provision-runner-repositories --spec /provisioning-private/spec/repository-provisioning.json --expected-binding-key primary
+                  install -d -m 0700 /runtime/secret-provider
+                  install -d -m 0700 /preview/socket /preview/log
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runner-identity-source, mountPath: /source/identity, readOnly: true}
+                - {name: runner-database-source, mountPath: /source/runner-database, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: runner-repository-spec-source, mountPath: /source/repository-spec, readOnly: true}
+                - {name: runner-repository-credentials-source, mountPath: /source/repository-credentials, readOnly: true}
+                - {name: runner-repository-private, mountPath: /provisioning-private}
+                - {name: repository-state, mountPath: /repository}
+                - {name: artifact-credentials-source, mountPath: /source/artifact-credentials, readOnly: true}
+                - {name: preview-runner-ca-source, mountPath: /source/preview-runner-ca, readOnly: true}
+                - {name: runner-fleet-source, mountPath: /source/fleet, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+                - {name: preview-socket, mountPath: /preview/socket}
+                - {name: preview-log, mountPath: /preview/log}
+          containers:
+            - name: runner-agent
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.runner_agent"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_RUNNER_ID, value: replace-with-runner-a-uuid}
+                - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION, value: "1"}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI, value: s3://replace-with-production-bucket/omnigent/runtime-recovery/runner/replace-with-runner-a-uuid/generation/1}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_ENDPOINT_URL, value: https://replace-artifact-endpoint.example.invalid}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_REGION, value: replace-with-artifact-region}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIALS_PROFILE, value: runner-replace-with-runner-a-uuid-g1}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIAL_REVISION, value: sha256:0000000000000000000000000000000000000000000000000000000000000000}
+                - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_TOKEN_FILE, value: /runtime/runner-connection-token}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CA_CERTIFICATE_FILE, value: /runtime/runner-control-ca.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_CERTIFICATE_FILE, value: /runtime/runner-control-client.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_KEY_FILE, value: /runtime/runner-control-client.key}
+                - {name: OMNIGENT_SAAS_RUNNER_AGENT_DATABASE_URL_FILE, value: /runtime/runner-agent-database-url}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_FILE, value: /runtime/runner-database-fleet.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_EVIDENCE_CONTEXT_FILE, value: /runtime/runner-database-fleet-evidence-context.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_EVIDENCE_CONTEXT_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_TRUST_PINS_FILE, value: /runtime/runner-database-fleet-trust-pins.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_TRUST_PINS_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_FILE, value: /runtime/runner-database-fleet-environment-attestation.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_SIGNATURE_FILE, value: /runtime/runner-database-fleet-environment-attestation.signature}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_PUBLIC_KEY_FILE, value: /runtime/runner-database-fleet-environment-attestation-public.pem}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_FILE, value: /runtime/runner-database-fleet-admission-receipt.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_SIGNATURE_FILE, value: /runtime/runner-database-fleet-admission-receipt.signature}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_PUBLIC_KEY_FILE, value: /runtime/runner-database-fleet-admission-receipt-public.pem}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_NAMESPACE, value: replace-with-runner-fleet-namespace}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_BINDINGS_FILE, value: /repository/state/repository-bindings.json}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_RECEIPT_FILE, value: /repository/state/repository-mirror-receipt.json}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_MIRROR_ROOT, value: /repository/state/mirrors/a}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_RUNNER_SLOT, value: a}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_SPEC_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_BINDINGS_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_RECEIPT_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIALS_FILE, value: /runtime/runner-recovery-artifact-credentials}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_CA_CERTIFICATE_FILE, value: /runtime/preview-runner-ca.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_PORTS, value: "9442"}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_SOCKET_ROOT, value: /preview/socket}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_LOG_ROOT, value: /preview/log}
+                - {name: OMNIGENT_SAAS_RUNNER_SECRET_PROVIDER_ROOT, value: /runtime/secret-provider}
+                - {name: OMNIGENT_SAAS_RUNNER_WORK_ROOT, value: /work/runtime}
+                - {name: OMNIGENT_SAAS_RUNNER_EXPECTED_CGROUP_PATH, value: self}
+                - {name: OMNIGENT_SAAS_RUNNER_WORKTREE_RESERVED_BYTES, value: "5368709120"}
+                - {name: OMNIGENT_SAAS_RUNNER_WORKTREE_LEASE_SECONDS, value: "300"}
+                - {name: OMNIGENT_SAAS_RUNNER_COMMAND_TIMEOUT_SECONDS, value: "1800"}
+              resources:
+                requests: {cpu: 500m, memory: 512Mi}
+                limits: {cpu: "1", memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: repository-state, mountPath: /repository}
+                - {name: work, mountPath: /work}
+                - {name: preview-socket, mountPath: /preview/socket}
+                - {name: preview-log, mountPath: /preview/log}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: runner-identity-source, secret: {secretName: omnigent-saas-runner-agent-a-identity, defaultMode: 0400}}
+            - {name: runner-database-source, secret: {secretName: omnigent-saas-runner-agent-a-database-g1, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: runner-repository-spec-source
+              secret:
+                secretName: omnigent-saas-runner-a-repository-provisioning-replace-repospec12
+                defaultMode: 0400
+                items: [{key: repository-provisioning.json, path: repository-provisioning.json}]
+            - name: runner-repository-credentials-source
+              secret:
+                secretName: omnigent-saas-runner-a-repository-credentials-replace-repocreds12
+                defaultMode: 0400
+                items: [{key: primary.credential, path: primary.credential}]
+            # Render an immutable, per-incarnation Secret name. Never reuse it
+            # for another Runner UUID or connection generation.
+            - {name: artifact-credentials-source, secret: {secretName: omnigent-runner-a-recovery-replace-g1-v1, defaultMode: 0400}}
+            - {name: preview-runner-ca-source, secret: {secretName: omnigent-saas-preview-runner-tunnel-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: runner-fleet-source
+              secret:
+                secretName: omnigent-saas-runner-database-fleet-replace-fleetpins12
+                defaultMode: 0400
+                items:
+                  - {key: runner-database-fleet.json, path: runner-database-fleet.json}
+                  - {key: evidence-context.json, path: evidence-context.json}
+                  - {key: trust-pins.json, path: trust-pins.json}
+                  - {key: environment-attestation.json, path: environment-attestation.json}
+                  - {key: environment-attestation.signature, path: environment-attestation.signature}
+                  - {key: environment-attestation-public.pem, path: environment-attestation-public.pem}
+                  - {key: admission-receipt.json, path: admission-receipt.json}
+                  - {key: admission-receipt.signature, path: admission-receipt.signature}
+                  - {key: admission-receipt-public.pem, path: admission-receipt-public.pem}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: work, emptyDir: {sizeLimit: 10Gi}}
+            - {name: runner-repository-private, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: repository-state, emptyDir: {sizeLimit: 5Gi}}
+            - {name: preview-socket, emptyDir: {medium: Memory, sizeLimit: 64Mi}}
+            - {name: preview-log, emptyDir: {sizeLimit: 512Mi}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 256Mi}}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-runner-agent-b
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-runner-agent-b
+        app.kubernetes.io/component: runner-agent
+      annotations:
+        omnigent.io/runner-fleet-phase: admission
+        omnigent.io/production-blocker: runner-fleet-admission-pending
+    spec:
+      # Runner B is an independent pre-registered incarnation. Never reuse
+      # Runner A's identity, recovery prefix, repository bindings, or Secret.
+      replicas: 0
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-runner-agent-b
+          app.kubernetes.io/component: runner-agent
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-runner-agent-b
+            app.kubernetes.io/component: runner-agent
+          annotations:
+            omnigent.io/runner-recovery-artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-fleet-phase: admission
+            omnigent.io/runner-database-fleet-namespace: replace-with-runner-fleet-namespace
+            omnigent.io/runner-database-fleet-admission-epoch: "0"
+            omnigent.io/runner-database-fleet-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-context-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-trust-pins-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-issuer: replace-with-runner-fleet-attestation-issuer
+            omnigent.io/runner-database-fleet-attestation-key-id: replace-with-runner-fleet-attestation-key-id
+            omnigent.io/runner-database-fleet-attestation-public-key-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-attestation-signature-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-issuer: replace-with-runner-fleet-receipt-issuer
+            omnigent.io/runner-database-fleet-receipt-key-id: replace-with-runner-fleet-receipt-key-id
+            omnigent.io/runner-database-fleet-receipt-public-key-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-database-fleet-receipt-signature-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-slot: b
+            # Isolated Beta profile: the canonical provisioning spec must set
+            # expected_binding_keys to exactly [primary]. Production fan-out
+            # requires an owner-rendered exact Secret items/copy projection or
+            # a separately admitted safe stager.
+            omnigent.io/runner-repository-expected-binding-keys: primary
+            omnigent.io/runner-repository-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-spec-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-bindings-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/runner-repository-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        spec:
+          serviceAccountName: omnigent-saas-runtime
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: app.kubernetes.io/component
+                        operator: In
+                        values: [runner-agent]
+                  topologyKey: kubernetes.io/hostname
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-runner-identity
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/identity/ca.crt /runtime/runner-control-ca.crt
+                  install -m 0400 /source/identity/tls.crt /runtime/runner-control-client.crt
+                  install -m 0400 /source/identity/tls.key /runtime/runner-control-client.key
+                  install -m 0400 /source/identity/connection-token /runtime/runner-connection-token
+                  install -m 0400 /source/runner-database/value /runtime/runner-agent-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/artifact-credentials/credentials /runtime/runner-recovery-artifact-credentials
+                  install -m 0400 /source/preview-runner-ca/ca.crt /runtime/preview-runner-ca.crt
+                  install -m 0400 /source/fleet/runner-database-fleet.json /runtime/runner-database-fleet.json
+                  install -m 0400 /source/fleet/evidence-context.json /runtime/runner-database-fleet-evidence-context.json
+                  install -m 0400 /source/fleet/trust-pins.json /runtime/runner-database-fleet-trust-pins.json
+                  install -m 0400 /source/fleet/environment-attestation.json /runtime/runner-database-fleet-environment-attestation.json
+                  install -m 0400 /source/fleet/environment-attestation.signature /runtime/runner-database-fleet-environment-attestation.signature
+                  install -m 0400 /source/fleet/environment-attestation-public.pem /runtime/runner-database-fleet-environment-attestation-public.pem
+                  install -m 0400 /source/fleet/admission-receipt.json /runtime/runner-database-fleet-admission-receipt.json
+                  install -m 0400 /source/fleet/admission-receipt.signature /runtime/runner-database-fleet-admission-receipt.signature
+                  install -m 0400 /source/fleet/admission-receipt-public.pem /runtime/runner-database-fleet-admission-receipt-public.pem
+                  install -d -m 0700 /provisioning-private/spec /provisioning-private/credentials /repository/state
+                  install -m 0400 /source/repository-spec/repository-provisioning.json /provisioning-private/spec/repository-provisioning.json
+                  install -m 0400 /source/repository-credentials/primary.credential /provisioning-private/credentials/primary.credential
+                  omnigent-saas-provision-runner-repositories --spec /provisioning-private/spec/repository-provisioning.json --expected-binding-key primary
+                  install -d -m 0700 /runtime/secret-provider
+                  install -d -m 0700 /preview/socket /preview/log
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runner-identity-source, mountPath: /source/identity, readOnly: true}
+                - {name: runner-database-source, mountPath: /source/runner-database, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: runner-repository-spec-source, mountPath: /source/repository-spec, readOnly: true}
+                - {name: runner-repository-credentials-source, mountPath: /source/repository-credentials, readOnly: true}
+                - {name: runner-repository-private, mountPath: /provisioning-private}
+                - {name: repository-state, mountPath: /repository}
+                - {name: artifact-credentials-source, mountPath: /source/artifact-credentials, readOnly: true}
+                - {name: preview-runner-ca-source, mountPath: /source/preview-runner-ca, readOnly: true}
+                - {name: runner-fleet-source, mountPath: /source/fleet, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+                - {name: preview-socket, mountPath: /preview/socket}
+                - {name: preview-log, mountPath: /preview/log}
+          containers:
+            - name: runner-agent
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.runner_agent"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_RUNNER_ID, value: replace-with-runner-b-uuid}
+                - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION, value: "1"}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI, value: s3://replace-with-production-bucket/omnigent/runtime-recovery/runner/replace-with-runner-b-uuid/generation/1}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_ENDPOINT_URL, value: https://replace-artifact-endpoint.example.invalid}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_REGION, value: replace-with-artifact-region}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIALS_PROFILE, value: runner-replace-with-runner-b-uuid-g1}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIAL_REVISION, value: sha256:0000000000000000000000000000000000000000000000000000000000000000}
+                - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_TOKEN_FILE, value: /runtime/runner-connection-token}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CA_CERTIFICATE_FILE, value: /runtime/runner-control-ca.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_CERTIFICATE_FILE, value: /runtime/runner-control-client.crt}
+                - {name: OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_KEY_FILE, value: /runtime/runner-control-client.key}
+                - {name: OMNIGENT_SAAS_RUNNER_AGENT_DATABASE_URL_FILE, value: /runtime/runner-agent-database-url}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_FILE, value: /runtime/runner-database-fleet.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_EVIDENCE_CONTEXT_FILE, value: /runtime/runner-database-fleet-evidence-context.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_EVIDENCE_CONTEXT_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_TRUST_PINS_FILE, value: /runtime/runner-database-fleet-trust-pins.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_TRUST_PINS_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_FILE, value: /runtime/runner-database-fleet-environment-attestation.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_SIGNATURE_FILE, value: /runtime/runner-database-fleet-environment-attestation.signature}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ENVIRONMENT_ATTESTATION_PUBLIC_KEY_FILE, value: /runtime/runner-database-fleet-environment-attestation-public.pem}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_FILE, value: /runtime/runner-database-fleet-admission-receipt.json}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_SIGNATURE_FILE, value: /runtime/runner-database-fleet-admission-receipt.signature}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_PUBLIC_KEY_FILE, value: /runtime/runner-database-fleet-admission-receipt-public.pem}
+                - {name: OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_NAMESPACE, value: replace-with-runner-fleet-namespace}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_BINDINGS_FILE, value: /repository/state/repository-bindings.json}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_RECEIPT_FILE, value: /repository/state/repository-mirror-receipt.json}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_MIRROR_ROOT, value: /repository/state/mirrors/b}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_RUNNER_SLOT, value: b}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_SPEC_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_BINDINGS_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_REPOSITORY_EXPECTED_RECEIPT_SHA256, value: "0000000000000000000000000000000000000000000000000000000000000000"}
+                - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_CREDENTIALS_FILE, value: /runtime/runner-recovery-artifact-credentials}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_CA_CERTIFICATE_FILE, value: /runtime/preview-runner-ca.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_PORTS, value: "9442"}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_SOCKET_ROOT, value: /preview/socket}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_LOG_ROOT, value: /preview/log}
+                - {name: OMNIGENT_SAAS_RUNNER_SECRET_PROVIDER_ROOT, value: /runtime/secret-provider}
+                - {name: OMNIGENT_SAAS_RUNNER_WORK_ROOT, value: /work/runtime}
+                - {name: OMNIGENT_SAAS_RUNNER_EXPECTED_CGROUP_PATH, value: self}
+                - {name: OMNIGENT_SAAS_RUNNER_WORKTREE_RESERVED_BYTES, value: "5368709120"}
+                - {name: OMNIGENT_SAAS_RUNNER_WORKTREE_LEASE_SECONDS, value: "300"}
+                - {name: OMNIGENT_SAAS_RUNNER_COMMAND_TIMEOUT_SECONDS, value: "1800"}
+              resources:
+                requests: {cpu: 500m, memory: 512Mi}
+                limits: {cpu: "1", memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: repository-state, mountPath: /repository}
+                - {name: work, mountPath: /work}
+                - {name: preview-socket, mountPath: /preview/socket}
+                - {name: preview-log, mountPath: /preview/log}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: runner-identity-source, secret: {secretName: omnigent-saas-runner-agent-b-identity, defaultMode: 0400}}
+            - {name: runner-database-source, secret: {secretName: omnigent-saas-runner-agent-b-database-g1, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: runner-repository-spec-source
+              secret:
+                secretName: omnigent-saas-runner-b-repository-provisioning-replace-repospec12
+                defaultMode: 0400
+                items: [{key: repository-provisioning.json, path: repository-provisioning.json}]
+            - name: runner-repository-credentials-source
+              secret:
+                secretName: omnigent-saas-runner-b-repository-credentials-replace-repocreds12
+                defaultMode: 0400
+                items: [{key: primary.credential, path: primary.credential}]
+            - {name: artifact-credentials-source, secret: {secretName: omnigent-runner-b-recovery-replace-g1-v1, defaultMode: 0400}}
+            - {name: preview-runner-ca-source, secret: {secretName: omnigent-saas-preview-runner-tunnel-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: runner-fleet-source
+              secret:
+                secretName: omnigent-saas-runner-database-fleet-replace-fleetpins12
+                defaultMode: 0400
+                items:
+                  - {key: runner-database-fleet.json, path: runner-database-fleet.json}
+                  - {key: evidence-context.json, path: evidence-context.json}
+                  - {key: trust-pins.json, path: trust-pins.json}
+                  - {key: environment-attestation.json, path: environment-attestation.json}
+                  - {key: environment-attestation.signature, path: environment-attestation.signature}
+                  - {key: environment-attestation-public.pem, path: environment-attestation-public.pem}
+                  - {key: admission-receipt.json, path: admission-receipt.json}
+                  - {key: admission-receipt.signature, path: admission-receipt.signature}
+                  - {key: admission-receipt-public.pem, path: admission-receipt-public.pem}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: work, emptyDir: {sizeLimit: 10Gi}}
+            - {name: runner-repository-private, emptyDir: {medium: Memory, sizeLimit: 64Ki}}
+            - {name: repository-state, emptyDir: {sizeLimit: 5Gi}}
+            - {name: preview-socket, emptyDir: {medium: Memory, sizeLimit: 64Mi}}
+            - {name: preview-log, emptyDir: {sizeLimit: 512Mi}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 256Mi}}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-preview-edge
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-preview-edge
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-preview-edge
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-preview-edge
+        spec:
+          serviceAccountName: omnigent-saas-runtime
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 30
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omnigent-saas-preview-edge
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-preview-secrets
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
+                  install -m 0400 /source/database/value /runtime/preview-edge-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
+                  install -m 0400 /source/relay/ca.crt /runtime/preview-relay-ca.crt
+                  install -m 0400 /source/relay/tls.crt /runtime/preview-relay-client.crt
+                  install -m 0400 /source/relay/tls.key /runtime/preview-relay-client.key
+                  install -m 0400 /source/readiness/tls.crt /runtime/preview-readiness-server.crt
+                  install -m 0400 /source/readiness/tls.key /runtime/preview-readiness-server.key
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
+                - {name: preview-database-source, mountPath: /source/database, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: preview-relay-source, mountPath: /source/relay, readOnly: true}
+                - {name: preview-readiness-tls-source, mountPath: /source/readiness, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+          containers:
+            - name: preview-edge
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.preview_edge"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
+                - {name: OMNIGENT_SAAS_PREVIEW_EDGE_DATABASE_URL_FILE, value: /runtime/preview-edge-database-url}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_PORTS, value: "9443"}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /runtime/service-role-bindings.json}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CA_CERTIFICATE_FILE, value: /runtime/preview-relay-ca.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CLIENT_CERTIFICATE_FILE, value: /runtime/preview-relay-client.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CLIENT_KEY_FILE, value: /runtime/preview-relay-client.key}
+                - {name: OMNIGENT_SAAS_PREVIEW_READINESS_SERVER_CERTIFICATE_FILE, value: /runtime/preview-readiness-server.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_READINESS_SERVER_KEY_FILE, value: /runtime/preview-readiness-server.key}
+              ports:
+                - name: http-preview
+                  containerPort: 8080
+                  protocol: TCP
+                - name: preview-ready
+                  containerPort: 8443
+                  protocol: TCP
+              startupProbe:
+                httpGet: {path: /readyz, port: http-preview}
+                periodSeconds: 3
+                timeoutSeconds: 2
+                failureThreshold: 20
+              readinessProbe:
+                httpGet: {path: /readyz, port: http-preview}
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 3
+              livenessProbe:
+                httpGet: {path: /livez, port: http-preview}
+                periodSeconds: 15
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: receipt-source, secret: {secretName: omnigent-saas-migration-receipt, defaultMode: 0400}}
+            - {name: preview-database-source, secret: {secretName: omnigent-saas-preview-edge-database, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: bindings-source
+              configMap: {name: omnigent-saas-service-role-bindings-replace-bindings12, defaultMode: 0444}
+            - {name: preview-relay-source, secret: {secretName: omnigent-saas-preview-relay-client-tls, defaultMode: 0400}}
+            - {name: preview-readiness-tls-source, secret: {secretName: omnigent-saas-preview-readiness-tls, defaultMode: 0400}}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 128Ki}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 64Mi}}
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-saas-preview-owner
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-preview-owner
+      annotations:
+        omnigent.io/production-eligible: "false"
+        omnigent.io/production-blocker: preview-owner-singleton
+    spec:
+      # The registry is process-local. Recreate prevents two live owners, but
+      # this singleton is an explicit Production blocker until durable shared
+      # ownership/fencing is implemented and proven.
+      replicas: 1
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-preview-owner
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-preview-owner
+          annotations:
+            omnigent.io/production-eligible: "false"
+            omnigent.io/production-blocker: preview-owner-singleton
+            omnigent.io/preview-owner-incarnation: replace-with-preview-owner-incarnation
+        spec:
+          serviceAccountName: omnigent-saas-preview-owner
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-preview-owner-secrets
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
+                  install -m 0400 /source/database/value /runtime/preview-owner-database-url
+                  install -m 0400 /source/postgresql-ca/ca.crt /runtime/postgresql-ca.crt
+                  install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
+                  install -m 0400 /source/registration/registration-token /runtime/preview-gateway-registration-token
+                  install -m 0400 /source/relay-client/ca.crt /runtime/preview-relay-ca.crt
+                  install -m 0400 /source/relay-client/tls.crt /runtime/preview-relay-client.crt
+                  install -m 0400 /source/relay-client/tls.key /runtime/preview-relay-client.key
+                  install -m 0400 /source/relay-server/tls.crt /runtime/preview-relay-server.crt
+                  install -m 0400 /source/relay-server/tls.key /runtime/preview-relay-server.key
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
+                - {name: preview-owner-database-source, mountPath: /source/database, readOnly: true}
+                - {name: postgresql-ca-source, mountPath: /source/postgresql-ca, readOnly: true}
+                - {name: bindings-source, mountPath: /source/bindings, readOnly: true}
+                - {name: preview-registration-source, mountPath: /source/registration, readOnly: true}
+                - {name: preview-relay-client-source, mountPath: /source/relay-client, readOnly: true}
+                - {name: preview-relay-server-source, mountPath: /source/relay-server, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+          containers:
+            - name: preview-owner
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["omnigent-saas-preview-owner"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-saas-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
+                - {name: OMNIGENT_SAAS_PREVIEW_OWNER_DATABASE_URL_FILE, value: /runtime/preview-owner-database-url}
+                - {name: OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE, value: /runtime/service-role-bindings.json}
+                - {name: OMNIGENT_SAAS_PREVIEW_GATEWAY_INSTANCE_ID, value: replace-with-preview-gateway-instance-id}
+                - {name: OMNIGENT_SAAS_PREVIEW_GATEWAY_REGISTRATION_TOKEN_FILE, value: /runtime/preview-gateway-registration-token}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_BIND_HOST, value: 0.0.0.0}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_BIND_PORT, value: "9443"}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_PORTS, value: "9442,9443"}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CA_CERTIFICATE_FILE, value: /runtime/preview-relay-ca.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CLIENT_CERTIFICATE_FILE, value: /runtime/preview-relay-client.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_CLIENT_KEY_FILE, value: /runtime/preview-relay-client.key}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_SERVER_CERTIFICATE_FILE, value: /runtime/preview-relay-server.crt}
+                - {name: OMNIGENT_SAAS_PREVIEW_RELAY_SERVER_KEY_FILE, value: /runtime/preview-relay-server.key}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_TUNNEL_BIND_HOST, value: 0.0.0.0}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_TUNNEL_PORT, value: "9442"}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_TUNNEL_SERVER_NAME, value: omnigent-saas-preview-owner.omnigent.svc.cluster.local}
+                - {name: OMNIGENT_SAAS_PREVIEW_RUNNER_TUNNEL_HEARTBEAT_SECONDS, value: "15"}
+              ports:
+                - name: runner-wss
+                  containerPort: 9442
+                  protocol: TCP
+                - name: relay-mtls
+                  containerPort: 9443
+                  protocol: TCP
+              startupProbe:
+                httpGet: {path: /readyz, port: runner-wss, scheme: HTTPS}
+                periodSeconds: 3
+                timeoutSeconds: 2
+                failureThreshold: 20
+              readinessProbe:
+                httpGet: {path: /readyz, port: runner-wss, scheme: HTTPS}
+                periodSeconds: 5
+                timeoutSeconds: 2
+                failureThreshold: 3
+              livenessProbe:
+                httpGet: {path: /livez, port: runner-wss, scheme: HTTPS}
+                periodSeconds: 15
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: receipt-source, secret: {secretName: omnigent-saas-migration-receipt, defaultMode: 0400}}
+            - {name: preview-owner-database-source, secret: {secretName: omnigent-saas-preview-owner-database, defaultMode: 0400}}
+            - {name: postgresql-ca-source, secret: {secretName: omnigent-saas-postgresql-ca, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}
+            - name: bindings-source
+              configMap: {name: omnigent-saas-service-role-bindings-replace-bindings12, defaultMode: 0444}
+            - {name: preview-registration-source, secret: {secretName: omnigent-saas-preview-owner-registration-replace-owner12, defaultMode: 0400}}
+            - {name: preview-relay-client-source, secret: {secretName: omnigent-saas-preview-owner-relay-client-tls-replace-owner12, defaultMode: 0400}}
+            - {name: preview-relay-server-source, secret: {secretName: omnigent-saas-preview-owner-relay-server-tls-replace-owner12, defaultMode: 0400}}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 128Ki}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 64Mi}}
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: omnigent-saas-server
+      namespace: omnigent
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: omnigent-saas-server
+      ports:
+        - name: http
+          port: 80
+          targetPort: http
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: omnigent-saas-runner-control
+      namespace: omnigent
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: omnigent-saas-worker
+      ports:
+        - name: mtls
+          port: 9444
+          targetPort: runner-control
+          protocol: TCP
+        - name: tls-readiness
+          port: 9445
+          targetPort: runner-ready
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: omnigent-saas-preview-edge
+      namespace: omnigent
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: omnigent-saas-preview-edge
+      ports:
+        - name: http
+          port: 80
+          targetPort: http-preview
+          protocol: TCP
+        - name: tls-readiness
+          port: 8443
+          targetPort: preview-ready
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: omnigent-saas-preview-owner
+      namespace: omnigent
+    spec:
+      type: ClusterIP
+      clusterIP: None
+      selector:
+        app.kubernetes.io/name: omnigent-saas-preview-owner
+      ports:
+        - name: runner-wss
+          port: 9442
+          targetPort: runner-wss
+          protocol: TCP
+        - name: relay-mtls
+          port: 9443
+          targetPort: relay-mtls
+          protocol: TCP
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: omnigent-saas-server
+      namespace: omnigent
+    spec:
+      minAvailable: 1
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-server
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: omnigent-saas-worker
+      namespace: omnigent
+    spec:
+      minAvailable: 1
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-worker
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: omnigent-saas-preview-edge
+      namespace: omnigent
+    spec:
+      minAvailable: 1
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: omnigent-saas-preview-edge

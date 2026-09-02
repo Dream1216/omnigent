@@ -14,10 +14,18 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
-from saas.control_plane.db_models import RuntimePlacementRecord
-from saas.control_plane.execution import ExecutionControlPlane
+from saas.control_plane.db_models import ControlPlaneOutboxEvent, RuntimePlacementRecord
+from saas.control_plane.dispatch_binding import (
+    dispatch_requirements_hash as _canonical_dispatch_requirements_hash,
+)
+from saas.control_plane.execution import ExecutionControlPlane, RunLease, RunMutation
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
+from saas.control_plane.isolation_models import EgressPolicyRecord, ExecutionProfileRecord
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.runner_execution_spec import (
+    ManagedRunExecutionSpecError,
+    production_run_execution_spec,
+)
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
     RunDispatchRecord,
@@ -29,6 +37,7 @@ from saas.control_plane.scheduling_models import (
 _ACTIVE_RUN_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
 )
+_HASH_ALPHABET = frozenset("0123456789abcdef")
 _VIRTUAL_RUNTIME_SCALE = 1_000_000
 
 
@@ -64,6 +73,13 @@ def _canonical_hash(payload: object) -> str:
     return sha256(encoded.encode()).hexdigest()
 
 
+def _hash64(value: str, *, field: str) -> str:
+    normalized = _text(value, field=field, maximum=64)
+    if len(normalized) != 64 or any(character not in _HASH_ALPHABET for character in normalized):
+        raise SchedulingError(f"{field}_invalid", f"{field} is invalid")
+    return normalized
+
+
 def _token_hash(token: str) -> str:
     return sha256(token.encode()).hexdigest()
 
@@ -85,6 +101,30 @@ class RunnerConnection:
 
 
 @dataclass(frozen=True, slots=True)
+class RunnerExecutionEnvelope:
+    """Server-derived immutable facts consumed by one managed Runner launch."""
+
+    change_set_id: UUID
+    tenant_id: UUID
+    space_id: UUID
+    project_id: UUID
+    run_id: UUID
+    runner_id: UUID
+    fence_token: int
+    execution_profile_id: UUID
+    execution_profile_hash: str
+    egress_policy_id: UUID
+    egress_policy_hash: str
+    product_revision: str
+    image_digest: str
+    execution_spec_hash: str
+    launch_argv: tuple[str, ...]
+    execution_kind: str = "omnigent.agent.v1"
+    preview_execution_id: UUID | None = None
+    checkpoint_revision: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class FairRunLease:
     run_id: UUID
     runner_id: UUID
@@ -95,6 +135,7 @@ class FairRunLease:
     expires_at: datetime
     capability_id: UUID
     capability_token: str
+    execution_envelope: RunnerExecutionEnvelope | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +237,24 @@ class SchedulingControlPlane:
         raw_token = secrets.token_urlsafe(32)
         digest = _token_hash(raw_token)
         with self._session_factory.begin() as db:
+            if db.bind is not None and db.bind.dialect.name == "postgresql":
+                db.execute(
+                    sa.text("LOCK TABLE public.saas_runner_registrations IN ROW EXCLUSIVE MODE")
+                )
             pool = self._pool(db, pool_id, lock=True)
+            promoted_fleet = db.scalar(
+                sa.select(ControlPlaneOutboxEvent.id)
+                .where(
+                    ControlPlaneOutboxEvent.aggregate_type == "runner_fleet",
+                    ControlPlaneOutboxEvent.event_type == "runner.fleet.promoted",
+                )
+                .limit(1)
+            )
+            if promoted_fleet is not None:
+                raise SchedulingError(
+                    "runner_fleet_stage_required",
+                    "A promoted production fleet can only rotate through owner staging",
+                )
             self._require_pool_compatibility(
                 pool,
                 protocol_version=protocol_version,
@@ -345,6 +403,8 @@ class SchedulingControlPlane:
         run_id: UUID,
         pool_id: UUID,
         required_capabilities: tuple[str, ...] | list[str],
+        execution_profile_id: UUID | None = None,
+        execution_profile_hash: str | None = None,
         cost_units: int = 1,
         eligible_at: datetime | None = None,
         maximum_wait: timedelta = timedelta(hours=1),
@@ -359,6 +419,7 @@ class SchedulingControlPlane:
         wait_until = ready_at + maximum_wait
         with self._session_factory.begin() as db:
             run = self._run(db, run_id, lock=True)
+            self._apply_run_context(db, run)
             if run.status != "queued":
                 raise SchedulingError("run_not_queued", "Only queued Runs can be dispatched")
             pool = self._pool(db, pool_id, lock=False)
@@ -371,15 +432,45 @@ class SchedulingControlPlane:
                 raise SchedulingError(
                     "tenant_queue_share_missing", "Tenant has no configured fair-queue share"
                 )
-            request_hash = _canonical_hash(
-                {
-                    "pool_id": str(pool_id),
-                    "queue_class": run.queue_class,
-                    "required_capabilities": capabilities,
-                    "cost_units": cost_units,
-                    "eligible_at": ready_at.isoformat(),
-                    "max_wait_at": wait_until.isoformat(),
-                }
+            profile, egress_policy = self._resolve_dispatch_profile_binding(db, run)
+            if execution_profile_id is not None and execution_profile_id != profile.id:
+                raise SchedulingError(
+                    "dispatch_execution_profile_invalid",
+                    "Caller-selected profile differs from server authority",
+                )
+            profile_hash = _hash64(
+                profile.config_hash,
+                field="dispatch_execution_profile_hash",
+            )
+            if execution_profile_hash is not None and (
+                _hash64(
+                    execution_profile_hash,
+                    field="dispatch_execution_profile_hash",
+                )
+                != profile_hash
+            ):
+                raise SchedulingError(
+                    "dispatch_execution_profile_hash_mismatch",
+                    "Dispatch execution profile hash is not current",
+                )
+            egress_policy_hash = _hash64(
+                egress_policy.rules_hash,
+                field="dispatch_egress_policy_hash",
+            )
+            request_hash = self._dispatch_requirements_hash(
+                tenant_id=run.tenant_id,
+                space_id=run.space_id,
+                project_id=run.project_id,
+                pool_id=pool_id,
+                execution_profile_id=profile.id,
+                execution_profile_hash=profile_hash,
+                egress_policy_id=egress_policy.id,
+                egress_policy_hash=egress_policy_hash,
+                queue_class=run.queue_class,
+                required_capabilities=capabilities,
+                cost_units=cost_units,
+                eligible_at=ready_at,
+                max_wait_at=wait_until,
             )
             existing = db.get(RunDispatchRecord, run_id)
             if existing is not None:
@@ -396,6 +487,10 @@ class SchedulingControlPlane:
                     space_id=run.space_id,
                     project_id=run.project_id,
                     pool_id=pool.id,
+                    execution_profile_id=profile.id,
+                    execution_profile_hash=profile_hash,
+                    egress_policy_id=egress_policy.id,
+                    egress_policy_hash=egress_policy_hash,
                     queue_class=run.queue_class,
                     required_capabilities=capabilities,
                     requirements_hash=request_hash,
@@ -418,6 +513,8 @@ class SchedulingControlPlane:
         capability_actions: tuple[str, ...] | list[str],
         capability_resource_scope: dict[str, str],
         heartbeat_timeout: timedelta = timedelta(seconds=30),
+        expected_product_revision: str | None = None,
+        product_image_digest: str | None = None,
         now: datetime | None = None,
     ) -> FairRunLease | None:
         """Atomically choose a tenant by weighted virtual runtime and lease one Run."""
@@ -430,7 +527,7 @@ class SchedulingControlPlane:
         resource_scope = self._resource_scope(capability_resource_scope)
         raw_capability = secrets.token_urlsafe(32)
         with self._session_factory.begin() as db:
-            runner = self._runner(db, runner_id, lock=True)
+            pool, runner = self._lock_pool_then_runner(db, runner_id)
             self._require_runner_connection(
                 runner,
                 connection_generation=connection_generation,
@@ -443,7 +540,6 @@ class SchedulingControlPlane:
                 raise SchedulingError("runner_heartbeat_stale", "Runner heartbeat is stale")
             if runner.active_leases >= runner.max_concurrency:
                 return None
-            pool = self._pool(db, runner.pool_id, lock=True)
             if pool.status != "active":
                 raise SchedulingError("runner_pool_unavailable", "Runner pool is not active")
             active_pool_leases = cast(
@@ -465,6 +561,53 @@ class SchedulingControlPlane:
             if selected is None:
                 return None
             share, dispatch, run = selected
+            self._apply_run_context(db, run)
+            profile = self._require_dispatch_profile_binding(db, dispatch=dispatch, run=run)
+            raw_change_set_id = run.input.get("change_set_id")
+            try:
+                change_set_id = (
+                    UUID(raw_change_set_id) if isinstance(raw_change_set_id, str) else None
+                )
+            except ValueError:
+                change_set_id = None
+            if expected_product_revision is not None or product_image_digest is not None:
+                try:
+                    execution_spec = production_run_execution_spec(run.input)
+                except ManagedRunExecutionSpecError as exc:
+                    raise SchedulingError(
+                        "run_execution_envelope_invalid",
+                        "Run does not have a valid managed execution specification",
+                    ) from exc
+                if (
+                    change_set_id is None
+                    or change_set_id.int == 0
+                    or expected_product_revision is None
+                    or product_image_digest is None
+                    or run.product_revision != expected_product_revision
+                ):
+                    raise SchedulingError(
+                        "run_execution_envelope_invalid",
+                        "Run does not have an exact production execution envelope",
+                    )
+                if (
+                    not product_image_digest.startswith("sha256:")
+                    or len(product_image_digest) != 71
+                ):
+                    raise SchedulingError(
+                        "run_execution_envelope_invalid", "Runner image digest is invalid"
+                    )
+                required_actions = (
+                    {"preview.serve", "run.execute", "worktree.read"}
+                    if execution_spec.kind == "omnigent.preview.v1"
+                    else {"run.execute", "sandbox.launch", "worktree.write"}
+                )
+                if not required_actions.issubset(actions):
+                    raise SchedulingError(
+                        "run_execution_capability_invalid",
+                        "Production Runner capability actions are incomplete",
+                    )
+            else:
+                execution_spec = None
             authoritative_scope = {
                 "tenant_id": str(run.tenant_id),
                 "space_id": str(run.space_id),
@@ -472,6 +615,8 @@ class SchedulingControlPlane:
                 "run_id": str(run.id),
                 "runner_id": str(runner.id),
             }
+            if change_set_id is not None:
+                authoritative_scope["change_set_id"] = str(change_set_id)
             for key, value in authoritative_scope.items():
                 supplied = resource_scope.get(key)
                 if supplied is not None and supplied != value:
@@ -533,6 +678,32 @@ class SchedulingControlPlane:
                 },
                 trace_id=f"runner:{runner.id}",
             )
+            envelope = None
+            if (
+                change_set_id is not None
+                and product_image_digest is not None
+                and execution_spec is not None
+            ):
+                envelope = RunnerExecutionEnvelope(
+                    change_set_id=change_set_id,
+                    tenant_id=run.tenant_id,
+                    space_id=run.space_id,
+                    project_id=run.project_id,
+                    run_id=run.id,
+                    runner_id=runner.id,
+                    fence_token=run.fence_token,
+                    execution_profile_id=profile.id,
+                    execution_profile_hash=profile.config_hash,
+                    egress_policy_id=dispatch.egress_policy_id,
+                    egress_policy_hash=dispatch.egress_policy_hash,
+                    product_revision=run.product_revision,
+                    image_digest=product_image_digest,
+                    execution_spec_hash=execution_spec.spec_hash,
+                    launch_argv=execution_spec.launch_argv,
+                    execution_kind=execution_spec.kind,
+                    preview_execution_id=execution_spec.preview_execution_id,
+                    checkpoint_revision=execution_spec.checkpoint_revision,
+                )
             return FairRunLease(
                 run.id,
                 runner.id,
@@ -543,6 +714,7 @@ class SchedulingControlPlane:
                 expires_at,
                 capability.id,
                 raw_capability,
+                envelope,
             )
 
     def verify_capability(
@@ -563,54 +735,189 @@ class SchedulingControlPlane:
         requested_action = _text(action, field="capability_action", maximum=128)
         required_scope = self._resource_scope(required_resource_scope)
         with self._session_factory() as db:
-            capability = db.scalar(
-                sa.select(CapabilityTokenRecord).where(CapabilityTokenRecord.token_hash == digest)
-            )
-            if capability is None:
-                raise SchedulingError("capability_invalid", "Capability is invalid")
-            if capability.revoked_at is not None or _aware(capability.expires_at) <= checked_at:
-                raise SchedulingError("capability_expired", "Capability is expired or revoked")
-            if capability.runner_id != runner_id or capability.run_id != run_id:
-                raise SchedulingError(
-                    "capability_binding_invalid", "Capability binding is invalid"
-                )
-            if requested_action not in capability.allowed_actions:
-                raise SchedulingError("capability_action_denied", "Capability action is denied")
-            for key, value in required_scope.items():
-                if capability.resource_scope.get(key) != value:
-                    raise SchedulingError(
-                        "capability_scope_denied", "Capability resource scope is denied"
-                    )
             runner = self._runner(db, runner_id, lock=False)
-            run = self._run(db, run_id, lock=False)
-            dispatch = db.get(RunDispatchRecord, run_id)
-            if dispatch is None or dispatch.status != "leased":
-                raise SchedulingError("capability_dispatch_stale", "Dispatch is not leased")
-            if runner.status not in {"online", "draining"}:
-                raise SchedulingError("capability_runner_unavailable", "Runner is unavailable")
-            if runner.connection_generation != capability.runner_connection_generation:
-                raise SchedulingError("capability_runner_stale", "Runner incarnation is stale")
-            if (
-                dispatch.selected_runner_id != runner.id
-                or dispatch.dispatch_generation != capability.dispatch_generation
-                or run.fence_token != capability.fence_token
-                or run.status not in _ACTIVE_RUN_STATUSES
-                or run.lease_expires_at is None
-                or _aware(run.lease_expires_at) <= checked_at
-            ):
-                raise SchedulingError("capability_fence_stale", "Capability fence is stale")
-            return VerifiedCapability(
-                capability.id,
-                capability.run_id,
-                capability.runner_id,
-                capability.tenant_id,
-                capability.space_id,
-                capability.project_id,
-                capability.fence_token,
-                tuple(capability.allowed_actions),
-                dict(capability.resource_scope),
-                _aware(capability.expires_at),
+            return self._verify_capability_in_transaction(
+                db,
+                digest=digest,
+                runner=runner,
+                run_id=run_id,
+                requested_action=requested_action,
+                required_scope=required_scope,
+                checked_at=checked_at,
+                lock=False,
             )
+
+    def authenticated_run_heartbeat(
+        self,
+        execution: ExecutionControlPlane,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        lease_token: UUID,
+        fence_token: int,
+        capability_token: str,
+        lease_duration: timedelta,
+        now: datetime | None = None,
+    ) -> RunLease:
+        """Authenticate Runner incarnation and extend one Run in one lock domain."""
+
+        checked_at = now or _utcnow()
+        _validate_time(checked_at)
+        with self._session_factory.begin() as db:
+            _pool, runner = self._lock_pool_then_runner(db, runner_id)
+            self._require_authenticated_run(
+                db,
+                runner=runner,
+                connection_generation=connection_generation,
+                connection_token=connection_token,
+                run_id=run_id,
+                capability_token=capability_token,
+                checked_at=checked_at,
+            )
+            return execution.heartbeat_in_transaction(
+                db,
+                run_id=run_id,
+                lease_token=lease_token,
+                fence_token=fence_token,
+                lease_duration=lease_duration,
+                now=checked_at,
+            )
+
+    def authenticated_run_transition(
+        self,
+        execution: ExecutionControlPlane,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        lease_token: UUID,
+        fence_token: int,
+        capability_token: str,
+        target_status: str,
+        trace_id: str,
+        now: datetime | None = None,
+    ) -> RunMutation:
+        """Authenticate Runner incarnation and mutate one Run in one transaction."""
+
+        checked_at = now or _utcnow()
+        _validate_time(checked_at)
+        with self._session_factory.begin() as db:
+            _pool, runner = self._lock_pool_then_runner(db, runner_id)
+            self._require_authenticated_run(
+                db,
+                runner=runner,
+                connection_generation=connection_generation,
+                connection_token=connection_token,
+                run_id=run_id,
+                capability_token=capability_token,
+                checked_at=checked_at,
+            )
+            return execution.transition_run_in_transaction(
+                db,
+                run_id=run_id,
+                lease_token=lease_token,
+                fence_token=fence_token,
+                target_status=target_status,
+                payload=None,
+                trace_id=trace_id,
+                now=checked_at,
+            )
+
+    def _require_authenticated_run(
+        self,
+        db: Session,
+        *,
+        runner: RunnerRegistrationRecord,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        capability_token: str,
+        checked_at: datetime,
+    ) -> VerifiedCapability:
+        self._require_runner_connection(
+            runner,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+        )
+        if runner.status not in {"online", "draining"}:
+            raise SchedulingError("runner_unavailable", "Runner is not heartbeat-eligible")
+        runner.last_heartbeat_at = checked_at
+        digest = _token_hash(_text(capability_token, field="capability_token", maximum=512))
+        return self._verify_capability_in_transaction(
+            db,
+            digest=digest,
+            runner=runner,
+            run_id=run_id,
+            requested_action="run.execute",
+            required_scope={"run_id": str(run_id)},
+            checked_at=checked_at,
+            lock=True,
+        )
+
+    def _verify_capability_in_transaction(
+        self,
+        db: Session,
+        *,
+        digest: str,
+        runner: RunnerRegistrationRecord,
+        run_id: UUID,
+        requested_action: str,
+        required_scope: dict[str, str],
+        checked_at: datetime,
+        lock: bool,
+    ) -> VerifiedCapability:
+        query = sa.select(CapabilityTokenRecord).where(CapabilityTokenRecord.token_hash == digest)
+        if lock:
+            query = query.with_for_update()
+        capability = db.scalar(query)
+        if capability is None:
+            raise SchedulingError("capability_invalid", "Capability is invalid")
+        if capability.revoked_at is not None or _aware(capability.expires_at) <= checked_at:
+            raise SchedulingError("capability_expired", "Capability is expired or revoked")
+        if capability.runner_id != runner.id or capability.run_id != run_id:
+            raise SchedulingError("capability_binding_invalid", "Capability binding is invalid")
+        if requested_action not in capability.allowed_actions:
+            raise SchedulingError("capability_action_denied", "Capability action is denied")
+        for key, value in required_scope.items():
+            if capability.resource_scope.get(key) != value:
+                raise SchedulingError(
+                    "capability_scope_denied", "Capability resource scope is denied"
+                )
+        run = self._run(db, run_id, lock=lock)
+        dispatch_query = sa.select(RunDispatchRecord).where(RunDispatchRecord.run_id == run_id)
+        if lock:
+            dispatch_query = dispatch_query.with_for_update()
+        dispatch = db.scalar(dispatch_query)
+        if dispatch is None or dispatch.status != "leased":
+            raise SchedulingError("capability_dispatch_stale", "Dispatch is not leased")
+        if runner.status not in {"online", "draining"}:
+            raise SchedulingError("capability_runner_unavailable", "Runner is unavailable")
+        if runner.connection_generation != capability.runner_connection_generation:
+            raise SchedulingError("capability_runner_stale", "Runner incarnation is stale")
+        if (
+            dispatch.selected_runner_id != runner.id
+            or dispatch.dispatch_generation != capability.dispatch_generation
+            or run.fence_token != capability.fence_token
+            or run.status not in _ACTIVE_RUN_STATUSES
+            or run.lease_expires_at is None
+            or _aware(run.lease_expires_at) <= checked_at
+        ):
+            raise SchedulingError("capability_fence_stale", "Capability fence is stale")
+        return VerifiedCapability(
+            capability.id,
+            capability.run_id,
+            capability.runner_id,
+            capability.tenant_id,
+            capability.space_id,
+            capability.project_id,
+            capability.fence_token,
+            tuple(capability.allowed_actions),
+            dict(capability.resource_scope),
+            _aware(capability.expires_at),
+        )
 
     def release_dispatch(
         self,
@@ -628,7 +935,7 @@ class SchedulingControlPlane:
         released_at = now or _utcnow()
         _validate_time(released_at)
         with self._session_factory.begin() as db:
-            runner = self._runner(db, runner_id, lock=True)
+            pool, runner = self._lock_pool_then_runner(db, runner_id)
             self._require_runner_connection(
                 runner,
                 connection_generation=connection_generation,
@@ -647,7 +954,11 @@ class SchedulingControlPlane:
                 return True
             if dispatch.status == "pending":
                 raise SchedulingError("dispatch_not_leased", "Run dispatch is not leased")
-            if dispatch.status != "leased" or dispatch.selected_runner_id != runner_id:
+            if (
+                dispatch.status != "leased"
+                or dispatch.selected_runner_id != runner_id
+                or dispatch.pool_id != pool.id
+            ):
                 raise SchedulingError("dispatch_binding_stale", "Dispatch Runner is stale")
             run = self._run(db, run_id, lock=True)
             if run.fence_token != fence_token:
@@ -664,7 +975,7 @@ class SchedulingControlPlane:
             share = self._queue_share(
                 db,
                 run.tenant_id,
-                self._pool(db, dispatch.pool_id),
+                pool,
                 lock=True,
             )
             if share is None or share.active_leases <= 0 or runner.active_leases <= 0:
@@ -754,6 +1065,355 @@ class SchedulingControlPlane:
                 )
             return tuple(runner.id for runner in runners)
 
+    def recover_expired_dispatches(
+        self,
+        *,
+        max_fence_token: int = 3,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> tuple[UUID, ...]:
+        """Atomically recover expired Run leases and their scheduling capacity.
+
+        This is scheduler-authority recovery, not a Runner-authenticated release.
+        It deliberately does not accept a raw Runner connection token: that secret
+        can disappear with the failed process whose lease is being recovered.  The
+        persisted capability row instead binds the exact Runner incarnation,
+        dispatch generation, and Run fence that acquired the capacity.
+
+        A normally expired Run is requeued until ``max_fence_token`` is reached;
+        cancelling or exhausted Runs become terminal.  The method also reconciles
+        the narrow half-recovered state produced by the older execution-only
+        sweeper, and releases capacity for a terminal Run whose worker died before
+        calling :meth:`release_dispatch`.
+        """
+
+        recovered_at = now or _utcnow()
+        _validate_time(recovered_at)
+        if max_fence_token <= 0 or not 1 <= limit <= 1000:
+            raise SchedulingError(
+                "dispatch_recovery_policy_invalid",
+                "Dispatch recovery limits must be positive and bounded",
+            )
+
+        with self._session_factory.begin() as db:
+            candidate_query = (
+                sa.select(
+                    RunDispatchRecord.run_id,
+                    RunDispatchRecord.selected_runner_id,
+                    RunDispatchRecord.pool_id,
+                    RunRecord.tenant_id,
+                    RunRecord.space_id,
+                    RunRecord.project_id,
+                )
+                .join(RunRecord, RunRecord.id == RunDispatchRecord.run_id)
+                .where(
+                    RunDispatchRecord.status == "leased",
+                    RunDispatchRecord.recovery_quarantined_at.is_(None),
+                    sa.or_(
+                        sa.and_(
+                            RunRecord.status.in_(tuple(_ACTIVE_RUN_STATUSES)),
+                            RunRecord.lease_expires_at.is_not(None),
+                            RunRecord.lease_expires_at <= recovered_at,
+                        ),
+                        sa.and_(
+                            RunRecord.status == "queued",
+                            RunRecord.lease_token.is_(None),
+                            RunRecord.lease_expires_at.is_(None),
+                            RunRecord.heartbeat_at.is_(None),
+                        ),
+                        RunRecord.status.in_(tuple(TERMINAL_RUN_STATUSES)),
+                    ),
+                )
+                .order_by(RunDispatchRecord.run_id)
+                .limit(limit)
+            )
+            candidates = tuple(db.execute(candidate_query))
+            recovered: list[UUID] = []
+            for (
+                run_id,
+                selected_runner_id,
+                pool_id,
+                tenant_id,
+                space_id,
+                project_id,
+            ) in candidates:
+                recovered_id: UUID | None = None
+                try:
+                    with db.begin_nested():
+                        recovered_id = self._recover_one_expired_dispatch(
+                            db,
+                            run_id=run_id,
+                            selected_runner_id=selected_runner_id,
+                            pool_id=pool_id,
+                            max_fence_token=max_fence_token,
+                            recovered_at=recovered_at,
+                        )
+                except SchedulingError as exc:
+                    self._quarantine_dispatch_recovery(
+                        db,
+                        run_id=run_id,
+                        tenant_id=tenant_id,
+                        space_id=space_id,
+                        project_id=project_id,
+                        recovered_at=recovered_at,
+                        reason=exc.code,
+                    )
+                    continue
+                if recovered_id is not None:
+                    recovered.append(recovered_id)
+            return tuple(recovered)
+
+    def _recover_one_expired_dispatch(
+        self,
+        db: Session,
+        *,
+        run_id: UUID,
+        selected_runner_id: UUID | None,
+        pool_id: UUID,
+        max_fence_token: int,
+        recovered_at: datetime,
+    ) -> UUID | None:
+        # Pool advisory lock is the global leading scheduler lock. Reconnect,
+        # claim, release, and recovery all take pool -> Runner -> Dispatch -> Run.
+        pool = self._pool(db, pool_id, lock=True)
+        if selected_runner_id is None:
+            raise SchedulingError(
+                "dispatch_recovery_binding_invalid",
+                "Leased dispatch is missing its selected Runner",
+            )
+        runner = self._runner(db, selected_runner_id, lock=True)
+        dispatch = db.scalar(
+            sa.select(RunDispatchRecord)
+            .where(RunDispatchRecord.run_id == run_id)
+            .with_for_update()
+        )
+        if dispatch is None:
+            raise SchedulingError("dispatch_not_found", "Run dispatch was not found")
+        if dispatch.status != "leased" or dispatch.recovery_quarantined_at is not None:
+            return None
+        if (
+            dispatch.selected_runner_id != runner.id
+            or dispatch.pool_id != pool.id
+            or dispatch.selected_failure_domain != pool.failure_domain
+            or runner.pool_id != pool.id
+            or runner.placement_id != pool.placement_id
+        ):
+            raise SchedulingError(
+                "dispatch_recovery_binding_invalid",
+                "Dispatch Runner no longer matches its reviewed pool",
+            )
+
+        run = self._run(db, run_id, lock=True)
+        self._apply_run_context(db, run)
+        self._require_dispatch_profile_binding(db, dispatch=dispatch, run=run)
+        active_expired = (
+            run.status in _ACTIVE_RUN_STATUSES
+            and run.lease_expires_at is not None
+            and _aware(run.lease_expires_at) <= recovered_at
+        )
+        legacy_requeued = (
+            run.status == "queued"
+            and run.lease_token is None
+            and run.lease_expires_at is None
+            and run.heartbeat_at is None
+        )
+        terminal = run.status in TERMINAL_RUN_STATUSES
+        if not (active_expired or legacy_requeued or terminal):
+            return None
+
+        capabilities = tuple(
+            db.scalars(
+                sa.select(CapabilityTokenRecord)
+                .where(
+                    CapabilityTokenRecord.run_id == run.id,
+                    CapabilityTokenRecord.runner_id == runner.id,
+                    CapabilityTokenRecord.dispatch_generation == dispatch.dispatch_generation,
+                    CapabilityTokenRecord.fence_token == run.fence_token,
+                )
+                .with_for_update()
+            )
+        )
+        if len(capabilities) != 1:
+            raise SchedulingError(
+                "dispatch_recovery_binding_invalid",
+                "Dispatch recovery requires one exact persisted capability",
+            )
+        capability = capabilities[0]
+        if capability.runner_connection_generation > runner.connection_generation:
+            raise SchedulingError(
+                "dispatch_recovery_generation_invalid",
+                "Capability Runner generation is newer than the Runner authority",
+            )
+        if active_expired and _aware(capability.expires_at) != _aware(
+            cast(datetime, run.lease_expires_at)
+        ):
+            raise SchedulingError(
+                "dispatch_recovery_lease_invalid",
+                "Capability and Run lease expiry do not match",
+            )
+        if legacy_requeued and _aware(capability.expires_at) > recovered_at:
+            raise SchedulingError(
+                "dispatch_recovery_lease_invalid",
+                "Half-recovered dispatch capability has not expired",
+            )
+
+        share = self._queue_share(db, run.tenant_id, pool, lock=True)
+        if share is None or share.active_leases <= 0 or runner.active_leases <= 0:
+            raise SchedulingError(
+                "dispatch_counter_inconsistent",
+                "Dispatch capacity counters are inconsistent",
+            )
+
+        if active_expired:
+            if run.status == "cancelling":
+                target_status = "cancelled"
+            elif run.fence_token >= max_fence_token:
+                target_status = "orphaned"
+            else:
+                target_status = "queued"
+            run.status = target_status
+            run.version += 1
+            if target_status in TERMINAL_RUN_STATUSES:
+                run.terminal_at = recovered_at
+                ExecutionControlPlane._finalize_reservations(db, run, succeeded=False)
+            ExecutionControlPlane._clear_lease(run)
+            ExecutionControlPlane._append_event(
+                db,
+                run,
+                event_type=f"run.{target_status}",
+                payload={
+                    "status": target_status,
+                    "reason": "lease_expired",
+                    "expired_fence_token": run.fence_token,
+                    "dispatch_generation": dispatch.dispatch_generation,
+                    "runner_connection_generation": capability.runner_connection_generation,
+                },
+                trace_id="scheduler:lease-expired",
+            )
+
+        share.active_leases -= 1
+        share.version += 1
+        runner.active_leases -= 1
+        terminal = run.status in TERMINAL_RUN_STATUSES
+        self._revoke_run_capabilities(
+            db,
+            run.id,
+            revoked_at=recovered_at,
+            reason="run_terminal" if terminal else "run_requeued",
+        )
+        if terminal:
+            dispatch.status = "released"
+            dispatch.released_at = recovered_at
+        else:
+            dispatch.status = "pending"
+            dispatch.selected_runner_id = None
+            dispatch.selected_failure_domain = None
+            dispatch.released_at = None
+            dispatch.dead_letter_reason = None
+        return run.id
+
+    @classmethod
+    def _quarantine_dispatch_recovery(
+        cls,
+        db: Session,
+        *,
+        run_id: UUID,
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        recovered_at: datetime,
+        reason: str,
+    ) -> None:
+        apply_rls_context(
+            db,
+            RlsContext(tenant_id=tenant_id, space_id=space_id, project_id=project_id),
+        )
+        dispatch = db.scalar(
+            sa.select(RunDispatchRecord)
+            .where(RunDispatchRecord.run_id == run_id)
+            .with_for_update()
+        )
+        if (
+            dispatch is not None
+            and dispatch.status == "leased"
+            and dispatch.recovery_quarantined_at is None
+        ):
+            run = db.get(RunRecord, run_id)
+            cls._record_dispatch_quarantine(
+                db,
+                dispatch=dispatch,
+                run=run,
+                quarantined_at=recovered_at,
+                reason=reason,
+                source="recovery",
+            )
+
+    @staticmethod
+    def _record_dispatch_quarantine(
+        db: Session,
+        *,
+        dispatch: RunDispatchRecord,
+        run: RunRecord | None,
+        quarantined_at: datetime,
+        reason: str,
+        source: str,
+    ) -> None:
+        if dispatch.recovery_quarantined_at is not None:
+            return
+        safe_reason = _text(reason, field="dispatch_quarantine_reason", maximum=128)
+        safe_source = _text(source, field="dispatch_quarantine_source", maximum=32)
+        forensic_context: dict[str, object] = {
+            "tenant_id": str(dispatch.tenant_id),
+            "space_id": str(dispatch.space_id),
+            "project_id": str(dispatch.project_id),
+            "run_id": str(dispatch.run_id),
+            "pool_id": str(dispatch.pool_id),
+            "execution_profile_id": str(dispatch.execution_profile_id),
+            "execution_profile_hash": dispatch.execution_profile_hash,
+            "egress_policy_id": str(dispatch.egress_policy_id),
+            "egress_policy_hash": dispatch.egress_policy_hash,
+            "requirements_hash": dispatch.requirements_hash,
+            "dispatch_generation": dispatch.dispatch_generation,
+            "dispatch_status": dispatch.status,
+            "selected_runner_id": (
+                str(dispatch.selected_runner_id)
+                if dispatch.selected_runner_id is not None
+                else None
+            ),
+            "run_fence_token": run.fence_token if run is not None else None,
+            "capacity_policy": (
+                "retained_until_reconciliation" if dispatch.status == "leased" else "not_acquired"
+            ),
+            "reason": safe_reason,
+            "source": safe_source,
+        }
+        payload = {
+            **forensic_context,
+            "forensic_hash": _canonical_hash(forensic_context),
+            "quarantined_at": _aware(quarantined_at).isoformat(),
+        }
+        dispatch.recovery_quarantined_at = quarantined_at
+        dispatch.recovery_quarantine_reason = safe_reason
+        db.add(
+            ControlPlaneOutboxEvent(
+                tenant_id=dispatch.tenant_id,
+                aggregate_type="run_dispatch",
+                aggregate_key=str(dispatch.run_id),
+                event_type="run.dispatch.quarantined",
+                payload=payload,
+                idempotency_key=(
+                    f"run-dispatch-quarantine:{dispatch.run_id}:"
+                    f"{dispatch.dispatch_generation}:{safe_source}"
+                ),
+                request_hash=_canonical_hash(payload),
+                attempt_count=0,
+                available_at=quarantined_at,
+            )
+        )
+        # The scheduler may continue into a different tenant scope in this
+        # transaction; persist this exact-scope quarantine before changing GUCs.
+        db.flush()
+
     def dead_letter_expired_dispatches(
         self,
         *,
@@ -817,6 +1477,7 @@ class SchedulingControlPlane:
                 RunDispatchRecord.pool_id == pool.id,
                 RunDispatchRecord.queue_class == pool.queue_class,
                 RunDispatchRecord.status == "pending",
+                RunDispatchRecord.recovery_quarantined_at.is_(None),
                 RunDispatchRecord.eligible_at <= claimed_at,
                 RunDispatchRecord.max_wait_at > claimed_at,
                 RunRecord.status == "queued",
@@ -848,6 +1509,7 @@ class SchedulingControlPlane:
                     RunDispatchRecord.pool_id == pool.id,
                     RunDispatchRecord.queue_class == pool.queue_class,
                     RunDispatchRecord.status == "pending",
+                    RunDispatchRecord.recovery_quarantined_at.is_(None),
                     RunDispatchRecord.eligible_at <= claimed_at,
                     RunDispatchRecord.max_wait_at > claimed_at,
                     RunRecord.status == "queued",
@@ -862,14 +1524,233 @@ class SchedulingControlPlane:
                     continue
                 run = self._run(db, dispatch.run_id, lock=True)
                 if run.status == "queued":
+                    self._apply_run_context(db, run)
+                    try:
+                        self._require_dispatch_profile_binding(
+                            db,
+                            dispatch=dispatch,
+                            run=run,
+                        )
+                    except SchedulingError as exc:
+                        self._record_dispatch_quarantine(
+                            db,
+                            dispatch=dispatch,
+                            run=run,
+                            quarantined_at=claimed_at,
+                            reason=exc.code,
+                            source="claim",
+                        )
+                        continue
                     return share, dispatch, run
         return None
+
+    @staticmethod
+    def _dispatch_requirements_hash(
+        *,
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        pool_id: UUID,
+        execution_profile_id: UUID,
+        execution_profile_hash: str,
+        egress_policy_id: UUID,
+        egress_policy_hash: str,
+        queue_class: str,
+        required_capabilities: list[str],
+        cost_units: int,
+        eligible_at: datetime,
+        max_wait_at: datetime,
+    ) -> str:
+        return _canonical_dispatch_requirements_hash(
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            pool_id=pool_id,
+            execution_profile_id=execution_profile_id,
+            execution_profile_hash=execution_profile_hash,
+            egress_policy_id=egress_policy_id,
+            egress_policy_hash=egress_policy_hash,
+            queue_class=queue_class,
+            required_capabilities=required_capabilities,
+            cost_units=cost_units,
+            eligible_at=eligible_at,
+            max_wait_at=max_wait_at,
+        )
+
+    @classmethod
+    def _require_dispatch_profile_binding(
+        cls,
+        db: Session,
+        *,
+        dispatch: RunDispatchRecord,
+        run: RunRecord,
+    ) -> ExecutionProfileRecord:
+        """Revalidate the immutable server-selected profile before side effects."""
+
+        try:
+            profile_hash = _hash64(
+                dispatch.execution_profile_hash,
+                field="dispatch_execution_profile_hash",
+            )
+            egress_policy_hash = _hash64(
+                dispatch.egress_policy_hash,
+                field="dispatch_egress_policy_hash",
+            )
+        except (AttributeError, TypeError, SchedulingError) as exc:
+            raise SchedulingError(
+                "dispatch_execution_profile_binding_invalid",
+                "Dispatch execution profile binding is malformed",
+            ) from exc
+        query = cls._dispatch_profile_query(
+            dispatch.execution_profile_id,
+            dispatch.egress_policy_id,
+        ).with_for_update(read=True)
+        binding = db.execute(query).one_or_none()
+        if binding is None:
+            raise SchedulingError(
+                "dispatch_execution_profile_invalid",
+                "Dispatch execution profile is unavailable or outside the Run scope",
+            )
+        profile, egress_policy = binding
+        if (
+            profile.status not in {"active", "retired"}
+            or egress_policy.status not in {"active", "retired"}
+            or egress_policy.allow_private_destinations
+            or profile.egress_policy_id != egress_policy.id
+            or profile.tenant_id != run.tenant_id
+            or profile.space_id != run.space_id
+            or profile.project_id != run.project_id
+            or egress_policy.tenant_id != run.tenant_id
+            or egress_policy.space_id != run.space_id
+            or egress_policy.project_id != run.project_id
+            or dispatch.tenant_id != run.tenant_id
+            or dispatch.space_id != run.space_id
+            or dispatch.project_id != run.project_id
+        ):
+            raise SchedulingError(
+                "dispatch_execution_profile_invalid",
+                "Dispatch execution profile is unavailable or outside the Run scope",
+            )
+        if profile.config_hash != profile_hash:
+            raise SchedulingError(
+                "dispatch_execution_profile_hash_mismatch",
+                "Dispatch execution profile hash is not current",
+            )
+        if egress_policy.rules_hash != egress_policy_hash:
+            raise SchedulingError(
+                "dispatch_egress_policy_hash_mismatch",
+                "Dispatch egress policy hash is not current",
+            )
+        expected_hash = cls._dispatch_requirements_hash(
+            tenant_id=dispatch.tenant_id,
+            space_id=dispatch.space_id,
+            project_id=dispatch.project_id,
+            pool_id=dispatch.pool_id,
+            execution_profile_id=profile.id,
+            execution_profile_hash=profile_hash,
+            egress_policy_id=egress_policy.id,
+            egress_policy_hash=egress_policy_hash,
+            queue_class=dispatch.queue_class,
+            required_capabilities=dispatch.required_capabilities,
+            cost_units=dispatch.cost_units,
+            eligible_at=dispatch.eligible_at,
+            max_wait_at=dispatch.max_wait_at,
+        )
+        if dispatch.requirements_hash != expected_hash:
+            raise SchedulingError(
+                "dispatch_requirements_hash_mismatch",
+                "Dispatch requirements are not bound to the selected execution profile",
+            )
+        return profile
+
+    @staticmethod
+    def _dispatch_profile_query(
+        execution_profile_id: UUID,
+        egress_policy_id: UUID,
+    ) -> sa.Select[tuple[ExecutionProfileRecord, EgressPolicyRecord]]:
+        """Select one exact persisted profile and egress policy as a lockable unit."""
+
+        return (
+            sa.select(ExecutionProfileRecord, EgressPolicyRecord)
+            .join(
+                EgressPolicyRecord,
+                sa.and_(
+                    EgressPolicyRecord.id == ExecutionProfileRecord.egress_policy_id,
+                    EgressPolicyRecord.tenant_id == ExecutionProfileRecord.tenant_id,
+                    EgressPolicyRecord.space_id == ExecutionProfileRecord.space_id,
+                    EgressPolicyRecord.project_id == ExecutionProfileRecord.project_id,
+                ),
+            )
+            .where(
+                ExecutionProfileRecord.id == execution_profile_id,
+                EgressPolicyRecord.id == egress_policy_id,
+                EgressPolicyRecord.allow_private_destinations.is_(False),
+            )
+        )
+
+    @classmethod
+    def _resolve_dispatch_profile_binding(
+        cls,
+        db: Session,
+        run: RunRecord,
+    ) -> tuple[ExecutionProfileRecord, EgressPolicyRecord]:
+        query = (
+            sa.select(ExecutionProfileRecord, EgressPolicyRecord)
+            .join(
+                EgressPolicyRecord,
+                sa.and_(
+                    EgressPolicyRecord.id == ExecutionProfileRecord.egress_policy_id,
+                    EgressPolicyRecord.tenant_id == ExecutionProfileRecord.tenant_id,
+                    EgressPolicyRecord.space_id == ExecutionProfileRecord.space_id,
+                    EgressPolicyRecord.project_id == ExecutionProfileRecord.project_id,
+                ),
+            )
+            .where(
+                ExecutionProfileRecord.tenant_id == run.tenant_id,
+                ExecutionProfileRecord.space_id == run.space_id,
+                ExecutionProfileRecord.project_id == run.project_id,
+                ExecutionProfileRecord.status == "active",
+                EgressPolicyRecord.status == "active",
+                EgressPolicyRecord.allow_private_destinations.is_(False),
+            )
+            .limit(2)
+            .with_for_update(read=True)
+        )
+        bindings = tuple(db.execute(query))
+        if not bindings:
+            raise SchedulingError(
+                "dispatch_execution_profile_invalid",
+                "Run scope has no active execution profile",
+            )
+        if len(bindings) != 1:
+            raise SchedulingError(
+                "dispatch_execution_profile_ambiguous",
+                "Run scope must have exactly one active execution profile",
+            )
+        profile, egress_policy = bindings[0]
+        if (
+            profile.network_mode != "proxy_only"
+            or not profile.root_read_only
+            or profile.run_as_uid <= 0
+            or profile.run_as_gid <= 0
+            or not profile.no_new_privileges
+            or profile.host_socket_access
+        ):
+            raise SchedulingError(
+                "dispatch_execution_profile_unsafe",
+                "Run execution profile does not satisfy the managed safety contract",
+            )
+        return profile, egress_policy
 
     @staticmethod
     def _apply_run_context(db: Session, run: RunRecord) -> None:
         apply_rls_context(
             db,
-            RlsContext(tenant_id=run.tenant_id, space_id=run.space_id),
+            RlsContext(
+                tenant_id=run.tenant_id,
+                space_id=run.space_id,
+                project_id=run.project_id,
+            ),
         )
 
     @staticmethod
@@ -982,6 +1863,36 @@ class SchedulingControlPlane:
         if pool is None:
             raise SchedulingError("runner_pool_not_found", "Runner pool was not found")
         return pool
+
+    @classmethod
+    def _lock_pool_then_runner(
+        cls,
+        db: Session,
+        runner_id: UUID,
+    ) -> tuple[RunnerPoolRecord, RunnerRegistrationRecord]:
+        """Take every pool/Runner mutation lock in one global order.
+
+        ``pool_id`` is immutable for a Runner registration. The leading read is
+        deliberately unlocked; both rows are re-read and the binding is checked
+        after the pool advisory lock has serialized reconnect, claim, release,
+        and scheduler recovery.
+        """
+
+        pool_id = db.scalar(
+            sa.select(RunnerRegistrationRecord.pool_id).where(
+                RunnerRegistrationRecord.id == runner_id
+            )
+        )
+        if pool_id is None:
+            raise SchedulingError("runner_not_found", "Runner was not found")
+        pool = cls._pool(db, pool_id, lock=True)
+        runner = cls._runner(db, runner_id, lock=True)
+        if runner.pool_id != pool.id:
+            raise SchedulingError(
+                "runner_pool_binding_invalid",
+                "Runner pool binding changed while acquiring scheduler locks",
+            )
+        return pool, runner
 
     @staticmethod
     def _runner(db: Session, runner_id: UUID, *, lock: bool = False) -> RunnerRegistrationRecord:

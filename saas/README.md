@@ -63,9 +63,16 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000007` has 111 control-plane FORCE-RLS
-  tables, including the shared public-registration abuse counters, Outbox
-  Quarantine ledger and durable Runtime Provider operation journal.
+- candidate schema revision `p0s000000010` extends the forced-RLS control plane
+  through exact dispatch/profile binding, Preview execution sessions, and
+  per-Runner-incarnation database authority. The preceding approved p0s7 record
+  remains immutable history; this successor requires a new decision and
+  evidence flow before it can be accepted. The direct Runner DML projection is
+  isolated-Beta-only: cross-profile secret/isolation forgery, capability-action
+  substitution, disabled/non-FORCE RLS, cross-database reachability, and catalog
+  drift must fail closed before Beta. Enterprise Production Admission further
+  requires narrow RPCs or transition triggers for every Runner-mutated
+  Worktree, quota, Preview, and Outbox state change.
 
 The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
 the non-secret Provider type/revision/hash before any external effect, keeps old
@@ -256,7 +263,7 @@ domains (`projects`, `runs`, and `worktrees`). A missing required domain fails
 at startup; it is intentionally impossible to infer a zero impact from an
 unwired provider.
 
-Control-plane installation has four ordered PostgreSQL authority phases; do
+Control-plane installation has five ordered PostgreSQL authority phases; do
 not collapse them into one superuser migration connection:
 
 1. A cluster principal operator runs
@@ -281,6 +288,15 @@ not collapse them into one superuser migration connection:
    control-plane database authority. This first-error-stopping transaction
    converges schema/table/function/RLS grants against the now-existing schema.
    Never invoke the `.sql` transaction bodies directly with plain `psql -f`.
+5. A managed-cluster superuser then runs
+   `psql --no-psqlrc --file saas/control_plane/postgresql_runner_agent_cluster.psql`
+   exactly once after the roles projection and before runtime admission. The
+   wrapper admits only PostgreSQL 18 with `max_notify_queue_pages=64` and
+   `max_prepared_transactions=0`, both sourced from the configuration file
+   with no pending restart, and with zero prepared transactions. It atomically
+   removes unsafe `PUBLIC` catalog routine authority and restores only the
+   exact audited central-role calls. Never run its `.sql` body directly, and
+   never grant the managed-superuser credential to an application or Runner.
 
 Give each service login exactly one role. Run identity/session endpoints with
 `saas_authenticator`, governance workflows with `saas_governance`, runtime
@@ -2140,6 +2156,37 @@ production Provider/KMS/HSM account, immutable evidence bucket, real backup esta
 cross-region restore drill, or protected exact-SHA CI/image admission for this slice.
 Consequently it closes neither the production Deletion gate nor P1 as a whole, and the
 release decision remains `NO-GO`.
+
+## P0S9 production Preview authority
+
+The production Preview path is a server-owned child Run over a committed ChangeSet and
+a separately heartbeated readonly Worktree. Browser requests contain only the source
+`run_id`, the closed `static_web_v1` profile, and an idempotency key; Runner identity,
+connection generation, Worktree lease tokens, capabilities, paths, commands, and other
+Runner secrets are never browser inputs. The fixed static runtime executes no Worktree
+code and serves a closed MIME set through no-follow component traversal, bounded files,
+no directory listing, and fixed security headers.
+
+When the child is ready, Control returns a URL whose one-use exchange bearer exists only
+in the fragment. A content-blind bootstrap clears the fragment before submitting the
+bearer to the same-origin authorize endpoint; the response installs a distinct rotating
+HttpOnly session cookie. Exchange, rotation, authorization, and revocation are narrow
+PostgreSQL CAS functions. Preview Edge cannot read or mutate session rows directly.
+
+The standalone Preview Owner owns the official `TunnelRegistry`, the Runner WebSocket
+lifecycle, and the TLS 1.3 mTLS relay listener. Runner tunnel registration is issued and
+revoked only through incarnation-bound SECURITY DEFINER functions that require the
+current Runner connection secret and active `runner_control` certificate fingerprint;
+the executor has no direct registration-table access. Each relayed request carries the
+canonical Preview host and fixed response policy. The receiving Owner re-authorizes the
+session hash and host, rebuilds and compares the complete durable Preview grant, then
+compares the exact Placement ID, Runner/generation, routing generation, Gateway, and
+relay subject before touching its local official Runner session. Revoked sessions,
+same-Runner cross-Preview substitution, and any grant or Placement mutation fail closed.
+
+These contracts have local unit and disposable PostgreSQL 16/18 evidence. They do not
+replace deployed NetworkPolicy, external PKI rotation, multi-replica failure drills,
+authenticated browser E2E, rollback, or protected exact-image admission evidence.
 
 ## Official upstream synchronization candidate: `9303cc1c`
 

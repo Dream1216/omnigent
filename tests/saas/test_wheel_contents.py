@@ -41,6 +41,8 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
     assert "saas/outbox_worker.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/postgresql_database.psql" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/postgresql_roles.psql" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/postgresql_runner_agent_cluster.psql" in (REQUIRED_WHEEL_PATHS)
+    assert "saas/control_plane/postgresql_runner_agent_cluster.sql" in (REQUIRED_WHEEL_PATHS)
     assert "saas/n1_outbox_admission.py" in REQUIRED_WHEEL_PATHS
     assert "saas/onboarding_composition.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/onboarding_workflow.py" in REQUIRED_WHEEL_PATHS
@@ -71,6 +73,23 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
         "saas/control_plane/migrations/versions/"
         "p0s000000007_registration_subject_lock_budget.py" in REQUIRED_WHEEL_PATHS
     )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000008_dispatch_profile_binding.py" in REQUIRED_WHEEL_PATHS
+    )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000009_preview_execution_sessions.py" in REQUIRED_WHEEL_PATHS
+    )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000010_runner_agent_database_authority.py" in REQUIRED_WHEEL_PATHS
+    )
+    assert "saas/control_plane/preview_models.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/preview_execution.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/preview_sessions.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/preview_tunnel_registration.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/runner_execution_spec.py" in REQUIRED_WHEEL_PATHS
 
 
 def test_notification_runtime_is_required_and_has_console_entrypoints() -> None:
@@ -92,6 +111,92 @@ def test_notification_runtime_is_required_and_has_console_entrypoints() -> None:
     )
     assert project["project"]["scripts"]["omnigent-saas-approval-scheduler"] == (
         "saas.approval_scheduler_worker:main"
+    )
+
+
+def test_production_artifact_admission_boundary_is_required_in_wheel() -> None:
+    assert "saas/production/artifact_store.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/artifact_admission.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/server/kubernetes.artifact-admission.yaml" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/finalize_artifact_receipt_revision.py" in REQUIRED_WHEEL_PATHS
+
+
+def test_production_runtime_is_required_and_has_console_entrypoints() -> None:
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    assert "saas/production/postgresql_migration.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/server.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/server_config.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/service_bindings.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/worker.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/runner_database_fleet.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/beta_postgresql_data_plane.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/repository_mirror.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/runner_executor.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/runner_readiness.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/preview_execution.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/preview_owner.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/preview_readiness.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/preview_relay.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/preview_runner_tunnel.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/runner_adapter/static_web_preview.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/run_postgresql_migration.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/provision_runner_repositories.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/stage_runner_database_fleet.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/check_worker_health.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/check_runner_control_readiness.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/verify_runner_database_fleet.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/promote_runner_database_fleet.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/render_kubernetes_namespace.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/render_kubernetes_release.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/scripts/render_beta_postgresql_data_plane.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/run_dispatch_projection.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/runtime_rls/postgresql_roles.psql" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/server/kubernetes.migration.yaml" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/server/kubernetes.network-policy.yaml" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/server/kubernetes.production.yaml" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/data/__init__.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/data/README.md" in REQUIRED_WHEEL_PATHS
+    assert "saas/deployment/data/restore-drill-evidence.schema.json" in REQUIRED_WHEEL_PATHS
+    assert project["project"]["scripts"]["omnigent-saas-postgresql-migrate"] == (
+        "saas.scripts.run_postgresql_migration:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-provision-runner-repositories"] == (
+        "saas.scripts.provision_runner_repositories:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-runner-database-fleet-admit"] == (
+        "saas.scripts.verify_runner_database_fleet:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-runner-database-fleet-stage"] == (
+        "saas.scripts.stage_runner_database_fleet:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-runner-database-fleet-promote"] == (
+        "saas.scripts.promote_runner_database_fleet:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-render-next-beta"] == (
+        "saas.scripts.render_kubernetes_namespace:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-render-kubernetes-release"] == (
+        "saas.scripts.render_kubernetes_release:main"
+    )
+    assert (
+        project["project"]["scripts"]["omnigent-saas-render-beta-postgresql-data-plane"]
+        == "saas.scripts.render_beta_postgresql_data_plane:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-server"] == ("saas.production.server:main")
+    assert project["project"]["scripts"]["omnigent-saas-production-worker"] == (
+        "saas.production.worker:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-worker-health"] == (
+        "saas.scripts.check_worker_health:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-runner-control-readiness"] == (
+        "saas.scripts.check_runner_control_readiness:main"
+    )
+    assert project["project"]["scripts"]["omnigent-saas-preview-owner"] == (
+        "saas.production.preview_owner:main"
     )
 
 

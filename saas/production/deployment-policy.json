@@ -1,11 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "policy_id": "omnigent-saas-production-deployment-v1",
-  "reviewed_at": "2026-08-24",
+  "reviewed_at": "2026-09-02",
   "revision_contract": {
     "upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000007"
+    "control_plane_schema_revision": "p0s000000010"
   },
   "evidence_directory": "saas/production/deployment-evidence",
   "max_evidence_age_days": 30,
@@ -29,6 +29,12 @@
     "runner_preview_uds_only",
     "runner_control_mtls",
     "preview_relay_mtls"
+  ],
+  "required_database_controls": [
+    "runner_target_database_connect_only",
+    "runner_no_database_create_or_temporary",
+    "runner_catalog_drift_fail_closed",
+    "runner_transition_rpc_or_trigger_only"
   ],
   "required_drills": [
     "failure_domain_loss",

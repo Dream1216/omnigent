@@ -162,7 +162,11 @@ def verify_n1_outbox_compatibility_schema_login(
                     "FROM pg_auth_members AS membership "
                     "JOIN pg_roles AS member ON member.oid = membership.member "
                     "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
-                    "WHERE granted.rolname = :role ORDER BY member.rolname"
+                    "WHERE granted.rolname = :role "
+                    "AND (NOT membership.admin_option "
+                    "OR COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true) "
+                    "OR COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true)) "
+                    "ORDER BY member.rolname"
                 ),
                 {"role": _COMPAT_ROLE},
             ).all()

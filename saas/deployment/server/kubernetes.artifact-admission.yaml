@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: omnigent-saas-artifact-admission
+      namespace: omnigent
+    automountServiceAccountToken: false
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-artifact-release-replace-release12
+      namespace: omnigent
+    immutable: true
+    data:
+      OMNIGENT_SAAS_PRODUCT_REVISION: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_SOURCE_SHA: "0000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_IMAGE_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      OMNIGENT_SAAS_RELEASE_INCARNATION: "00000000000000000000000000000000"
+      OMNIGENT_SAAS_ARTIFACT_STORE_URI: s3://replace-with-production-bucket/omnigent
+      OMNIGENT_SAAS_ARTIFACT_ENDPOINT_URL: https://replace-artifact-endpoint.example.invalid
+      OMNIGENT_SAAS_ARTIFACT_REGION: replace-with-artifact-region
+      OMNIGENT_SAAS_ARTIFACT_CREDENTIALS_PROFILE: omnigent-saas-artifacts
+      OMNIGENT_SAAS_ARTIFACT_CREDENTIAL_REVISION: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      AWS_EC2_METADATA_DISABLED: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: omnigent-artifact-admit-replace-release12
+      namespace: omnigent
+      labels:
+        app.kubernetes.io/name: omnigent-saas-artifact-admission
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: omnigent-saas-artifact-admission
+          annotations:
+            omnigent.io/artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            omnigent.io/release-incarnation: "00000000000000000000000000000000"
+        spec:
+          restartPolicy: Never
+          serviceAccountName: omnigent-saas-artifact-admission
+          automountServiceAccountToken: false
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: stage-artifact-credentials
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  install -m 0400 /source/credentials /runtime/artifact-credentials
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: artifact-credentials-source, mountPath: /source, readOnly: true}
+                - {name: runtime-secrets, mountPath: /runtime}
+          containers:
+            - name: artifact-admission
+              image: ghcr.io/omnigent-ai/omnigent-server@sha256:0000000000000000000000000000000000000000000000000000000000000000
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "saas.production.artifact_admission"]
+              envFrom:
+                - configMapRef:
+                    name: omnigent-artifact-release-replace-release12
+              env:
+                - {name: OMNIGENT_SAAS_ARTIFACT_CREDENTIALS_FILE, value: /runtime/artifact-credentials}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: 250m, memory: 256Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+              volumeMounts:
+                - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
+                - {name: temp, mountPath: /tmp}
+          volumes:
+            - {name: artifact-credentials-source, secret: {secretName: omnigent-artifact-creds-replace-credential12, defaultMode: 0400}}
+            - {name: runtime-secrets, emptyDir: {medium: Memory, sizeLimit: 16Ki}}
+            - {name: temp, emptyDir: {medium: Memory, sizeLimit: 16Mi}}

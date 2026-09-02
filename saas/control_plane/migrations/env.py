@@ -21,6 +21,7 @@ from saas.control_plane import onboarding_models as _onboarding_models  # noqa: 
 from saas.control_plane import placement_models as _placement_models  # noqa: F401
 from saas.control_plane import platform_governed_models as _platform_governed_models  # noqa: F401
 from saas.control_plane import platform_models as _platform_models  # noqa: F401
+from saas.control_plane import preview_models as _preview_models  # noqa: F401
 from saas.control_plane import privacy_models as _privacy_models  # noqa: F401
 from saas.control_plane import public_api_models as _public_api_models  # noqa: F401
 from saas.control_plane import scheduling_models as _scheduling_models  # noqa: F401
@@ -32,6 +33,13 @@ config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
+    # A production migration receipt is captured from the Kubernetes Job log.
+    # Keep the successful Alembic path silent so that log is one JSON document,
+    # while WARNING/ERROR still surface on stderr and fail the Job.
+    import logging as _logging  # local: env.py executes inside Alembic
+
+    if not _logging.getLogger().isEnabledFor(_logging.DEBUG):
+        _logging.getLogger("alembic").setLevel(_logging.WARNING)
 
 db_url = os.environ.get("OMNIGENT_SAAS_DB_URL")
 if db_url:

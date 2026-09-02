@@ -29,6 +29,7 @@ from saas.control_plane import (
 )
 from saas.control_plane.db_models import RuntimePlacementRecord
 from saas.control_plane.scheduling_models import RunnerPoolRecord, RunnerRegistrationRecord
+from saas.production.runner_control import DurableRunnerControlCertificateAuthorizer
 
 
 class _CertificateOptions(TypedDict, total=False):
@@ -329,6 +330,44 @@ def test_certificate_authorization_tracks_runner_generation_status_and_bundle(
             now=now + timedelta(minutes=1),
         )
     assert stale.value.code == "runner_certificate_runner_stale"
+
+
+def test_runner_control_authorizer_uses_durable_activation_and_revocation(
+    certificate_fixture,
+) -> None:
+    _, _, authority, runner_id, _fixture_now = certificate_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    certificate_der = _runner_certificate(runner_id, now=now)
+    activated = authority.activate_certificate(
+        runner_id=runner_id,
+        runner_connection_generation=1,
+        purpose="runner_control",
+        certificate_der=certificate_der,
+        trust_bundle_version="bundle-v1",
+        now=now,
+    )
+    authorizer = DurableRunnerControlCertificateAuthorizer(authority)
+
+    assert authorizer.is_runner_machine_certificate_authorized(
+        runner_id=runner_id,
+        certificate_der=certificate_der,
+        purpose="runner_control",
+    )
+    assert not authorizer.is_runner_machine_certificate_authorized(
+        runner_id=runner_id,
+        certificate_der=certificate_der,
+        purpose="preview_tunnel",
+    )
+    assert authority.revoke_certificate(
+        fingerprint_sha256=activated.fingerprint_sha256,
+        reason="runner control leaf retired",
+        now=now + timedelta(seconds=1),
+    )
+    assert not authorizer.is_runner_machine_certificate_authorized(
+        runner_id=runner_id,
+        certificate_der=certificate_der,
+        purpose="runner_control",
+    )
 
 
 @pytest.mark.parametrize(

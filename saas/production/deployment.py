@@ -2,8 +2,9 @@
 
 The contract deliberately distinguishes logical Kubernetes objects from physical
 failure domains. A record qualifies only when every required component is spread over
-distinct physical hosts in at least two zones, all containment controls are live, and
-the complete failure matrix has independently attested immutable evidence.
+distinct physical hosts in at least two zones, all containment and Runner database
+controls are live, and the complete failure matrix has independently attested
+immutable evidence.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ _RECORD_FIELDS = {
     "cluster",
     "components",
     "network_controls",
+    "database_controls",
     "drills",
     "artifact",
     "attestations",
@@ -160,8 +162,8 @@ def _validate_policy(
     baseline: Mapping[str, Any],
 ) -> list[str]:
     violations: list[str] = []
-    if policy.get("schema_version") != 1:
-        violations.append("deployment policy schema_version must be 1")
+    if policy.get("schema_version") != 2:
+        violations.append("deployment policy schema_version must be 2")
     if not _nonempty(policy.get("policy_id")):
         violations.append("deployment policy_id is required")
     if _parse_time(f"{policy.get('reviewed_at')}T00:00:00Z") is None:
@@ -216,6 +218,16 @@ def _validate_policy(
     network_controls = _string_set(policy.get("required_network_controls"))
     if len(network_controls) < 10:
         violations.append("required_network_controls must contain the complete containment set")
+    database_controls = _string_set(policy.get("required_database_controls"))
+    if database_controls != {
+        "runner_target_database_connect_only",
+        "runner_no_database_create_or_temporary",
+        "runner_catalog_drift_fail_closed",
+        "runner_transition_rpc_or_trigger_only",
+    }:
+        violations.append(
+            "required_database_controls must match the complete Runner database boundary"
+        )
     drills = _string_set(policy.get("required_drills"))
     required_drills = {
         "failure_domain_loss",
@@ -428,8 +440,8 @@ def _validate_record(
     )
     if set(record) != _RECORD_FIELDS:
         violations.append(f"{label}: record fields do not match schema")
-    if record.get("schema_version") != 1:
-        violations.append(f"{label}: schema_version must be 1")
+    if record.get("schema_version") != 2:
+        violations.append(f"{label}: schema_version must be 2")
     if not _nonempty(evidence_id):
         violations.append("deployment evidence_id is required")
     if record.get("evidence_kind") != "production_deployment_drill":
@@ -471,6 +483,13 @@ def _validate_record(
         violations.append(f"{label}: network controls do not match policy")
     elif any(network[name] is not True for name in expected_network):
         blockers.append(f"{label}: one or more containment controls failed")
+
+    expected_database = _string_set(policy.get("required_database_controls"))
+    database = _mapping(record.get("database_controls"))
+    if database is None or set(database) != expected_database:
+        violations.append(f"{label}: database controls do not match policy")
+    elif any(database[name] is not True for name in expected_database):
+        blockers.append(f"{label}: one or more Runner database controls failed")
 
     expected_drills = _string_set(policy.get("required_drills"))
     drills = _mapping(record.get("drills"))
@@ -618,6 +637,9 @@ def validate_deployment_readiness(
             "required_component_count": len(_mapping(policy.get("required_components")) or {}),
             "required_network_control_count": len(
                 _string_set(policy.get("required_network_controls"))
+            ),
+            "required_database_control_count": len(
+                _string_set(policy.get("required_database_controls"))
             ),
             "required_drill_count": len(_string_set(policy.get("required_drills"))),
             "violation_count": len(set(violations)),

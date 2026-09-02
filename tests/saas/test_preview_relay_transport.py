@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from ssl import SSLContext
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
@@ -27,7 +28,9 @@ from saas.preview_gateway import PreviewTunnelRequest, PreviewTunnelResponse
 from saas.preview_relay_transport import (
     MutualTlsPreviewRelayClient,
     MutualTlsPreviewRelayServer,
+    PolicyBoundPreviewRelayEndpointResolver,
     PreviewRelayEndpoint,
+    PreviewRelayEndpointPolicy,
     PreviewRelayTransportError,
 )
 from saas.preview_tunnel import (
@@ -209,6 +212,28 @@ class _EndpointResolver:
         return self.endpoint
 
 
+def _endpoint_policy() -> PreviewRelayEndpointPolicy:
+    return PreviewRelayEndpointPolicy.from_strings(
+        allowed_dns_suffixes=("omnigent.svc.cluster.local",),
+        allowed_cidrs=("10.42.0.0/16", "fd42::/64"),
+        allowed_ports=(9443,),
+    )
+
+
+def _dns_answer(address: str) -> list[tuple[int, int, int, str, tuple[object, ...]]]:
+    socket_module = __import__("socket")
+    family = socket_module.AF_INET6 if ":" in address else socket_module.AF_INET
+    return [
+        (
+            family,
+            socket_module.SOCK_STREAM,
+            socket_module.IPPROTO_TCP,
+            "",
+            (address, 9443),
+        )
+    ]
+
+
 class _PlacementAuthority:
     def __init__(self, placement: RunnerTunnelPlacement) -> None:
         self.current = placement
@@ -268,6 +293,24 @@ class _PlacementAuthority:
         return self.current
 
 
+class _FullGrantAuthority:
+    def __init__(
+        self,
+        placement: RunnerTunnelPlacement,
+        route: PreviewRouteGrant,
+    ) -> None:
+        self.placement = placement
+        self.route = route
+        self.active = True
+        self.calls: list[PreviewRouteGrant] = []
+
+    def resolve_preview_grant(self, route: PreviewRouteGrant) -> RunnerTunnelPlacement:
+        self.calls.append(route)
+        if not self.active or route != self.route:
+            raise RunnerTunnelPlacementError("runner_tunnel_route_stale", "stale")
+        return self.placement
+
+
 class _LocalTunnel:
     def __init__(self) -> None:
         self.calls: list[PreviewTunnelRequest] = []
@@ -320,8 +363,16 @@ def _route(placement: RunnerTunnelPlacement) -> PreviewRouteGrant:
         opaque_preview_key="pvr_relay_contract",
         preview_token_hash="a" * 64,
         upstream_request_headers=headers,
-        response_headers={"Content-Security-Policy": "sandbox"},
+        response_headers={
+            "Content-Security-Policy": "sandbox",
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        },
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        preview_host="preview-a.example.test",
     )
 
 
@@ -450,6 +501,91 @@ async def test_mtls_preview_relay_rechecks_stale_placement_without_replay(tmp_pa
     assert stale.value.code == "preview_runner_placement_stale"
     assert local.calls == []
     assert len(placements.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_relay_owner_rebuilds_full_grant_and_rejects_every_identity_mutation() -> None:
+    placement = _placement()
+    route = _route(placement)
+    authority = _FullGrantAuthority(placement, route)
+    local = _LocalTunnel()
+    router = PlacementRoutedPreviewTunnel(
+        gateway_instance_id=placement.gateway_instance_id,
+        placements=authority,
+        local_tunnel=cast(OfficialRunnerPreviewTunnel, local),
+        relay=None,
+    )
+
+    request = PreviewTunnelRequest(
+        route=route,
+        method="GET",
+        path="/",
+        query="",
+        headers=route.upstream_request_headers,
+        body=b"",
+    )
+    response = await router.accept_relay(placement, request)
+    assert response.status_code == 201
+    assert local.calls == [request]
+    local.calls.clear()
+
+    mutations = (
+        replace(route, preview_id=uuid4()),
+        replace(route, tenant_id=uuid4()),
+        replace(route, space_id=uuid4()),
+        replace(route, project_id=uuid4()),
+        replace(route, runner_id=uuid4()),
+        replace(route, runner_connection_generation=route.runner_connection_generation + 1),
+        replace(route, run_id=uuid4()),
+        replace(route, run_fence_token=route.run_fence_token + 1),
+        replace(route, worktree_id=uuid4()),
+        replace(route, worktree_lease_generation=route.worktree_lease_generation + 1),
+        replace(route, opaque_preview_key="pvr_other_preview"),
+        replace(route, preview_token_hash="b" * 64),
+        replace(route, upstream_request_headers={"accept": "application/json"}),
+        replace(
+            route,
+            response_headers={
+                **route.response_headers,
+                "X-Frame-Options": "SAMEORIGIN",
+            },
+        ),
+        replace(route, expires_at=route.expires_at + timedelta(seconds=1)),
+        replace(route, preview_host="preview-b.example.test"),
+        # Same Runner incarnation but a different tenant/Preview is still not
+        # authority for this token.
+        replace(route, preview_id=uuid4(), tenant_id=uuid4(), project_id=uuid4()),
+    )
+    for mutated in mutations:
+        with pytest.raises(PreviewTunnelAdapterError) as rejected:
+            await router.accept_relay(
+                placement,
+                replace(request, route=mutated, headers=mutated.upstream_request_headers),
+            )
+        assert rejected.value.code == "preview_runner_placement_stale"
+    assert local.calls == []
+
+    for mutated_placement in (
+        replace(placement, placement_id=uuid4()),
+        replace(placement, runner_id=uuid4()),
+        replace(
+            placement,
+            runner_connection_generation=placement.runner_connection_generation + 1,
+        ),
+        replace(placement, routing_generation=placement.routing_generation + 1),
+        replace(placement, gateway_instance_id="gateway-c"),
+        replace(placement, relay_subject=f"rtp_{uuid4().hex}"),
+    ):
+        with pytest.raises(PreviewTunnelAdapterError) as rejected:
+            await router.accept_relay(mutated_placement, request)
+        assert rejected.value.code == "preview_runner_placement_stale"
+    assert local.calls == []
+
+    authority.active = False
+    with pytest.raises(PreviewTunnelAdapterError) as revoked:
+        await router.accept_relay(placement, request)
+    assert revoked.value.code == "preview_runner_placement_stale"
+    assert local.calls == []
 
 
 @pytest.mark.asyncio
@@ -586,9 +722,20 @@ async def test_mtls_preview_relay_preserves_identity_error_when_write_side_close
             await self._writer.wait_closed()
 
     async def write_failing_open_connection(
-        *args: object, **kwargs: object
+        host: str | None = None,
+        port: int | str | None = None,
+        *,
+        ssl: SSLContext | bool | None = None,
+        server_hostname: str | None = None,
+        ssl_handshake_timeout: float | None = None,
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        reader, writer = await original_open_connection(*args, **kwargs)
+        reader, writer = await original_open_connection(
+            host,
+            port,
+            ssl=ssl,
+            server_hostname=server_hostname,
+            ssl_handshake_timeout=ssl_handshake_timeout,
+        )
         return reader, cast(asyncio.StreamWriter, DrainFailingWriter(writer))
 
     server._write_error = recording_write_error  # type: ignore[method-assign]
@@ -738,13 +885,103 @@ def test_mtls_preview_relay_rejects_weak_tls_and_untrusted_endpoint(tmp_path: Pa
         PreviewRelayEndpoint("https://attacker.invalid/path", 443, "localhost")
 
 
+def test_policy_bound_relay_endpoint_pins_an_allowed_cluster_dns_answer() -> None:
+    directory = _EndpointResolver(
+        PreviewRelayEndpoint(
+            "preview-owner-0.omnigent.svc.cluster.local",
+            9443,
+            "preview-owner-0.omnigent.svc.cluster.local",
+        )
+    )
+    resolver = PolicyBoundPreviewRelayEndpointResolver(
+        directory,
+        _endpoint_policy(),
+        getaddrinfo=lambda *_args, **_kwargs: _dns_answer("10.42.7.19"),
+    )
+
+    endpoint = resolver.resolve(_placement())
+
+    assert endpoint == PreviewRelayEndpoint(
+        "10.42.7.19", 9443, "preview-owner-0.omnigent.svc.cluster.local"
+    )
+
+
+@pytest.mark.parametrize(
+    "address",
+    (
+        "127.0.0.1",
+        "169.254.169.254",
+        "10.43.1.9",
+        "8.8.8.8",
+        "::1",
+        "fe80::1",
+    ),
+)
+def test_policy_bound_relay_endpoint_rejects_non_cluster_addresses(address: str) -> None:
+    directory = _EndpointResolver(
+        PreviewRelayEndpoint(
+            "preview-owner-0.omnigent.svc.cluster.local",
+            9443,
+            "preview-owner-0.omnigent.svc.cluster.local",
+        )
+    )
+    resolver = PolicyBoundPreviewRelayEndpointResolver(
+        directory,
+        _endpoint_policy(),
+        getaddrinfo=lambda *_args, **_kwargs: _dns_answer(address),
+    )
+
+    with pytest.raises(PreviewRelayTransportError) as denied:
+        resolver.resolve(_placement())
+
+    assert denied.value.code == "preview_relay_endpoint_denied"
+
+
+def test_policy_bound_relay_endpoint_rejects_suffix_port_and_mixed_dns_answers() -> None:
+    allowed = _endpoint_policy()
+    for endpoint in (
+        PreviewRelayEndpoint("preview-owner.attacker.invalid", 9443, "attacker.invalid"),
+        PreviewRelayEndpoint(
+            "preview-owner-0.omnigent.svc.cluster.local",
+            9444,
+            "preview-owner-0.omnigent.svc.cluster.local",
+        ),
+    ):
+        resolver = PolicyBoundPreviewRelayEndpointResolver(
+            _EndpointResolver(endpoint),
+            allowed,
+            getaddrinfo=lambda *_args, **_kwargs: _dns_answer("10.42.7.19"),
+        )
+        with pytest.raises(PreviewRelayTransportError) as denied:
+            resolver.resolve(_placement())
+        assert denied.value.code == "preview_relay_endpoint_denied"
+
+    mixed = PolicyBoundPreviewRelayEndpointResolver(
+        _EndpointResolver(
+            PreviewRelayEndpoint(
+                "preview-owner-0.omnigent.svc.cluster.local",
+                9443,
+                "preview-owner-0.omnigent.svc.cluster.local",
+            )
+        ),
+        allowed,
+        getaddrinfo=lambda *_args, **_kwargs: (
+            _dns_answer("10.42.7.19") + _dns_answer("169.254.169.254")
+        ),
+    )
+    with pytest.raises(PreviewRelayTransportError) as denied:
+        mixed.resolve(_placement())
+    assert denied.value.code == "preview_relay_endpoint_denied"
+
+
 @pytest.mark.asyncio
 async def test_mtls_preview_relay_hides_service_discovery_failures(tmp_path: Path) -> None:
     certificates = _certificate_fixture(tmp_path)
     placement = _placement()
 
     class _UnavailableDirectory:
-        def resolve(self, _placement: RunnerTunnelPlacement) -> PreviewRelayEndpoint:
+        def resolve(self, placement: RunnerTunnelPlacement) -> PreviewRelayEndpoint:
+            del placement
             raise RuntimeError("internal topology must not escape")
 
     client = MutualTlsPreviewRelayClient(
