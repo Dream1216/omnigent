@@ -1520,7 +1520,7 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     execution = asyncio.create_task(
         context.executor.execute(context.lease, cancellation=asyncio.Event())
     )
-    await heartbeat_started.wait()
+    await asyncio.wait_for(heartbeat_started.wait(), timeout=2)
     expiry_before_late_response = active.worktree_lease.expires_at
     assert await asyncio.wait_for(execution, timeout=1) == "orphaned"
     release_response.set()

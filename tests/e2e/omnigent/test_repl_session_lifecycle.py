@@ -33,7 +33,7 @@ from tests.e2e.omnigent._pexpect_harness import (
     ensure_repl_test_theme_env,
     submit_prompt,
 )
-from tests.e2e.omnigent.conftest import configure_mock_llm
+from tests.e2e.omnigent.conftest import configure_mock_llm, set_fallback_mock_llm
 
 _MODEL = "mock-session-lifecycle"
 _HARNESS = "openai-agents"
@@ -876,17 +876,22 @@ async def test_repl_reasoning_effort_threads_through(
     :param mock_llm_server_url: Mock server URL.
     :param tmp_path: Per-test temp directory.
     """
+    marker = "SESSION_REASONING_OK"
+    routing_token = "session-reasoning-effort-e2e"
+    queue_key = "repl-session-reasoning-effort"
     env = _repl_env(mock_credentials_env, tmp_path / "home", mock_llm_server_url)
     yaml_path = _write_marker_agent(
         tmp_path,
         "repl_session_reasoning_effort",
-        "SESSION_REASONING_OK",
+        marker,
     )
     configure_mock_llm(
         mock_llm_server_url,
-        [{"text": "SESSION_REASONING_OK"}],
-        key=_MODEL,
+        [{"text": marker}],
+        key=queue_key,
+        match=routing_token,
     )
+    set_fallback_mock_llm(mock_llm_server_url, queue_key, marker)
     with _running_server(omnigent_python, omnigent_repo_root, env, tmp_path) as server:
         from omnigent.cli import _bundle
 
@@ -913,7 +918,7 @@ async def test_repl_reasoning_effort_threads_through(
                     files_getter=session_files.get,
                     session=bound,
                 )
-                result = await chat.query("respond with the configured marker")
-                assert "SESSION_REASONING_OK" in result.text
+                result = await chat.query(f"{routing_token}: respond with the configured marker")
+                assert marker in result.text
                 refreshed = await client.sessions.get(created.id)
                 assert refreshed.reasoning_effort == "high"

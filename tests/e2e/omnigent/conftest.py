@@ -236,6 +236,7 @@ def configure_mock_llm(
     responses: list[dict],
     *,
     key: str = "default",
+    match: str | None = None,
 ) -> None:
     """
     Configure a keyed response queue on the mock LLM server.
@@ -243,10 +244,15 @@ def configure_mock_llm(
     :param mock_llm_server_url: Mock server URL.
     :param responses: List of response config dicts.
     :param key: Queue key (typically model name).
+    :param match: Optional user-content token that routes only matching
+        requests to this queue, independent of their model name.
     """
+    payload: dict[str, object] = {"key": key, "responses": responses}
+    if match is not None:
+        payload["match"] = match
     resp = httpx.post(
         f"{mock_llm_server_url}/mock/configure",
-        json={"key": key, "responses": responses},
+        json=payload,
         timeout=5.0,
     )
     resp.raise_for_status()
