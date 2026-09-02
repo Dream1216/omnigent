@@ -268,6 +268,16 @@ describe("setup clipboard IPC wiring", () => {
   });
 });
 
+describe("macOS activation wiring", () => {
+  it("counts tracked shell windows instead of utility windows", () => {
+    assert.match(liveCode, /app\.on\("activate"[\s\S]{0,500}windows\.size === 0/);
+    assert.doesNotMatch(
+      liveCode,
+      /app\.on\("activate"[\s\S]{0,500}BrowserWindow\.getAllWindows\(\)\.length === 0/,
+    );
+  });
+});
+
 describe("managed server preference wiring", () => {
   it("exposes managed servers only through the setup-page bridge", () => {
     assert.match(
@@ -304,6 +314,47 @@ describe("managed server preference wiring", () => {
   it("renders organization-provided servers separately on setup", () => {
     assert.match(setupSource, /Provided by your organization/);
     assert.match(setupSource, /setup\s*\.getManagedServers\(\)/);
+  });
+});
+
+describe("Databricks-internal local-host CLI wiring", () => {
+  it("selects isaac omni only behind the internal flag and Databricks server gate", () => {
+    assert.match(
+      liveCode,
+      /function hostCliCommand\(serverUrl\)[\s\S]{0,300}databricksInternalFeaturesEnabled\(\)[\s\S]{0,120}isDatabricksManagedServerUrl\(serverUrl\)[\s\S]{0,300}prefixArgs:\s*\["omni"\]/,
+    );
+  });
+
+  it("uses the selected command for identity availability and every host action", () => {
+    assert.match(
+      liveCode,
+      /host-get-identity[\s\S]{0,350}Boolean\(hostCliCommand\(senderServerUrl\(event\)\)\)/,
+    );
+    assert.match(
+      liveCode,
+      /host-control[\s\S]{0,450}const cliCommand = hostCliCommand\(serverUrl\)[\s\S]{0,1400}ensureServerAuth\(cliCommand, serverUrl\)[\s\S]{0,400}ensureHostConnected\(cliCommand, serverUrl\)[\s\S]{0,300}disconnectHost\(cliCommand, serverUrl\)/,
+    );
+  });
+
+  it("disables CLI customization in main and explains managed policy in the setup dialog", () => {
+    assert.match(
+      liveCode,
+      /omnigent:set-cli-path[\s\S]{0,300}databricksInternalFeaturesEnabled\(\)[\s\S]{0,250}customizationDisabled:\s*true[\s\S]{0,80}accepted:\s*false/,
+    );
+    assert.match(
+      liveCode,
+      /omnigent:browse-cli-path[\s\S]{0,250}databricksInternalFeaturesEnabled\(\)\) return null/,
+    );
+    assert.match(
+      liveCode,
+      /omnigent:cli-reset-path[\s\S]{0,250}databricksInternalFeaturesEnabled\(\)[\s\S]{0,250}customizationDisabled:\s*true/,
+    );
+    assert.match(setupSource, /cliGear\.hidden = false/);
+    assert.match(setupSource, /cliManaged\.hidden = !cliCustomizationDisabled/);
+    assert.match(setupSource, /cliPathInput\.disabled = cliCustomizationDisabled/);
+    assert.match(setupSource, /cliBrowse\.disabled = cliCustomizationDisabled/);
+    assert.match(setupSource, /cliRedetect\.disabled = cliCustomizationDisabled/);
+    assert.match(setupSource, /Managed by your organization/);
   });
 });
 

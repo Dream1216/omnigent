@@ -1055,6 +1055,106 @@ def test_read_transcript_items_since_flags_compact_summary(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
+    "stdout",
+    [
+        "Not enough messages to compact.",
+        "not enough messages to compact",
+        "Nothing to compact.",
+    ],
+)
+def test_read_transcript_items_since_flags_compact_noop(tmp_path: Path, stdout: str) -> None:
+    """
+    A ``/compact`` refusal stdout record is surfaced with its text.
+
+    When Claude declines ``/compact`` (context too small), it writes the
+    refusal to a standalone ``local_command`` stdout record — separate from
+    the ``/compact`` command echo. The bridge must surface it as a
+    ``slash_command`` item flagged ``is_compact_noop=True`` (so the forwarder
+    dismisses the stranded "Compacting…" spinner) carrying the refusal text as
+    ``output`` (so the web shows the same message Claude did).
+    """
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": "compact-cmd",
+                        "message": {
+                            "role": "user",
+                            "content": (
+                                "<command-name>/compact</command-name>\n"
+                                "            <command-message>compact</command-message>\n"
+                                "            <command-args></command-args>"
+                            ),
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "local_command",
+                        "uuid": "compact-stdout",
+                        "isMeta": False,
+                        "content": f"<local-command-stdout>{stdout}</local-command-stdout>",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _cursor, _current_response_id, items = read_transcript_items_since(
+        transcript_path,
+        0,
+        agent_name="claude-native-ui",
+    )
+
+    # Exactly one bubble: the bare ``/compact`` echo is deduped away so the
+    # web shows a single "Command compact" row (like the terminal), and it
+    # carries the refusal text as ``output``.
+    compact_items = [item for item in items if item.data.get("name") == "compact"]
+    assert len(compact_items) == 1, f"expected one /compact bubble, got {items!r}"
+    noop = compact_items[0]
+    assert noop.is_compact_noop is True
+    assert noop.item_type == "slash_command"
+    assert noop.data["kind"] == "command"
+    assert noop.data["output"] == stdout.strip()
+
+
+def test_read_transcript_items_since_keeps_real_bash_local_command(tmp_path: Path) -> None:
+    """
+    A non-refusal ``local_command`` stdout is not mistaken for a compact noop.
+
+    A shell ``!cmd`` record still surfaces as a terminal command, never a
+    flagged compact-noop item.
+    """
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "type": "system",
+                "subtype": "local_command",
+                "uuid": "bash-1",
+                "content": ("<bash-input>echo hi</bash-input>\n<bash-stdout>hi</bash-stdout>"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _cursor, _current_response_id, items = read_transcript_items_since(
+        transcript_path,
+        0,
+        agent_name="claude-native-ui",
+    )
+
+    assert all(not item.is_compact_noop for item in items), items
+
+
+@pytest.mark.parametrize(
     "raw_text",
     [
         "Prompt is too long",
@@ -2736,6 +2836,76 @@ def test_augment_claude_args_mirrors_launch_overrides_into_settings(
     assert settings["model"] == "claude-fable-5"
     assert settings["permissions"] == {"defaultMode": "auto"}
     assert settings["effortLevel"] == "xhigh"
+
+
+@pytest.mark.parametrize(
+    "bypass_args",
+    [
+        ("--dangerously-skip-permissions",),
+        ("--permission-mode", "bypassPermissions"),
+        ("--permission-mode=bypassPermissions",),
+    ],
+    ids=["skip-flag", "mode-spaced", "mode-joined"],
+)
+def test_augment_claude_args_preaccepts_bypass_dialog(
+    bypass_args: tuple[str, ...],
+    tmp_path: Path,
+) -> None:
+    """
+    A bypass launch pre-accepts Claude's one-time bypass consent dialog.
+
+    Claude shows a blocking "Bypass Permissions mode / 1. No, exit /
+    2. Yes, I accept" dialog before the first bypass launch. It fires no
+    PermissionRequest hook, so a host-spawned worker has nobody to answer it
+    and hangs forever producing no output. Setting
+    ``skipDangerousModePermissionPrompt`` in the invocation-local settings
+    sidecar clears the gate without touching the user's own config. Both
+    spellings that reach the CLI must be recognised.
+    """
+    args = augment_claude_args(
+        bypass_args,
+        bridge_dir=tmp_path,
+        python_executable="/venv/bin/python",
+    )
+
+    settings = _load_invocation_settings(args)
+    assert settings.get("skipDangerousModePermissionPrompt") is True, (
+        "bypass launches must set skipDangerousModePermissionPrompt; without it a "
+        f"headless worker hangs on the acceptance dialog. args={bypass_args!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "non_bypass_args",
+    [
+        (),
+        ("--permission-mode", "auto"),
+        ("--permission-mode", "acceptEdits"),
+        ("--permission-mode", "plan"),
+    ],
+    ids=["none", "auto", "acceptEdits", "plan"],
+)
+def test_augment_claude_args_leaves_bypass_consent_alone_otherwise(
+    non_bypass_args: tuple[str, ...],
+    tmp_path: Path,
+) -> None:
+    """
+    Non-bypass launches must NOT pre-accept bypass mode.
+
+    Writing the key unconditionally would silently record bypass consent for
+    every native session, including ones that never asked for it, so the gate
+    stays scoped to launches that actually request bypass.
+    """
+    args = augment_claude_args(
+        non_bypass_args,
+        bridge_dir=tmp_path,
+        python_executable="/venv/bin/python",
+    )
+
+    settings = _load_invocation_settings(args)
+    assert "skipDangerousModePermissionPrompt" not in settings, (
+        f"non-bypass launch must not record bypass consent; args={non_bypass_args!r}"
+    )
 
 
 def test_augment_claude_args_mirrors_joined_model_arg_into_settings(
