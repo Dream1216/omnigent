@@ -299,6 +299,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/adr-approval-authorities.json",
     "saas/production/adr-approval-candidate.json",
     "saas/production/adr-approvals/README.md",
+    "saas/production/adr-approvals/omnigent-saas-p0s11-production-runtime-2026-09-02-42167426f3706279.json",
     "saas/production/adr-approvals/omnigent-saas-upstream-sync-3369b36c-2026-08-31-2500a820699ccb24.json",
     "saas/production/adr-approvals/omnigent-saas-p0-sole-owner-waiver-2026-08-09-59c80f30abe891bb.json",
     "saas/production/adrs/README.md",

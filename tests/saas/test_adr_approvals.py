@@ -144,19 +144,22 @@ def test_current_adr_contract_has_consistent_degraded_waiver_state() -> None:
     )
 
 
-def test_current_schema_head_is_the_successor_decision_target() -> None:
+def test_current_schema_head_has_an_immutable_approved_record() -> None:
     require_current_approval_history(_repo())
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000011"  # type: ignore[index]
     assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000011"  # type: ignore[index]
-    assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
-    assert "record" not in baseline["approval"]  # type: ignore[operator]
-    assert all(adr["status"] == "proposed" for adr in baseline["adrs"])  # type: ignore[index]
+    assert baseline["approval"]["state"] == "approved"  # type: ignore[index]
+    assert baseline["approval"]["record"] == (  # type: ignore[index]
+        "saas/production/adr-approvals/"
+        "omnigent-saas-p0s11-production-runtime-2026-09-02-42167426f3706279.json"
+    )
+    assert all(adr["status"] == "accepted" for adr in baseline["adrs"])  # type: ignore[index]
     report = validate_approval_contract(_repo(), baseline)
     assert report["status"] == "pass"
-    assert report["approval_readiness"] == "blocked"
-    assert report["blockers"] == ["no immutable ADR approval record is referenced"]
+    assert report["approval_readiness"] == "approved"
+    assert report["blockers"] == []
 
 
 def test_decision_bundle_detects_document_tampering(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ def test_current_adr_approval_and_ci_evidence_are_required_wheel_artifacts() -> 
     assert "saas/acceptance/p0-adr-approval-evidence-ci-33468247922.json" in REQUIRED_WHEEL_PATHS
     assert (
         "saas/production/adr-approvals/"
-        "omnigent-saas-upstream-sync-3369b36c-2026-08-31-2500a820699ccb24.json"
+        "omnigent-saas-p0s11-production-runtime-2026-09-02-42167426f3706279.json"
         in REQUIRED_WHEEL_PATHS
     )
 

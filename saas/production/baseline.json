@@ -10,7 +10,7 @@
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {
-    "state": "review_required",
+    "state": "approved",
     "mode": "sole-owner-risk-waiver",
     "governance_classification": "degraded",
     "scope": "p0-architectural-decision-bundle",
@@ -18,6 +18,7 @@
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",
+    "record": "saas/production/adr-approvals/omnigent-saas-p0s11-production-runtime-2026-09-02-42167426f3706279.json",
     "required_roles": [
       "product-owner",
       "platform-architecture",
@@ -31,7 +32,7 @@
       "id": "ADR-001",
       "title": "PostgreSQL topology and transaction boundary",
       "owner": "platform-architecture",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Use one multi-AZ PostgreSQL cluster per data region, separate official and SaaS ownership roles, revoke PUBLIC database reachability cluster-wide, bind each Runner to only the receipt database with CONNECTION LIMIT 8, run official migrations before SaaS migrations, keep local transactions within one Placement, and use Saga plus Outbox across Placements.",
       "verification_gate": "PostgreSQL 18 forced-RLS plus cross-database and unbounded-connection direct-Runner denial must pass; PostgreSQL 16 remains the migration and role-compatibility N-1 lane and must reject direct Runner runtime admission. Migration drift, local transaction fault injection, and cross-Placement Saga compensation must also pass."
     },
@@ -39,7 +40,7 @@
       "id": "ADR-002",
       "title": "Runtime Placement and migration protocol",
       "owner": "runtime-compatibility",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "The server selects Placement from residency, plan, capacity, runtime lineage, and Project affinity; active bindings never reroute from client input; migration uses snapshot, catch-up, generation fencing, atomic cutover, and retained rollback material.",
       "verification_gate": "Same physical workspace number in two Placements, stale generation, partial cutover, and N-1 rollback tests must fail closed or recover."
     },
@@ -47,7 +48,7 @@
       "id": "ADR-003",
       "title": "Authorization snapshot and degradation",
       "owner": "control-plane",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Use an opaque session-bound Context Snapshot with a maximum 60-second lifetime, shared rotatable keys, live healthy-path revalidation, Outbox invalidation, and an exact low-risk GET or HEAD degradation allowlist.",
       "verification_gate": "Two-replica PostgreSQL tests must prove immediate healthy-path revocation and fail-closed sensitive operations during dependency failure."
     },
@@ -55,7 +56,7 @@
       "id": "ADR-004",
       "title": "Runner isolation and responsibility modes",
       "owner": "execution-platform",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Support Managed Shared, Managed Dedicated, and Customer-managed Runner modes behind one capability and lease contract; dedicated and customer-managed modes change placement and responsibility, not authorization semantics. Managed modes disable the upstream copy-on-write Runner zygote and reject ambient provider credentials until a fork-safety review proves post-fork credential, descriptor, native-state, telemetry, and tenant-context reset. P0S10 removes Runner table DML and exposes only exact reviewed RPCs, but direct database access and its same-project quota and ChangeSetGroup lock surface remain isolated-synthetic-Beta-only. Production requires an enforcing database proxy or removal of direct Runner database credentials and central ownership of shared quota, group derivation, and garbage collection.",
       "verification_gate": "Two failure domains, certificate rotation, quarantine, lease expiry, stale fencing, tenant-pool isolation, canonical managed process policy, negative ambient-credential inheritance, cross-action and cross-profile forgery denial, catalog drift poisoning, and raw-SQL transition enforcement must pass."
     },
@@ -63,7 +64,7 @@
       "id": "ADR-005",
       "title": "Sandbox, tool, network, secret, and supply-chain policy",
       "owner": "security",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Treat repositories and prompts as hostile; use non-privileged per-Run isolation, no host socket, default-deny internal and metadata networks, server-side tool policy, short-lived secret brokering, immutable digests, SBOM, signed provenance, and release vulnerability gates.",
       "verification_gate": "Host escape, SSRF, DNS rebinding, secret exfiltration, cache poisoning, unsigned image, and critical vulnerability probes must be blocking."
     },
@@ -71,7 +72,7 @@
       "id": "ADR-006",
       "title": "SLO, data class, RPO, RTO, and recovery",
       "owner": "site-reliability",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Adopt the SLOs and T0-T2 recovery objectives in this baseline; encrypted protected backups are cross-failure-domain and restore into isolation before traffic; conduct quarterly tenant and regional drills.",
       "verification_gate": "Business approval plus measured tenant and regional recovery evidence at the exact schema, source, adapter, and key revisions is required."
     },
@@ -79,7 +80,7 @@
       "id": "ADR-007",
       "title": "Metering, pricing, ledgers, reconciliation, and quota",
       "owner": "billing-platform",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Keep immutable Usage, versioned Pricing Snapshot, append-only Customer and Provider ledgers, and daily reconciliation separate; use fixed-point amounts and correction entries; reserve quota before provider work.",
       "verification_gate": "Duplicate, late, unknown-result, refund, plan-change, and provider-invoice reconciliation cases must preserve ledger invariants."
     },
@@ -87,7 +88,7 @@
       "id": "ADR-008",
       "title": "API, webhook, connector, and SSRF baseline",
       "owner": "control-plane",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Expose versioned public contracts with idempotency and deprecation windows; keep Service Accounts non-interactive; store only peppered API Key digests; bind machine permissions, network policy, expiry, and project scope explicitly; sign and deduplicate webhooks; bind connector identities to authorized resources; resolve and filter every outbound target against metadata, loopback, link-local, private, and control-plane networks.",
       "verification_gate": "One-time Key disclosure, rotate/revoke, no privilege inheritance or escalation, network and scope denial, signature rotation, replay, reordering, redirect, DNS rebinding, repository transfer, and app-uninstall tests must pass."
     },
@@ -95,7 +96,7 @@
       "id": "ADR-009",
       "title": "Single-region production boundary",
       "owner": "product-owner",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "The first production offer is single-region multi-AZ; it makes no active-active multi-region, sovereign-region, or cross-border failover promise. Dedicated Placement is separately contracted and multi-region requires a new ADR and gate.",
       "verification_gate": "Product terms, deployment manifests, routing, backup location, and tenant-facing region disclosures must agree."
     },
@@ -103,7 +104,7 @@
       "id": "ADR-010",
       "title": "Identity and management-web security",
       "owner": "security",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Use strict OIDC Code plus S256 PKCE, explicit identity linking, server-side revocable cookies, CSRF and Origin enforcement, distinct human and machine token namespaces, rejection of Cookie plus Bearer ambiguity, independent Platform Console origin and identity source, MFA for privileged production roles, and fail-closed recovery.",
       "verification_gate": "Session fixation, CSRF, CORS, redirect, cache, history, logout replay, machine-token interactive-login denial, account recovery, and privileged MFA browser tests must pass."
     },
@@ -111,7 +112,7 @@
       "id": "ADR-011",
       "title": "Feature flag and configuration governance",
       "owner": "platform-architecture",
-      "status": "proposed",
+      "status": "accepted",
       "decision": "Every flag has an owner, scope, safe default, expiry, audit event, and revision snapshot; tenant settings cannot weaken platform security; expired or unknown security flags fail closed.",
       "verification_gate": "Configuration schema, expiry lint, audit, rollback, stale replica, and tenant override negative tests must pass."
     }
