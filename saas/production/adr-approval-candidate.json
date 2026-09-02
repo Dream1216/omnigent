@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "candidate_id": "omnigent-saas-upstream-sync-3369b36c-2026-08-31",
-  "implementation_revision": "52d62ee533da983a1a5f6a3f145d3777ff1c0d4b",
-  "evidence_revision": "52d62ee533da983a1a5f6a3f145d3777ff1c0d4b",
+  "candidate_id": "omnigent-saas-p0s10-production-runtime-2026-09-02",
+  "implementation_revision": "aec2a7ec9a494b38fc94bf3b681a7e1ea2356570",
+  "evidence_revision": "aec2a7ec9a494b38fc94bf3b681a7e1ea2356570",
   "upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
   "adapter_contract_version": "0.2.0",
-  "control_plane_schema_revision": "p0s000000007",
+  "control_plane_schema_revision": "p0s000000010",
   "deployment_scope": "single-region-multi-az",
-  "decision_registry_sha256": "bb0959fd5b5050c2b3cb5e017d04009c566734d5d252cd37e1efc060bf3dc093",
+  "decision_registry_sha256": "74d5eafe18f856e21fcfcb69b4759b7cc4bfb006f5419c7bdfe9572707cf3619",
   "decision_files": [
     "saas/production/adrs/ADR-001-postgresql-topology-and-transactions.md",
     "saas/production/adrs/ADR-002-runtime-placement-and-migration.md",
@@ -21,5 +21,5 @@
     "saas/production/adrs/ADR-010-identity-and-management-web-security.md",
     "saas/production/adrs/ADR-011-feature-flag-and-configuration.md"
   ],
-  "decision_bundle_sha256": "2500a820699ccb245a9dd2c0e5232618b74959f5cc11af94e9ec6313d28d106d"
+  "decision_bundle_sha256": "50d177f2eda8ce008f54f3cba6812ee9325f384b470f750001f96f80f1980936"
 }
