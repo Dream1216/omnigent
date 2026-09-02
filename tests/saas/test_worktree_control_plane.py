@@ -4,9 +4,11 @@ import json
 import os
 import subprocess
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -14,7 +16,6 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from saas.compatibility import RequestContext
 from saas.control_plane import (
@@ -23,12 +24,16 @@ from saas.control_plane import (
     ChangeSetSpec,
     CompositeRemovalImpactProvider,
     ControlPlaneOutboxEvent,
+    EgressPolicyRecord,
     ExecutionControlPlane,
+    ExecutionProfileRecord,
     ExecutionRevisionSet,
     GlobalUser,
     ProjectMembershipRecord,
     ProjectRecord,
     ProjectRemovalImpactProvider,
+    RunnerRegistrationRecord,
+    RunRecord,
     RuntimePlacementRecord,
     SaasBase,
     SchedulingControlPlane,
@@ -43,6 +48,13 @@ from saas.control_plane import (
     WorktreeQuotaRecord,
     WorktreeRemovalImpactProvider,
 )
+from saas.control_plane.preview_execution import (
+    PreviewExecutionControlPlane,
+    PreviewExecutionControlPlaneError,
+    PreviewExecutionPolicy,
+    PreviewRunnerExecutionAuthority,
+)
+from saas.control_plane.preview_models import PreviewCommandRecord, PreviewExecutionRecord
 from saas.runner_adapter import (
     CheckpointArtifact,
     FilesystemRecoveryArtifactStore,
@@ -50,6 +62,24 @@ from saas.runner_adapter import (
     RunnerWorktreeAdapterError,
     StaticRepositoryMirrorResolver,
 )
+from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
+
+
+class _FakeArtifactStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put(self, key: str, data: bytes) -> None:
+        self.objects[key] = data
+
+    def get(self, key: str) -> bytes:
+        try:
+            return self.objects[key]
+        except KeyError:
+            raise KeyError(key) from None
+
+    def exists(self, key: str) -> bool:
+        return key in self.objects
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +88,8 @@ class WorktreeFixture:
     request: RequestContext
     project_id: UUID
     placement_id: UUID
+    execution_profile_id: UUID
+    execution_profile_hash: str
     execution: ExecutionControlPlane
     scheduling: SchedulingControlPlane
     worktrees: WorktreeControlPlane
@@ -76,11 +108,10 @@ class LeasedRun:
 
 
 @pytest.fixture
-def worktree_fixture() -> Iterator[WorktreeFixture]:
+def worktree_fixture(tmp_path: Path) -> Iterator[WorktreeFixture]:
     engine = sa.create_engine(
-        "sqlite://",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
+        f"sqlite+pysqlite:///{tmp_path / 'worktree-control-plane.sqlite3'}",
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
 
     @sa.event.listens_for(engine, "connect")
@@ -96,6 +127,8 @@ def worktree_fixture() -> Iterator[WorktreeFixture]:
     space_id = uuid4()
     project_id = uuid4()
     placement_id = uuid4()
+    execution_profile_id = uuid4()
+    execution_profile_hash = "3" * 64
     request = RequestContext(
         actor_id=actor_id,
         tenant_id=tenant_id,
@@ -176,6 +209,51 @@ def worktree_fixture() -> Iterator[WorktreeFixture]:
                 version=1,
             )
         )
+        egress_policy_id = uuid4()
+        db.add(
+            EgressPolicyRecord(
+                id=egress_policy_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                created_by=actor_id,
+                name="worktree-default-deny",
+                rules=[],
+                rules_hash="0" * 64,
+                allow_private_destinations=False,
+                status="active",
+                version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ExecutionProfileRecord(
+                id=execution_profile_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                created_by=actor_id,
+                name="worktree-managed-default",
+                sandbox_backend="linux_bwrap",
+                network_mode="proxy_only",
+                root_read_only=True,
+                run_as_uid=65532,
+                run_as_gid=65532,
+                no_new_privileges=True,
+                host_socket_access=False,
+                syscall_profile_ref="oci-default-v1",
+                cpu_millis=1000,
+                memory_bytes=512 * 1024 * 1024,
+                pids_limit=128,
+                allowed_tools=["git", "shell"],
+                approval_required_tools=[],
+                denied_tools=[],
+                config_hash=execution_profile_hash,
+                status="active",
+                version=1,
+            )
+        )
         db.add(
             RuntimePlacementRecord(
                 id=placement_id,
@@ -197,6 +275,8 @@ def worktree_fixture() -> Iterator[WorktreeFixture]:
         request,
         project_id,
         placement_id,
+        execution_profile_id,
+        execution_profile_hash,
         execution,
         scheduling,
         WorktreeControlPlane(factory, scheduler=scheduling),
@@ -307,6 +387,8 @@ def _lease_run(
         run_id=admitted.run_id,
         pool_id=pool_id,
         required_capabilities=["git", "shell"],
+        execution_profile_id=fixture.execution_profile_id,
+        execution_profile_hash=fixture.execution_profile_hash,
         eligible_at=now,
         maximum_wait=timedelta(hours=1),
     )
@@ -394,6 +476,561 @@ def _ready(
     )
 
 
+def test_worktree_heartbeat_renews_only_within_run_and_lifetime_fences(
+    worktree_fixture: WorktreeFixture,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _, change_set_id = _repository_and_change_set(fixture, suffix="heartbeat-renew")
+    fixture.worktrees.configure_quota(
+        fixture.request,
+        project_id=fixture.project_id,
+        max_active_instances=4,
+        max_active_writers=2,
+        max_reserved_bytes=4_000_000,
+        max_lease_seconds=90,
+        max_lifetime_seconds=180,
+        gc_grace_seconds=10,
+    )
+    leased = _lease_run(fixture, change_set_id=change_set_id, key="heartbeat-renew", now=now)
+    lease = _allocate(fixture, leased, change_set_id, now=now + timedelta(seconds=2))
+    _ready(fixture, lease, now=now + timedelta(seconds=3))
+    assert lease.expires_at == now + timedelta(seconds=92)
+
+    # A legacy usage-only heartbeat preserves the original TTL.
+    unchanged = fixture.worktrees.heartbeat(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        actual_bytes=100_000,
+        dirty=False,
+        now=now + timedelta(seconds=10),
+    )
+    assert unchanged.lease_expires_at == lease.expires_at
+
+    run_capped = fixture.worktrees.heartbeat(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        actual_bytes=105_000,
+        dirty=True,
+        lease_duration=timedelta(seconds=90),
+        now=now + timedelta(seconds=80),
+    )
+    # now + TTL would be +170s, but the current Run lease ends at +121s.
+    assert run_capped.lease_expires_at == now + timedelta(seconds=121)
+
+    fixture.execution.heartbeat(
+        run_id=leased.run_id,
+        lease_token=leased.run_lease_token,
+        fence_token=leased.run_fence_token,
+        lease_duration=timedelta(seconds=300),
+        now=now + timedelta(seconds=90),
+    )
+    renewed = fixture.worktrees.heartbeat(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        actual_bytes=110_000,
+        dirty=True,
+        lease_duration=timedelta(seconds=90),
+        now=now + timedelta(seconds=100),
+    )
+    # now + TTL would be +190s and the Run lease is +390s, but lifetime is +182s.
+    assert renewed.lease_expires_at == now + timedelta(seconds=182)
+    assert fixture.worktrees.expire_stale_leases(now=now + timedelta(seconds=181)) == ()
+    expired = fixture.worktrees.expire_stale_leases(now=now + timedelta(seconds=183))
+    assert len(expired) == 1 and expired[0].status == "quarantined"
+
+
+def test_worktree_heartbeat_stale_cas_and_authority_do_not_extend_expiry(
+    worktree_fixture: WorktreeFixture,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _, change_set_id = _repository_and_change_set(fixture, suffix="heartbeat-cas")
+    _configure_worktree_quota(fixture)
+    leased = _lease_run(fixture, change_set_id=change_set_id, key="heartbeat-cas", now=now)
+    lease = _allocate(fixture, leased, change_set_id, now=now + timedelta(seconds=2))
+    _ready(fixture, lease, now=now + timedelta(seconds=3))
+
+    exact_fence = {
+        "runner_id": lease.runner_id,
+        "lease_generation": lease.lease_generation,
+        "run_fence_token": lease.run_fence_token,
+        "lease_token": lease.lease_token,
+    }
+    stale_values = (
+        (
+            uuid4(),
+            lease.lease_generation,
+            lease.run_fence_token,
+            lease.lease_token,
+        ),
+        (
+            lease.runner_id,
+            lease.lease_generation + 1,
+            lease.run_fence_token,
+            lease.lease_token,
+        ),
+        (
+            lease.runner_id,
+            lease.lease_generation,
+            lease.run_fence_token + 1,
+            lease.lease_token,
+        ),
+        (
+            lease.runner_id,
+            lease.lease_generation,
+            lease.run_fence_token,
+            "unknown-worktree-lease-token",
+        ),
+    )
+    for stale_runner, stale_generation, stale_fence, stale_token in stale_values:
+        with pytest.raises(WorktreeControlPlaneError) as stale_cas:
+            fixture.worktrees.heartbeat(
+                worktree_id=lease.worktree_id,
+                runner_id=stale_runner,
+                lease_generation=stale_generation,
+                run_fence_token=stale_fence,
+                lease_token=stale_token,
+                actual_bytes=100_000,
+                dirty=False,
+                lease_duration=timedelta(seconds=90),
+                now=now + timedelta(seconds=10),
+            )
+        assert stale_cas.value.code == "worktree_lease_stale"
+
+    with fixture.factory.begin() as db:
+        run = db.get(RunRecord, leased.run_id)
+        assert run is not None and run.lease_expires_at is not None
+        original_run_expiry = run.lease_expires_at
+        run.lease_expires_at = now - timedelta(seconds=1)
+    with pytest.raises(WorktreeControlPlaneError) as inactive_run:
+        fixture.worktrees.heartbeat(
+            worktree_id=lease.worktree_id,
+            **exact_fence,
+            actual_bytes=100_000,
+            dirty=False,
+            lease_duration=timedelta(seconds=90),
+            now=now + timedelta(seconds=10),
+        )
+    assert inactive_run.value.code == "worktree_authority_stale"
+    with fixture.factory.begin() as db:
+        run = db.get(RunRecord, leased.run_id)
+        assert run is not None
+        run.lease_expires_at = original_run_expiry
+
+    with fixture.factory.begin() as db:
+        runner = db.get(RunnerRegistrationRecord, leased.runner_id)
+        assert runner is not None
+        runner.connection_generation += 1
+    with pytest.raises(WorktreeControlPlaneError) as stale_runner:
+        fixture.worktrees.heartbeat(
+            worktree_id=lease.worktree_id,
+            runner_id=lease.runner_id,
+            lease_generation=lease.lease_generation,
+            run_fence_token=lease.run_fence_token,
+            lease_token=lease.lease_token,
+            actual_bytes=100_000,
+            dirty=False,
+            lease_duration=timedelta(seconds=90),
+            now=now + timedelta(seconds=11),
+        )
+    assert stale_runner.value.code == "worktree_authority_stale"
+    with fixture.factory() as db:
+        record = db.get(WorktreeInstanceRecord, lease.worktree_id)
+        assert record is not None
+        assert record.lease_expires_at == lease.expires_at.replace(tzinfo=None)
+
+
+def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order(
+    isolated_postgres_url: str,
+) -> None:
+    from tests.saas.test_worktree_postgresql import (
+        _migrate,
+        _role_factory,
+        _seed_scope,
+    )
+
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(isolated_postgres_url, pool_size=6, max_overflow=0)
+    placement_id = uuid4()
+    scope = {
+        "actor": uuid4(),
+        "tenant": uuid4(),
+        "space": uuid4(),
+        "project": uuid4(),
+        "task": uuid4(),
+        "run": uuid4(),
+        "allocation_run": uuid4(),
+        "profile": uuid4(),
+        "profile_hash": "7" * 64,
+        "repository": uuid4(),
+        "group": uuid4(),
+        "change_set": uuid4(),
+        "quota": uuid4(),
+    }
+    try:
+        with engine.begin() as connection:
+            _migrate(connection, root)
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+            )
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runtime_placements "
+                    "(id, runtime_type, data_region, failure_domain, database_cluster_ref, "
+                    "object_store_ref, kms_key_ref, official_schema_revision, capacity_class, "
+                    "status) VALUES (:id, 'omnigent', 'cn-east-1', 'cn-east-1a', "
+                    "'db-heartbeat-lock', 'objects-heartbeat-lock', 'kms-heartbeat-lock', "
+                    "'runtime-schema-v1', 'shared-medium', 'active')"
+                ),
+                {"id": placement_id},
+            )
+            _seed_scope(
+                connection,
+                actor_id=scope["actor"],
+                tenant_id=scope["tenant"],
+                space_id=scope["space"],
+                project_id=scope["project"],
+                task_id=scope["task"],
+                run_id=scope["run"],
+                execution_profile_id=scope["profile"],
+                execution_profile_hash=scope["profile_hash"],
+                repository_id=scope["repository"],
+                group_id=scope["group"],
+                change_set_id=scope["change_set"],
+                quota_id=scope["quota"],
+                suffix="heartbeat-lock",
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runs "
+                    "(id, tenant_id, space_id, project_id, task_id, created_by, status, "
+                    "version, event_sequence, queue_class, priority, idempotency_key, "
+                    "request_hash, input, product_revision, upstream_revision, "
+                    "schema_revision, adapter_contract_version, fence_token) "
+                    "SELECT :allocation_run, tenant_id, space_id, project_id, task_id, "
+                    "created_by, 'queued', 1, 0, queue_class, priority, :key, :request_hash, "
+                    "input, product_revision, upstream_revision, schema_revision, "
+                    "adapter_contract_version, 0 FROM saas_runs WHERE id = :source_run"
+                ),
+                {
+                    "allocation_run": scope["allocation_run"],
+                    "key": f"p4-worktree-heartbeat-lock-{scope['allocation_run']}",
+                    "request_hash": "a" * 64,
+                    "source_run": scope["run"],
+                },
+            )
+
+        platform = SchedulingControlPlane(_role_factory(engine, "saas_platform"))
+        executor_factory = _role_factory(engine, "saas_executor")
+
+        @sa.event.listens_for(executor_factory, "after_begin")
+        def _bound_lock_wait(
+            _session: Session,
+            _transaction: object,
+            connection: sa.Connection,
+        ) -> None:
+            connection.exec_driver_sql("SET LOCAL lock_timeout = '2s'")
+            connection.exec_driver_sql("SET LOCAL statement_timeout = '4s'")
+
+        scheduler = SchedulingControlPlane(executor_factory)
+        execution = ExecutionControlPlane(executor_factory)
+        worktrees = WorktreeControlPlane(executor_factory, scheduler=scheduler)
+        postgres_fixture = WorktreeFixture(
+            executor_factory,
+            RequestContext(
+                actor_id=scope["actor"],
+                tenant_id=scope["tenant"],
+                space_id=scope["space"],
+                project_id=scope["project"],
+                user_security_version=1,
+                tenant_membership_version=1,
+                space_membership_version=1,
+                trace_id="postgresql-heartbeat-lock",
+            ),
+            scope["project"],
+            placement_id,
+            scope["profile"],
+            scope["profile_hash"],
+            execution,
+            scheduler,
+            worktrees,
+        )
+        pool_id = platform.create_pool(
+            placement_id=placement_id,
+            name=f"heartbeat-lock-{uuid4().hex}",
+            queue_class="interactive",
+            capacity_slots=2,
+            reserved_slots=0,
+            protocol_version=2,
+            source_revision="upstream",
+            schema_revision="runtime-schema-v1",
+            adapter_contract_version="0.2.0",
+        )
+        scheduler.configure_tenant_share(
+            tenant_id=scope["tenant"],
+            pool_id=pool_id,
+            weight=1,
+            max_concurrent=2,
+            burst_limit=2,
+        )
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        scheduler.prepare_dispatch(
+            run_id=scope["run"],
+            pool_id=pool_id,
+            required_capabilities=["git", "shell"],
+            execution_profile_id=scope["profile"],
+            execution_profile_hash=scope["profile_hash"],
+            eligible_at=now,
+            maximum_wait=timedelta(hours=1),
+        )
+        runner = scheduler.register_runner(
+            pool_id=pool_id,
+            instance_key=f"heartbeat-lock-{uuid4().hex}",
+            failure_domain="cn-east-1a",
+            protocol_version=2,
+            source_revision="upstream",
+            schema_revision="runtime-schema-v1",
+            adapter_contract_version="0.2.0",
+            capabilities=["git", "shell"],
+            max_concurrency=2,
+            now=now,
+        )
+        run_lease = scheduler.claim_fair_run(
+            runner_id=runner.runner_id,
+            connection_generation=runner.connection_generation,
+            connection_token=runner.connection_token,
+            lease_duration=timedelta(seconds=120),
+            capability_actions=["worktree.read", "worktree.write", "run.execute"],
+            capability_resource_scope={"change_set_id": str(scope["change_set"])},
+            now=now + timedelta(seconds=1),
+        )
+        assert run_lease is not None
+        lease = worktrees.allocate_worktree(
+            capability_token=run_lease.capability_token,
+            runner_id=runner.runner_id,
+            run_id=run_lease.run_id,
+            change_set_id=scope["change_set"],
+            access_mode="writer",
+            reserved_bytes=1_000_000,
+            lease_duration=timedelta(seconds=90),
+            trace_id="postgresql:heartbeat-lock",
+            now=now + timedelta(seconds=2),
+        )
+        _ready(postgres_fixture, lease, now=now + timedelta(seconds=3))
+        scheduler.prepare_dispatch(
+            run_id=scope["allocation_run"],
+            pool_id=pool_id,
+            required_capabilities=["git", "shell"],
+            execution_profile_id=scope["profile"],
+            execution_profile_hash=scope["profile_hash"],
+            eligible_at=now + timedelta(seconds=4),
+            maximum_wait=timedelta(hours=1),
+        )
+        allocation_run_lease = scheduler.claim_fair_run(
+            runner_id=runner.runner_id,
+            connection_generation=runner.connection_generation,
+            connection_token=runner.connection_token,
+            lease_duration=timedelta(seconds=120),
+            capability_actions=["worktree.read", "worktree.write", "run.execute"],
+            capability_resource_scope={"change_set_id": str(scope["change_set"])},
+            now=now + timedelta(seconds=5),
+        )
+        assert allocation_run_lease is not None
+        assert allocation_run_lease.run_id == scope["allocation_run"]
+
+        for iteration in range(8):
+            participant_count = 3 if iteration == 0 else 2
+            barrier = Barrier(participant_count)
+            checked_at = now + timedelta(seconds=10 + iteration)
+
+            def heartbeat_run(sync: Barrier = barrier, at: datetime = checked_at) -> object:
+                sync.wait()
+                return scheduler.authenticated_run_heartbeat(
+                    execution,
+                    runner_id=runner.runner_id,
+                    connection_generation=runner.connection_generation,
+                    connection_token=runner.connection_token,
+                    run_id=run_lease.run_id,
+                    lease_token=run_lease.lease_token,
+                    fence_token=run_lease.fence_token,
+                    capability_token=run_lease.capability_token,
+                    lease_duration=timedelta(seconds=120),
+                    now=at,
+                )
+
+            def heartbeat_worktree(sync: Barrier = barrier, at: datetime = checked_at) -> object:
+                sync.wait()
+                return worktrees.heartbeat(
+                    worktree_id=lease.worktree_id,
+                    runner_id=lease.runner_id,
+                    lease_generation=lease.lease_generation,
+                    run_fence_token=lease.run_fence_token,
+                    lease_token=lease.lease_token,
+                    actual_bytes=100_000,
+                    dirty=False,
+                    lease_duration=timedelta(seconds=90),
+                    now=at,
+                )
+
+            def allocate_readonly(sync: Barrier = barrier, at: datetime = checked_at) -> object:
+                sync.wait()
+                return worktrees.allocate_worktree(
+                    capability_token=allocation_run_lease.capability_token,
+                    runner_id=runner.runner_id,
+                    run_id=allocation_run_lease.run_id,
+                    change_set_id=scope["change_set"],
+                    access_mode="readonly",
+                    reserved_bytes=100_000,
+                    lease_duration=timedelta(seconds=90),
+                    trace_id="postgresql:allocation-lock",
+                    now=at,
+                )
+
+            with ThreadPoolExecutor(max_workers=participant_count) as workers:
+                run_future = workers.submit(heartbeat_run)
+                worktree_future = workers.submit(heartbeat_worktree)
+                allocation_future = workers.submit(allocate_readonly) if iteration == 0 else None
+                assert run_future.result(timeout=5) is not None
+                assert worktree_future.result(timeout=5) is not None
+                if allocation_future is not None:
+                    readonly_lease = allocation_future.result(timeout=5)
+                    assert readonly_lease.run_id == allocation_run_lease.run_id
+                    assert readonly_lease.change_set_id == lease.change_set_id
+                    assert readonly_lease.access_mode == "readonly"
+                    with executor_factory() as database:
+                        quota = database.get(WorktreeQuotaRecord, scope["quota"])
+                        assert quota is not None
+                        assert (quota.active_instances, quota.active_writers) == (2, 1)
+                        allocation_counts = database.execute(
+                            sa.select(
+                                WorktreeInstanceRecord.run_id,
+                                WorktreeInstanceRecord.run_fence_token,
+                                sa.func.count(),
+                            )
+                            .where(
+                                WorktreeInstanceRecord.run_id.in_(
+                                    (run_lease.run_id, allocation_run_lease.run_id)
+                                )
+                            )
+                            .group_by(
+                                WorktreeInstanceRecord.run_id,
+                                WorktreeInstanceRecord.run_fence_token,
+                            )
+                        ).all()
+                    assert set(allocation_counts) == {
+                        (run_lease.run_id, run_lease.fence_token, 1),
+                        (allocation_run_lease.run_id, allocation_run_lease.fence_token, 1),
+                    }
+
+        # Exercise the recovery/GC chains against live lifecycle calls, not only
+        # allocation and the two heartbeat paths above. Any PostgreSQL deadlock,
+        # lock timeout, or statement timeout escapes and fails this bounded test.
+        with executor_factory() as database:
+            writer = database.get(WorktreeInstanceRecord, lease.worktree_id)
+            assert writer is not None and writer.lease_expires_at is not None
+            writer_expiry = writer.lease_expires_at
+            if writer_expiry.tzinfo is None:
+                writer_expiry = writer_expiry.replace(tzinfo=timezone.utc)
+        sweep_barrier = Barrier(3)
+
+        def race_heartbeat() -> object:
+            sweep_barrier.wait()
+            try:
+                return worktrees.heartbeat(
+                    worktree_id=lease.worktree_id,
+                    runner_id=lease.runner_id,
+                    lease_generation=lease.lease_generation,
+                    run_fence_token=lease.run_fence_token,
+                    lease_token=lease.lease_token,
+                    actual_bytes=100_000,
+                    dirty=False,
+                    lease_duration=timedelta(seconds=90),
+                    now=writer_expiry - timedelta(seconds=1),
+                )
+            except WorktreeControlPlaneError as exc:
+                return exc
+
+        def race_checkpoint() -> object:
+            sweep_barrier.wait()
+            try:
+                return worktrees.checkpoint(
+                    worktree_id=lease.worktree_id,
+                    runner_id=lease.runner_id,
+                    lease_generation=lease.lease_generation,
+                    run_fence_token=lease.run_fence_token,
+                    lease_token=lease.lease_token,
+                    head_revision="f" * 40,
+                    recovery_artifact_ref=f"artifact:{uuid4()}",
+                    environment_snapshot_ref=f"environment:{uuid4()}",
+                    dirty_after=False,
+                    trace_id="postgresql:checkpoint-lock-race",
+                    now=writer_expiry - timedelta(seconds=1),
+                )
+            except WorktreeControlPlaneError as exc:
+                return exc
+
+        def race_sweep() -> object:
+            sweep_barrier.wait()
+            return worktrees.expire_stale_leases(now=writer_expiry)
+
+        with ThreadPoolExecutor(max_workers=3) as workers:
+            heartbeat_future = workers.submit(race_heartbeat)
+            checkpoint_future = workers.submit(race_checkpoint)
+            sweep_future = workers.submit(race_sweep)
+            assert heartbeat_future.result(timeout=5) is not None
+            assert checkpoint_future.result(timeout=5) is not None
+            assert sweep_future.result(timeout=5) is not None
+
+        # Whichever live operation won first, a later recovery pass converges the
+        # writer to released state before GC races a stale release attempt.
+        worktrees.expire_stale_leases(now=now + timedelta(seconds=300))
+        with executor_factory() as database:
+            released_writer = database.get(WorktreeInstanceRecord, lease.worktree_id)
+            assert released_writer is not None and released_writer.status == "released"
+        gc_barrier = Barrier(2)
+
+        def race_gc() -> object:
+            gc_barrier.wait()
+            return worktrees.mark_gc_eligible(now=now + timedelta(seconds=320))
+
+        def race_stale_release() -> object:
+            gc_barrier.wait()
+            try:
+                return worktrees.release(
+                    worktree_id=lease.worktree_id,
+                    runner_id=lease.runner_id,
+                    lease_generation=lease.lease_generation,
+                    run_fence_token=lease.run_fence_token,
+                    lease_token=lease.lease_token,
+                    final_change_set_status=None,
+                    trace_id="postgresql:release-lock-race",
+                    now=now + timedelta(seconds=319),
+                )
+            except WorktreeControlPlaneError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            gc_future = workers.submit(race_gc)
+            release_future = workers.submit(race_stale_release)
+            assert gc_future.result(timeout=5) is not None
+            release_result = release_future.result(timeout=5)
+            assert isinstance(release_result, WorktreeControlPlaneError)
+            assert release_result.code == "worktree_lease_stale"
+    finally:
+        engine.dispose()
+
+
 def _finish_run(
     fixture: WorktreeFixture,
     leased: LeasedRun,
@@ -409,6 +1046,117 @@ def _finish_run(
             trace_id=f"runner:{status}",
             now=now + timedelta(seconds=offset),
         )
+
+
+def test_recovery_and_gc_use_the_live_lifecycle_lock_order(
+    worktree_fixture: WorktreeFixture,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _, expired_change_set_id = _repository_and_change_set(fixture, suffix="lock-trace-expire")
+    _configure_worktree_quota(fixture)
+    expired_run = _lease_run(
+        fixture,
+        change_set_id=expired_change_set_id,
+        key="lock-trace-expire",
+        now=now,
+    )
+    expired_lease = _allocate(
+        fixture,
+        expired_run,
+        expired_change_set_id,
+        now=now + timedelta(seconds=2),
+    )
+    _ready(fixture, expired_lease, now=now + timedelta(seconds=3))
+    fixture.worktrees.heartbeat(
+        worktree_id=expired_lease.worktree_id,
+        runner_id=expired_lease.runner_id,
+        lease_generation=expired_lease.lease_generation,
+        run_fence_token=expired_lease.run_fence_token,
+        lease_token=expired_lease.lease_token,
+        actual_bytes=100_000,
+        dirty=True,
+        now=now + timedelta(seconds=5),
+    )
+
+    bind = fixture.factory.kw["bind"]
+    statements: list[str] = []
+
+    def capture_sql(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        normalized = " ".join(statement.lower().split())
+        if normalized.startswith("select"):
+            statements.append(normalized)
+
+    def assert_chain(trace: list[str]) -> None:
+        expected = (
+            "saas_runner_registrations",
+            "saas_capability_tokens",
+            "saas_runs",
+            "saas_changesets",
+            "saas_worktree_instances",
+            "saas_worktree_quotas",
+        )
+        position = -1
+        for table in expected:
+            position = next(
+                index
+                for index in range(position + 1, len(trace))
+                if f"from {table}" in trace[index]
+            )
+
+    sa.event.listen(bind, "before_cursor_execute", capture_sql)
+    try:
+        expired = fixture.worktrees.expire_stale_leases(now=now + timedelta(seconds=93))
+    finally:
+        sa.event.remove(bind, "before_cursor_execute", capture_sql)
+    assert len(expired) == 1 and expired[0].status == "quarantined"
+    assert_chain(statements)
+
+    _, released_change_set_id = _repository_and_change_set(fixture, suffix="lock-trace-gc")
+    released_run = _lease_run(
+        fixture,
+        change_set_id=released_change_set_id,
+        key="lock-trace-gc",
+        now=now + timedelta(seconds=100),
+    )
+    released_lease = _allocate(
+        fixture,
+        released_run,
+        released_change_set_id,
+        now=now + timedelta(seconds=102),
+    )
+    _ready(fixture, released_lease, now=now + timedelta(seconds=103))
+    _finish_run(fixture, released_run, now=now + timedelta(seconds=104))
+    fixture.worktrees.release(
+        worktree_id=released_lease.worktree_id,
+        runner_id=released_lease.runner_id,
+        lease_generation=released_lease.lease_generation,
+        run_fence_token=released_lease.run_fence_token,
+        lease_token=released_lease.lease_token,
+        final_change_set_status=None,
+        trace_id="lock-trace:release",
+        now=now + timedelta(seconds=108),
+    )
+    with fixture.factory.begin() as database:
+        released_record = database.get(WorktreeInstanceRecord, released_lease.worktree_id)
+        assert released_record is not None
+        released_record.dirty = True
+
+    statements.clear()
+    sa.event.listen(bind, "before_cursor_execute", capture_sql)
+    try:
+        eligible = fixture.worktrees.mark_gc_eligible(now=now + timedelta(seconds=120))
+    finally:
+        sa.event.remove(bind, "before_cursor_execute", capture_sql)
+    assert len(eligible) == 1 and eligible[0].status == "quarantined"
+    assert_chain(statements)
 
 
 def _git_fixture(cwd: Path, *args: str) -> str:
@@ -495,8 +1243,24 @@ def test_changeset_writer_checkpoint_release_gc_and_opaque_storage(
         assert lease.lease_token not in serialized
         assert "https://" not in json_safe
 
-    with pytest.raises(WorktreeControlPlaneError) as writer_conflict:
+    with pytest.raises(WorktreeControlPlaneError) as duplicate_run:
         _allocate(fixture, leased, change_set_id, now=now + timedelta(seconds=3))
+    assert duplicate_run.value.code == "worktree_run_already_allocated"
+
+    competing_run = _lease_run(
+        fixture,
+        change_set_id=change_set_id,
+        key="lifecycle-competing-writer",
+        pool_id=leased.pool_id,
+        now=now + timedelta(seconds=3),
+    )
+    with pytest.raises(WorktreeControlPlaneError) as writer_conflict:
+        _allocate(
+            fixture,
+            competing_run,
+            change_set_id,
+            now=now + timedelta(seconds=5),
+        )
     assert writer_conflict.value.code == "changeset_writer_conflict"
 
     _ready(fixture, lease, now=now + timedelta(seconds=3))
@@ -596,6 +1360,251 @@ def test_changeset_writer_checkpoint_release_gc_and_opaque_storage(
         assert all(lease.lease_token not in str(event.payload) for event in outbox)
 
 
+def test_committed_checkpoint_allows_only_new_readonly_worktree(
+    worktree_fixture: WorktreeFixture,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _, change_set_id = _repository_and_change_set(fixture, suffix="preview-readonly")
+    _configure_worktree_quota(fixture)
+    source_run = _lease_run(
+        fixture,
+        change_set_id=change_set_id,
+        key="preview-source",
+        now=now,
+    )
+    source = _allocate(
+        fixture,
+        source_run,
+        change_set_id,
+        now=now + timedelta(seconds=2),
+    )
+    _ready(fixture, source, now=now + timedelta(seconds=3))
+    recovery_ref = f"artifact:{uuid4()}"
+    fixture.worktrees.checkpoint(
+        worktree_id=source.worktree_id,
+        runner_id=source.runner_id,
+        lease_generation=source.lease_generation,
+        run_fence_token=source.run_fence_token,
+        lease_token=source.lease_token,
+        head_revision="f" * 40,
+        recovery_artifact_ref=recovery_ref,
+        environment_snapshot_ref=f"environment:{uuid4()}",
+        dirty_after=False,
+        trace_id="runner:preview-checkpoint",
+        now=now + timedelta(seconds=4),
+    )
+    _finish_run(fixture, source_run, now=now + timedelta(seconds=5))
+    fixture.worktrees.release(
+        worktree_id=source.worktree_id,
+        runner_id=source.runner_id,
+        lease_generation=source.lease_generation,
+        run_fence_token=source.run_fence_token,
+        lease_token=source.lease_token,
+        final_change_set_status="committed",
+        trace_id="runner:source-release",
+        now=now + timedelta(seconds=6),
+    )
+
+    preview_run = _lease_run(
+        fixture,
+        change_set_id=change_set_id,
+        key="preview-child",
+        now=now + timedelta(seconds=7),
+    )
+    readonly = _allocate(
+        fixture,
+        preview_run,
+        change_set_id,
+        access_mode="readonly",
+        now=now + timedelta(seconds=9),
+    )
+    with fixture.factory() as db:
+        readonly_record = db.get(WorktreeInstanceRecord, readonly.worktree_id)
+        assert readonly_record is not None
+        assert readonly_record.recovery_artifact_ref == recovery_ref
+    with pytest.raises(WorktreeControlPlaneError) as writer:
+        _allocate(
+            fixture,
+            preview_run,
+            change_set_id,
+            access_mode="writer",
+            now=now + timedelta(seconds=10),
+        )
+    assert writer.value.code == "changeset_unavailable"
+
+
+def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
+    worktree_fixture: WorktreeFixture,
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    _, change_set_id = _repository_and_change_set(fixture, suffix="preview-saga")
+    _configure_worktree_quota(fixture)
+    source_run = _lease_run(
+        fixture,
+        change_set_id=change_set_id,
+        key="preview-saga-source",
+        now=now,
+    )
+    source = _allocate(
+        fixture,
+        source_run,
+        change_set_id,
+        now=now + timedelta(seconds=2),
+    )
+    _ready(fixture, source, now=now + timedelta(seconds=3))
+    recovery_ref = f"artifact:{uuid4()}"
+    fixture.worktrees.checkpoint(
+        worktree_id=source.worktree_id,
+        runner_id=source.runner_id,
+        lease_generation=source.lease_generation,
+        run_fence_token=source.run_fence_token,
+        lease_token=source.lease_token,
+        head_revision="a" * 40,
+        recovery_artifact_ref=recovery_ref,
+        environment_snapshot_ref=f"environment:{uuid4()}",
+        dirty_after=False,
+        trace_id="runner:preview-saga-checkpoint",
+        now=now + timedelta(seconds=4),
+    )
+    _finish_run(fixture, source_run, now=now + timedelta(seconds=5))
+    fixture.worktrees.release(
+        worktree_id=source.worktree_id,
+        runner_id=source.runner_id,
+        lease_generation=source.lease_generation,
+        run_fence_token=source.run_fence_token,
+        lease_token=source.lease_token,
+        final_change_set_status="committed",
+        trace_id="runner:preview-saga-release",
+        now=now + timedelta(seconds=6),
+    )
+    fixture.execution.configure_quota(
+        fixture.request,
+        project_id=fixture.project_id,
+        resource="preview_runs",
+        limit_units=2,
+    )
+    previews = PreviewExecutionControlPlane(
+        fixture.factory,
+        policy=PreviewExecutionPolicy(
+            preview_root_domain="preview.example.test",
+            exchange_hmac_key=b"p" * 32,
+        ),
+    )
+    created = previews.request_preview(
+        fixture.request,
+        project_id=fixture.project_id,
+        source_run_id=source_run.run_id,
+        preview_kind="static_web_v1",
+        idempotency_key="preview-saga-idempotency-0001",
+        now=now + timedelta(seconds=7),
+    )
+    replayed = previews.request_preview(
+        fixture.request,
+        project_id=fixture.project_id,
+        source_run_id=source_run.run_id,
+        preview_kind="static_web_v1",
+        idempotency_key="preview-saga-idempotency-0001",
+        now=now + timedelta(seconds=8),
+    )
+    assert created.status == "queued" and created.replayed is False
+    assert replayed.preview_execution_id == created.preview_execution_id
+    assert replayed.child_run_id == created.child_run_id and replayed.replayed is True
+    with fixture.factory() as db:
+        child = db.get(RunRecord, created.child_run_id)
+        execution = db.get(PreviewExecutionRecord, created.preview_execution_id)
+        command = db.scalar(
+            sa.select(PreviewCommandRecord).where(
+                PreviewCommandRecord.preview_execution_id == created.preview_execution_id
+            )
+        )
+        events = tuple(
+            db.scalars(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.aggregate_key == str(created.preview_execution_id)
+                )
+            )
+        )
+        assert child is not None and child.parent_run_id == source_run.run_id
+        assert child.queue_class == "preview" and child.status == "queued"
+        assert child.input["execution"] == {
+            "checkpoint_revision": "a" * 40,
+            "kind": "omnigent.preview.v1",
+            "preview_execution_id": str(created.preview_execution_id),
+            "profile": "static_web_v1",
+        }
+        assert execution is not None and execution.change_set_id == change_set_id
+        assert command is not None and command.command_type == "start"
+        assert command.generation == 1 and command.status == "pending"
+        assert [event.event_type for event in events] == ["preview.command.available"]
+
+    with fixture.factory.begin() as db:
+        child = db.get(RunRecord, created.child_run_id)
+        runner = db.get(RunnerRegistrationRecord, source_run.runner_id)
+        assert child is not None and runner is not None
+        child.status = "running"
+        child.lease_owner = str(runner.id)
+        child.lease_token = uuid4()
+        child.lease_expires_at = now + timedelta(minutes=5)
+        child.heartbeat_at = now + timedelta(seconds=9)
+        child.fence_token = 11
+    runner_commands = PreviewRunnerExecutionAuthority(fixture.factory)
+    first_claim = runner_commands.claim_start(
+        tenant_id=fixture.request.tenant_id,
+        space_id=fixture.request.space_id,
+        project_id=fixture.project_id,
+        child_run_id=created.child_run_id,
+        runner_id=source_run.runner_id,
+        connection_generation=source_run.runner_generation,
+        run_fence_token=11,
+        now=now + timedelta(seconds=10),
+    )
+    assert first_claim.preview_execution_id == created.preview_execution_id
+    assert first_claim.checkpoint_revision == "a" * 40
+    with pytest.raises(PreviewExecutionControlPlaneError) as duplicate_claim:
+        runner_commands.claim_start(
+            tenant_id=fixture.request.tenant_id,
+            space_id=fixture.request.space_id,
+            project_id=fixture.project_id,
+            child_run_id=created.child_run_id,
+            runner_id=source_run.runner_id,
+            connection_generation=source_run.runner_generation,
+            run_fence_token=11,
+            now=now + timedelta(seconds=11),
+        )
+    assert duplicate_claim.value.code == "preview_start_command_stale"
+
+    with fixture.factory.begin() as db:
+        child = db.get(RunRecord, created.child_run_id)
+        assert child is not None
+        child.fence_token = 12
+    recovered_claim = runner_commands.claim_start(
+        tenant_id=fixture.request.tenant_id,
+        space_id=fixture.request.space_id,
+        project_id=fixture.project_id,
+        child_run_id=created.child_run_id,
+        runner_id=source_run.runner_id,
+        connection_generation=source_run.runner_generation,
+        run_fence_token=12,
+        now=now + timedelta(seconds=12),
+    )
+    assert recovered_claim.claim_token != first_claim.claim_token
+    runner_commands.mark_starting(
+        recovered_claim,
+        runner_id=source_run.runner_id,
+        connection_generation=source_run.runner_generation,
+        run_fence_token=12,
+        now=now + timedelta(seconds=13),
+    )
+    with fixture.factory() as db:
+        execution = db.get(PreviewExecutionRecord, created.preview_execution_id)
+        command = db.get(PreviewCommandRecord, recovered_claim.command_id)
+        assert execution is not None and execution.status == "starting"
+        assert command is not None and command.attempt_count == 2
+        assert command.run_fence_token == 12
+
+
 def test_expired_dirty_checkpoint_rebuilds_on_new_run_fence(
     worktree_fixture: WorktreeFixture,
 ) -> None:
@@ -640,7 +1649,25 @@ def test_expired_dirty_checkpoint_rebuilds_on_new_run_fence(
             change_set_id,
             now=now + timedelta(seconds=94),
         )
-    assert implicit_replacement.value.code == "worktree_rebuild_source_required"
+    assert implicit_replacement.value.code == "worktree_run_already_allocated"
+    with pytest.raises(WorktreeControlPlaneError) as old_fence_explicit_source:
+        _allocate(
+            fixture,
+            first,
+            change_set_id,
+            now=now + timedelta(seconds=95),
+            rebuild_from_id=source.worktree_id,
+        )
+    assert old_fence_explicit_source.value.code == "worktree_run_already_allocated"
+    with pytest.raises(WorktreeControlPlaneError) as old_fence_invalid_source:
+        _allocate(
+            fixture,
+            first,
+            change_set_id,
+            now=now + timedelta(seconds=96),
+            rebuild_from_id=uuid4(),
+        )
+    assert old_fence_invalid_source.value.code == "worktree_run_already_allocated"
 
     recovered = fixture.execution.recover_expired_runs(now=now + timedelta(seconds=122))
     assert len(recovered) == 1 and recovered[0].status == "queued"
@@ -685,11 +1712,29 @@ def test_expired_dirty_checkpoint_rebuilds_on_new_run_fence(
         second_lease.fence_token,
         second_lease.capability_token,
     )
+    with pytest.raises(WorktreeControlPlaneError) as readonly_rebuild:
+        _allocate(
+            fixture,
+            second,
+            change_set_id,
+            access_mode="readonly",
+            now=now + timedelta(seconds=125),
+            rebuild_from_id=source.worktree_id,
+        )
+    assert readonly_rebuild.value.code == "worktree_rebuild_requires_writer"
+    with pytest.raises(WorktreeControlPlaneError) as new_fence_implicit_replacement:
+        _allocate(
+            fixture,
+            second,
+            change_set_id,
+            now=now + timedelta(seconds=126),
+        )
+    assert new_fence_implicit_replacement.value.code == "worktree_rebuild_source_required"
     replacement = _allocate(
         fixture,
         second,
         change_set_id,
-        now=now + timedelta(seconds=125),
+        now=now + timedelta(seconds=127),
         rebuild_from_id=source.worktree_id,
     )
     assert replacement.run_fence_token == 2
@@ -865,6 +1910,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         authority=fixture.worktrees,
         mirrors=StaticRepositoryMirrorResolver({binding: first_mirror}),
         recovery_artifacts=artifact_store,
+        runner_id=first_lease.runner_id,
     )
     _git_fixture(first_mirror, "config", "core.sshCommand", "/bin/false")
     with pytest.raises(RunnerWorktreeAdapterError) as executable_config:
@@ -991,6 +2037,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         authority=fixture.worktrees,
         mirrors=StaticRepositoryMirrorResolver({binding: second_mirror}),
         recovery_artifacts=artifact_store,
+        runner_id=second_lease.runner_id,
     )
     second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
     assert second_physical.head_revision == checkpoint.head_revision
@@ -1016,6 +2063,15 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         first_lease.worktree_id,
         second_lease.worktree_id,
     }
+
+    with pytest.raises(RunnerWorktreeAdapterError) as cross_runner_delete:
+        second_adapter.delete(
+            worktree_id=first_lease.worktree_id,
+            expected_lease_generation=first_release.lease_generation,
+            opaque_runtime_key=first_lease.opaque_runtime_key,
+            trace_id="runner:cross-runner-delete",
+        )
+    assert cross_runner_delete.value.code == "worktree_delete_grant_mismatch"
 
     first_deleted = first_adapter.delete(
         worktree_id=first_lease.worktree_id,
@@ -1179,3 +2235,28 @@ def test_worktree_event_scope_is_database_enforced(worktree_fixture: WorktreeFix
                     trace_id="attack",
                 )
             )
+
+
+def test_object_recovery_store_is_content_addressed_idempotent_and_tamper_evident() -> None:
+    backend = _FakeArtifactStore()
+    store = ObjectRecoveryArtifactStore(backend, maximum_bundle_bytes=1024)
+    artifact = CheckpointArtifact(
+        repository_binding_digest="a" * 64,
+        base_revision="b" * 40,
+        head_revision="c" * 40,
+        bundle=b"exact recovery bundle",
+    )
+
+    reference = store.put(artifact)
+    assert store.put(artifact) == reference
+    assert store.get(reference) == artifact
+    assert len(backend.objects) == 2
+
+    bundle_key = next(key for key in backend.objects if key.endswith(".bundle"))
+    backend.objects[bundle_key] = b"tampered"
+    with pytest.raises(RunnerWorktreeAdapterError) as tampered:
+        store.get(reference)
+    assert tampered.value.code == "artifact_integrity_failed"
+    with pytest.raises(RunnerWorktreeAdapterError) as conflict:
+        store.put(artifact)
+    assert conflict.value.code == "artifact_digest_collision"

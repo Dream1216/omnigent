@@ -20,18 +20,28 @@ least two availability zones and continue to enforce every tenant and sandbox fe
 5. Verify default-deny ingress/egress, metadata and private control-plane denial,
    proxy-only Runner egress, restricted DNS, isolated Preview origin, Runner-local UDS,
    and mTLS on Runner control and Preview relay paths from live policy and packet probes.
+6. As a cluster owner or audited superuser, prove every database has removed
+   `PUBLIC` `CONNECT`, `CREATE`, and `TEMPORARY`; prove each Runner LOGIN and the
+   `saas_runner_agent` base role can effectively connect only to the exact
+   receipt-bound database and cannot create temporary objects anywhere.
+7. Prove every Runner-mutated Worktree, quota, Preview, and Outbox transition is
+   enforced by a narrow database RPC or equivalent `OLD` to `NEW` trigger. A
+   successful isolated-Beta run using raw table DML is not production evidence.
 
 ## Failure matrix
 
 Run one controlled scenario at a time and preserve timestamps plus artifact digests:
 
 - loss of each failure domain and a network partition between domains;
-- control-plane, Runner, and Preview Gateway replica loss;
+- control-plane, Runner, Preview Edge, and standalone Preview Owner replica loss;
 - direct egress bypass, metadata access, DNS rebinding, and secret-exfiltration probes;
 - stale lease/fencing replay;
+- cross-database Runner connection, capability-action substitution, disabled or
+  non-FORCE RLS, catalog/default-ACL drift, and raw-SQL lifecycle forgery;
 - candidate to signed N-1 rollback, completed within 900 seconds.
 
-During every scenario verify authorization, RLS, fairness, fencing, Preview generation,
+During every scenario verify authorization, RLS, fairness, fencing, the exact Preview
+Placement plus Runner connection generation, one-use exchange/session replay denial,
 secret revocation, and cross-Tenant denial. Stop immediately if isolation weakens.
 Restore normal capacity before starting the next scenario.
 

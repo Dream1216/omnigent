@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from datetime import datetime
+from importlib.resources import files
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -36,6 +38,17 @@ if TYPE_CHECKING:
 
 
 _MAX_RETRY_AFTER_SECONDS = 86_400
+_CATALOG_CACHE_CONTROL = "public, max-age=60, must-revalidate"
+_UI_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'self'; "
+        "frame-ancestors 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
 _NETWORK_RATE_LIMIT_ROUTES = {
     "request_registration": ("/onboarding/registrations", "registration.request"),
     "resend_verification": (
@@ -62,7 +75,7 @@ class OnboardingRegistrationRequest(_StrictRequest):
     tenant_slug: str = Field(min_length=1, max_length=63)
     default_space_name: str = Field(min_length=1, max_length=256)
     default_space_slug: str = Field(min_length=1, max_length=63)
-    plan_key: str = Field(min_length=1, max_length=128)
+    plan_key: str = Field(min_length=1, max_length=64)
     home_region: str = Field(min_length=1, max_length=64)
 
 
@@ -113,6 +126,30 @@ class OnboardingStatusResponse(BaseModel):
     support_reference: str | None = None
 
 
+class OnboardingCatalogPlanResponse(BaseModel):
+    """Allowlisted commercial facts for one currently selectable plan."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key: str = Field(min_length=1, max_length=64)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    trial_days: int = Field(ge=1, le=90)
+    trial_run_limit: int = Field(ge=1)
+    trial_concurrency_limit: int = Field(ge=1)
+
+
+class OnboardingCatalogResponse(BaseModel):
+    """Atomic anonymous plan and region catalog bound to one semantic revision."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: Literal[1] = 1
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plans: list[OnboardingCatalogPlanResponse] = Field(min_length=1)
+    regions: list[str] = Field(min_length=1)
+    verification_ttl_seconds: int = Field(ge=300, le=86_400)
+
+
 def create_onboarding_router(
     *,
     onboarding: SelfServiceOnboardingService,
@@ -130,6 +167,26 @@ def create_onboarding_router(
             client_network=client_network,
         )
     )
+
+    @router.get(
+        "/onboarding/catalog",
+        response_model=OnboardingCatalogResponse,
+        responses={304: {"description": "Catalog revision is unchanged"}},
+    )
+    def public_catalog(
+        request: Request, response: Response
+    ) -> OnboardingCatalogResponse | Response:
+        catalog = OnboardingCatalogResponse.model_validate(onboarding.public_catalog())
+        etag = f'W/"{catalog.revision}"'
+        headers = {
+            "Cache-Control": _CATALOG_CACHE_CONTROL,
+            "ETag": etag,
+        }
+        if _if_none_match(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers=headers)
+        for name, value in headers.items():
+            response.headers[name] = value
+        return catalog
 
     @router.get(
         "/onboarding/status",
@@ -230,6 +287,40 @@ def create_onboarding_router(
         return _completion_payload(completed)
 
     return router
+
+
+def create_onboarding_ui_router() -> APIRouter:
+    """Serve the build-free onboarding UI outside the official web bundle."""
+
+    router = APIRouter()
+
+    @router.get("/signup", include_in_schema=False)
+    @router.get("/signup/verify", include_in_schema=False)
+    @router.get("/signup/status", include_in_schema=False)
+    @router.get("/saas/login", include_in_schema=False)
+    def onboarding_shell() -> HTMLResponse:
+        return HTMLResponse(
+            files("saas.onboarding_ui").joinpath("onboarding.html").read_text(encoding="utf-8"),
+            headers=_UI_HEADERS,
+        )
+
+    @router.get("/saas/onboarding-assets/onboarding.css", include_in_schema=False)
+    def onboarding_css() -> Response:
+        return _ui_asset("onboarding.css", "text/css")
+
+    @router.get("/saas/onboarding-assets/onboarding.js", include_in_schema=False)
+    def onboarding_javascript() -> Response:
+        return _ui_asset("onboarding.js", "text/javascript")
+
+    return router
+
+
+def _ui_asset(name: str, media_type: str) -> Response:
+    return Response(
+        files("saas.onboarding_ui").joinpath(name).read_bytes(),
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _network_rate_limited_route_class(
@@ -352,3 +443,17 @@ def _rate_limit_unavailable_http_error() -> HTTPException:
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _if_none_match(value: str | None, current_etag: str) -> bool:
+    """Apply weak comparison for one bounded, server-generated catalog ETag."""
+
+    if value is None:
+        return False
+
+    def normalized(candidate: str) -> str:
+        stripped = candidate.strip()
+        return stripped[2:].strip() if stripped.startswith("W/") else stripped
+
+    current = normalized(current_etag)
+    return any(normalized(candidate) in {"*", current} for candidate in value.split(","))

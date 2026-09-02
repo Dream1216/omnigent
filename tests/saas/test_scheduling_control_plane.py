@@ -13,7 +13,10 @@ from sqlalchemy.pool import StaticPool
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     CapabilityTokenRecord,
+    ControlPlaneOutboxEvent,
+    EgressPolicyRecord,
     ExecutionControlPlane,
+    ExecutionProfileRecord,
     ExecutionRevisionSet,
     GlobalUser,
     ProjectMembershipRecord,
@@ -40,6 +43,8 @@ class SchedulingScope:
     space_id: UUID
     project_id: UUID
     owner_id: UUID
+    execution_profile_id: UUID
+    execution_profile_hash: str
     request: RequestContext
 
 
@@ -57,11 +62,15 @@ def _scope(index: int) -> SchedulingScope:
     tenant_id = uuid4()
     space_id = uuid4()
     project_id = uuid4()
+    execution_profile_id = uuid4()
+    execution_profile_hash = f"{index}" * 64
     return SchedulingScope(
         tenant_id,
         space_id,
         project_id,
         owner_id,
+        execution_profile_id,
+        execution_profile_hash,
         RequestContext(
             actor_id=owner_id,
             tenant_id=tenant_id,
@@ -178,6 +187,51 @@ def scheduling_fixture() -> Iterator[SchedulingFixture]:
                     version=1,
                 )
             )
+            egress_policy_id = uuid4()
+            db.add(
+                EgressPolicyRecord(
+                    id=egress_policy_id,
+                    tenant_id=scope.tenant_id,
+                    space_id=scope.space_id,
+                    project_id=scope.project_id,
+                    created_by=scope.owner_id,
+                    name="scheduler-default-deny",
+                    rules=[],
+                    rules_hash="0" * 64,
+                    allow_private_destinations=False,
+                    status="active",
+                    version=1,
+                )
+            )
+            db.flush()
+            db.add(
+                ExecutionProfileRecord(
+                    id=scope.execution_profile_id,
+                    tenant_id=scope.tenant_id,
+                    space_id=scope.space_id,
+                    project_id=scope.project_id,
+                    egress_policy_id=egress_policy_id,
+                    created_by=scope.owner_id,
+                    name="scheduler-managed-default",
+                    sandbox_backend="linux_bwrap",
+                    network_mode="proxy_only",
+                    root_read_only=True,
+                    run_as_uid=65532,
+                    run_as_gid=65532,
+                    no_new_privileges=True,
+                    host_socket_access=False,
+                    syscall_profile_ref="oci-default-v1",
+                    cpu_millis=1000,
+                    memory_bytes=512 * 1024 * 1024,
+                    pids_limit=128,
+                    allowed_tools=["shell"],
+                    approval_required_tools=[],
+                    denied_tools=[],
+                    config_hash=scope.execution_profile_hash,
+                    status="active",
+                    version=1,
+                )
+            )
     yield SchedulingFixture(
         factory,
         ExecutionControlPlane(factory),
@@ -237,6 +291,14 @@ def _pool(fixture: SchedulingFixture) -> UUID:
     )
 
 
+def _profile_binding(fixture: SchedulingFixture, run_id: UUID) -> tuple[UUID, str]:
+    with fixture.factory() as db:
+        run = db.get(RunRecord, run_id)
+        assert run is not None
+    scope = next(value for value in fixture.scopes if value.project_id == run.project_id)
+    return scope.execution_profile_id, scope.execution_profile_hash
+
+
 def _finish_run(
     fixture: SchedulingFixture,
     *,
@@ -288,17 +350,23 @@ def test_weighted_fair_claim_prevents_hot_tenant_starvation_and_scopes_capabilit
     hot_runs = tuple(_admit(fixture, fixture.scopes[0], key=f"hot-{index}") for index in range(3))
     quiet_run = _admit(fixture, fixture.scopes[1], key="quiet-1")
     for run_id in (*hot_runs, quiet_run):
+        profile_id, profile_hash = _profile_binding(fixture, run_id)
         assert not fixture.scheduling.prepare_dispatch(
             run_id=run_id,
             pool_id=pool_id,
             required_capabilities=["shell"],
+            execution_profile_id=profile_id,
+            execution_profile_hash=profile_hash,
             eligible_at=now,
             maximum_wait=timedelta(hours=1),
         )
+    hot_profile_id, hot_profile_hash = _profile_binding(fixture, hot_runs[0])
     assert fixture.scheduling.prepare_dispatch(
         run_id=hot_runs[0],
         pool_id=pool_id,
         required_capabilities=["shell"],
+        execution_profile_id=hot_profile_id,
+        execution_profile_hash=hot_profile_hash,
         eligible_at=now,
         maximum_wait=timedelta(hours=1),
     )
@@ -497,6 +565,8 @@ def test_runner_compatibility_stale_heartbeat_and_dispatch_dead_letter(
         run_id=run_id,
         pool_id=pool_id,
         required_capabilities=["shell"],
+        execution_profile_id=scope.execution_profile_id,
+        execution_profile_hash=scope.execution_profile_hash,
         eligible_at=now,
         maximum_wait=timedelta(minutes=1),
     )
@@ -522,3 +592,250 @@ def test_runner_compatibility_stale_heartbeat_and_dispatch_dead_letter(
         assert share is not None and share.virtual_runtime == 0 and share.active_leases == 0
         assert runner is not None and runner.status == "offline"
         assert db.scalar(sa.select(sa.func.count()).select_from(CapabilityTokenRecord)) == 0
+
+
+def test_ordinary_runner_registration_cannot_bypass_promoted_fleet(
+    scheduling_fixture: SchedulingFixture,
+) -> None:
+    fixture = scheduling_fixture
+    pool_id = _pool(fixture)
+    now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    with fixture.factory.begin() as db:
+        db.add(
+            ControlPlaneOutboxEvent(
+                tenant_id=None,
+                aggregate_type="runner_fleet",
+                aggregate_key="runner-a:runner-b",
+                event_type="runner.fleet.promoted",
+                payload={"admission_epoch": 1},
+                idempotency_key="runner-fleet-promoted-test",
+                request_hash="f" * 64,
+                attempt_count=0,
+                available_at=now,
+            )
+        )
+
+    with pytest.raises(SchedulingError) as rejected:
+        fixture.scheduling.register_runner(
+            pool_id=pool_id,
+            instance_key="runner-c",
+            failure_domain="cn-east-1a",
+            protocol_version=2,
+            source_revision="upstream-revision",
+            schema_revision="runtime-schema-v1",
+            adapter_contract_version="0.2.0",
+            capabilities=["shell"],
+            max_concurrency=1,
+            now=now,
+        )
+
+    assert rejected.value.code == "runner_fleet_stage_required"
+    with fixture.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunnerRegistrationRecord)) == 0
+
+
+@pytest.mark.parametrize("recovery_drift", ["profile", "egress"])
+def test_recovery_accepts_retired_bound_profile_and_egress(
+    scheduling_fixture: SchedulingFixture,
+    recovery_drift: str,
+) -> None:
+    fixture = scheduling_fixture
+    scope = fixture.scopes[0]
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    pool_id = _pool(fixture)
+    fixture.scheduling.configure_tenant_share(
+        tenant_id=scope.tenant_id,
+        pool_id=pool_id,
+        weight=1,
+        max_concurrent=1,
+        burst_limit=1,
+    )
+    run_id = _admit(fixture, scope, key=f"profile-drift-{recovery_drift}")
+    other_scope = fixture.scopes[1]
+    with pytest.raises(SchedulingError) as cross_scope:
+        fixture.scheduling.prepare_dispatch(
+            run_id=run_id,
+            pool_id=pool_id,
+            required_capabilities=["shell"],
+            execution_profile_id=other_scope.execution_profile_id,
+            execution_profile_hash=other_scope.execution_profile_hash,
+            eligible_at=now,
+            maximum_wait=timedelta(hours=1),
+        )
+    assert cross_scope.value.code == "dispatch_execution_profile_invalid"
+    with fixture.factory.begin() as db:
+        profile = db.get(ExecutionProfileRecord, scope.execution_profile_id)
+        assert profile is not None
+        policy = db.get(EgressPolicyRecord, profile.egress_policy_id)
+        assert policy is not None
+        policy.status = "retired"
+    with pytest.raises(SchedulingError) as retired_egress_prepare:
+        fixture.scheduling.prepare_dispatch(
+            run_id=run_id,
+            pool_id=pool_id,
+            required_capabilities=["shell"],
+            execution_profile_id=scope.execution_profile_id,
+            execution_profile_hash=scope.execution_profile_hash,
+            eligible_at=now,
+            maximum_wait=timedelta(hours=1),
+        )
+    assert retired_egress_prepare.value.code == "dispatch_execution_profile_invalid"
+    with fixture.factory.begin() as db:
+        profile = db.get(ExecutionProfileRecord, scope.execution_profile_id)
+        assert profile is not None
+        policy = db.get(EgressPolicyRecord, profile.egress_policy_id)
+        assert policy is not None
+        policy.status = "active"
+    assert not fixture.scheduling.prepare_dispatch(
+        run_id=run_id,
+        pool_id=pool_id,
+        required_capabilities=["shell"],
+        execution_profile_id=scope.execution_profile_id,
+        execution_profile_hash=scope.execution_profile_hash,
+        eligible_at=now,
+        maximum_wait=timedelta(hours=1),
+    )
+    runner = fixture.scheduling.register_runner(
+        pool_id=pool_id,
+        instance_key="runner-profile-drift",
+        failure_domain="cn-east-1a",
+        protocol_version=2,
+        source_revision="upstream-revision",
+        schema_revision="runtime-schema-v1",
+        adapter_contract_version="0.2.0",
+        capabilities=["shell"],
+        max_concurrency=1,
+        now=now,
+    )
+
+    lease = fixture.scheduling.claim_fair_run(
+        runner_id=runner.runner_id,
+        connection_generation=runner.connection_generation,
+        connection_token=runner.connection_token,
+        lease_duration=timedelta(seconds=5),
+        capability_actions=["worktree.read"],
+        capability_resource_scope={"worktree_id": "profile-drift"},
+        now=now + timedelta(seconds=1),
+    )
+    assert lease is not None
+    with fixture.factory.begin() as db:
+        profile = db.get(ExecutionProfileRecord, scope.execution_profile_id)
+        assert profile is not None
+        if recovery_drift == "profile":
+            profile.status = "retired"
+        else:
+            policy = db.get(EgressPolicyRecord, profile.egress_policy_id)
+            assert policy is not None
+            policy.status = "retired"
+
+    recovered = fixture.scheduling.recover_expired_dispatches(now=now + timedelta(seconds=7))
+    assert recovered == (run_id,)
+    with fixture.factory() as db:
+        dispatch = db.get(RunDispatchRecord, run_id)
+        run = db.get(RunRecord, run_id)
+        share = db.scalar(
+            sa.select(TenantQueueShareRecord).where(
+                TenantQueueShareRecord.tenant_id == scope.tenant_id,
+                TenantQueueShareRecord.pool_id == pool_id,
+            )
+        )
+        persisted_runner = db.get(RunnerRegistrationRecord, runner.runner_id)
+        assert dispatch is not None
+        quarantine = db.scalar(
+            sa.select(ControlPlaneOutboxEvent).where(
+                ControlPlaneOutboxEvent.aggregate_type == "run_dispatch",
+                ControlPlaneOutboxEvent.aggregate_key == str(run_id),
+                ControlPlaneOutboxEvent.event_type == "run.dispatch.quarantined",
+            )
+        )
+        assert dispatch.status == "pending"
+        assert dispatch.recovery_quarantined_at is None
+        assert dispatch.recovery_quarantine_reason is None
+        assert quarantine is None
+        assert run is not None and run.status == "queued"
+        assert share is not None and share.active_leases == 0
+        assert persisted_runner is not None and persisted_runner.active_leases == 0
+
+
+def test_claim_quarantines_invalid_pending_dispatch_and_continues(
+    scheduling_fixture: SchedulingFixture,
+) -> None:
+    fixture = scheduling_fixture
+    scope = fixture.scopes[0]
+    now = datetime(2026, 8, 4, 13, 0, tzinfo=timezone.utc)
+    pool_id = _pool(fixture)
+    fixture.scheduling.configure_tenant_share(
+        tenant_id=scope.tenant_id,
+        pool_id=pool_id,
+        weight=1,
+        max_concurrent=2,
+        burst_limit=2,
+    )
+    poisoned_run_id = _admit(fixture, scope, key="pending-profile-poison")
+    healthy_run_id = _admit(fixture, scope, key="pending-profile-healthy")
+    for run_id in (poisoned_run_id, healthy_run_id):
+        assert not fixture.scheduling.prepare_dispatch(
+            run_id=run_id,
+            pool_id=pool_id,
+            required_capabilities=["shell"],
+            eligible_at=now,
+            maximum_wait=timedelta(hours=1),
+        )
+    with fixture.factory.begin() as db:
+        poisoned_run = db.get(RunRecord, poisoned_run_id)
+        healthy_run = db.get(RunRecord, healthy_run_id)
+        poisoned = db.get(RunDispatchRecord, poisoned_run_id)
+        assert poisoned_run is not None and healthy_run is not None and poisoned is not None
+        poisoned_run.priority = 100
+        healthy_run.priority = 0
+        poisoned.egress_policy_hash = "f" * 64
+
+    runner = fixture.scheduling.register_runner(
+        pool_id=pool_id,
+        instance_key="runner-skips-quarantine",
+        failure_domain="cn-east-1a",
+        protocol_version=2,
+        source_revision="upstream-revision",
+        schema_revision="runtime-schema-v1",
+        adapter_contract_version="0.2.0",
+        capabilities=["shell"],
+        max_concurrency=2,
+        now=now,
+    )
+    lease = fixture.scheduling.claim_fair_run(
+        runner_id=runner.runner_id,
+        connection_generation=runner.connection_generation,
+        connection_token=runner.connection_token,
+        lease_duration=timedelta(minutes=5),
+        capability_actions=["run.execute"],
+        capability_resource_scope={"worktree_id": "healthy"},
+        now=now + timedelta(seconds=1),
+    )
+    assert lease is not None and lease.run_id == healthy_run_id
+
+    with fixture.factory() as db:
+        poisoned = db.get(RunDispatchRecord, poisoned_run_id)
+        healthy = db.get(RunDispatchRecord, healthy_run_id)
+        persisted_runner = db.get(RunnerRegistrationRecord, runner.runner_id)
+        share = db.scalar(
+            sa.select(TenantQueueShareRecord).where(
+                TenantQueueShareRecord.tenant_id == scope.tenant_id,
+                TenantQueueShareRecord.pool_id == pool_id,
+            )
+        )
+        quarantine = db.scalar(
+            sa.select(ControlPlaneOutboxEvent).where(
+                ControlPlaneOutboxEvent.aggregate_type == "run_dispatch",
+                ControlPlaneOutboxEvent.aggregate_key == str(poisoned_run_id),
+            )
+        )
+        assert poisoned is not None and poisoned.status == "pending"
+        assert poisoned.recovery_quarantine_reason == "dispatch_egress_policy_hash_mismatch"
+        assert poisoned.recovery_quarantined_at is not None
+        assert healthy is not None and healthy.status == "leased"
+        assert persisted_runner is not None and persisted_runner.active_leases == 1
+        assert share is not None and share.active_leases == 1
+        assert quarantine is not None
+        assert quarantine.payload["capacity_policy"] == "not_acquired"
+        assert quarantine.payload["egress_policy_hash"] == "f" * 64
+        assert len(str(quarantine.payload["forensic_hash"])) == 64

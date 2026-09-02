@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
@@ -36,14 +37,21 @@ class OmnigentStoreAdapter:
         if not self.adapter_contract_version.strip():
             raise ValueError("adapter contract version must not be empty")
 
-    def invoke(self, runtime: RuntimeContext, operation: Callable[[], T]) -> T:
-        """Run an official Store call under the server-derived physical workspace."""
+    @contextmanager
+    def bind(self, runtime: RuntimeContext) -> Iterator[RuntimeContext]:
+        """Bind both workspace contexts for every Store transaction in one operation."""
 
         self._validate_runtime(runtime)
         with (
             bind_runtime_context(runtime),
             bind_managed_session_initializer(self._initialize_official_session),
         ):
+            yield runtime
+
+    def invoke(self, runtime: RuntimeContext, operation: Callable[[], T]) -> T:
+        """Run an official Store call under the server-derived physical workspace."""
+
+        with self.bind(runtime):
             return operation()
 
     def require_owned_record(self, runtime: RuntimeContext, record: WorkspaceOwnedRecord) -> None:

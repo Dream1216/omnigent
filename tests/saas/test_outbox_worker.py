@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -9,7 +10,7 @@ import pytest
 
 from saas.control_plane.onboarding import OnboardingOutboxPublisher
 from saas.control_plane.outbox import DispatchResult
-from saas.outbox_worker import OutboxWorker, _load_publisher
+from saas.outbox_worker import OutboxWorker, _load_dispatcher_database_url, _load_publisher
 
 
 class _Publisher:
@@ -161,6 +162,41 @@ def test_publisher_loader_rejects_raw_optional_onboarding_publisher(
 
     with pytest.raises(RuntimeError, match="create_tenant_onboarding_composition"):
         _load_publisher("publisher_module:candidate")
+
+
+def test_dispatcher_database_url_can_be_loaded_from_owner_only_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "dispatcher-dsn"
+    path.write_text("postgresql+psycopg://dispatcher:secret@db.example.test/saas\n")
+    path.chmod(0o400)
+    monkeypatch.delenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE", str(path))
+
+    assert _load_dispatcher_database_url().startswith("postgresql+psycopg://dispatcher:")
+
+
+def test_dispatcher_database_url_rejects_ambiguous_or_unsafe_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "dispatcher-dsn"
+    path.write_text("postgresql+psycopg://dispatcher:secret@db.example.test/saas\n")
+    path.chmod(0o600)
+    monkeypatch.setenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE", str(path))
+    monkeypatch.delenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="unsafe"):
+        _load_dispatcher_database_url()
+
+    path.chmod(0o400)
+    monkeypatch.setenv(
+        "OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL",
+        "postgresql+psycopg://dispatcher:other@db.example.test/saas",
+    )
+    with pytest.raises(RuntimeError, match="exactly one"):
+        _load_dispatcher_database_url()
 
 
 @pytest.mark.parametrize(

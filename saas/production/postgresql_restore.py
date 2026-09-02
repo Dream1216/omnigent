@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from alembic import command
@@ -29,10 +29,12 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL, make_url
 
+from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 _DATABASE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+_ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _SELECTED_HASH_TABLES = (
     "alembic_version",
     "saas_alembic_version",
@@ -64,6 +66,8 @@ _SELECTED_HASH_TABLES = (
     "saas_quota_reservations",
     "saas_runner_pools",
     "saas_runner_registrations",
+    "saas_egress_policies",
+    "saas_execution_profiles",
     "saas_run_dispatches",
     "saas_capability_tokens",
     "saas_runner_certificates",
@@ -167,13 +171,35 @@ class PostgreSqlEndpoint:
             database=database,
         )
 
+    def for_login(self, username: str, password: str) -> PostgreSqlEndpoint:
+        """Return the same TCP endpoint for one direct disposable login."""
+
+        _require_role_name(username)
+        return PostgreSqlEndpoint(
+            drivername=self.drivername,
+            username=username,
+            password=password,
+            host=self.host,
+            port=self.port,
+            admin_database=self.admin_database,
+        )
+
 
 def _require_database_name(database: str) -> None:
     if _DATABASE_NAME.fullmatch(database) is None:
         raise PostgreSqlRestoreContractError("unsafe generated database name")
 
 
+def _require_role_name(role: str) -> None:
+    if _ROLE_NAME.fullmatch(role) is None:
+        raise PostgreSqlRestoreContractError("unsafe generated role name")
+
+
 def _database_name(kind: str) -> str:
+    return f"omnigent_{kind}_{uuid4().hex[:20]}"
+
+
+def _role_name(kind: str) -> str:
     return f"omnigent_{kind}_{uuid4().hex[:20]}"
 
 
@@ -305,12 +331,66 @@ def _admin_engine(endpoint: PostgreSqlEndpoint) -> sa.Engine:
     )
 
 
-def _create_database(endpoint: PostgreSqlEndpoint, database: str) -> None:
-    _require_database_name(database)
+def _create_disposable_owner(
+    endpoint: PostgreSqlEndpoint,
+    role: str,
+    password: str,
+) -> None:
+    _require_role_name(role)
+    if re.fullmatch(r"[0-9a-f]{64}", password) is None:
+        raise PostgreSqlRestoreContractError("unsafe generated role password")
     engine = _admin_engine(endpoint)
     try:
         with engine.connect() as connection:
-            connection.exec_driver_sql(f'CREATE DATABASE "{database}"')
+            connection.exec_driver_sql(
+                f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT "
+                "NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1"
+            )
+    finally:
+        engine.dispose()
+
+
+def _drop_disposable_owner(endpoint: PostgreSqlEndpoint, role: str) -> None:
+    _require_role_name(role)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(f'DROP ROLE IF EXISTS "{role}"')
+    finally:
+        engine.dispose()
+
+
+def _set_disposable_owner_bypassrls(
+    endpoint: PostgreSqlEndpoint,
+    role: str,
+    *,
+    enabled: bool,
+) -> None:
+    _require_role_name(role)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            state = "BYPASSRLS" if enabled else "NOBYPASSRLS"
+            connection.exec_driver_sql(f'ALTER ROLE "{role}" {state}')
+    finally:
+        engine.dispose()
+
+
+def _create_database(
+    endpoint: PostgreSqlEndpoint,
+    database: str,
+    *,
+    owner: str | None = None,
+) -> None:
+    _require_database_name(database)
+    if owner is not None:
+        _require_role_name(owner)
+    engine = _admin_engine(endpoint)
+    try:
+        with engine.connect() as connection:
+            owner_clause = f' OWNER "{owner}"' if owner is not None else ""
+            connection.exec_driver_sql(f'CREATE DATABASE "{database}"{owner_clause}')
     finally:
         engine.dispose()
 
@@ -409,6 +489,10 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
         "runner_pool": "96000000-0000-4000-8000-000000000001",
         "runner_a": "97000000-0000-4000-8000-000000000001",
         "runner_b": "97000000-0000-4000-8000-000000000002",
+        "egress_policy_a": "97500000-0000-4000-8000-000000000001",
+        "egress_policy_b": "97500000-0000-4000-8000-000000000002",
+        "execution_profile_a": "97600000-0000-4000-8000-000000000001",
+        "execution_profile_b": "97600000-0000-4000-8000-000000000002",
         "task_a": "98000000-0000-4000-8000-000000000001",
         "task_b": "98000000-0000-4000-8000-000000000002",
         "run_a": "99000000-0000-4000-8000-000000000001",
@@ -776,6 +860,49 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
             )
             connection.execute(
                 sa.text(
+                    "INSERT INTO saas_egress_policies "
+                    "(id, tenant_id, space_id, project_id, created_by, name, rules, "
+                    "rules_hash, allow_private_destinations, status, version) VALUES "
+                    "(:egress_policy_a, :tenant_a, :space_a, :project_a, :actor_a, "
+                    "'recovery-default-deny-a', CAST('[]' AS jsonb), :egress_hash_a, "
+                    "false, 'active', 1), "
+                    "(:egress_policy_b, :tenant_b, :space_b, :project_b, :actor_b, "
+                    "'recovery-default-deny-b', CAST('[]' AS jsonb), :egress_hash_b, "
+                    "false, 'active', 1)"
+                ),
+                {
+                    **identifiers,
+                    "egress_hash_a": "a" * 64,
+                    "egress_hash_b": "b" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_execution_profiles "
+                    "(id, tenant_id, space_id, project_id, egress_policy_id, created_by, "
+                    "name, sandbox_backend, network_mode, root_read_only, run_as_uid, "
+                    "run_as_gid, no_new_privileges, host_socket_access, syscall_profile_ref, "
+                    "cpu_millis, memory_bytes, pids_limit, allowed_tools, "
+                    "approval_required_tools, denied_tools, config_hash, status, version) VALUES "
+                    "(:execution_profile_a, :tenant_a, :space_a, :project_a, "
+                    ":egress_policy_a, :actor_a, 'recovery-managed-a', 'linux_bwrap', "
+                    "'proxy_only', true, 65532, 65532, true, false, 'oci-default-v1', "
+                    "1000, 536870912, 128, CAST('[\"shell\"]' AS jsonb), "
+                    "CAST('[]' AS jsonb), CAST('[]' AS jsonb), :profile_hash_a, 'active', 1), "
+                    "(:execution_profile_b, :tenant_b, :space_b, :project_b, "
+                    ":egress_policy_b, :actor_b, 'recovery-managed-b', 'linux_bwrap', "
+                    "'proxy_only', true, 65532, 65532, true, false, 'oci-default-v1', "
+                    "1000, 536870912, 128, CAST('[\"shell\"]' AS jsonb), "
+                    "CAST('[]' AS jsonb), CAST('[]' AS jsonb), :profile_hash_b, 'active', 1)"
+                ),
+                {
+                    **identifiers,
+                    "profile_hash_a": "c" * 64,
+                    "profile_hash_b": "d" * 64,
+                },
+            )
+            connection.execute(
+                sa.text(
                     "INSERT INTO saas_runtime_resource_bindings "
                     "(id, runtime_partition_id, tenant_id, space_id, project_id, "
                     "resource_type, runtime_resource_id, saas_resource_id, "
@@ -889,26 +1016,57 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "cap_hash": "9" * 64,
                 },
             )
+            dispatch_eligible_at = datetime.now(UTC) - timedelta(minutes=1)
+            dispatch_max_wait_at = dispatch_eligible_at + timedelta(hours=1)
+            dispatch_hashes = {
+                suffix: dispatch_requirements_hash(
+                    tenant_id=UUID(str(identifiers[f"tenant_{suffix}"])),
+                    space_id=UUID(str(identifiers[f"space_{suffix}"])),
+                    project_id=UUID(str(identifiers[f"project_{suffix}"])),
+                    pool_id=UUID(str(identifiers["runner_pool"])),
+                    execution_profile_id=UUID(str(identifiers[f"execution_profile_{suffix}"])),
+                    execution_profile_hash=("c" if suffix == "a" else "d") * 64,
+                    egress_policy_id=UUID(str(identifiers[f"egress_policy_{suffix}"])),
+                    egress_policy_hash=("a" if suffix == "a" else "b") * 64,
+                    queue_class="interactive",
+                    required_capabilities=["shell"],
+                    cost_units=1,
+                    eligible_at=dispatch_eligible_at,
+                    max_wait_at=dispatch_max_wait_at,
+                )
+                for suffix in ("a", "b")
+            }
             connection.execute(
                 sa.text(
                     "INSERT INTO saas_run_dispatches "
-                    "(run_id, tenant_id, space_id, project_id, pool_id, queue_class, "
+                    "(run_id, tenant_id, space_id, project_id, pool_id, "
+                    "execution_profile_id, execution_profile_hash, "
+                    "egress_policy_id, egress_policy_hash, queue_class, "
                     "required_capabilities, requirements_hash, cost_units, eligible_at, "
                     "max_wait_at, status, selected_runner_id, selected_failure_domain, "
                     "dispatch_generation) VALUES "
-                    "(:run_a, :tenant_a, :space_a, :project_a, :runner_pool, 'interactive', "
-                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
-                    "'1 minute', now() + interval '1 hour', 'leased', :runner_a, "
+                    "(:run_a, :tenant_a, :space_a, :project_a, :runner_pool, "
+                    ":execution_profile_a, :profile_hash_a, :egress_policy_a, :egress_hash_a, "
+                    "'interactive', CAST(:capabilities AS jsonb), :requirements_hash_a, 1, "
+                    ":eligible_at, :max_wait_at, 'leased', :runner_a, "
                     "'region-a-1', 1), "
-                    "(:run_b, :tenant_b, :space_b, :project_b, :runner_pool, 'interactive', "
-                    "CAST(:capabilities AS jsonb), :requirements_hash, 1, now() - interval "
-                    "'1 minute', now() + interval '1 hour', 'leased', :runner_b, "
+                    "(:run_b, :tenant_b, :space_b, :project_b, :runner_pool, "
+                    ":execution_profile_b, :profile_hash_b, :egress_policy_b, :egress_hash_b, "
+                    "'interactive', CAST(:capabilities AS jsonb), :requirements_hash_b, 1, "
+                    ":eligible_at, :max_wait_at, 'leased', :runner_b, "
                     "'region-a-1', 1)"
                 ),
                 {
                     **identifiers,
                     "capabilities": json.dumps(["shell"]),
-                    "requirements_hash": "a" * 64,
+                    "profile_hash_a": "c" * 64,
+                    "profile_hash_b": "d" * 64,
+                    "egress_hash_a": "a" * 64,
+                    "egress_hash_b": "b" * 64,
+                    "requirements_hash_a": dispatch_hashes["a"],
+                    "requirements_hash_b": dispatch_hashes["b"],
+                    "eligible_at": dispatch_eligible_at,
+                    "max_wait_at": dispatch_max_wait_at,
                 },
             )
             connection.execute(
@@ -3061,7 +3219,7 @@ def run_logical_restore_contract(
         )
     if re.fullmatch(r"[0-9a-f]{40}", product_revision) is None:
         raise PostgreSqlRestoreContractError("product_revision must be a full Git SHA")
-    endpoint = PostgreSqlEndpoint.parse(admin_url)
+    admin_endpoint = PostgreSqlEndpoint.parse(admin_url)
     migration_config = Config(repo / "saas/control_plane/alembic.ini")
     migration_config.set_main_option(
         "script_location",
@@ -3070,7 +3228,7 @@ def run_logical_restore_contract(
     expected_saas_head = ScriptDirectory.from_config(migration_config).get_current_head()
     if expected_saas_head is None:
         raise PostgreSqlRestoreContractError("SaaS migration head is missing")
-    admin_engine = sa.create_engine(endpoint.sqlalchemy_url(endpoint.admin_database))
+    admin_engine = sa.create_engine(admin_endpoint.sqlalchemy_url(admin_endpoint.admin_database))
     try:
         with admin_engine.connect() as connection:
             server_version_num = int(
@@ -3085,19 +3243,29 @@ def run_logical_restore_contract(
         )
     source_database = _database_name("restore_source")
     target_database = _database_name("restore_target")
+    owner_role = _role_name("restore_owner")
+    owner_password = uuid4().hex + uuid4().hex
+    owner_endpoint = admin_endpoint.for_login(owner_role, owner_password)
     started = datetime.now(UTC)
     created: list[str] = []
+    owner_created = False
     try:
-        _create_database(endpoint, source_database)
+        _create_disposable_owner(admin_endpoint, owner_role, owner_password)
+        owner_created = True
+        _create_database(admin_endpoint, source_database, owner=owner_role)
         created.append(source_database)
-        _apply_database_authority(repo, endpoint, source_database)
-        _migrate_source(repo, endpoint, source_database)
-        identifiers = _seed_source(endpoint, source_database)
+        _apply_database_authority(repo, owner_endpoint, source_database)
+        _migrate_source(repo, owner_endpoint, source_database)
+        # Fixture creation and cross-Tenant backup inspection deliberately use
+        # the disposable cluster operator.  The schema owner remains a narrow
+        # direct login and is used only for the ownership-sensitive migration
+        # and authority phases.
+        identifiers = _seed_source(admin_endpoint, source_database)
         with tempfile.TemporaryDirectory(prefix="omnigent-logical-restore-") as temporary:
             archive = Path(temporary) / "backup.dump"
             dump_client = _run_pg_tool(
                 "pg_dump",
-                endpoint,
+                admin_endpoint,
                 source_database,
                 archive,
                 server_major=server_major,
@@ -3105,20 +3273,36 @@ def run_logical_restore_contract(
             if not archive.is_file() or archive.stat().st_size <= 0:
                 raise PostgreSqlRestoreContractError("pg_dump produced an empty archive")
             backup_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
-            _apply_post_backup_replay(endpoint, source_database, identifiers)
-            source_hash, source_counts = _database_digest(endpoint, source_database)
-            _create_database(endpoint, target_database)
+            _apply_post_backup_replay(admin_endpoint, source_database, identifiers)
+            source_hash, source_counts = _database_digest(admin_endpoint, source_database)
+            _create_database(admin_endpoint, target_database, owner=owner_role)
             created.append(target_database)
-            _apply_database_authority(repo, endpoint, target_database)
-            restore_client = _run_pg_tool(
-                "pg_restore",
-                endpoint,
-                target_database,
-                archive,
-                server_major=server_major,
+            _apply_database_authority(repo, owner_endpoint, target_database)
+            # pg_restore must replay rows from multiple forced-RLS scopes while
+            # also creating every object as the direct target owner.  Elevate
+            # only this disposable owner for the bounded load, then remove the
+            # bypass before applying or verifying either authority projection.
+            _set_disposable_owner_bypassrls(
+                admin_endpoint,
+                owner_role,
+                enabled=True,
             )
+            try:
+                restore_client = _run_pg_tool(
+                    "pg_restore",
+                    owner_endpoint,
+                    target_database,
+                    archive,
+                    server_major=server_major,
+                )
+            finally:
+                _set_disposable_owner_bypassrls(
+                    admin_endpoint,
+                    owner_role,
+                    enabled=False,
+                )
         target_engine = sa.create_engine(
-            endpoint.sqlalchemy_url(target_database), poolclass=sa.pool.NullPool
+            owner_endpoint.sqlalchemy_url(target_database), poolclass=sa.pool.NullPool
         )
         try:
             with target_engine.begin() as connection:
@@ -3130,14 +3314,14 @@ def run_logical_restore_contract(
                 )
         finally:
             target_engine.dispose()
-        _apply_post_backup_replay(endpoint, target_database, identifiers)
+        _apply_post_backup_replay(admin_endpoint, target_database, identifiers)
         restored_facts = _verify_restored_database(
-            endpoint,
+            admin_endpoint,
             target_database,
             identifiers,
             expected_saas_head=expected_saas_head,
         )
-        target_hash, target_counts = _database_digest(endpoint, target_database)
+        target_hash, target_counts = _database_digest(admin_endpoint, target_database)
         if target_hash != source_hash or target_counts != source_counts:
             raise PostgreSqlRestoreContractError("restored selected-table content hash drifted")
         completed = datetime.now(UTC)
@@ -3163,6 +3347,7 @@ def run_logical_restore_contract(
             **restored_facts,
             "source_and_restore_database_names_were_distinct": source_database != target_database,
             "database_authority_applied_to_source_and_restore": True,
+            "disposable_narrow_owner_applied_to_source_and_restore": True,
             "temporary_databases_dropped_after_report": True,
             "not_proven": [
                 "production data backup or restore",
@@ -3174,4 +3359,6 @@ def run_logical_restore_contract(
         }
     finally:
         for database in reversed(created):
-            _drop_database(endpoint, database)
+            _drop_database(admin_endpoint, database)
+        if owner_created:
+            _drop_disposable_owner(admin_endpoint, owner_role)

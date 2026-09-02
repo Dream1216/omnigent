@@ -32,7 +32,11 @@ from saas.control_plane.onboarding import (
     EmailVerificationMessage,
     OnboardingOutboxPublisher,
 )
-from saas.control_plane.outbox import OutboxPublishError, _quarantine_event_hash
+from saas.control_plane.outbox import (
+    OutboxClaimRoute,
+    OutboxPublishError,
+    _quarantine_event_hash,
+)
 
 NOW = datetime(2026, 8, 4, 4, 0, tzinfo=timezone.utc)
 
@@ -239,6 +243,62 @@ def test_outbox_dispatcher_is_detached_safe_and_retries_with_backoff(
         assert stored is not None
         assert stored.attempt_count == 2
         assert stored.published_at is not None
+
+
+def test_outbox_dispatcher_claim_route_leaves_unowned_events_unmodified(
+    sessions: sessionmaker[Session],
+) -> None:
+    unrelated_id = uuid4()
+    queued_id = uuid4()
+    _add_outbox_event(sessions, unrelated_id)
+    with sessions.begin() as db:
+        db.add(
+            ControlPlaneOutboxEvent(
+                id=queued_id,
+                tenant_id=None,
+                aggregate_type="run",
+                aggregate_key="run-1",
+                event_type="run.event.persisted",
+                idempotency_key=f"event-{queued_id}",
+                request_hash="b" * 64,
+                payload={"event_type": "run.queued"},
+                attempt_count=0,
+            )
+        )
+    publisher = _RecordingPublisher()
+    dispatcher = OutboxDispatcher(
+        sessions,
+        publisher,
+        claim_routes=(OutboxClaimRoute("run", "run.event.persisted", "run.queued"),),
+    )
+
+    result = dispatcher.dispatch_once(batch_size=1, now=NOW)
+
+    assert (result.claimed, result.published, result.failed) == (1, 1, 0)
+    assert publisher.ids == [queued_id]
+    with sessions() as db:
+        unrelated = db.get(ControlPlaneOutboxEvent, unrelated_id)
+        queued = db.get(ControlPlaneOutboxEvent, queued_id)
+        assert unrelated is not None and queued is not None
+        assert unrelated.attempt_count == 0
+        assert unrelated.claimed_at is None
+        assert unrelated.claim_token is None
+        assert unrelated.published_at is None
+        assert queued.published_at is not None
+
+
+def test_outbox_dispatcher_rejects_empty_duplicate_or_invalid_claim_routes(
+    sessions: sessionmaker[Session],
+) -> None:
+    publisher = _RecordingPublisher()
+    route = OutboxClaimRoute("run", "run.event.persisted", "run.queued")
+
+    with pytest.raises(ValueError, match="non-empty"):
+        OutboxDispatcher(sessions, publisher, claim_routes=())
+    with pytest.raises(ValueError, match="unique"):
+        OutboxDispatcher(sessions, publisher, claim_routes=(route, route))
+    with pytest.raises(ValueError, match="route is invalid"):
+        OutboxClaimRoute("run", "run.event.persisted", "Run Queued")
 
 
 def test_nonretryable_pre_side_effect_error_is_quarantined_once_without_secret(

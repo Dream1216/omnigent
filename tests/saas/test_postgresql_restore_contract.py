@@ -62,6 +62,13 @@ def test_postgresql_endpoint_requires_explicit_tcp_admin_coordinates() -> None:
     assert endpoint.admin_database == "postgres"
     assert endpoint.sqlalchemy_url("isolated_restore").database == "isolated_restore"
 
+    owner_endpoint = endpoint.for_login("omnigent_restore_owner_test", "owner-password")
+    assert owner_endpoint.username == "omnigent_restore_owner_test"
+    assert owner_endpoint.password == "owner-password"
+    assert owner_endpoint.host == endpoint.host
+    assert owner_endpoint.port == endpoint.port
+    assert owner_endpoint.admin_database == endpoint.admin_database
+
 
 @pytest.mark.parametrize(
     "url",
@@ -94,6 +101,44 @@ def test_restore_contract_requires_explicit_disposable_database_authorization() 
             "postgresql+psycopg://user:password@127.0.0.1:5432/postgres",
             product_revision="a" * 40,
         )
+
+
+def test_restore_contract_uses_and_cleans_up_a_disposable_narrow_owner() -> None:
+    raw_url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
+    if not raw_url:
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required")
+    endpoint = PostgreSqlEndpoint.parse(raw_url)
+    admin_engine = sa.create_engine(endpoint.sqlalchemy_url(endpoint.admin_database))
+    try:
+        with admin_engine.connect() as connection:
+            owners_before = set(
+                connection.execute(
+                    sa.text("SELECT rolname FROM pg_roles WHERE rolname LIKE :prefix"),
+                    {"prefix": "omnigent_restore_owner_%"},
+                ).scalars()
+            )
+
+        report = run_logical_restore_contract(
+            Path.cwd(),
+            raw_url,
+            product_revision="a" * 40,
+            allow_disposable_databases=True,
+        )
+
+        with admin_engine.connect() as connection:
+            owners_after = set(
+                connection.execute(
+                    sa.text("SELECT rolname FROM pg_roles WHERE rolname LIKE :prefix"),
+                    {"prefix": "omnigent_restore_owner_%"},
+                ).scalars()
+            )
+    finally:
+        admin_engine.dispose()
+
+    assert report["status"] == "pass"
+    assert report["database_authority_applied_to_source_and_restore"] is True
+    assert report["disposable_narrow_owner_applied_to_source_and_restore"] is True
+    assert owners_after == owners_before
 
 
 def test_restore_fixture_uses_current_vertical_onboarding_plan_contract() -> None:

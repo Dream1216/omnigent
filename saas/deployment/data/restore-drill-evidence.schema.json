@@ -1,0 +1,206 @@
+{
+  "$id": "urn:omnigent:beta-postgresql:restore-drill-evidence:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "checks": {
+            "anyOf": [
+              {
+                "properties": {
+                  "database_owner_verified": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "database_owner_verified"
+                ]
+              },
+              {
+                "properties": {
+                  "pitr_target_reached": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "pitr_target_reached"
+                ]
+              },
+              {
+                "properties": {
+                  "source_store_read_only": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "source_store_read_only"
+                ]
+              },
+              {
+                "properties": {
+                  "wal_replay_verified": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "wal_replay_verified"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "failure_code",
+          "failure_detail_sha256"
+        ]
+      },
+      "if": {
+        "properties": {
+          "execution_status": {
+            "const": "pass"
+          }
+        },
+        "required": [
+          "execution_status"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "failure_code"
+              ]
+            },
+            {
+              "required": [
+                "failure_detail_sha256"
+              ]
+            }
+          ]
+        },
+        "properties": {
+          "checks": {
+            "properties": {
+              "database_owner_verified": {
+                "const": true
+              },
+              "pitr_target_reached": {
+                "const": true
+              },
+              "source_store_read_only": {
+                "const": true
+              },
+              "wal_replay_verified": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "bundle_sha256": {
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "checks": {
+      "additionalProperties": false,
+      "properties": {
+        "data_validation_sha256": {
+          "pattern": "^(?!0{64}$)[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "database_owner_verified": {
+          "type": "boolean"
+        },
+        "pitr_target_reached": {
+          "type": "boolean"
+        },
+        "source_store_read_only": {
+          "type": "boolean"
+        },
+        "wal_replay_verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data_validation_sha256",
+        "database_owner_verified",
+        "pitr_target_reached",
+        "source_store_read_only",
+        "wal_replay_verified"
+      ],
+      "type": "object"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$",
+      "type": "string"
+    },
+    "deployment_id": {
+      "format": "uuid",
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "execution_status": {
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "failure_code": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "type": "string"
+    },
+    "failure_detail_sha256": {
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "recovery_target_time": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$",
+      "type": "string"
+    },
+    "restored_cluster_uid": {
+      "format": "uuid",
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "source_backup_uid": {
+      "format": "uuid",
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "spec_sha256": {
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundle_sha256",
+    "checks",
+    "completed_at",
+    "deployment_id",
+    "execution_status",
+    "recovery_target_time",
+    "restored_cluster_uid",
+    "schema_version",
+    "source_backup_uid",
+    "spec_sha256",
+    "started_at"
+  ],
+  "title": "Beta PostgreSQL restore drill evidence",
+  "type": "object"
+}

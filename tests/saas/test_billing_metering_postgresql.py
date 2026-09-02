@@ -24,7 +24,9 @@ from saas.control_plane import (
     BillingControlPlane,
     BillingMeteringAuthority,
     BillingMeteringError,
+    EgressPolicyRecord,
     ExecutionControlPlane,
+    ExecutionProfileRecord,
     ExecutionRevisionSet,
     GlobalUser,
     ProjectMembershipRecord,
@@ -114,6 +116,8 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         uuid4(),
         uuid4(),
     )
+    execution_profile_id = uuid4()
+    execution_profile_hash = "5" * 64
     other_owner, other_tenant = uuid4(), uuid4()
     context = RequestContext(
         actor_id=owner_id,
@@ -223,6 +227,51 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
                 version=1,
             )
         )
+        egress_policy_id = uuid4()
+        db.add(
+            EgressPolicyRecord(
+                id=egress_policy_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                created_by=owner_id,
+                name="metering-default-deny",
+                rules=[],
+                rules_hash="0" * 64,
+                allow_private_destinations=False,
+                status="active",
+                version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ExecutionProfileRecord(
+                id=execution_profile_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                created_by=owner_id,
+                name="metering-managed-default",
+                sandbox_backend="linux_bwrap",
+                network_mode="proxy_only",
+                root_read_only=True,
+                run_as_uid=65532,
+                run_as_gid=65532,
+                no_new_privileges=True,
+                host_socket_access=False,
+                syscall_profile_ref="oci-default-v1",
+                cpu_millis=1000,
+                memory_bytes=512 * 1024 * 1024,
+                pids_limit=128,
+                allowed_tools=["shell"],
+                approval_required_tools=[],
+                denied_tools=[],
+                config_hash=execution_profile_hash,
+                status="active",
+                version=1,
+            )
+        )
 
     execution.configure_quota(
         context,
@@ -269,6 +318,8 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         run_id=run_id,
         pool_id=pool_id,
         required_capabilities=["shell"],
+        execution_profile_id=execution_profile_id,
+        execution_profile_hash=execution_profile_hash,
         eligible_at=now - timedelta(seconds=1),
         maximum_wait=timedelta(hours=1),
     )
@@ -510,6 +561,20 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         ).all()
         assert len(posture) == 2
         assert all(not superuser and not bypass for _role, superuser, bypass in posture)
+
+        # The p0s8 profile-binding downgrade is intentionally fail-closed: all
+        # dispatches must be drained before its binding columns can be removed.
+        # This isolated fixture owns only the dispatch created above, so remove
+        # it to establish the schema-migration precondition. Production drain
+        # orchestration remains a separate runbook and admission concern.
+        assert (
+            connection.execute(
+                sa.text("DELETE FROM saas_run_dispatches WHERE run_id = :run"),
+                {"run": run_id},
+            ).rowcount
+            == 1
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 0
 
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))

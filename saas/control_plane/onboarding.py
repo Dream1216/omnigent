@@ -9,6 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Protocol
@@ -49,6 +50,7 @@ from saas.control_plane.rls import (
     apply_onboarding_rls_context,
     apply_registration_rls_context,
 )
+from saas.onboarding_email import EmailVerificationDeliveryError
 
 _SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _MIN_PASSWORD_LENGTH = 12
@@ -155,6 +157,17 @@ class OnboardingPlan:
 
         return _digest(self.snapshot())
 
+    def public_catalog_entry(self) -> dict[str, object]:
+        """Project only customer-selectable, non-operational plan facts."""
+
+        return {
+            "currency": self.currency,
+            "key": self.key,
+            "trial_concurrency_limit": self.trial_concurrency_limit,
+            "trial_days": self.trial_days,
+            "trial_run_limit": self.trial_run_limit,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class OnboardingPolicy:
@@ -183,6 +196,20 @@ class OnboardingPolicy:
             if plan.key == key and (revision is None or plan.policy_revision == revision):
                 return plan
         raise OnboardingError("plan_unavailable", "selected plan is unavailable")
+
+    def public_catalog(self) -> dict[str, object]:
+        """Return one deterministic public snapshot of selectable plans and regions."""
+
+        snapshot: dict[str, object] = {
+            "schema_version": 1,
+            "plans": [
+                plan.public_catalog_entry()
+                for plan in sorted(self.plans, key=lambda candidate: candidate.key)
+            ],
+            "regions": sorted(self.home_regions),
+            "verification_ttl_seconds": int(self.verification_ttl.total_seconds()),
+        }
+        return {**snapshot, "revision": _digest(snapshot)}
 
 
 class RegistrationRateLimiter(Protocol):
@@ -663,8 +690,8 @@ class SharedRegistrationRateLimitJanitor:
 class EmailVerificationMessage:
     registration_id: UUID
     challenge_id: UUID
-    email: str
-    verification_token: str
+    email: str = dataclass_field(repr=False)
+    verification_token: str = dataclass_field(repr=False)
     expires_at: datetime
 
 
@@ -906,6 +933,11 @@ class SelfServiceOnboardingService:
             subject_kind="network",
             subject=subject,
         )
+
+    def public_catalog(self) -> dict[str, object]:
+        """Return the deployment policy's allowlisted anonymous catalog projection."""
+
+        return self._policy.public_catalog()
 
     def request_registration(
         self,
@@ -1993,6 +2025,17 @@ class OnboardingOutboxPublisher:
                 return
             try:
                 self._email_sender.send_verification(event_id=event_id, message=message)
+            except EmailVerificationDeliveryError as error:
+                self._registrations.record_email_delivery(
+                    message=message,
+                    succeeded=False,
+                    error_code="delivery_unavailable",
+                )
+                raise OutboxPublishError(
+                    error.code,
+                    retryable=error.retryable,
+                    pre_side_effect=error.pre_side_effect,
+                ) from error
             except Exception as error:
                 self._registrations.record_email_delivery(
                     message=message,

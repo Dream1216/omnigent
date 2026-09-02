@@ -61,7 +61,7 @@ def _create_p4f_constraints() -> None:
 def _replace_p4g_guard() -> None:
     op.execute(
         """
-        CREATE OR REPLACE FUNCTION saas_guard_preview_gateway_instance()
+        CREATE OR REPLACE FUNCTION public.saas_guard_preview_gateway_instance()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             IF ROW(
@@ -89,7 +89,7 @@ def _replace_p4g_guard() -> None:
                     AND NEW.activated_at >= OLD.last_heartbeat_at
                     AND EXISTS (
                         SELECT 1
-                        FROM saas_preview_gateway_certificates AS certificate
+                        FROM public.saas_preview_gateway_certificates AS certificate
                         WHERE certificate.gateway_instance_id = NEW.id
                             AND certificate.status = 'active'
                             AND certificate.certificate_not_before <= NEW.activated_at
@@ -129,7 +129,7 @@ def _replace_p4g_guard() -> None:
 def _restore_p4f_guard() -> None:
     op.execute(
         """
-        CREATE OR REPLACE FUNCTION saas_guard_preview_gateway_instance()
+        CREATE OR REPLACE FUNCTION public.saas_guard_preview_gateway_instance()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
             IF ROW(

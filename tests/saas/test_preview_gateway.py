@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from saas.control_plane import PreviewRouteGrant
+from saas.control_plane.preview_sessions import (
+    PreviewBrowserSessionGrant,
+    PreviewSessionError,
+)
 from saas.preview_gateway import (
     PREVIEW_COOKIE_NAME,
     PreviewTunnelRequest,
     PreviewTunnelResponse,
     create_preview_gateway_app,
+    create_preview_session_gateway_app,
 )
 
 
@@ -181,3 +187,118 @@ def test_preview_gateway_rejects_host_header_path_smuggling() -> None:
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "preview_host_invalid"
     assert not authority.calls
+
+
+class _SessionAuthority:
+    def __init__(self, route: PreviewRouteGrant, exchange_token: str) -> None:
+        self.route = route
+        self.exchange_token = exchange_token
+        self.current = "session_" + "s" * 48
+        self.next = "session_" + "n" * 48
+        self.exchanged = False
+        self.authorized: list[str] = []
+
+    def exchange(self, *, host: str, exchange_token: str) -> PreviewBrowserSessionGrant:
+        if (
+            self.exchanged
+            or host != self.route.preview_host
+            or exchange_token != self.exchange_token
+        ):
+            raise PreviewSessionError("preview_exchange_invalid")
+        self.exchanged = True
+        return PreviewBrowserSessionGrant(self.route, self.current)
+
+    def authorize_and_rotate(
+        self,
+        *,
+        host: str,
+        session_token: str,
+        incoming_headers: dict[str, str],
+    ) -> PreviewBrowserSessionGrant:
+        del incoming_headers
+        if host != self.route.preview_host or session_token not in {self.current, self.next}:
+            raise PreviewSessionError("preview_session_invalid")
+        self.authorized.append(session_token)
+        if session_token == self.current:
+            return PreviewBrowserSessionGrant(self.route, self.next)
+        return PreviewBrowserSessionGrant(self.route)
+
+
+def test_p0s9_gateway_consumes_url_bearer_once_and_rotates_independent_cookie() -> None:
+    host = "pv-session.preview.example.net"
+    exchange_token = "exchange_" + "e" * 48
+    base = _Authority(host=host, token=exchange_token)
+    route = replace(base.route, preview_host=host)
+    authority = _SessionAuthority(route, exchange_token)
+    tunnel = _Tunnel()
+    app = create_preview_session_gateway_app(authority=authority, tunnel=tunnel)
+
+    with TestClient(app, base_url=f"https://{host}", follow_redirects=False) as client:
+        exchange = client.post("/__omnigent/authorize", data={"token": exchange_token})
+        assert exchange.status_code == 303
+        exchange_cookie = exchange.headers["set-cookie"]
+        assert authority.current in exchange_cookie
+        assert exchange_token not in exchange_cookie
+
+        first = client.get("/")
+        assert first.status_code == 200
+        assert authority.next in first.headers["set-cookie"]
+        second = client.get("/")
+        assert second.status_code == 200
+        assert "set-cookie" not in second.headers
+        assert authority.authorized == [authority.current, authority.next]
+
+    with TestClient(app, base_url=f"https://{host}", follow_redirects=False) as replay:
+        denied = replay.post("/__omnigent/authorize", data={"token": exchange_token})
+        assert denied.status_code == 403
+        assert denied.json()["detail"]["code"] == "preview_exchange_invalid"
+
+
+def test_p0s9_fragment_bootstrap_is_content_blind_no_store_and_clears_url() -> None:
+    host = "pv-session.preview.example.net"
+    exchange_token = "exchange_" + "e" * 48
+    base = _Authority(host=host, token=exchange_token)
+    route = replace(base.route, preview_host=host)
+    authority = _SessionAuthority(route, exchange_token)
+    app = create_preview_session_gateway_app(authority=authority, tunnel=_Tunnel())
+
+    with TestClient(app, base_url=f"https://{host}", follow_redirects=False) as client:
+        bootstrap = client.get("/__omnigent/bootstrap")
+        assert bootstrap.status_code == 200
+        assert bootstrap.request.url.query == b""
+        assert exchange_token not in str(bootstrap.request.url)
+        assert exchange_token not in bootstrap.text
+        assert bootstrap.headers["cache-control"] == "no-store, max-age=0"
+        assert bootstrap.headers["referrer-policy"] == "no-referrer"
+        assert "default-src 'none'" in bootstrap.headers["content-security-policy"]
+        assert "script-src 'self'" in bootstrap.headers["content-security-policy"]
+
+        script = client.get("/__omnigent/bootstrap.js")
+        assert script.status_code == 200
+        assert script.headers["cache-control"] == "no-store, max-age=0"
+        assert "window.history.replaceState" in script.text
+        assert script.text.index("window.history.replaceState") < script.text.index(
+            "form.submit()"
+        )
+        assert exchange_token not in script.text
+
+        leaked_query = client.get(f"/__omnigent/bootstrap?token={exchange_token}")
+        assert leaked_query.status_code == 403
+        assert authority.exchanged is False
+
+
+def test_p0s9_gateway_rejects_forged_host_and_empty_session_cookie() -> None:
+    host = "pv-session.preview.example.net"
+    exchange_token = "exchange_" + "e" * 48
+    base = _Authority(host=host, token=exchange_token)
+    route = replace(base.route, preview_host=host)
+    authority = _SessionAuthority(route, exchange_token)
+    app = create_preview_session_gateway_app(authority=authority, tunnel=_Tunnel())
+
+    with TestClient(app, base_url=f"https://{host}", follow_redirects=False) as client:
+        assert client.get("/").status_code == 401
+        exchange = client.post("/__omnigent/authorize", data={"token": exchange_token})
+        assert exchange.status_code == 303
+        forged = client.get("/", headers={"Host": "forged.preview.example.net"})
+        assert forged.status_code == 403
+        assert forged.json()["detail"]["code"] == "preview_session_invalid"

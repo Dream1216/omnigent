@@ -2,7 +2,9 @@
 -- psql operators must use postgresql_roles.psql, which enables ON_ERROR_STOP
 -- and wraps this entire authority projection in one transaction. API callers
 -- must execute this body inside an explicit transaction.
--- Run as the SaaS control-plane database owner after every schema migration.
+-- Run as the direct, narrow owner of the SaaS control-plane objects after
+-- every schema migration. The database and official Runtime objects have
+-- different owners and are deliberately outside this authority boundary.
 -- Application login roles should inherit exactly one of these NOLOGIN roles.
 -- Cluster principals and their fixed role graph are an operator-owned phase.
 -- Database-level PUBLIC TEMPORARY revocation is a separate database-owner
@@ -18,8 +20,11 @@ DECLARE
         'saas_dispatcher',
         'saas_dispatcher_n1_compat',
         'saas_executor',
+        'saas_runner_agent',
         'saas_secret_broker',
         'saas_preview_gateway',
+        'saas_preview_edge',
+        'saas_preview_owner',
         'saas_webhook_dispatcher',
         'saas_billing',
         'saas_metering',
@@ -110,7 +115,18 @@ BEGIN
     SELECT count(*) INTO n1_incoming_memberships
     FROM pg_auth_members AS membership
     JOIN pg_roles AS granted ON granted.oid = membership.roleid
-    WHERE granted.rolname = 'saas_dispatcher_n1_compat';
+    WHERE granted.rolname = 'saas_dispatcher_n1_compat'
+      AND (
+          NOT membership.admin_option
+          OR COALESCE(
+              (to_jsonb(membership) ->> 'inherit_option')::boolean,
+              true
+          )
+          OR COALESCE(
+              (to_jsonb(membership) ->> 'set_option')::boolean,
+              true
+          )
+      );
 
     IF n1_incoming_memberships <> 0 THEN
         RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
@@ -187,7 +203,11 @@ BEGIN
         'p0s000000004',
         'p0s000000005',
         'p0s000000006',
-        'p0s000000007'
+        'p0s000000007',
+        'p0s000000008',
+        'p0s000000009',
+        'p0s000000010',
+        'p0s000000011'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -610,6 +630,14 @@ BEGIN
                       '84edaf917bdde5521267880561cb83d9b6099530dc8d76b3d07d26eb32867a8b'
                   WHEN 'p0s000000007' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000008' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000009' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000010' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000011' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -693,7 +721,10 @@ BEGIN
              'a712a6bb5fa0f0b66ce8102486e8d51bcc11382fb5397ab5043b17e5689efda5'
        )
        OR (
-          schema_revision IN ('p0s000000006', 'p0s000000007')
+          schema_revision IN (
+              'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
+              'p0s000000010', 'p0s000000011'
+          )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
           AND rate_constraint_contract_hash IS DISTINCT FROM
@@ -788,8 +819,11 @@ DECLARE
         'saas_dispatcher',
         'saas_dispatcher_n1_compat',
         'saas_executor',
+        'saas_runner_agent',
         'saas_secret_broker',
         'saas_preview_gateway',
+        'saas_preview_edge',
+        'saas_preview_owner',
         'saas_webhook_dispatcher',
         'saas_billing',
         'saas_metering',
@@ -877,20 +911,6 @@ BEGIN
     END LOOP;
 END
 $$;
-GRANT USAGE ON SCHEMA public TO
-    saas_app, saas_authenticator, saas_governance, saas_dispatcher, saas_executor,
-    saas_secret_broker, saas_preview_gateway, saas_webhook_dispatcher, saas_billing,
-    saas_metering, saas_public_api, saas_platform, saas_platform_authenticator,
-    saas_platform_app,
-    saas_platform_governance, saas_platform_projector, saas_platform_support,
-    saas_privacy_executor, saas_privacy_dispatcher, saas_privacy_verifier,
-    saas_notification_scheduler, saas_notification_dispatcher,
-    saas_notification_directory, saas_approval_scheduler_enterprise,
-    saas_approval_scheduler_privacy, saas_approval_scheduler_audit,
-    saas_approval_scheduler_support_customer,
-    saas_approval_scheduler_support_staff, saas_registration, saas_onboarding,
-    saas_onboarding_status;
-
 -- Platform browser/API roles are independent from the emergency saas_platform
 -- role. No GRANT connects them, so an application login cannot SET ROLE into
 -- the recovery authority even when its Staff identity has every product role.
@@ -1043,6 +1063,246 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_self_service_events
 TO saas_platform;
 
+-- P0S9 Preview is split into a browser Edge (content-blind token routines) and
+-- a placement-bound Owner.  Keep this projection conditional so the same
+-- authority body remains replayable at every supported schema-forward rollback
+-- point while refusing a partial P0S9 object set.
+DO $$
+DECLARE
+    schema_revision text;
+    target_role text;
+    target_table text;
+    target_privilege text;
+    target_signature text;
+    column_list text;
+    target_roles constant text[] := ARRAY[
+        'saas_app', 'saas_authenticator', 'saas_governance', 'saas_dispatcher',
+        'saas_dispatcher_n1_compat', 'saas_executor', 'saas_runner_agent',
+        'saas_secret_broker',
+        'saas_preview_gateway', 'saas_preview_edge', 'saas_preview_owner',
+        'saas_webhook_dispatcher', 'saas_billing', 'saas_metering',
+        'saas_public_api', 'saas_platform', 'saas_platform_authenticator',
+        'saas_platform_app', 'saas_platform_governance',
+        'saas_platform_projector', 'saas_platform_support',
+        'saas_privacy_executor', 'saas_privacy_dispatcher',
+        'saas_privacy_verifier', 'saas_notification_scheduler',
+        'saas_notification_dispatcher', 'saas_notification_directory',
+        'saas_approval_scheduler_enterprise', 'saas_approval_scheduler_privacy',
+        'saas_approval_scheduler_audit', 'saas_approval_scheduler_support_customer',
+        'saas_approval_scheduler_support_staff', 'saas_registration',
+        'saas_onboarding', 'saas_onboarding_status',
+        'saas_runtime_provider_journal'
+    ];
+    preview_tables constant text[] := ARRAY[
+        'saas_preview_executions', 'saas_preview_commands',
+        'saas_preview_sessions', 'saas_preview_tunnel_registrations'
+    ];
+    preview_functions constant text[] := ARRAY[
+        'public.saas_preview_issue_tunnel_registration_v1(uuid,bigint,text,text,uuid,text,text,text,integer)',
+        'public.saas_preview_revoke_tunnel_registration_v1(uuid,bigint,text,text,uuid,text)',
+        'public.saas_preview_preauthorize_tunnel_v1(text,text,text,text,timestamptz)',
+        'public.saas_preview_redeem_tunnel_v1(text,text,text,text,uuid,text,timestamptz)',
+        'public.saas_preview_heartbeat_tunnel_v1(text,text,text,text,timestamptz)',
+        'public.saas_preview_disconnect_tunnel_v1(text,text,text,text,timestamptz)',
+        'public.saas_preview_issue_exchange_v1(uuid,text,timestamptz)',
+        'public.saas_preview_create_command_v1(uuid,uuid,text,text,timestamptz)',
+        'public.saas_preview_exchange_v1(text,uuid,text,timestamptz,timestamptz)',
+        'public.saas_preview_authorize_session_v1(text,text,timestamptz)',
+        'public.saas_preview_rotate_session_v1(text,text,text,timestamptz,timestamptz)',
+        'public.saas_preview_revoke_session_v1(text,timestamptz)',
+        'public.saas_preview_owner_route_match_v1(uuid,uuid,bigint,text,text,timestamptz)',
+        'public.saas_preview_owner_heartbeat_gateway_v1(text,text)',
+        'public.saas_preview_owner_release_gateway_v1(text,text)'
+    ];
+BEGIN
+    SELECT version_num INTO STRICT schema_revision
+    FROM public.saas_alembic_version;
+    IF schema_revision NOT IN ('p0s000000009', 'p0s000000010', 'p0s000000011') THEN
+        IF EXISTS (
+            SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
+            WHERE to_regclass('public.' || expected.table_name) IS NOT NULL
+        ) THEN
+            RAISE EXCEPTION 'P0S9 Preview authority found on an older schema revision';
+        END IF;
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
+        WHERE to_regclass('public.' || expected.table_name) IS NULL
+    ) OR EXISTS (
+        SELECT 1 FROM unnest(preview_functions) AS expected(signature)
+        WHERE to_regprocedure(expected.signature) IS NULL
+    ) THEN
+        RAISE EXCEPTION 'P0S9 Preview authority object contract rejected';
+    END IF;
+
+    FOREACH target_table IN ARRAY preview_tables
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH target_role IN ARRAY target_roles
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
+    END LOOP;
+    FOREACH target_signature IN ARRAY preview_functions
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
+        FOREACH target_role IN ARRAY target_roles
+        LOOP
+            EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
+    END LOOP;
+
+    GRANT EXECUTE ON FUNCTION
+        public.saas_preview_issue_exchange_v1(uuid,text,timestamptz),
+        public.saas_preview_create_command_v1(uuid,uuid,text,text,timestamptz)
+    TO saas_app;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_preview_exchange_v1(text,uuid,text,timestamptz,timestamptz),
+        public.saas_preview_authorize_session_v1(text,text,timestamptz),
+        public.saas_preview_rotate_session_v1(text,text,text,timestamptz,timestamptz),
+        public.saas_preview_revoke_session_v1(text,timestamptz)
+    TO saas_preview_edge;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_preview_issue_tunnel_registration_v1(
+            uuid,bigint,text,text,uuid,text,text,text,integer
+        ),
+        public.saas_preview_revoke_tunnel_registration_v1(
+            uuid,bigint,text,text,uuid,text
+        )
+    TO saas_executor;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_preview_preauthorize_tunnel_v1(text,text,text,text,timestamptz),
+        public.saas_preview_redeem_tunnel_v1(
+            text,text,text,text,uuid,text,timestamptz
+        ),
+        public.saas_preview_heartbeat_tunnel_v1(text,text,text,text,timestamptz),
+        public.saas_preview_disconnect_tunnel_v1(text,text,text,text,timestamptz),
+        public.saas_preview_owner_route_match_v1(
+            uuid,uuid,bigint,text,text,timestamptz
+        ),
+        public.saas_preview_authorize_session_v1(text,text,timestamptz),
+        public.saas_preview_owner_heartbeat_gateway_v1(text,text),
+        public.saas_preview_owner_release_gateway_v1(text,text)
+    TO saas_preview_owner;
+
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, source_run_id, child_run_id,
+        change_set_id, created_by, profile, opaque_preview_key, preview_host,
+        status, command_generation, expires_at, ready_at, terminal_at,
+        failure_code, version, created_at, updated_at, exchange_issued_at,
+        exchange_consumed_at
+    ) ON public.saas_preview_executions TO saas_app;
+    GRANT INSERT (
+        id, tenant_id, space_id, project_id, source_run_id, child_run_id,
+        change_set_id, created_by, profile, idempotency_key_hash, request_hash,
+        opaque_preview_key, preview_host, status, command_generation, expires_at,
+        version, created_at, updated_at
+    ) ON public.saas_preview_executions TO saas_app;
+
+    GRANT SELECT ON public.saas_preview_executions,
+        public.saas_preview_commands TO saas_executor;
+    GRANT INSERT ON public.saas_preview_commands TO saas_executor;
+    GRANT UPDATE (
+        status, command_generation, runner_id, placement_id, worktree_id,
+        run_fence_token, runner_connection_generation, worktree_lease_generation,
+        expires_at, ready_at, terminal_at, failure_code, version, updated_at
+    ) ON public.saas_preview_executions TO saas_executor;
+    GRANT UPDATE (
+        status, runner_id, placement_id, runner_connection_generation,
+        claim_token_hash, claimed_by_gateway, attempt_count, available_at,
+        claimed_at, completed_at, failure_code, updated_at
+    ) ON public.saas_preview_commands TO saas_executor;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, child_run_id, status,
+        command_generation, runner_id, placement_id, worktree_id,
+        run_fence_token, runner_connection_generation, worktree_lease_generation,
+        expires_at, ready_at, terminal_at, failure_code, version
+    ) ON public.saas_preview_executions TO saas_preview_owner;
+    GRANT UPDATE (
+        status, command_generation, runner_id, placement_id, worktree_id,
+        run_fence_token, runner_connection_generation, worktree_lease_generation,
+        ready_at, terminal_at, failure_code, version, updated_at
+    ) ON public.saas_preview_executions TO saas_preview_owner;
+    GRANT SELECT ON public.saas_preview_commands,
+        public.saas_preview_tunnel_registrations TO saas_preview_owner;
+    GRANT UPDATE (
+        status, claim_token_hash, claimed_by_gateway, attempt_count, claimed_at,
+        completed_at, failure_code, updated_at
+    ) ON public.saas_preview_commands TO saas_preview_owner;
+    GRANT UPDATE (
+        status, official_runner_id, redeemed_at, disconnected_at, revoked_at,
+        updated_at
+    ) ON public.saas_preview_tunnel_registrations TO saas_preview_owner;
+    GRANT SELECT (
+        id, status, lease_expires_at
+    ) ON public.saas_preview_gateway_instances TO saas_preview_owner;
+    GRANT SELECT (
+        id, runner_id, runner_connection_generation, routing_generation,
+        gateway_instance_id, relay_subject, status, lease_expires_at
+    ) ON public.saas_runner_tunnel_placements TO saas_preview_owner;
+    GRANT SELECT (
+        id, placement_id, status, connection_generation, protocol_version,
+        source_revision, schema_revision, adapter_contract_version, capabilities,
+        capabilities_hash
+    ) ON public.saas_runner_registrations TO saas_preview_owner;
+
+    GRANT SELECT, INSERT, UPDATE, DELETE ON
+        public.saas_preview_executions,
+        public.saas_preview_commands,
+        public.saas_preview_sessions,
+        public.saas_preview_tunnel_registrations
+    TO saas_platform;
+END
+$$;
+
+-- PostgreSQL grants new functions to PUBLIC by default.  The production owner
+-- sanitizer removes that implicit authority from every SaaS-owned routine.
+-- These two SECURITY INVOKER predicates are referenced by CHECK constraints,
+-- so restore EXECUTE only to the exact writers whose GUC-bound source proofs
+-- the function bodies recognize.
+REVOKE EXECUTE ON FUNCTION public.approval_source_work_binding_is_valid(
+    uuid, text, uuid, uuid, uuid, text, uuid, text, text
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.approval_source_work_binding_is_valid(
+    uuid, text, uuid, uuid, uuid, text, uuid, text, text
+) TO
+    saas_approval_scheduler_enterprise,
+    saas_approval_scheduler_privacy,
+    saas_approval_scheduler_audit,
+    saas_approval_scheduler_support_customer,
+    saas_approval_scheduler_support_staff;
+
+REVOKE EXECUTE ON FUNCTION public.approval_notification_binding_is_valid(
+    text, uuid, uuid, uuid, text, uuid, uuid
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.approval_notification_binding_is_valid(
+    text, uuid, uuid, uuid, text, uuid, uuid
+) TO
+    saas_notification_scheduler,
+    saas_governance,
+    saas_platform_governance,
+    saas_approval_scheduler_enterprise,
+    saas_approval_scheduler_privacy,
+    saas_approval_scheduler_audit,
+    saas_approval_scheduler_support_customer,
+    saas_approval_scheduler_support_staff;
+
 -- Runtime Provider journal authority is intentionally independent from every
 -- control-plane application/runtime role.  Converge all historical grants
 -- before installing the fixed Fence-write and Receipt-write column sets.
@@ -1107,8 +1367,6 @@ $$;
 DO $$
 BEGIN
     IF to_regclass('public.saas_runtime_provider_operation_journal') IS NOT NULL THEN
-        REVOKE ALL ON SCHEMA public FROM saas_runtime_provider_journal;
-        GRANT USAGE ON SCHEMA public TO saas_runtime_provider_journal;
         GRANT SELECT ON saas_runtime_provider_operation_journal
         TO saas_runtime_provider_journal;
         GRANT INSERT (
@@ -1765,21 +2023,111 @@ GRANT INSERT ON saas_notification_delivery_attempts TO saas_notification_dispatc
 -- column-level grant.  A table-level REVOKE is insufficient in PostgreSQL:
 -- column ACLs survive it.  Converge all four onboarding authorities over every
 -- current public relation before rebuilding the exact projections below.  The
--- sequence, routine, schema, default-ACL, and database revocations keep an old
--- release from retaining an independent authority channel.
+-- sequence, routine, and default-ACL revocations keep an old release from
+-- retaining an independent authority channel. Database/schema authority is
+-- owned and verified by the preceding database-owner phase.
 DO $$
 DECLARE
-    target_role text;
-    target_table text;
-    target_privilege text;
-    column_list text;
-BEGIN
-    FOREACH target_role IN ARRAY ARRAY[
+    target_roles constant text[] := ARRAY[
         'saas_registration',
         'saas_onboarding',
         'saas_executor',
+        'saas_runner_agent',
         'saas_onboarding_status'
-    ]
+    ];
+    caller_role oid;
+    target_role text;
+    target_table text;
+    target_sequence text;
+    target_signature text;
+    target_privilege text;
+    column_list text;
+    unmanaged_foreign_authority integer;
+BEGIN
+    SELECT role.oid
+    INTO caller_role
+    FROM pg_roles AS role
+    WHERE role.rolname = current_user;
+
+    -- A narrow SaaS owner cannot revoke ACLs granted by the official owner or
+    -- any other authority. Reject such drift before the first mutation rather
+    -- than crossing an ownership boundary or leaving a hidden authority path.
+    SELECT count(*)
+    INTO unmanaged_foreign_authority
+    FROM (
+        SELECT 1
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(relation.relacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE grantee.rolname = ANY(target_roles)
+          AND (
+              namespace.nspname <> 'public'
+              OR relation.relowner <> caller_role
+          )
+        UNION ALL
+        SELECT 1
+        FROM pg_attribute AS attribute
+        JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE grantee.rolname = ANY(target_roles)
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+          AND (
+              namespace.nspname <> 'public'
+              OR relation.relowner <> caller_role
+          )
+        UNION ALL
+        SELECT 1
+        FROM pg_proc AS routine
+        JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+        CROSS JOIN LATERAL aclexplode(routine.proacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE grantee.rolname = ANY(target_roles)
+          AND (
+              namespace.nspname <> 'public'
+              OR routine.proowner <> caller_role
+          )
+        UNION ALL
+        SELECT 1
+        FROM pg_type AS type
+        CROSS JOIN LATERAL aclexplode(type.typacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE grantee.rolname = ANY(target_roles)
+        UNION ALL
+        SELECT 1
+        FROM pg_database AS database
+        CROSS JOIN LATERAL aclexplode(database.datacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE database.datname = current_database()
+          AND grantee.rolname = ANY(target_roles)
+          AND NOT (
+              acl.grantor = database.datdba
+              AND acl.privilege_type = 'CONNECT'
+              AND NOT acl.is_grantable
+          )
+        UNION ALL
+        SELECT 1
+        FROM pg_default_acl AS defaults
+        LEFT JOIN pg_namespace AS namespace
+          ON namespace.oid = defaults.defaclnamespace
+        CROSS JOIN LATERAL aclexplode(defaults.defaclacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE grantee.rolname = ANY(target_roles)
+          AND (
+              defaults.defaclrole <> caller_role
+              OR namespace.nspname IS DISTINCT FROM 'public'
+              OR defaults.defaclobjtype NOT IN ('r', 'S', 'f')
+          )
+    ) AS foreign_authority;
+    IF unmanaged_foreign_authority <> 0 THEN
+        RAISE EXCEPTION
+            'control-plane onboarding authority rejected: foreign owner ACL drifted';
+    END IF;
+
+    FOREACH target_role IN ARRAY target_roles
     LOOP
         FOR target_table IN
             SELECT relation.relname
@@ -1787,6 +2135,7 @@ BEGIN
             JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
             WHERE namespace.nspname = 'public'
               AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND relation.relowner = caller_role
             ORDER BY relation.relname
         LOOP
             EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
@@ -1808,26 +2157,108 @@ BEGIN
                 END LOOP;
             END IF;
         END LOOP;
-        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM ' ||
-            quote_ident(target_role);
-        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM ' ||
-            quote_ident(target_role);
-        EXECUTE 'REVOKE ALL PRIVILEGES ON SCHEMA public FROM ' || quote_ident(target_role);
-        EXECUTE 'GRANT USAGE ON SCHEMA public TO ' || quote_ident(target_role);
-        EXECUTE 'REVOKE CREATE, TEMPORARY ON DATABASE ' ||
-            quote_ident(current_database()) || ' FROM ' || quote_ident(target_role);
+        FOR target_sequence IN
+            SELECT relation.relname
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind = 'S'
+              AND relation.relowner = caller_role
+            ORDER BY relation.relname
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON SEQUENCE public.' ||
+                quote_ident(target_sequence) || ' FROM ' || quote_ident(target_role);
+        END LOOP;
+        FOR target_signature IN
+            SELECT 'public.' || quote_ident(routine.proname) || '(' ||
+                pg_get_function_identity_arguments(routine.oid) || ')'
+            FROM pg_proc AS routine
+            JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND routine.proowner = caller_role
+            ORDER BY routine.oid
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION ' || target_signature ||
+                ' FROM ' || quote_ident(target_role);
+        END LOOP;
     END LOOP;
 END
 $$;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
-        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+        saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
+        saas_onboarding_status;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON SEQUENCES FROM
-        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+        saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
+        saas_onboarding_status;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
-        saas_registration, saas_onboarding, saas_executor, saas_onboarding_status;
+        saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
+        saas_onboarding_status;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM
+        saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
+        saas_onboarding_status;
+
+-- Application-owned objects are default-deny to PUBLIC as well as to every
+-- service capability.  Extension members are excluded from the existing
+-- routine sweep: the separately pinned pg_trgm contract intentionally retains
+-- its upstream PUBLIC EXECUTE/USAGE projection.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM PUBLIC;
+DO $$
+DECLARE
+    target_signature text;
+    target_type text;
+BEGIN
+    FOR target_signature IN
+        SELECT 'public.' || quote_ident(routine.proname) || '(' ||
+            pg_get_function_identity_arguments(routine.oid) || ')'
+        FROM pg_proc AS routine
+        JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+        WHERE namespace.nspname = 'public'
+          AND routine.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_depend AS dependency
+              WHERE dependency.classid = 'pg_proc'::regclass
+                AND dependency.objid = routine.oid
+                AND dependency.refclassid = 'pg_extension'::regclass
+                AND dependency.deptype = 'e'
+          )
+        ORDER BY routine.oid
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION ' || target_signature ||
+            ' FROM PUBLIC';
+    END LOOP;
+    FOR target_type IN
+        SELECT 'public.' || quote_ident(type.typname)
+        FROM pg_type AS type
+        JOIN pg_namespace AS namespace ON namespace.oid = type.typnamespace
+        WHERE namespace.nspname = 'public'
+          AND type.typowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+          AND type.typelem = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_depend AS dependency
+              WHERE dependency.classid = 'pg_type'::regclass
+                AND dependency.objid = type.oid
+                AND dependency.refclassid = 'pg_extension'::regclass
+                AND dependency.deptype = 'e'
+          )
+        ORDER BY type.oid
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TYPE ' || target_type || ' FROM PUBLIC';
+    END LOOP;
+END
+$$;
 
 -- Rate-limit state is reachable only through three content-blind routines.
 -- Remove table-, column-, and routine-level ACL drift from every observed
@@ -2667,6 +3098,11 @@ GRANT SELECT, INSERT ON
 TO saas_executor;
 
 GRANT SELECT ON saas_runner_pools TO saas_executor;
+GRANT SELECT ON
+    saas_runtime_placements,
+    saas_runtime_partitions,
+    saas_runtime_resource_bindings
+TO saas_executor;
 GRANT SELECT (
     id, connect_host, connect_port, server_name, failure_domain,
     source_revision, adapter_contract_version, status, registered_at,
@@ -2679,6 +3115,28 @@ GRANT SELECT, INSERT, UPDATE ON
     saas_run_dispatches,
     saas_capability_tokens
 TO saas_executor;
+
+-- The global executor authority convergence above deliberately revokes every
+-- function ACL before reconstructing the final projection.  Restore only the
+-- two P0S9 incarnation-bound registration CAS functions (when present); never
+-- restore direct registration-table DML.
+DO $$
+BEGIN
+    IF to_regprocedure(
+        'public.saas_preview_issue_tunnel_registration_v1('
+        'uuid,bigint,text,text,uuid,text,text,text,integer)'
+    ) IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION
+            public.saas_preview_issue_tunnel_registration_v1(
+                uuid,bigint,text,text,uuid,text,text,text,integer
+            ),
+            public.saas_preview_revoke_tunnel_registration_v1(
+                uuid,bigint,text,text,uuid,text
+            )
+        TO saas_executor;
+    END IF;
+END
+$$;
 
 GRANT SELECT ON
     saas_repositories,
@@ -2699,6 +3157,95 @@ GRANT SELECT ON
     saas_execution_profiles,
     saas_secret_bindings
 TO saas_executor;
+-- PostgreSQL requires UPDATE privilege on at least one column before a
+-- SELECT ... FOR SHARE lock can serialize profile retirement.  Only the
+-- immutable primary-key column is granted.  The only executor UPDATE policy
+-- has exact-scope USING and WITH CHECK (false), so FORCE RLS still rejects
+-- every attempted write while permitting the row lock.
+GRANT UPDATE (id) ON saas_egress_policies TO saas_executor;
+GRANT UPDATE (id) ON saas_execution_profiles TO saas_executor;
+-- The authoritative queue projector locks its exact active route and pool in
+-- the same transaction as the selected profile. P0S8 supplies Project-scoped
+-- UPDATE eligibility plus false-WITH-CHECK mutation policies, so these four
+-- primary-key-only ACLs permit FOR SHARE but no real UPDATE or side channel.
+-- Runner-pool ordinary SELECT remains fleet-global for content-blind readiness;
+-- its FOR SHARE lock still intersects the Project-scoped UPDATE policy.
+REVOKE UPDATE ON
+    saas_runtime_placements,
+    saas_runtime_partitions,
+    saas_runtime_resource_bindings,
+    saas_runner_pools
+FROM saas_executor;
+GRANT UPDATE (id) ON saas_runtime_placements TO saas_executor;
+GRANT UPDATE (id) ON saas_runtime_partitions TO saas_executor;
+GRANT UPDATE (id) ON saas_runtime_resource_bindings TO saas_executor;
+GRANT UPDATE (id) ON saas_runner_pools TO saas_executor;
+
+DO $$
+DECLARE
+    expected_lock_acls integer;
+    unexpected_lock_acls integer;
+BEGIN
+    SELECT count(*)
+    INTO expected_lock_acls
+    FROM pg_attribute AS attribute
+    JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+    JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+    WHERE namespace.nspname = 'public'
+      AND relation.relname IN (
+          'saas_egress_policies', 'saas_execution_profiles',
+          'saas_runtime_placements', 'saas_runtime_partitions',
+          'saas_runtime_resource_bindings', 'saas_runner_pools'
+      )
+      AND attribute.attname = 'id'
+      AND grantee.rolname = 'saas_executor'
+      AND acl.privilege_type = 'UPDATE'
+      AND NOT acl.is_grantable;
+
+    SELECT count(*)
+    INTO unexpected_lock_acls
+    FROM (
+        SELECT relation.relname, NULL::text AS column_name, acl.privilege_type
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(
+            COALESCE(relation.relacl, acldefault('r', relation.relowner))
+        ) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE namespace.nspname = 'public'
+          AND relation.relname IN (
+              'saas_egress_policies', 'saas_execution_profiles',
+              'saas_runtime_placements', 'saas_runtime_partitions',
+              'saas_runtime_resource_bindings', 'saas_runner_pools'
+          )
+          AND grantee.rolname = 'saas_executor'
+          AND acl.privilege_type = 'UPDATE'
+        UNION ALL
+        SELECT relation.relname, attribute.attname, acl.privilege_type
+        FROM pg_attribute AS attribute
+        JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(attribute.attacl) AS acl
+        JOIN pg_roles AS grantee ON grantee.oid = acl.grantee
+        WHERE namespace.nspname = 'public'
+          AND relation.relname IN (
+              'saas_egress_policies', 'saas_execution_profiles',
+              'saas_runtime_placements', 'saas_runtime_partitions',
+              'saas_runtime_resource_bindings', 'saas_runner_pools'
+          )
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+          AND grantee.rolname = 'saas_executor'
+          AND acl.privilege_type = 'UPDATE'
+          AND (attribute.attname <> 'id' OR acl.is_grantable)
+    ) AS unexpected;
+    IF expected_lock_acls <> 6 OR unexpected_lock_acls <> 0 THEN
+        RAISE EXCEPTION 'dispatch profile lock authority projection rejected';
+    END IF;
+END
+$$;
 
 GRANT SELECT, INSERT, UPDATE ON
     saas_run_isolation_grants,
@@ -2809,7 +3356,18 @@ BEGIN
     SELECT count(*), min(membership.member)
     INTO incoming_count, incoming_oid
     FROM pg_auth_members AS membership
-    WHERE membership.roleid = compat_oid;
+    WHERE membership.roleid = compat_oid
+      AND (
+          NOT membership.admin_option
+          OR COALESCE(
+              (to_jsonb(membership) ->> 'inherit_option')::boolean,
+              true
+          )
+          OR COALESCE(
+              (to_jsonb(membership) ->> 'set_option')::boolean,
+              true
+          )
+      );
 
     IF incoming_count > 1 THEN
         RAISE EXCEPTION 'p0s3 N-1 Outbox compatibility login admission rejected';
@@ -3074,8 +3632,6 @@ BEGIN
     END LOOP;
 END
 $$;
-REVOKE ALL ON SCHEMA public FROM saas_dispatcher_n1_compat;
-GRANT USAGE ON SCHEMA public TO saas_dispatcher_n1_compat;
 -- Fixed 9451a64 query projection.  Never replace these with table privileges:
 -- an Outbox schema migration must drain the compat worker, apply DDL, and pass
 -- a fresh catalog admission before restart so new columns cannot be inherited.
@@ -3276,3 +3832,619 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_privacy_identity_tombstones,
     saas_control_plane_outbox
 TO saas_platform;
+
+-- P0S10 replaces the fleet-wide executor DSN in Runner pods with one LOGIN per
+-- immutable Runner incarnation.  The LOGIN inherits this NOLOGIN capability
+-- directly, but every row policy also authenticates the unforgeable
+-- session_user spelling runner_<uuidhex>_g<generation>.  No SET ROLE path can
+-- satisfy that predicate and this role never inherits saas_executor.
+DO $$
+DECLARE
+    schema_revision text;
+    canonical_json_function oid;
+    canonical_json_sha256_function oid;
+    worktree_authority_function oid;
+    identity_function oid;
+    registered_function oid;
+    allocate_worktree_function oid;
+    append_worktree_event_function oid;
+    materialization_grant_function oid;
+    transition_worktree_function oid;
+    issue_isolation_grant_function oid;
+    isolation_snapshot_function oid;
+    isolation_metadata_function oid;
+    redeem_isolation_grant_function oid;
+    claim_secret_lease_function oid;
+    preview_authority_function oid;
+    claim_preview_start_function oid;
+    claim_preview_stop_function oid;
+    transition_preview_function oid;
+    observed_policy_count integer;
+    observed_policy_relations integer;
+    unsafe_policy_relations integer;
+    policy_contract_hash text;
+    support_policy_count integer;
+    support_policy_relations integer;
+    support_policy_contract_hash text;
+    function_contract_hash text;
+    safe_function_acls integer;
+    observed_function_acls integer;
+    unsafe_function_acl record;
+BEGIN
+    SELECT version_num INTO STRICT schema_revision
+    FROM public.saas_alembic_version;
+    identity_function := to_regprocedure(
+        'public.saas_runner_agent_identity_v1(uuid,bigint)'
+    );
+    canonical_json_function := to_regprocedure(
+        'public.saas_canonical_json_v1(jsonb)'
+    );
+    canonical_json_sha256_function := to_regprocedure(
+        'public.saas_canonical_json_sha256_v1(jsonb)'
+    );
+    worktree_authority_function := to_regprocedure(
+        'public.saas_runner_worktree_authority_live_v1('
+        'text,uuid,uuid,uuid,text,bigint,boolean)'
+    );
+    registered_function := to_regprocedure(
+        'public.saas_runner_agent_registered_v1(uuid,bigint)'
+    );
+    allocate_worktree_function := to_regprocedure(
+        'public.saas_runner_allocate_worktree_v1('
+        'text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid)'
+    );
+    append_worktree_event_function := to_regprocedure(
+        'public.saas_runner_append_worktree_event_v1(uuid,text,jsonb,text)'
+    );
+    materialization_grant_function := to_regprocedure(
+        'public.saas_runner_materialization_grant_v1(uuid,uuid,bigint,bigint,text)'
+    );
+    transition_worktree_function := to_regprocedure(
+        'public.saas_runner_transition_worktree_v1('
+        'text,uuid,uuid,bigint,bigint,text,bigint,boolean,integer,'
+        'text,text,text,text,text)'
+    );
+    issue_isolation_grant_function := to_regprocedure(
+        'public.saas_runner_issue_isolation_grant_v1('
+        'text,uuid,uuid,uuid,bigint,bigint,uuid,text,integer)'
+    );
+    isolation_snapshot_function := to_regprocedure(
+        'public.saas_runner_isolation_snapshot_v1(text,uuid,uuid)'
+    );
+    isolation_metadata_function := to_regprocedure(
+        'public.saas_runner_isolation_metadata_v1(text,uuid,uuid)'
+    );
+    redeem_isolation_grant_function := to_regprocedure(
+        'public.saas_runner_redeem_isolation_grant_v1(text,uuid,uuid,jsonb)'
+    );
+    claim_secret_lease_function := to_regprocedure(
+        'public.saas_runner_claim_secret_lease_v1(text,uuid,uuid)'
+    );
+    preview_authority_function := to_regprocedure(
+        'public.saas_runner_preview_authority_v1('
+        'text,uuid,uuid,uuid,bigint,bigint)'
+    );
+    claim_preview_start_function := to_regprocedure(
+        'public.saas_runner_claim_preview_start_v1('
+        'text,uuid,uuid,uuid,bigint,bigint,text)'
+    );
+    claim_preview_stop_function := to_regprocedure(
+        'public.saas_runner_claim_preview_stop_v1('
+        'text,uuid,uuid,uuid,bigint,bigint,text)'
+    );
+    transition_preview_function := to_regprocedure(
+        'public.saas_runner_transition_preview_v1('
+        'text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,'
+        'boolean,boolean,text)'
+    );
+    IF schema_revision NOT IN ('p0s000000010', 'p0s000000011') THEN
+        IF canonical_json_function IS NOT NULL
+           OR canonical_json_sha256_function IS NOT NULL
+           OR worktree_authority_function IS NOT NULL
+           OR identity_function IS NOT NULL OR registered_function IS NOT NULL
+           OR allocate_worktree_function IS NOT NULL
+           OR append_worktree_event_function IS NOT NULL
+           OR materialization_grant_function IS NOT NULL
+           OR transition_worktree_function IS NOT NULL
+           OR issue_isolation_grant_function IS NOT NULL
+           OR isolation_snapshot_function IS NOT NULL
+           OR isolation_metadata_function IS NOT NULL
+           OR redeem_isolation_grant_function IS NOT NULL
+           OR claim_secret_lease_function IS NOT NULL
+           OR preview_authority_function IS NOT NULL
+           OR claim_preview_start_function IS NOT NULL
+           OR claim_preview_stop_function IS NOT NULL
+           OR transition_preview_function IS NOT NULL
+           OR to_regclass('public.uq_worktree_runner_run_fence_v1') IS NOT NULL
+           OR to_regclass(
+                'public.uq_runner_isolation_grant_capability_worktree_v1'
+           ) IS NOT NULL
+           OR EXISTS (
+            SELECT 1
+            FROM pg_policy AS policy
+            WHERE (SELECT oid FROM pg_roles WHERE rolname = 'saas_runner_agent') =
+                  ANY(policy.polroles)
+               OR policy.polname ~ '^rls_.*_runner_api_definer$'
+        ) THEN
+            RAISE EXCEPTION 'P0S10 Runner authority found on an older schema revision';
+        END IF;
+        RETURN;
+    END IF;
+    IF canonical_json_function IS NULL OR canonical_json_sha256_function IS NULL
+       OR worktree_authority_function IS NULL
+       OR identity_function IS NULL OR registered_function IS NULL
+       OR allocate_worktree_function IS NULL
+       OR append_worktree_event_function IS NULL
+       OR materialization_grant_function IS NULL
+       OR transition_worktree_function IS NULL
+       OR issue_isolation_grant_function IS NULL
+       OR isolation_snapshot_function IS NULL
+       OR isolation_metadata_function IS NULL
+       OR redeem_isolation_grant_function IS NULL
+       OR claim_secret_lease_function IS NULL
+       OR preview_authority_function IS NULL
+       OR claim_preview_start_function IS NULL
+       OR claim_preview_stop_function IS NULL
+       OR transition_preview_function IS NULL THEN
+        RAISE EXCEPTION 'P0S10 Runner authority object contract rejected';
+    END IF;
+
+    SELECT count(*), count(DISTINCT policy.polrelid)
+    INTO observed_policy_count, observed_policy_relations
+    FROM pg_policy AS policy
+    JOIN pg_class AS relation ON relation.oid = policy.polrelid
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND (SELECT oid FROM pg_roles WHERE rolname = 'saas_runner_agent') =
+          ANY(policy.polroles);
+    SELECT count(*)
+    INTO unsafe_policy_relations
+    FROM (
+        SELECT DISTINCT relation.oid
+        FROM pg_policy AS policy
+        JOIN pg_class AS relation ON relation.oid = policy.polrelid
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND (SELECT oid FROM pg_roles WHERE rolname = 'saas_runner_agent') =
+              ANY(policy.polroles)
+          AND (
+              NOT relation.relrowsecurity
+              OR NOT relation.relforcerowsecurity
+              OR relation.relowner <> (
+                  SELECT registration.relowner
+                  FROM pg_class AS registration
+                  WHERE registration.oid =
+                        'public.saas_runner_registrations'::regclass
+              )
+          )
+    ) AS unsafe_relation;
+    IF observed_policy_count <> 36 OR observed_policy_relations <> 18
+       OR unsafe_policy_relations <> 0
+    THEN
+        RAISE EXCEPTION 'P0S10 Runner RLS policy contract rejected';
+    END IF;
+    SELECT encode(sha256(convert_to(string_agg(
+        relation.relname || '|' || policy.polname || '|' ||
+        policy.polcmd::text || '|' || policy.polpermissive::text || '|' ||
+        array_to_string(ARRAY(
+            SELECT role.rolname
+            FROM unnest(policy.polroles) AS role_oid
+            JOIN pg_roles AS role ON role.oid = role_oid
+            ORDER BY role.rolname
+        ), ',') || '|' ||
+        COALESCE(pg_get_expr(policy.polqual, policy.polrelid, false), '') || '|' ||
+        COALESCE(pg_get_expr(policy.polwithcheck, policy.polrelid, false), '') || '|' ||
+        relation.relrowsecurity::text || '|' ||
+        relation.relforcerowsecurity::text || '|' ||
+        (relation.relowner = (
+            SELECT registration.relowner
+            FROM pg_class AS registration
+            WHERE registration.oid =
+                  'public.saas_runner_registrations'::regclass
+        ))::text,
+        E'\n' ORDER BY relation.relname, policy.polname
+    ), 'UTF8')), 'hex')
+    INTO policy_contract_hash
+    FROM pg_policy AS policy
+    JOIN pg_class AS relation ON relation.oid = policy.polrelid
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND (SELECT oid FROM pg_roles WHERE rolname = 'saas_runner_agent') =
+          ANY(policy.polroles);
+    -- pg_dump/pg_restore reparses the three varchar-array predicates used by
+    -- Runner registration and Worktree selection into an equivalent text-array
+    -- AST.  Admit only the exact migrated or exact logical-roundtrip catalogs;
+    -- counts, owners, FORCE RLS, roles, commands, and every other expression
+    -- remain part of the digest above.
+    IF policy_contract_hash IS DISTINCT FROM
+       'd312cd026e9669e0fb5e723c390c8f0e93c5566ff691ad6d4a41870147d17f0a'
+       AND policy_contract_hash IS DISTINCT FROM
+       '3ef7ef89c9dc74b75a3a22d8c6e31ac48d48d38f15aae1c17a9a654db9b5d325'
+    THEN
+        RAISE EXCEPTION 'P0S10 Runner RLS policy contract rejected';
+    END IF;
+    SELECT count(*), count(DISTINCT policy.polrelid),
+        encode(sha256(convert_to(string_agg(
+            relation.relname || '|' || policy.polname || '|' ||
+            policy.polcmd::text || '|' || policy.polpermissive::text || '|' ||
+            array_to_string(ARRAY(
+                SELECT CASE WHEN role_oid = 0 THEN 'PUBLIC' ELSE role.rolname END
+                FROM unnest(policy.polroles) AS role_oid
+                LEFT JOIN pg_roles AS role ON role.oid = role_oid
+                ORDER BY 1
+            ), ',') || '|' ||
+            COALESCE(pg_get_expr(policy.polqual, policy.polrelid, false), '') || '|' ||
+            COALESCE(pg_get_expr(policy.polwithcheck, policy.polrelid, false), '') || '|' ||
+            relation.relrowsecurity::text || '|' ||
+            relation.relforcerowsecurity::text || '|' ||
+            (relation.relowner = (
+                SELECT registration.relowner FROM pg_class AS registration
+                WHERE registration.oid =
+                      'public.saas_runner_registrations'::regclass
+            ))::text,
+            E'\n' ORDER BY relation.relname, policy.polname
+        ), 'UTF8')), 'hex')
+    INTO support_policy_count, support_policy_relations,
+        support_policy_contract_hash
+    FROM pg_policy AS policy
+    JOIN pg_class AS relation ON relation.oid = policy.polrelid
+    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND policy.polname ~ '^rls_.*_runner_api_definer$';
+    IF support_policy_count <> 19 OR support_policy_relations <> 19
+       OR support_policy_contract_hash IS DISTINCT FROM
+          'dc0b05ef2b6602113a0158cab27b3e787f39edd8b285ab40bc10aa5fd78bd65e'
+    THEN
+        RAISE EXCEPTION 'P0S10 Runner API support policy contract rejected';
+    END IF;
+    SELECT encode(sha256(convert_to(string_agg(
+        procedure.proname || '|' || oidvectortypes(procedure.proargtypes) ||
+        '|' || language.lanname || '|' || procedure.prokind::text || '|' ||
+        procedure.prosecdef::text || '|' || procedure.proleakproof::text ||
+        '|' || procedure.provolatile::text || '|' ||
+        procedure.proparallel::text || '|' ||
+        COALESCE(array_to_string(procedure.proconfig, E'\x1f'), '') || '|' ||
+        pg_get_function_result(procedure.oid) || '|' || procedure.prosrc ||
+        '|' || (procedure.proowner = (
+            SELECT relation.relowner FROM pg_class AS relation
+            WHERE relation.oid =
+                  'public.saas_runner_registrations'::regclass
+        ))::text,
+        E'\n' ORDER BY procedure.proname
+    ), 'UTF8')), 'hex')
+    INTO function_contract_hash
+    FROM pg_proc AS procedure
+    JOIN pg_namespace AS namespace
+      ON namespace.oid = procedure.pronamespace
+    JOIN pg_language AS language ON language.oid = procedure.prolang
+    WHERE namespace.nspname = 'public'
+      AND procedure.proname IN (
+          'saas_canonical_json_v1',
+          'saas_canonical_json_sha256_v1',
+          'saas_runner_worktree_authority_live_v1',
+          'saas_runner_agent_identity_v1',
+          'saas_runner_agent_registered_v1',
+          'saas_runner_allocate_worktree_v1',
+          'saas_runner_append_worktree_event_v1',
+          'saas_runner_materialization_grant_v1',
+          'saas_runner_transition_worktree_v1',
+          'saas_runner_issue_isolation_grant_v1',
+          'saas_runner_isolation_snapshot_v1',
+          'saas_runner_isolation_metadata_v1',
+          'saas_runner_redeem_isolation_grant_v1',
+          'saas_runner_claim_secret_lease_v1',
+          'saas_runner_preview_authority_v1',
+          'saas_runner_claim_preview_start_v1',
+          'saas_runner_claim_preview_stop_v1',
+          'saas_runner_transition_preview_v1'
+      );
+    IF function_contract_hash IS DISTINCT FROM
+       '43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02'
+    THEN
+        RAISE EXCEPTION 'P0S10 Runner function contract rejected';
+    END IF;
+
+    -- Remove PostgreSQL's implicit PUBLIC EXECUTE and any replay drift before
+    -- restoring the sole invoker.  The owner sanitizer earlier in this file
+    -- has already removed every stale table, column, sequence, and routine ACL
+    -- from saas_runner_agent.
+    REVOKE ALL ON FUNCTION
+        public.saas_canonical_json_v1(jsonb),
+        public.saas_canonical_json_sha256_v1(jsonb),
+        public.saas_runner_worktree_authority_live_v1(
+            text,uuid,uuid,uuid,text,bigint,boolean
+        )
+    FROM PUBLIC;
+    REVOKE ALL ON FUNCTION
+        public.saas_runner_agent_identity_v1(uuid,bigint)
+    FROM PUBLIC;
+    REVOKE ALL ON FUNCTION
+        public.saas_runner_agent_registered_v1(uuid,bigint)
+    FROM PUBLIC;
+    REVOKE ALL ON FUNCTION
+        public.saas_runner_allocate_worktree_v1(
+            text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid
+        ),
+        public.saas_runner_append_worktree_event_v1(uuid,text,jsonb,text),
+        public.saas_runner_materialization_grant_v1(uuid,uuid,bigint,bigint,text),
+        public.saas_runner_transition_worktree_v1(
+            text,uuid,uuid,bigint,bigint,text,bigint,boolean,integer,
+            text,text,text,text,text
+        ),
+        public.saas_runner_issue_isolation_grant_v1(
+            text,uuid,uuid,uuid,bigint,bigint,uuid,text,integer
+        ),
+        public.saas_runner_isolation_snapshot_v1(text,uuid,uuid),
+        public.saas_runner_isolation_metadata_v1(text,uuid,uuid),
+        public.saas_runner_redeem_isolation_grant_v1(text,uuid,uuid,jsonb),
+        public.saas_runner_claim_secret_lease_v1(text,uuid,uuid),
+        public.saas_runner_preview_authority_v1(
+            text,uuid,uuid,uuid,bigint,bigint
+        ),
+        public.saas_runner_claim_preview_start_v1(
+            text,uuid,uuid,uuid,bigint,bigint,text
+        ),
+        public.saas_runner_claim_preview_stop_v1(
+            text,uuid,uuid,uuid,bigint,bigint,text
+        ),
+        public.saas_runner_transition_preview_v1(
+            text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,
+            boolean,boolean,text
+        )
+    FROM PUBLIC;
+    FOR unsafe_function_acl IN
+        SELECT DISTINCT
+            'public.' || quote_ident(procedure.proname) || '(' ||
+                pg_get_function_identity_arguments(procedure.oid) || ')' AS signature,
+            pg_get_userbyid(acl.grantee) AS grantee_name
+        FROM pg_proc AS procedure
+        CROSS JOIN LATERAL aclexplode(
+            COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+        ) AS acl
+        WHERE procedure.oid IN (
+            canonical_json_function, canonical_json_sha256_function,
+            worktree_authority_function,
+            identity_function, registered_function, allocate_worktree_function,
+            append_worktree_event_function, materialization_grant_function,
+            transition_worktree_function, issue_isolation_grant_function,
+            isolation_snapshot_function, isolation_metadata_function,
+            redeem_isolation_grant_function, claim_secret_lease_function,
+            preview_authority_function, claim_preview_start_function,
+            claim_preview_stop_function, transition_preview_function
+        )
+          AND acl.grantee NOT IN (0, procedure.proowner)
+          AND pg_get_userbyid(acl.grantee) <> 'saas_runner_agent'
+    LOOP
+        EXECUTE 'REVOKE ALL ON FUNCTION ' || unsafe_function_acl.signature ||
+            ' FROM ' || quote_ident(unsafe_function_acl.grantee_name);
+    END LOOP;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_runner_agent_identity_v1(uuid,bigint)
+    TO saas_runner_agent;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_runner_agent_registered_v1(uuid,bigint)
+    TO saas_runner_agent;
+    GRANT EXECUTE ON FUNCTION
+        public.saas_runner_allocate_worktree_v1(
+            text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid
+        ),
+        public.saas_runner_materialization_grant_v1(uuid,uuid,bigint,bigint,text),
+        public.saas_runner_transition_worktree_v1(
+            text,uuid,uuid,bigint,bigint,text,bigint,boolean,integer,
+            text,text,text,text,text
+        ),
+        public.saas_runner_issue_isolation_grant_v1(
+            text,uuid,uuid,uuid,bigint,bigint,uuid,text,integer
+        ),
+        public.saas_runner_isolation_metadata_v1(text,uuid,uuid),
+        public.saas_runner_redeem_isolation_grant_v1(text,uuid,uuid,jsonb),
+        public.saas_runner_claim_secret_lease_v1(text,uuid,uuid),
+        public.saas_runner_claim_preview_start_v1(
+            text,uuid,uuid,uuid,bigint,bigint,text
+        ),
+        public.saas_runner_claim_preview_stop_v1(
+            text,uuid,uuid,uuid,bigint,bigint,text
+        ),
+        public.saas_runner_transition_preview_v1(
+            text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,
+            boolean,boolean,text
+        )
+    TO saas_runner_agent;
+
+    GRANT SELECT ON
+        public.saas_alembic_version,
+        public.saas_run_dispatches,
+        public.saas_runs,
+        public.saas_repositories,
+        public.saas_changeset_groups,
+        public.saas_changesets,
+        public.saas_worktree_quotas,
+        public.saas_worktree_events,
+        public.saas_egress_policies,
+        public.saas_execution_profiles,
+        public.saas_secret_bindings,
+        public.saas_preview_sessions
+    TO saas_runner_agent;
+    GRANT SELECT (
+        id, pool_id, placement_id, instance_key, failure_domain, status,
+        connection_generation, protocol_version, source_revision, schema_revision,
+        adapter_contract_version, capabilities, capabilities_hash,
+        max_concurrency, active_leases, last_heartbeat_at, registered_at, updated_at
+    ) ON public.saas_runner_registrations TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, run_id, runner_id,
+        runner_connection_generation, dispatch_generation, fence_token,
+        allowed_actions, resource_scope, issued_at, expires_at, revoked_at,
+        revocation_reason
+    ) ON public.saas_capability_tokens TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, change_set_id, run_id, runner_id,
+        created_by, created_by_service_account_id, opaque_runtime_key, access_mode,
+        status, lease_generation, run_fence_token, runner_connection_generation,
+        lease_expires_at, heartbeat_at, maximum_lifetime_at, reserved_bytes,
+        actual_bytes, dirty, recovery_artifact_ref, environment_snapshot_ref,
+        event_sequence, released_at, quarantine_reason, deleted_at, created_at,
+        updated_at
+    ) ON public.saas_worktree_instances TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, run_id, runner_id, worktree_id,
+        execution_profile_id, capability_id, run_fence_token,
+        runner_connection_generation, worktree_lease_generation, grant_hash,
+        status, expires_at, redeemed_at, revoked_at, created_at
+    ) ON public.saas_run_isolation_grants TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, isolation_grant_id,
+        secret_binding_id, run_id, runner_id, run_fence_token,
+        runner_connection_generation, status, expires_at, redeemed_at,
+        revoked_at, created_at
+    ) ON public.saas_secret_access_leases TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, source_run_id, child_run_id,
+        change_set_id, created_by, profile, idempotency_key_hash, request_hash,
+        opaque_preview_key, preview_host, status, command_generation, runner_id,
+        placement_id, worktree_id, run_fence_token, runner_connection_generation,
+        worktree_lease_generation, exchange_issued_at, exchange_consumed_at,
+        expires_at, ready_at, terminal_at, failure_code, version, created_at,
+        updated_at
+    ) ON public.saas_preview_executions TO saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, preview_execution_id, command_type,
+        generation, request_hash, status, runner_id, placement_id,
+        runner_connection_generation, run_fence_token, claimed_by_gateway,
+        attempt_count, available_at, claimed_at, completed_at, failure_code,
+        created_at, updated_at
+    ) ON public.saas_preview_commands TO saas_runner_agent;
+    REVOKE SELECT ON public.saas_preview_sessions FROM saas_runner_agent;
+    GRANT SELECT (
+        id, tenant_id, space_id, project_id, preview_execution_id, generation,
+        status, expires_at, last_authenticated_at, rotated_at, revoked_at,
+        created_at, updated_at
+    ) ON public.saas_preview_sessions TO saas_runner_agent;
+
+    -- All business mutations below this boundary are owner-executed through
+    -- exact SECURITY DEFINER APIs.  Runner logins receive no raw INSERT,
+    -- DELETE, or mutable-column UPDATE authority on Worktree, evidence,
+    -- isolation, secret, or Preview lifecycle tables.
+
+    SELECT count(*), count(*) FILTER (
+        WHERE (
+            acl.grantee = procedure.proowner
+            AND acl.grantor = procedure.proowner
+            AND acl.privilege_type = 'EXECUTE'
+            AND NOT acl.is_grantable
+        ) OR (
+            pg_get_userbyid(acl.grantee) = 'saas_runner_agent'
+            AND acl.grantor = procedure.proowner
+            AND acl.privilege_type = 'EXECUTE'
+            AND NOT acl.is_grantable
+        )
+    )
+    INTO observed_function_acls, safe_function_acls
+    FROM pg_proc AS procedure
+    CROSS JOIN LATERAL aclexplode(
+        COALESCE(procedure.proacl, acldefault('f', procedure.proowner))
+    ) AS acl
+    WHERE procedure.oid IN (
+        canonical_json_function, canonical_json_sha256_function,
+        worktree_authority_function,
+        identity_function, registered_function, allocate_worktree_function,
+        append_worktree_event_function, materialization_grant_function,
+        transition_worktree_function, issue_isolation_grant_function,
+        isolation_snapshot_function, isolation_metadata_function,
+        redeem_isolation_grant_function, claim_secret_lease_function,
+        preview_authority_function, claim_preview_start_function,
+        claim_preview_stop_function, transition_preview_function
+    );
+    IF observed_function_acls <> 30 OR safe_function_acls <> 30 OR NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS procedure
+        JOIN pg_language AS language ON language.oid = procedure.prolang
+        WHERE procedure.oid = identity_function
+          AND language.lanname = 'sql'
+          AND procedure.prokind = 'f'
+          AND NOT procedure.prosecdef
+          AND NOT procedure.proleakproof
+          AND procedure.provolatile = 's'
+          AND procedure.proparallel = 's'
+          AND procedure.proconfig = ARRAY['search_path=pg_catalog']::text[]
+          AND pg_get_function_result(procedure.oid) = 'boolean'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS procedure
+        JOIN pg_language AS language ON language.oid = procedure.prolang
+        WHERE procedure.oid = registered_function
+          AND language.lanname = 'sql'
+          AND procedure.prokind = 'f'
+          AND NOT procedure.prosecdef
+          AND NOT procedure.proleakproof
+          AND procedure.provolatile = 's'
+          AND procedure.proparallel = 's'
+          AND procedure.proconfig = ARRAY['search_path=pg_catalog']::text[]
+          AND pg_get_function_result(procedure.oid) = 'boolean'
+          AND procedure.proowner = (
+              SELECT relation.relowner
+              FROM pg_class AS relation
+              WHERE relation.oid =
+                    'public.saas_runner_registrations'::regclass
+          )
+    ) OR has_function_privilege(
+        'saas_runner_agent', canonical_json_function, 'EXECUTE'
+    ) OR has_function_privilege(
+        'saas_runner_agent', canonical_json_sha256_function, 'EXECUTE'
+    ) OR has_function_privilege(
+        'saas_runner_agent', worktree_authority_function, 'EXECUTE'
+    ) OR has_function_privilege(
+        'saas_runner_agent', append_worktree_event_function, 'EXECUTE'
+    ) OR has_function_privilege(
+        'saas_runner_agent', isolation_snapshot_function, 'EXECUTE'
+    ) OR has_function_privilege(
+        'saas_runner_agent', preview_authority_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', allocate_worktree_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', materialization_grant_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', transition_worktree_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', issue_isolation_grant_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', isolation_metadata_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', redeem_isolation_grant_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', claim_secret_lease_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', claim_preview_start_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', claim_preview_stop_function, 'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'saas_runner_agent', transition_preview_function, 'EXECUTE'
+    ) OR (
+        SELECT count(*) <> 16
+        FROM pg_proc AS procedure
+        WHERE procedure.oid IN (
+            canonical_json_function, canonical_json_sha256_function,
+            worktree_authority_function,
+            allocate_worktree_function, append_worktree_event_function,
+            materialization_grant_function, transition_worktree_function,
+            issue_isolation_grant_function, isolation_snapshot_function,
+            isolation_metadata_function, redeem_isolation_grant_function,
+            claim_secret_lease_function, preview_authority_function,
+            claim_preview_start_function, claim_preview_stop_function,
+            transition_preview_function
+        )
+          AND procedure.prosecdef
+          AND NOT procedure.proleakproof
+          AND procedure.proconfig =
+              ARRAY['search_path=pg_catalog, pg_temp']::text[]
+          AND procedure.proowner = (
+              SELECT relation.relowner
+              FROM pg_class AS relation
+              WHERE relation.oid =
+                    'public.saas_runner_registrations'::regclass
+          )
+    ) THEN
+        RAISE EXCEPTION 'P0S10 Runner identity function authority rejected';
+    END IF;
+END
+$$;

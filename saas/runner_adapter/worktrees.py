@@ -20,6 +20,7 @@ import stat
 import subprocess
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -95,6 +96,7 @@ class WorktreeLifecycleAuthority(Protocol):
         lease_token: str,
         actual_bytes: int,
         dirty: bool,
+        lease_duration: timedelta | None = None,
     ) -> WorktreeMutation: ...
 
     def checkpoint(
@@ -142,6 +144,16 @@ class RecoveryArtifactStore(Protocol):
     def put(self, artifact: CheckpointArtifact) -> str: ...
 
     def get(self, artifact_ref: str) -> CheckpointArtifact: ...
+
+
+class BinaryArtifactStore(Protocol):
+    """Minimal official ArtifactStore surface used by durable recovery."""
+
+    def put(self, key: str, data: bytes) -> None: ...
+
+    def get(self, key: str) -> bytes: ...
+
+    def exists(self, key: str) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,6 +442,131 @@ class FilesystemRecoveryArtifactStore:
         return CheckpointArtifact(repository_digest, base_revision, head_revision, bundle)
 
 
+class ObjectRecoveryArtifactStore:
+    """Content-addressed Worktree recovery over a durable binary object store."""
+
+    def __init__(
+        self,
+        store: BinaryArtifactStore,
+        *,
+        maximum_bundle_bytes: int = 512 * 1024 * 1024,
+    ) -> None:
+        if maximum_bundle_bytes <= 0 or maximum_bundle_bytes > 8 * 1024 * 1024 * 1024:
+            raise RunnerWorktreeAdapterError(
+                "artifact_size_limit_invalid",
+                "Checkpoint bundle limit must be between 1 byte and 8 GiB",
+            )
+        self._store = store
+        self._maximum_bundle_bytes = maximum_bundle_bytes
+
+    @staticmethod
+    def _keys(digest: str) -> tuple[str, str]:
+        prefix = f"worktree-recovery/v1/sha256/{digest[:2]}/{digest}"
+        return f"{prefix}.json", f"{prefix}.bundle"
+
+    def _put_exact(self, key: str, payload: bytes) -> None:
+        if self._store.exists(key):
+            if self._store.get(key) != payload:
+                raise RunnerWorktreeAdapterError(
+                    "artifact_digest_collision", "Checkpoint digest content mismatch"
+                )
+            return
+        self._store.put(key, payload)
+        if self._store.get(key) != payload:
+            raise RunnerWorktreeAdapterError(
+                "artifact_persistence_failed", "Checkpoint artifact persistence failed"
+            )
+
+    def put(self, artifact: CheckpointArtifact) -> str:
+        _validate_object_id(artifact.base_revision, field="base_revision")
+        _validate_object_id(artifact.head_revision, field="head_revision")
+        if not re.fullmatch(r"[0-9a-f]{64}", artifact.repository_binding_digest):
+            raise RunnerWorktreeAdapterError(
+                "artifact_repository_digest_invalid",
+                "Checkpoint Repository digest is invalid",
+            )
+        if len(artifact.bundle) > self._maximum_bundle_bytes:
+            raise RunnerWorktreeAdapterError(
+                "artifact_too_large", "Checkpoint bundle exceeds the configured size limit"
+            )
+        manifest = {
+            "format_version": _ARTIFACT_VERSION,
+            "repository_binding_digest": artifact.repository_binding_digest,
+            "base_revision": artifact.base_revision,
+            "head_revision": artifact.head_revision,
+            "bundle_sha256": hashlib.sha256(artifact.bundle).hexdigest(),
+        }
+        manifest_bytes = _canonical_json(manifest)
+        digest = hashlib.sha256(manifest_bytes + b"\0" + artifact.bundle).hexdigest()
+        manifest_key, bundle_key = self._keys(digest)
+        # Publish payload first and the validating manifest last.  Exact reads
+        # after each write turn eventual/partial persistence into a fail-closed
+        # error while allowing an identical interrupted upload to resume.
+        self._put_exact(bundle_key, artifact.bundle)
+        self._put_exact(manifest_key, manifest_bytes)
+        return f"wta_sha256_{digest}"
+
+    def get(self, artifact_ref: str) -> CheckpointArtifact:
+        match = _ARTIFACT_REF.fullmatch(artifact_ref)
+        if match is None:
+            raise RunnerWorktreeAdapterError(
+                "artifact_ref_invalid", "Checkpoint reference is not content-addressed"
+            )
+        digest = match.group(1)
+        manifest_key, bundle_key = self._keys(digest)
+        try:
+            manifest_bytes = self._store.get(manifest_key)
+            bundle = self._store.get(bundle_key)
+        except KeyError as error:
+            raise RunnerWorktreeAdapterError(
+                "artifact_unavailable", "Checkpoint artifact is unavailable"
+            ) from error
+        if (
+            not isinstance(manifest_bytes, bytes)
+            or not isinstance(bundle, bytes)
+            or len(manifest_bytes) > 65_536
+            or len(bundle) > self._maximum_bundle_bytes
+        ):
+            raise RunnerWorktreeAdapterError(
+                "artifact_too_large", "Checkpoint artifact exceeds its configured size limit"
+            )
+        try:
+            manifest = json.loads(manifest_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RunnerWorktreeAdapterError(
+                "artifact_manifest_invalid", "Checkpoint manifest is invalid"
+            ) from error
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("format_version") != _ARTIFACT_VERSION
+            or _canonical_json(manifest) != manifest_bytes
+            or hashlib.sha256(manifest_bytes + b"\0" + bundle).hexdigest() != digest
+            or manifest.get("bundle_sha256") != hashlib.sha256(bundle).hexdigest()
+        ):
+            raise RunnerWorktreeAdapterError(
+                "artifact_integrity_failed", "Checkpoint artifact integrity check failed"
+            )
+        repository_digest = manifest.get("repository_binding_digest")
+        base_revision = manifest.get("base_revision")
+        head_revision = manifest.get("head_revision")
+        if not all(
+            isinstance(item, str) for item in (repository_digest, base_revision, head_revision)
+        ):
+            raise RunnerWorktreeAdapterError(
+                "artifact_manifest_invalid", "Checkpoint manifest fields are invalid"
+            )
+        assert isinstance(repository_digest, str)
+        assert isinstance(base_revision, str)
+        assert isinstance(head_revision, str)
+        if not re.fullmatch(r"[0-9a-f]{64}", repository_digest):
+            raise RunnerWorktreeAdapterError(
+                "artifact_manifest_invalid", "Checkpoint Repository digest is invalid"
+            )
+        _validate_object_id(base_revision, field="artifact_base_revision")
+        _validate_object_id(head_revision, field="artifact_head_revision")
+        return CheckpointArtifact(repository_digest, base_revision, head_revision, bundle)
+
+
 class RunnerWorktreeAdapter:
     """Materialize, checkpoint, rebuild, and delete one fenced physical checkout."""
 
@@ -442,6 +579,7 @@ class RunnerWorktreeAdapter:
         authority: WorktreeLifecycleAuthority,
         mirrors: RepositoryMirrorResolver,
         recovery_artifacts: RecoveryArtifactStore,
+        runner_id: UUID | None = None,
         git_timeout_seconds: int = _GIT_TIMEOUT_SECONDS,
     ) -> None:
         if git_timeout_seconds <= 0 or git_timeout_seconds > 900:
@@ -459,6 +597,11 @@ class RunnerWorktreeAdapter:
             }
         )
         self._authority = authority
+        if runner_id is not None and runner_id.int == 0:
+            raise RunnerWorktreeAdapterError(
+                "runner_identity_invalid", "Runner identity must not be nil"
+            )
+        self._runner_id = runner_id
         self._mirrors = mirrors
         self._recovery_artifacts = recovery_artifacts
         self._git_timeout_seconds = git_timeout_seconds
@@ -466,6 +609,11 @@ class RunnerWorktreeAdapter:
 
     def materialize(self, lease: WorktreeLease, *, trace_id: str) -> PhysicalWorktree:
         """Fence the lease, resolve trusted inputs, and create a detached checkout."""
+
+        if self._runner_id is not None and lease.runner_id != self._runner_id:
+            raise RunnerWorktreeAdapterError(
+                "worktree_runner_mismatch", "Worktree lease belongs to another Runner"
+            )
 
         self._authority.begin_materialization(
             worktree_id=lease.worktree_id,
@@ -565,6 +713,121 @@ class RunnerWorktreeAdapter:
                 actual_bytes,
                 grant.access_mode == "readonly",
             )
+
+    def heartbeat(
+        self,
+        lease: WorktreeLease,
+        *,
+        lease_duration: timedelta,
+        physical_worktree: PhysicalWorktree | None = None,
+    ) -> WorktreeMutation:
+        """Renew one exact physical checkout fence and refresh its measured usage."""
+
+        if self._runner_id is not None and lease.runner_id != self._runner_id:
+            raise RunnerWorktreeAdapterError(
+                "worktree_runner_mismatch", "Worktree lease belongs to another Runner"
+            )
+        actual_bytes = 0
+        dirty = False
+        if physical_worktree is not None:
+            if physical_worktree.worktree_id != lease.worktree_id:
+                raise RunnerWorktreeAdapterError(
+                    "worktree_state_fence_mismatch",
+                    "Physical Worktree does not match the active lease",
+                )
+            target = self._target_path(lease.opaque_runtime_key)
+            state_path = self._state_path(lease.opaque_runtime_key)
+            with self._operation_lock(lease.opaque_runtime_key):
+                metadata = self._load_state(state_path)
+                self._verify_state_lease(metadata, lease)
+                if metadata.get("phase") != "ready":
+                    raise RunnerWorktreeAdapterError(
+                        "worktree_not_ready", "Physical Worktree is not ready for heartbeat"
+                    )
+                identity = metadata.get("identity")
+                if not isinstance(identity, dict):
+                    raise RunnerWorktreeAdapterError(
+                        "worktree_state_invalid", "Runner Worktree state is invalid"
+                    )
+                self._verify_target_identity(target, metadata)
+                actual_bytes = self._inspect_tree(
+                    target, maximum_bytes=int(identity["reserved_bytes"])
+                )
+                # A live writer is conservatively dirty.  This avoids racing
+                # Git index locks with the command and prevents unchecked release.
+                dirty = identity.get("access_mode") == "writer"
+        mutation = self._authority.heartbeat(
+            worktree_id=lease.worktree_id,
+            runner_id=lease.runner_id,
+            lease_generation=lease.lease_generation,
+            run_fence_token=lease.run_fence_token,
+            lease_token=lease.lease_token,
+            actual_bytes=actual_bytes,
+            dirty=dirty,
+            lease_duration=lease_duration,
+        )
+        if (
+            mutation.worktree_id != lease.worktree_id
+            or mutation.lease_generation != lease.lease_generation
+            or mutation.status not in {"reserved", "materializing", "ready", "checkpointing"}
+            or mutation.lease_expires_at is None
+        ):
+            raise RunnerWorktreeAdapterError(
+                "worktree_heartbeat_result_invalid",
+                "Control-plane Worktree heartbeat result is invalid",
+            )
+        return mutation
+
+    def renew_fence(
+        self,
+        lease: WorktreeLease,
+        *,
+        lease_duration: timedelta,
+        physical_worktree: PhysicalWorktree | None,
+    ) -> WorktreeMutation:
+        """Renew an already-verified fence while checkpoint owns the local Git lock.
+
+        Checkpointing intentionally serializes every local Git/state mutation under
+        ``_operation_lock``.  A normal heartbeat would block behind a large bundle
+        upload and could let the durable lease expire.  Once command execution has
+        stopped, this narrow path may renew only the exact control-plane fence using
+        the last verified size and a conservative dirty bit; checkpoint performs the
+        next physical inspection before it can publish or release anything.
+        """
+
+        if self._runner_id is not None and lease.runner_id != self._runner_id:
+            raise RunnerWorktreeAdapterError(
+                "worktree_runner_mismatch", "Worktree lease belongs to another Runner"
+            )
+        if physical_worktree is not None and (
+            physical_worktree.worktree_id != lease.worktree_id
+            or physical_worktree.readonly != (lease.access_mode == "readonly")
+        ):
+            raise RunnerWorktreeAdapterError(
+                "worktree_state_fence_mismatch",
+                "Physical Worktree does not match the active lease",
+            )
+        mutation = self._authority.heartbeat(
+            worktree_id=lease.worktree_id,
+            runner_id=lease.runner_id,
+            lease_generation=lease.lease_generation,
+            run_fence_token=lease.run_fence_token,
+            lease_token=lease.lease_token,
+            actual_bytes=(0 if physical_worktree is None else physical_worktree.actual_bytes),
+            dirty=physical_worktree is not None and lease.access_mode == "writer",
+            lease_duration=lease_duration,
+        )
+        if (
+            mutation.worktree_id != lease.worktree_id
+            or mutation.lease_generation != lease.lease_generation
+            or mutation.status not in {"reserved", "materializing", "ready", "checkpointing"}
+            or mutation.lease_expires_at is None
+        ):
+            raise RunnerWorktreeAdapterError(
+                "worktree_heartbeat_result_invalid",
+                "Control-plane Worktree heartbeat result is invalid",
+            )
+        return mutation
 
     def checkpoint(
         self,
@@ -687,6 +950,7 @@ class RunnerWorktreeAdapter:
         )
         if (
             grant.worktree_id != worktree_id
+            or (self._runner_id is not None and grant.runner_id != self._runner_id)
             or grant.opaque_runtime_key != opaque_runtime_key
             or grant.lease_generation != expected_lease_generation
         ):
@@ -713,6 +977,7 @@ class RunnerWorktreeAdapter:
             if (
                 not isinstance(identity, dict)
                 or identity.get("worktree_id") != str(worktree_id)
+                or identity.get("runner_id") != str(grant.runner_id)
                 or identity.get("opaque_runtime_key_digest") != _digest_text(opaque_runtime_key)
                 or identity.get("repository_binding_digest")
                 != _digest_text(grant.repository_source_binding_key)

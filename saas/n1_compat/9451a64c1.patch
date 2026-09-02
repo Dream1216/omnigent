@@ -145,7 +145,7 @@ new file mode 100644
 index 00000000..760b0fc0
 --- /dev/null
 +++ b/saas/n1_outbox_compat_admission.py
-@@ -0,0 +1,712 @@
+@@ -0,0 +1,743 @@
 +"""Catalog-bound admission for the pinned N-1 Outbox compatibility worker."""
 +
 +from __future__ import annotations
@@ -451,13 +451,6 @@ index 00000000..760b0fc0
 +                    "SELECT 1 FROM aclexplode(object.typacl) AS acl "
 +                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
 +                    "WHERE grantee.rolname IN (:login, :compat))) + ("
-+                    "SELECT count(*) FROM pg_database AS object "
-+                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
-+                    "WHERE owner.oid = object.datdba "
-+                    "AND owner.rolname IN (:login, :compat)) OR EXISTS ("
-+                    "SELECT 1 FROM aclexplode(object.datacl) AS acl "
-+                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
-+                    "WHERE grantee.rolname IN (:login, :compat))) + ("
 +                    "SELECT count(*) FROM pg_default_acl AS object "
 +                    "WHERE EXISTS (SELECT 1 FROM pg_roles AS owner "
 +                    "WHERE owner.oid = object.defaclrole "
@@ -467,6 +460,38 @@ index 00000000..760b0fc0
 +                    "WHERE grantee.rolname IN (:login, :compat)))"
 +                ),
 +                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            database_acl_facts = connection.execute(
++                sa.text(
++                    "SELECT database.datname, grantee.rolname, acl.privilege_type, "
++                    "acl.is_grantable, database.datname = current_database(), "
++                    "grantor.oid = database.datdba "
++                    "FROM pg_database AS database "
++                    "CROSS JOIN LATERAL aclexplode(COALESCE(database.datacl, "
++                    "acldefault('d', database.datdba))) AS acl "
++                    "JOIN pg_roles AS grantee ON grantee.oid = acl.grantee "
++                    "JOIN pg_roles AS grantor ON grantor.oid = acl.grantor "
++                    "WHERE grantee.rolname IN (:login, :compat) "
++                    "ORDER BY database.datname, grantee.rolname, acl.privilege_type, "
++                    "acl.is_grantable, grantor.rolname"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).all()
++            database_ownership = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_database AS database "
++                    "JOIN pg_roles AS owner ON owner.oid = database.datdba "
++                    "WHERE owner.rolname IN (:login, :compat)"
++                ),
++                {"compat": _COMPAT_ROLE, "login": expected_login},
++            ).scalar_one()
++            public_database_authority = connection.execute(
++                sa.text(
++                    "SELECT count(*) FROM pg_database AS database "
++                    "CROSS JOIN LATERAL aclexplode(COALESCE(database.datacl, "
++                    "acldefault('d', database.datdba))) AS acl "
++                    "WHERE database.datname = current_database() AND acl.grantee = 0"
++                )
 +            ).scalar_one()
 +            executable_security_definers = connection.execute(
 +                sa.text(
@@ -706,6 +731,7 @@ index 00000000..760b0fc0
 +    expected_incoming = {(_COMPAT_ROLE, expected_login, _COMPAT_ROLE, False, True, False)}
 +    column_acls = [tuple(row) for row in direct_column_acls]
 +    schema_acls = [tuple(row) for row in direct_schema_acls]
++    database_acls = [tuple(row) for row in database_acl_facts]
 +    constraints = [_normalized_expression(row[0]) for row in constraint_definitions]
 +    policies = [
 +        (
@@ -786,6 +812,10 @@ index 00000000..760b0fc0
 +        or schema_acls != [(_COMPAT_ROLE, "public", "USAGE", False)]
 +        or non_system_schema_ownership != 0
 +        or direct_catalog_authority != 0
++        or database_acls
++        != [(str(identity[2]), _COMPAT_ROLE, "CONNECT", False, True, True)]
++        or database_ownership != 0
++        or public_database_authority != 0
 +        or executable_security_definers != 0
 +        or bool(effective_database_temp)
 +        or tuple(bool(value) for value in effective_outbox_acl)
@@ -848,6 +878,7 @@ index 00000000..760b0fc0
 +    canonical_facts = {
 +        "contract": _CONTRACT,
 +        "database": [str(identity[2]), int(identity[3])],
++        "database_acl": [list(row) for row in database_acls],
 +        "expected_login": expected_login,
 +        "roles": {name: list(values) for name, values in sorted(roles.items())},
 +        "server_version_num": int(identity[6]),

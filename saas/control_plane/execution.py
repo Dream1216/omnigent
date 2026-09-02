@@ -33,6 +33,7 @@ from saas.control_plane.execution_models import (
     TaskRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
 
 _LEASED_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
@@ -584,19 +585,72 @@ class ExecutionControlPlane:
         heartbeat_at = now or _utcnow()
         _validate_time(heartbeat_at)
         with self._session_factory.begin() as db:
-            run = self._run(db, run_id, lock=True)
-            self._require_lease(run, lease_token, fence_token, heartbeat_at)
-            run.heartbeat_at = heartbeat_at
-            run.lease_expires_at = heartbeat_at + lease_duration
-            run.version += 1
-            return RunLease(
-                run.id,
-                cast(UUID, run.lease_token),
-                run.fence_token,
-                run.status,
-                cast(datetime, run.lease_expires_at),
-                run.version,
+            return self.heartbeat_in_transaction(
+                db,
+                run_id=run_id,
+                lease_token=lease_token,
+                fence_token=fence_token,
+                lease_duration=lease_duration,
+                now=heartbeat_at,
             )
+
+    def heartbeat_in_transaction(
+        self,
+        db: Session,
+        *,
+        run_id: UUID,
+        lease_token: UUID,
+        fence_token: int,
+        lease_duration: timedelta,
+        now: datetime,
+    ) -> RunLease:
+        """Extend a lease inside an already-authenticated scheduling transaction."""
+
+        if lease_duration <= timedelta(0):
+            raise ExecutionControlPlaneError(
+                "lease_duration_invalid", "lease duration must be positive"
+            )
+        _validate_time(now)
+        run = self._run(db, run_id, lock=True)
+        self._require_lease(run, lease_token, fence_token, now)
+        lease_expires_at = now + lease_duration
+        dispatch = db.get(RunDispatchRecord, run.id)
+        if dispatch is not None:
+            if dispatch.status != "leased" or dispatch.selected_runner_id is None:
+                raise ExecutionControlPlaneError(
+                    "lease_capability_binding_invalid",
+                    "scheduled Run lease has no active dispatch binding",
+                )
+            capabilities = tuple(
+                db.scalars(
+                    sa.select(CapabilityTokenRecord)
+                    .where(
+                        CapabilityTokenRecord.run_id == run.id,
+                        CapabilityTokenRecord.runner_id == dispatch.selected_runner_id,
+                        CapabilityTokenRecord.dispatch_generation == dispatch.dispatch_generation,
+                        CapabilityTokenRecord.fence_token == run.fence_token,
+                        CapabilityTokenRecord.revoked_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            )
+            if len(capabilities) != 1:
+                raise ExecutionControlPlaneError(
+                    "lease_capability_binding_invalid",
+                    "scheduled Run heartbeat requires one exact active capability",
+                )
+            capabilities[0].expires_at = lease_expires_at
+        run.heartbeat_at = now
+        run.lease_expires_at = lease_expires_at
+        run.version += 1
+        return RunLease(
+            run.id,
+            cast(UUID, run.lease_token),
+            run.fence_token,
+            run.status,
+            cast(datetime, run.lease_expires_at),
+            run.version,
+        )
 
     def transition_run(
         self,
@@ -617,27 +671,56 @@ class ExecutionControlPlane:
         _validate_time(changed_at)
         trace = _validate_text(trace_id, field="trace_id", maximum=128)
         with self._session_factory.begin() as db:
-            run = self._run(db, run_id, lock=True)
-            self._require_lease(run, lease_token, fence_token, changed_at)
-            if target_status not in _ALLOWED_TRANSITIONS[run.status]:
-                raise ExecutionControlPlaneError(
-                    "run_transition_invalid", f"cannot transition {run.status} to {target_status}"
-                )
-            run.status = target_status
-            run.version += 1
-            if target_status in TERMINAL_RUN_STATUSES:
-                run.terminal_at = changed_at
-                self._finalize_reservations(db, run, succeeded=target_status == "succeeded")
-            self._append_event(
+            return self.transition_run_in_transaction(
                 db,
-                run,
-                event_type=f"run.{target_status}",
-                payload={"status": target_status, **(payload or {})},
+                run_id=run_id,
+                lease_token=lease_token,
+                fence_token=fence_token,
+                target_status=target_status,
+                payload=payload,
                 trace_id=trace,
+                now=changed_at,
             )
-            if target_status in TERMINAL_RUN_STATUSES:
-                self._clear_lease(run)
-            return RunMutation(run.id, run.status, run.version, run.event_sequence)
+
+    def transition_run_in_transaction(
+        self,
+        db: Session,
+        *,
+        run_id: UUID,
+        lease_token: UUID,
+        fence_token: int,
+        target_status: str,
+        payload: dict[str, object] | None,
+        trace_id: str,
+        now: datetime,
+    ) -> RunMutation:
+        """Apply the existing Run state machine inside a caller-owned transaction."""
+
+        if target_status not in RUN_STATUSES:
+            raise ExecutionControlPlaneError("run_status_invalid", "Run status is invalid")
+        _validate_time(now)
+        trace = _validate_text(trace_id, field="trace_id", maximum=128)
+        run = self._run(db, run_id, lock=True)
+        self._require_lease(run, lease_token, fence_token, now)
+        if target_status not in _ALLOWED_TRANSITIONS[run.status]:
+            raise ExecutionControlPlaneError(
+                "run_transition_invalid", f"cannot transition {run.status} to {target_status}"
+            )
+        run.status = target_status
+        run.version += 1
+        if target_status in TERMINAL_RUN_STATUSES:
+            run.terminal_at = now
+            self._finalize_reservations(db, run, succeeded=target_status == "succeeded")
+        self._append_event(
+            db,
+            run,
+            event_type=f"run.{target_status}",
+            payload={"status": target_status, **(payload or {})},
+            trace_id=trace,
+        )
+        if target_status in TERMINAL_RUN_STATUSES:
+            self._clear_lease(run)
+        return RunMutation(run.id, run.status, run.version, run.event_sequence)
 
     def request_cancel(
         self,

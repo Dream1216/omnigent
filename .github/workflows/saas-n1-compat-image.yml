@@ -74,8 +74,8 @@ env:
   N1_BUILDKIT_IMAGE: moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
   N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b
   N1_CONTRACT_VERSION: p0s3-n1-outbox-security-compat-v1
-  N1_PATCH_SHA256: a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23
-  N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73
+  N1_PATCH_SHA256: 0a17dc7164f222505d51122e85ea35296b201443cb80ea17ba4278b6072ef194
+  N1_PATCHED_TREE_HASH: git-sha1:0386790351b7da9cf026756ae688ad36b879e20d
   N1_UV_IMAGE: ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded
   N1_SCHEMA_REVISION: p0s000000003
   N1_IMAGE_NAME: omnigent-saas-n1-compat
@@ -299,7 +299,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:18
+        image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -405,7 +405,8 @@ jobs:
             --junitxml="${RUNNER_TEMP}/postgresql-n1.xml" \
             tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge \
             tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay \
-            'tests/saas/test_n1_outbox_admission.py::test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_marker_drift[p0s000000004]'
+            'tests/saas/test_n1_outbox_admission.py::test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_marker_drift[p0s000000004]' \
+            tests/saas/test_production_runner_postgresql.py::test_pg16_runner_direct_authority_is_fail_closed
           "$UV_PROJECT_ENVIRONMENT/bin/python" -I - <<'PY'
           import os
           import xml.etree.ElementTree as ET
@@ -418,7 +419,7 @@ jobs:
               key: int(suite.attrib.get(key, "0"))
               for key in ("tests", "failures", "errors", "skipped")
           }
-          expected = {"tests": 3, "failures": 0, "errors": 0, "skipped": 0}
+          expected = {"tests": 4, "failures": 0, "errors": 0, "skipped": 0}
           if observed != expected:
               raise SystemExit(f"PostgreSQL N-1 test cardinality rejected: {observed}")
           PY

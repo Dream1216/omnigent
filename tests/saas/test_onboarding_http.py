@@ -103,6 +103,7 @@ def _http_harness(
     client_network: TrustedClientNetworkResolver | None = None,
     omit_client_network: bool = False,
     configure_onboarding: bool = True,
+    policy: OnboardingPolicy | None = None,
 ) -> Generator[_HttpHarness, None, None]:
     engine = sa.create_engine(
         "sqlite://",
@@ -123,7 +124,7 @@ def _http_harness(
     lifecycle = MembershipLifecycleService(sessions)
     identities = IdentityManagementService(sessions)
     passwords = PasswordCredentialService(sessions)
-    policy = OnboardingPolicy(
+    effective_policy = policy or OnboardingPolicy(
         plans=(
             OnboardingPlan(
                 key="starter",
@@ -141,13 +142,13 @@ def _http_harness(
     )
     onboarding = _NetworkAwareOnboardingService(
         sessions,
-        policy=policy,
+        policy=effective_policy,
         envelope_keyring=envelopes,
         rate_limiter=_AllowAllRateLimiter(),
     )
     onboarding.network_calls = []
     onboarding.network_error = None
-    coordinator = TenantOnboardingCoordinator(sessions, policy=policy)
+    coordinator = TenantOnboardingCoordinator(sessions, policy=effective_policy)
     sender = _RecordingEmailSender()
     dispatcher = OutboxDispatcher(
         sessions,
@@ -287,6 +288,125 @@ def _verify_start_and_login(
     )
     assert login.status_code == 200
     return user_id, onboarding_id, body
+
+
+def test_public_catalog_is_atomic_sorted_allowlisted_and_ignores_a_stale_cookie() -> None:
+    policy = OnboardingPolicy(
+        plans=(
+            OnboardingPlan(
+                key="team",
+                policy_revision="internal-team-policy-must-not-leak",
+                trial_days=30,
+                currency="CNY",
+                trial_run_limit=500,
+                trial_concurrency_limit=5,
+                runtime_type="internal-team-runtime",
+                capacity_class="internal-team-capacity",
+            ),
+            OnboardingPlan(
+                key="starter",
+                policy_revision="internal-starter-policy-must-not-leak",
+                trial_days=14,
+                currency="USD",
+                trial_run_limit=100,
+                trial_concurrency_limit=2,
+                runtime_type="internal-starter-runtime",
+                capacity_class="internal-starter-capacity",
+            ),
+        ),
+        home_regions=frozenset({"us-west-2", "cn-east-1"}),
+        verification_ttl=timedelta(minutes=45),
+    )
+    harness_iterator = _http_harness(policy=policy)
+    harness = next(harness_iterator)
+    try:
+        response = harness.client.get(
+            "/saas/onboarding/catalog",
+            headers={"Cookie": "saas_session=expired-or-revoked"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "public, max-age=60, must-revalidate"
+        payload = response.json()
+        assert payload == {
+            "schema_version": 1,
+            "revision": payload["revision"],
+            "plans": [
+                {
+                    "key": "starter",
+                    "currency": "USD",
+                    "trial_days": 14,
+                    "trial_run_limit": 100,
+                    "trial_concurrency_limit": 2,
+                },
+                {
+                    "key": "team",
+                    "currency": "CNY",
+                    "trial_days": 30,
+                    "trial_run_limit": 500,
+                    "trial_concurrency_limit": 5,
+                },
+            ],
+            "regions": ["cn-east-1", "us-west-2"],
+            "verification_ttl_seconds": 2700,
+        }
+        assert len(payload["revision"]) == 64
+        assert response.headers["ETag"] == f'W/"{payload["revision"]}"'
+        assert not {
+            "policy_revision",
+            "runtime_type",
+            "capacity_class",
+            "default_project_name",
+            "default_project_visibility",
+            "quota_resource",
+            "quota_limit",
+        }.intersection(payload["plans"][0])
+        assert "internal-" not in response.text
+        assert harness.onboarding.network_calls == []
+    finally:
+        harness_iterator.close()
+
+
+def test_public_catalog_supports_weak_conditional_get_without_network_rate_limiting() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        initial = harness.client.get("/saas/onboarding/catalog")
+        assert initial.status_code == 200
+        etag = initial.headers["ETag"]
+
+        unchanged = harness.client.get(
+            "/saas/onboarding/catalog",
+            headers={"If-None-Match": f'"not-current", {etag}'},
+        )
+
+        assert unchanged.status_code == 304
+        assert unchanged.content == b""
+        assert unchanged.headers["ETag"] == etag
+        assert unchanged.headers["Cache-Control"] == ("public, max-age=60, must-revalidate")
+        assert harness.onboarding.network_calls == []
+    finally:
+        harness_iterator.close()
+
+
+def test_public_catalog_route_and_plan_key_boundary_are_exact() -> None:
+    harness_iterator = _http_harness()
+    harness = next(harness_iterator)
+    try:
+        assert harness.client.get("/saas/onboarding/catalog/extra").status_code == 404
+        assert harness.client.post("/saas/onboarding/catalog", json={}).status_code == 405
+
+        oversized_plan = harness.client.post(
+            "/saas/onboarding/registrations",
+            headers=_post_headers("oversized-plan-key"),
+            json={**_registration_body("oversized-plan"), "plan_key": "p" * 65},
+        )
+        assert oversized_plan.status_code == 422
+        assert harness.onboarding.network_calls == [
+            ("registration.request", "client-network:ipv4:198.51.100.0/24")
+        ]
+    finally:
+        harness_iterator.close()
 
 
 def test_only_the_three_exact_post_paths_are_public_and_origin_guarded() -> None:

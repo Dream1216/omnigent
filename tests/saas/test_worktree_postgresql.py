@@ -39,6 +39,12 @@ def _postgres_url() -> str:
 
 
 def _migrate(connection: sa.Connection, root: Path) -> None:
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
+    )
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+    )
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
@@ -81,6 +87,8 @@ def _seed_scope(
     project_id: UUID,
     task_id: UUID,
     run_id: UUID,
+    execution_profile_id: UUID,
+    execution_profile_hash: str,
     repository_id: UUID,
     group_id: UUID,
     change_set_id: UUID,
@@ -129,6 +137,48 @@ def _seed_scope(
             "space": space_id,
             "project": project_id,
             "actor": actor_id,
+        },
+    )
+    egress_policy_id = uuid4()
+    connection.execute(
+        sa.text(
+            "INSERT INTO saas_egress_policies "
+            "(id, tenant_id, space_id, project_id, created_by, name, rules, rules_hash, "
+            "allow_private_destinations, status, version) VALUES "
+            "(:id, :tenant, :space, :project, :actor, 'worktree-default-deny', "
+            "CAST('[]' AS jsonb), :rules_hash, false, 'active', 1)"
+        ),
+        {
+            "id": egress_policy_id,
+            "tenant": tenant_id,
+            "space": space_id,
+            "project": project_id,
+            "actor": actor_id,
+            "rules_hash": "0" * 64,
+        },
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO saas_execution_profiles "
+            "(id, tenant_id, space_id, project_id, egress_policy_id, created_by, name, "
+            "sandbox_backend, network_mode, root_read_only, run_as_uid, run_as_gid, "
+            "no_new_privileges, host_socket_access, syscall_profile_ref, cpu_millis, "
+            "memory_bytes, pids_limit, allowed_tools, approval_required_tools, denied_tools, "
+            "config_hash, status, version) VALUES "
+            "(:id, :tenant, :space, :project, :egress_policy, :actor, "
+            "'worktree-managed-default', 'linux_bwrap', 'proxy_only', true, 65532, 65532, "
+            "true, false, 'oci-default-v1', 1000, 536870912, 128, "
+            "CAST('[\"git\",\"shell\"]' AS jsonb), CAST('[]' AS jsonb), "
+            "CAST('[]' AS jsonb), :config_hash, 'active', 1)"
+        ),
+        {
+            "id": execution_profile_id,
+            "tenant": tenant_id,
+            "space": space_id,
+            "project": project_id,
+            "egress_policy": egress_policy_id,
+            "actor": actor_id,
+            "config_hash": execution_profile_hash,
         },
     )
     connection.execute(
@@ -230,6 +280,8 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
             "project": uuid4(),
             "task": uuid4(),
             "run": uuid4(),
+            "profile": uuid4(),
+            "profile_hash": ("8" if suffix == "a" else "9") * 64,
             "repository": uuid4(),
             "group": uuid4(),
             "change_set": uuid4(),
@@ -246,6 +298,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
         connection.exec_driver_sql(
             f"CREATE ROLE {probe_role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT; "
             f"GRANT saas_app TO {probe_role}; "
+            f"GRANT USAGE ON SCHEMA public TO {probe_role}; "
             f"GRANT SELECT, INSERT, UPDATE ON {', '.join(sorted(_WORKTREE_RLS_TABLES))} "
             f"TO {probe_role}; GRANT SELECT ON saas_preview_leases, "
             f"saas_runner_certificates TO {probe_role}; "
@@ -272,6 +325,8 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
                 project_id=scope["project"],
                 task_id=scope["task"],
                 run_id=scope["run"],
+                execution_profile_id=scope["profile"],
+                execution_profile_hash=scope["profile_hash"],
                 repository_id=scope["repository"],
                 group_id=scope["group"],
                 change_set_id=scope["change_set"],
@@ -305,6 +360,8 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
         run_id=scopes[0]["run"],
         pool_id=pool_id,
         required_capabilities=["git", "shell"],
+        execution_profile_id=scopes[0]["profile"],
+        execution_profile_hash=scopes[0]["profile_hash"],
         eligible_at=now,
         maximum_wait=timedelta(hours=1),
     )
@@ -356,7 +413,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
     leases = [result for result in results if not isinstance(result, WorktreeControlPlaneError)]
     errors = [result for result in results if isinstance(result, WorktreeControlPlaneError)]
     assert len(leases) == 1
-    assert len(errors) == 1 and errors[0].code == "changeset_writer_conflict"
+    assert len(errors) == 1 and errors[0].code == "worktree_run_already_allocated"
     lease = leases[0]
 
     with pytest.raises(DBAPIError):
@@ -441,6 +498,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
             f"REVOKE ALL PRIVILEGES ON {', '.join(sorted(_WORKTREE_RLS_TABLES))} "
             f"FROM {probe_role}; REVOKE ALL PRIVILEGES ON saas_preview_leases, "
             f"saas_runner_certificates "
-            f"FROM {probe_role}; REVOKE saas_app FROM {probe_role}; DROP ROLE {probe_role}"
+            f"FROM {probe_role}; REVOKE USAGE ON SCHEMA public FROM {probe_role}; "
+            f"REVOKE saas_app FROM {probe_role}; DROP ROLE {probe_role}"
         )
     engine.dispose()

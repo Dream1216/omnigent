@@ -10,7 +10,7 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import Protocol
+from typing import NoReturn, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import RequestContext
 from saas.control_plane.authorization import ProjectAuthorizer
-from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.db_models import ControlPlaneOutboxEvent, ProjectRecord
+from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.execution_models import RunRecord
 from saas.control_plane.isolation_models import (
     CREDENTIAL_SCHEMES,
@@ -32,7 +33,7 @@ from saas.control_plane.isolation_models import (
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
-from saas.control_plane.scheduling_models import RunnerRegistrationRecord
+from saas.control_plane.scheduling_models import RunDispatchRecord, RunnerRegistrationRecord
 from saas.control_plane.worktree_models import WorktreeInstanceRecord
 from saas.control_plane.worktrees import WorktreeMaterializationGrant
 
@@ -70,6 +71,7 @@ _PREVIEW_RESPONSE_HEADERS = {
 _FORBIDDEN_PREVIEW_REQUEST_HEADERS = frozenset(
     {"authorization", "cookie", "proxy-authorization", "x-forwarded-access-token"}
 )
+_RUNNER_AGENT_LOGIN = re.compile(r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$")
 
 
 def _utcnow() -> datetime:
@@ -361,6 +363,7 @@ class PreviewRouteGrant:
     upstream_request_headers: dict[str, str]
     response_headers: dict[str, str]
     expires_at: datetime
+    preview_host: str = ""
 
 
 class IsolationControlPlane:
@@ -376,6 +379,12 @@ class IsolationControlPlane:
         self._session_factory = session_factory
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
         self._scheduler = scheduler or SchedulingControlPlane(session_factory)
+        bind = session_factory.kw.get("bind")
+        self._runner_rpc = bool(
+            bind is not None
+            and bind.dialect.name == "postgresql"
+            and _RUNNER_AGENT_LOGIN.fullmatch(bind.url.username or "")
+        )
 
     def create_egress_policy(
         self,
@@ -468,7 +477,27 @@ class IsolationControlPlane:
         profile_id = uuid4()
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            policy = db.get(EgressPolicyRecord, egress_policy_id)
+            # The Project row is the stable writer mutex for the partial
+            # one-active-profile invariant.  It serializes concurrent profile
+            # replacements before either writer can observe/retire the current
+            # generation and insert its successor.
+            project = db.scalar(
+                sa.select(ProjectRecord)
+                .where(
+                    ProjectRecord.id == project_id,
+                    ProjectRecord.tenant_id == request.tenant_id,
+                    ProjectRecord.space_id == request.space_id,
+                    ProjectRecord.status == "active",
+                )
+                .with_for_update()
+            )
+            if project is None:
+                raise IsolationControlPlaneError("project_unavailable", "project is unavailable")
+            policy = db.scalar(
+                sa.select(EgressPolicyRecord)
+                .where(EgressPolicyRecord.id == egress_policy_id)
+                .with_for_update(read=True)
+            )
             if (
                 policy is None
                 or policy.status != "active"
@@ -480,6 +509,21 @@ class IsolationControlPlane:
                 raise IsolationControlPlaneError(
                     "egress_policy_unavailable", "egress policy is unavailable"
                 )
+            active_profiles = tuple(
+                db.scalars(
+                    sa.select(ExecutionProfileRecord)
+                    .where(
+                        ExecutionProfileRecord.tenant_id == request.tenant_id,
+                        ExecutionProfileRecord.space_id == request.space_id,
+                        ExecutionProfileRecord.project_id == project_id,
+                        ExecutionProfileRecord.status == "active",
+                    )
+                    .order_by(ExecutionProfileRecord.id)
+                    .with_for_update()
+                )
+            )
+            for active_profile in active_profiles:
+                active_profile.status = "retired"
             db.add(
                 ExecutionProfileRecord(
                     id=profile_id,
@@ -606,7 +650,6 @@ class IsolationControlPlane:
         runner_id: UUID,
         run_id: UUID,
         worktree_grant: WorktreeMaterializationGrant,
-        execution_profile_id: UUID,
         lifetime: timedelta = timedelta(seconds=60),
         now: datetime | None = None,
     ) -> IssuedIsolationGrant:
@@ -621,6 +664,14 @@ class IsolationControlPlane:
         if worktree_grant.runner_id != runner_id or worktree_grant.run_id != run_id:
             raise IsolationControlPlaneError(
                 "isolation_worktree_binding_invalid", "Worktree grant binding is invalid"
+            )
+        if self._runner_rpc:
+            return self._issue_postgresql_runner_grant(
+                capability_token=capability_token,
+                runner_id=runner_id,
+                run_id=run_id,
+                worktree_grant=worktree_grant,
+                lifetime=lifetime,
             )
         try:
             capability = self._scheduler.verify_capability(
@@ -651,19 +702,72 @@ class IsolationControlPlane:
                 RlsContext(
                     tenant_id=capability.tenant_id,
                     space_id=capability.space_id,
+                    project_id=capability.project_id,
                     actor_id=None,
                 ),
             )
-            profile = db.get(ExecutionProfileRecord, execution_profile_id)
+            dispatch = db.scalar(
+                sa.select(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == run_id)
+                .with_for_update()
+            )
+            if (
+                dispatch is None
+                or dispatch.status != "leased"
+                or dispatch.selected_runner_id != runner_id
+            ):
+                raise IsolationControlPlaneError(
+                    "isolation_dispatch_profile_unbound",
+                    "leased dispatch has no authoritative execution profile binding",
+                )
+            run = db.scalar(sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update())
+            binding = db.execute(
+                SchedulingControlPlane._dispatch_profile_query(
+                    dispatch.execution_profile_id,
+                    dispatch.egress_policy_id,
+                ).with_for_update(read=True)
+            ).one_or_none()
+            profile, policy = binding if binding is not None else (None, None)
             runner = db.get(RunnerRegistrationRecord, runner_id)
             worktree = db.get(WorktreeInstanceRecord, worktree_grant.worktree_id)
             required_capabilities = self._required_runner_capabilities(profile)
+            expected_requirements_hash = dispatch_requirements_hash(
+                tenant_id=dispatch.tenant_id,
+                space_id=dispatch.space_id,
+                project_id=dispatch.project_id,
+                pool_id=dispatch.pool_id,
+                execution_profile_id=dispatch.execution_profile_id,
+                execution_profile_hash=dispatch.execution_profile_hash,
+                egress_policy_id=dispatch.egress_policy_id,
+                egress_policy_hash=dispatch.egress_policy_hash,
+                queue_class=dispatch.queue_class,
+                required_capabilities=dispatch.required_capabilities,
+                cost_units=dispatch.cost_units,
+                eligible_at=dispatch.eligible_at,
+                max_wait_at=dispatch.max_wait_at,
+            )
             if (
-                profile is None
-                or profile.status != "active"
+                run is None
+                or run.status not in _ACTIVE_RUN_STATUSES
+                or run.fence_token != capability.fence_token
+                or run.tenant_id != capability.tenant_id
+                or run.space_id != capability.space_id
+                or run.project_id != capability.project_id
+                or profile is None
+                or policy is None
+                or profile.config_hash != dispatch.execution_profile_hash
+                or policy.rules_hash != dispatch.egress_policy_hash
+                or profile.egress_policy_id != policy.id
+                or dispatch.requirements_hash != expected_requirements_hash
+                or profile.status not in {"active", "retired"}
+                or policy.status not in {"active", "retired"}
+                or policy.allow_private_destinations
                 or profile.tenant_id != capability.tenant_id
                 or profile.space_id != capability.space_id
                 or profile.project_id != capability.project_id
+                or policy.tenant_id != capability.tenant_id
+                or policy.space_id != capability.space_id
+                or policy.project_id != capability.project_id
                 or runner is None
                 or runner.status not in {"online", "draining"}
                 or runner.connection_generation != worktree_grant.runner_connection_generation
@@ -679,6 +783,7 @@ class IsolationControlPlane:
                 or worktree.run_fence_token != worktree_grant.run_fence_token
                 or worktree.runner_connection_generation
                 != worktree_grant.runner_connection_generation
+                or not set(required_capabilities).issubset(set(dispatch.required_capabilities))
                 or not set(required_capabilities).issubset(set(runner.capabilities))
             ):
                 raise IsolationControlPlaneError(
@@ -695,6 +800,8 @@ class IsolationControlPlane:
                 "worktree_id": str(worktree.id),
                 "profile_id": str(profile.id),
                 "profile_hash": profile.config_hash,
+                "egress_policy_id": str(policy.id),
+                "egress_policy_hash": policy.rules_hash,
                 "run_fence_token": capability.fence_token,
                 "runner_connection_generation": runner.connection_generation,
                 "worktree_lease_generation": worktree.lease_generation,
@@ -750,6 +857,12 @@ class IsolationControlPlane:
 
         redeemed_at = now or _utcnow()
         _validate_time(redeemed_at)
+        if self._runner_rpc:
+            return self._redeem_postgresql_runner_grant(
+                token=token,
+                runner_id=runner_id,
+                run_id=run_id,
+            )
         digest = _token_hash(_text(token, field="isolation_grant_token", maximum=512))
         with self._session_factory.begin() as db:
             _set_token_rls(db, "app.isolation_token_hash", digest)
@@ -764,7 +877,12 @@ class IsolationControlPlane:
                 )
             apply_rls_context(
                 db,
-                RlsContext(tenant_id=record.tenant_id, space_id=record.space_id, actor_id=None),
+                RlsContext(
+                    tenant_id=record.tenant_id,
+                    space_id=record.space_id,
+                    project_id=record.project_id,
+                    actor_id=None,
+                ),
             )
             if (
                 record.status != "active"
@@ -775,22 +893,59 @@ class IsolationControlPlane:
                 raise IsolationControlPlaneError(
                     "isolation_grant_stale", "isolation grant is expired, used, or misbound"
                 )
-            run = db.get(RunRecord, run_id)
+            run = db.scalar(sa.select(RunRecord).where(RunRecord.id == run_id).with_for_update())
+            dispatch = db.scalar(
+                sa.select(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == run_id)
+                .with_for_update(read=True)
+            )
             runner = db.get(RunnerRegistrationRecord, runner_id)
             worktree = db.get(WorktreeInstanceRecord, record.worktree_id)
-            profile = db.get(ExecutionProfileRecord, record.execution_profile_id)
-            policy = (
-                db.get(EgressPolicyRecord, profile.egress_policy_id)
-                if profile is not None
+            binding = (
+                db.execute(
+                    SchedulingControlPlane._dispatch_profile_query(
+                        record.execution_profile_id,
+                        dispatch.egress_policy_id,
+                    ).with_for_update(read=True)
+                ).one_or_none()
+                if dispatch is not None
                 else None
             )
+            profile, policy = binding if binding is not None else (None, None)
             required_capabilities = self._required_runner_capabilities(profile)
+            expected_requirements_hash = (
+                dispatch_requirements_hash(
+                    tenant_id=dispatch.tenant_id,
+                    space_id=dispatch.space_id,
+                    project_id=dispatch.project_id,
+                    pool_id=dispatch.pool_id,
+                    execution_profile_id=dispatch.execution_profile_id,
+                    execution_profile_hash=dispatch.execution_profile_hash,
+                    egress_policy_id=dispatch.egress_policy_id,
+                    egress_policy_hash=dispatch.egress_policy_hash,
+                    queue_class=dispatch.queue_class,
+                    required_capabilities=dispatch.required_capabilities,
+                    cost_units=dispatch.cost_units,
+                    eligible_at=dispatch.eligible_at,
+                    max_wait_at=dispatch.max_wait_at,
+                )
+                if dispatch is not None
+                else None
+            )
             if (
                 run is None
                 or run.status not in _ACTIVE_RUN_STATUSES
                 or run.fence_token != record.run_fence_token
                 or run.lease_expires_at is None
                 or _aware(run.lease_expires_at) <= redeemed_at
+                or run.tenant_id != record.tenant_id
+                or run.space_id != record.space_id
+                or run.project_id != record.project_id
+                or dispatch is None
+                or dispatch.status != "leased"
+                or dispatch.selected_runner_id != runner_id
+                or dispatch.execution_profile_id != record.execution_profile_id
+                or dispatch.requirements_hash != expected_requirements_hash
                 or runner is None
                 or runner.status not in {"online", "draining"}
                 or runner.connection_generation != record.runner_connection_generation
@@ -801,10 +956,19 @@ class IsolationControlPlane:
                 or worktree.run_fence_token != record.run_fence_token
                 or worktree.runner_connection_generation != record.runner_connection_generation
                 or profile is None
-                or profile.status != "active"
+                or profile.status not in {"active", "retired"}
+                or profile.config_hash != dispatch.execution_profile_hash
                 or policy is None
-                or policy.status != "active"
+                or policy.status not in {"active", "retired"}
                 or policy.allow_private_destinations
+                or policy.rules_hash != dispatch.egress_policy_hash
+                or profile.egress_policy_id != policy.id
+                or profile.tenant_id != record.tenant_id
+                or profile.space_id != record.space_id
+                or profile.project_id != record.project_id
+                or policy.tenant_id != record.tenant_id
+                or policy.space_id != record.space_id
+                or policy.project_id != record.project_id
             ):
                 raise IsolationControlPlaneError(
                     "isolation_fence_stale", "Run, Runner, Worktree, or profile fence is stale"
@@ -898,6 +1062,13 @@ class IsolationControlPlane:
 
         redeemed_at = now or _utcnow()
         _validate_time(redeemed_at)
+        if self._runner_rpc:
+            return self._redeem_postgresql_runner_secret(
+                token=token,
+                runner_id=runner_id,
+                run_id=run_id,
+                provider=provider,
+            )
         digest = _token_hash(_text(token, field="secret_lease_token", maximum=512))
         material: SecretMaterial
         with self._session_factory.begin() as db:
@@ -1000,7 +1171,12 @@ class IsolationControlPlane:
                 runner_id=runner_id,
                 run_id=run_id,
                 action="preview.serve",
-                required_resource_scope={"change_set_id": str(worktree_grant.change_set_id)},
+                # The scheduling capability already binds the exact
+                # Tenant/Space/Project/Run/Runner/fence. The trusted Worktree
+                # grant below independently binds its ChangeSet to the same
+                # Run/Runner/fence, so a caller-selected ChangeSet scope is
+                # neither necessary nor available at fair-claim time.
+                required_resource_scope={"run_id": str(run_id)},
                 now=issued_at,
             )
         except SchedulingError as exc:
@@ -1220,6 +1396,281 @@ class IsolationControlPlane:
             )
             return True
 
+    def _issue_postgresql_runner_grant(
+        self,
+        *,
+        capability_token: str,
+        runner_id: UUID,
+        run_id: UUID,
+        worktree_grant: WorktreeMaterializationGrant,
+        lifetime: timedelta,
+    ) -> IssuedIsolationGrant:
+        lifetime_seconds = max(1, int(lifetime.total_seconds()))
+        request_identity = json.dumps(
+            {
+                "lifetime_seconds": lifetime_seconds,
+                "run_fence_token": worktree_grant.run_fence_token,
+                "run_id": str(run_id),
+                "runner_id": str(runner_id),
+                "worktree_id": str(worktree_grant.worktree_id),
+                "worktree_lease_generation": worktree_grant.lease_generation,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        identity_key = capability_token.encode()
+        grant_id = UUID(
+            bytes=hmac.new(
+                identity_key,
+                b"omnigent-isolation-grant-id-v1\x00" + request_identity,
+                sha256,
+            ).digest()[:16],
+            version=4,
+        )
+        raw_token = (
+            f"iso_{grant_id.hex}_"
+            + hmac.new(
+                identity_key,
+                b"omnigent-isolation-grant-token-v1\x00" + request_identity,
+                sha256,
+            ).hexdigest()
+        )
+        try:
+            with self._session_factory.begin() as db:
+                row = (
+                    db.execute(
+                        sa.text(
+                            "SELECT * FROM public.saas_runner_issue_isolation_grant_v1("
+                            ":capability_hash, :runner_id, :run_id, :worktree_id, "
+                            ":worktree_generation, :run_fence, :grant_id, :grant_hash, "
+                            ":lifetime_seconds)"
+                        ),
+                        {
+                            "capability_hash": _token_hash(capability_token),
+                            "runner_id": runner_id,
+                            "run_id": run_id,
+                            "worktree_id": worktree_grant.worktree_id,
+                            "worktree_generation": worktree_grant.lease_generation,
+                            "run_fence": worktree_grant.run_fence_token,
+                            "grant_id": grant_id,
+                            "grant_hash": _token_hash(raw_token),
+                            "lifetime_seconds": lifetime_seconds,
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        return IssuedIsolationGrant(
+            UUID(str(row["grant_id"])),
+            raw_token,
+            _aware(row["expires_at"]),
+        )
+
+    def _redeem_postgresql_runner_grant(
+        self,
+        *,
+        token: str,
+        runner_id: UUID,
+        run_id: UUID,
+    ) -> TrustedRunnerLaunchGrant:
+        raw_token = _text(token, field="isolation_grant_token", maximum=512)
+        digest = _token_hash(raw_token)
+        try:
+            with self._session_factory.begin() as db:
+                metadata = db.scalar(
+                    sa.text(
+                        "SELECT public.saas_runner_isolation_metadata_v1("
+                        ":token_hash, :runner_id, :run_id)"
+                    ),
+                    {"token_hash": digest, "runner_id": runner_id, "run_id": run_id},
+                )
+            snapshot = cast(dict[str, object], metadata)
+            bindings = cast(list[dict[str, object]], snapshot["secret_bindings"])
+            commitments: list[dict[str, str]] = []
+            secret_tokens: dict[UUID, str] = {}
+            for binding in bindings:
+                binding_id = UUID(str(binding["binding_id"]))
+                binding_identity = (
+                    f"{snapshot['grant_id']}|{binding_id}|{run_id}|{runner_id}"
+                ).encode()
+                lease_id = UUID(
+                    bytes=hmac.new(
+                        raw_token.encode(),
+                        b"omnigent-secret-lease-id-v1\x00" + binding_identity,
+                        sha256,
+                    ).digest()[:16],
+                    version=4,
+                )
+                secret_token = (
+                    "sec_"
+                    + hmac.new(
+                        raw_token.encode(),
+                        b"omnigent-secret-lease-token-v1\x00" + binding_identity,
+                        sha256,
+                    ).hexdigest()
+                )
+                commitments.append(
+                    {
+                        "binding_id": str(binding_id),
+                        "lease_id": str(lease_id),
+                        "token_hash": _token_hash(secret_token),
+                    }
+                )
+                secret_tokens[binding_id] = secret_token
+            with self._session_factory.begin() as db:
+                redeemed = db.scalar(
+                    sa.text(
+                        "SELECT public.saas_runner_redeem_isolation_grant_v1("
+                        ":token_hash, :runner_id, :run_id, CAST(:commitments AS jsonb))"
+                    ),
+                    {
+                        "token_hash": digest,
+                        "runner_id": runner_id,
+                        "run_id": run_id,
+                        "commitments": json.dumps(
+                            commitments, sort_keys=True, separators=(",", ":")
+                        ),
+                    },
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        return self._trusted_launch_from_snapshot(cast(dict[str, object], redeemed), secret_tokens)
+
+    def _redeem_postgresql_runner_secret(
+        self,
+        *,
+        token: str,
+        runner_id: UUID,
+        run_id: UUID,
+        provider: SecretValueProvider,
+    ) -> SecretMaterial:
+        raw_token = _text(token, field="secret_lease_token", maximum=512)
+        try:
+            with self._session_factory.begin() as db:
+                row = (
+                    db.execute(
+                        sa.text(
+                            "SELECT * FROM public.saas_runner_claim_secret_lease_v1("
+                            ":token_hash, :runner_id, :run_id)"
+                        ),
+                        {
+                            "token_hash": _token_hash(raw_token),
+                            "runner_id": runner_id,
+                            "run_id": run_id,
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+        except sa.exc.DBAPIError as exc:
+            self._raise_runner_rpc_error(exc)
+        if bool(row["replayed"]):
+            raise IsolationControlPlaneError(
+                "secret_lease_stale", "secret lease or distributed fence is stale"
+            )
+        value = provider.resolve(
+            provider=str(row["vault_provider"]),
+            vault_ref=str(row["vault_ref"]),
+            version_ref=str(row["version_ref"]),
+        ).strip()
+        if not value or len(value) > 65536:
+            raise IsolationControlPlaneError(
+                "secret_material_invalid", "secret provider returned invalid material"
+            )
+        inject_env = cast(list[object], row["inject_env"])
+        return SecretMaterial(
+            UUID(str(row["binding_id"])),
+            str(row["binding_name"]),
+            str(row["host"]),
+            str(row["credential_scheme"]),
+            None if row["username"] is None else str(row["username"]),
+            tuple(str(value) for value in inject_env),
+            value,
+        )
+
+    @staticmethod
+    def _trusted_launch_from_snapshot(
+        snapshot: dict[str, object], secret_tokens: dict[UUID, str]
+    ) -> TrustedRunnerLaunchGrant:
+        profile = cast(dict[str, object], snapshot["profile"])
+        bindings = cast(list[dict[str, object]], snapshot["secret_bindings"])
+        required_capabilities = tuple(
+            str(value) for value in cast(list[object], snapshot["required_runner_capabilities"])
+        )
+        contract_payload = {
+            "profile_hash": str(profile["config_hash"]),
+            "egress_hash": str(snapshot["egress_hash"]),
+            "required_runner_capabilities": required_capabilities,
+        }
+        contract = SandboxLaunchContract(
+            str(profile["sandbox_backend"]),
+            str(profile["network_mode"]),
+            bool(profile["root_read_only"]),
+            int(cast(int, profile["run_as_uid"])),
+            int(cast(int, profile["run_as_gid"])),
+            bool(profile["no_new_privileges"]),
+            bool(profile["host_socket_access"]),
+            str(profile["syscall_profile_ref"]),
+            int(cast(int, profile["cpu_millis"])),
+            int(cast(int, profile["memory_bytes"])),
+            int(cast(int, profile["pids_limit"])),
+            ToolPolicy(
+                tuple(str(value) for value in cast(list[object], profile["allowed_tools"])),
+                tuple(
+                    str(value) for value in cast(list[object], profile["approval_required_tools"])
+                ),
+                tuple(str(value) for value in cast(list[object], profile["denied_tools"])),
+            ),
+            tuple(str(value) for value in cast(list[object], snapshot["egress_rules"])),
+            bool(snapshot["allow_private_destinations"]),
+            required_capabilities,
+            _canonical_hash(contract_payload),
+        )
+        expires_at = datetime.fromisoformat(str(snapshot["expires_at"]))
+        secret_leases = tuple(
+            SecretLeaseReference(
+                UUID(str(binding["binding_id"])),
+                str(binding["name"]),
+                str(binding["host"]),
+                str(binding["credential_scheme"]),
+                None if binding["username"] is None else str(binding["username"]),
+                tuple(str(value) for value in cast(list[object], binding["inject_env"])),
+                secret_tokens[UUID(str(binding["binding_id"]))],
+                expires_at,
+            )
+            for binding in bindings
+        )
+        return TrustedRunnerLaunchGrant(
+            UUID(str(snapshot["grant_id"])),
+            UUID(str(snapshot["tenant_id"])),
+            UUID(str(snapshot["space_id"])),
+            UUID(str(snapshot["project_id"])),
+            UUID(str(snapshot["run_id"])),
+            UUID(str(snapshot["runner_id"])),
+            UUID(str(snapshot["worktree_id"])),
+            str(snapshot["worktree_access_mode"]),
+            int(cast(int, snapshot["worktree_lease_generation"])),
+            int(cast(int, snapshot["run_fence_token"])),
+            int(cast(int, snapshot["runner_connection_generation"])),
+            contract,
+            secret_leases,
+            expires_at,
+        )
+
+    @staticmethod
+    def _raise_runner_rpc_error(error: sa.exc.DBAPIError) -> NoReturn:
+        detail = str(error.orig).splitlines()[0]
+        match = re.search(r"runner_[a-z0-9_]+", detail)
+        code = match.group(0) if match is not None else "runner_database_authority_rejected"
+        code = {
+            "runner_isolation_grant_invalid": "isolation_grant_invalid",
+            "runner_secret_lease_invalid": "secret_lease_invalid",
+            "runner_secret_lease_stale": "secret_lease_stale",
+        }.get(code, code)
+        raise IsolationControlPlaneError(code, "Runner database authority rejected") from None
+
     @staticmethod
     def _required_runner_capabilities(
         profile: ExecutionProfileRecord | None,
@@ -1293,6 +1744,10 @@ class IsolationControlPlane:
         payload: dict[str, object],
         idempotency_key: str,
     ) -> None:
+        # Runner RLS binds each event to the already-persisted exact grant or
+        # lease.  Flush the authoritative row/state transition before the
+        # FK-free Outbox INSERT so SQLAlchemy cannot reorder the two writes.
+        db.flush()
         db.add(
             ControlPlaneOutboxEvent(
                 tenant_id=tenant_id,

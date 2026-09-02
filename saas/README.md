@@ -63,9 +63,16 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000007` has 111 control-plane FORCE-RLS
-  tables, including the shared public-registration abuse counters, Outbox
-  Quarantine ledger and durable Runtime Provider operation journal.
+- candidate schema revision `p0s000000011` extends the forced-RLS control plane
+  through exact dispatch/profile binding, Preview execution sessions, and
+  per-Runner-incarnation database authority. The preceding approved p0s7 record
+  remains immutable history; this successor requires a new decision and
+  evidence flow before it can be accepted. The direct Runner DML projection is
+  isolated-Beta-only: cross-profile secret/isolation forgery, capability-action
+  substitution, disabled/non-FORCE RLS, cross-database reachability, and catalog
+  drift must fail closed before Beta. Enterprise Production Admission further
+  requires narrow RPCs or transition triggers for every Runner-mutated
+  Worktree, quota, Preview, and Outbox state change.
 
 The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
 the non-secret Provider type/revision/hash before any external effect, keeps old
@@ -256,7 +263,7 @@ domains (`projects`, `runs`, and `worktrees`). A missing required domain fails
 at startup; it is intentionally impossible to infer a zero impact from an
 unwired provider.
 
-Control-plane installation has four ordered PostgreSQL authority phases; do
+Control-plane installation has five ordered PostgreSQL authority phases; do
 not collapse them into one superuser migration connection:
 
 1. A cluster principal operator runs
@@ -281,6 +288,15 @@ not collapse them into one superuser migration connection:
    control-plane database authority. This first-error-stopping transaction
    converges schema/table/function/RLS grants against the now-existing schema.
    Never invoke the `.sql` transaction bodies directly with plain `psql -f`.
+5. A managed-cluster superuser then runs
+   `psql --no-psqlrc --file saas/control_plane/postgresql_runner_agent_cluster.psql`
+   exactly once after the roles projection and before runtime admission. The
+   wrapper admits only PostgreSQL 18 with `max_notify_queue_pages=64` and
+   `max_prepared_transactions=0`, both sourced from the configuration file
+   with no pending restart, and with zero prepared transactions. It atomically
+   removes unsafe `PUBLIC` catalog routine authority and restores only the
+   exact audited central-role calls. Never run its `.sql` body directly, and
+   never grant the managed-superuser credential to an application or Runner.
 
 Give each service login exactly one role. Run identity/session endpoints with
 `saas_authenticator`, governance workflows with `saas_governance`, runtime
@@ -828,7 +844,7 @@ exact upstream, adapter, schema, and downstream product revisions; measure T0-T2
 RPO/RTO; prove an encrypted deletion-protected backup outside the source failure
 domains; restore with traffic disabled into separately hashed account, network, KMS,
 object-prefix, search-index, and Runner-pool boundaries; pass the complete 50-table
-control-plane and 17-table runtime forced-RLS, cross-tenant, tombstone, revocation,
+control-plane and 18-table runtime forced-RLS, cross-tenant, tombstone, revocation,
 binding, ledger, object, key, and canary matrix; and reference a signed immutable
 artifact with independent SRE, security, and data-owner attestations. Both a current
 Tenant drill and a current cluster drill are required. The repository intentionally
@@ -850,7 +866,7 @@ the exact official and SaaS migration heads plus both forced-RLS layers, seeds t
 Tenant/workspace scopes, creates a custom-format logical backup, and restores it into
 a separately generated database. It then replays post-backup identity/session
 revocation, membership removal, and Tenant deletion-marker facts; reapplies
-least-privilege roles; verifies the canonical 50-table control-plane and 17-table
+least-privilege roles; verifies the canonical 50-table control-plane and 18-table
 runtime RLS inventories; runs cross-Tenant and cross-workspace negative probes; and
 compares canonical hashes and row counts across eleven selected tables before dropping
 both databases. Client credentials stay in the subprocess environment rather than
@@ -2141,15 +2157,47 @@ cross-region restore drill, or protected exact-SHA CI/image admission for this s
 Consequently it closes neither the production Deletion gate nor P1 as a whole, and the
 release decision remains `NO-GO`.
 
-## Official upstream synchronization candidate: `9303cc1c`
+## P0S9 production Preview authority
 
-The 2026-08-24 synchronization candidate merges official
-`9303cc1cd12e2e5788f4e2b9dcde9308b474017a` into downstream implementation merge
-`8fada23f5fc0f50ccef10f2a3b03197ce61607e0`. The textual merge conflicts were limited
-to `omnigent/host/connect.py`, `pyproject.toml`, and `uv.lock`. The resolved Host command
-retains the official isolated-path `-P` flag while selecting the managed Runner entry
-module through the existing Runtime Partition environment seam. The dependency metadata
-keeps official PEP 735 dependency groups and the downstream `saas` extra.
+The production Preview path is a server-owned child Run over a committed ChangeSet and
+a separately heartbeated readonly Worktree. Browser requests contain only the source
+`run_id`, the closed `static_web_v1` profile, and an idempotency key; Runner identity,
+connection generation, Worktree lease tokens, capabilities, paths, commands, and other
+Runner secrets are never browser inputs. The fixed static runtime executes no Worktree
+code and serves a closed MIME set through no-follow component traversal, bounded files,
+no directory listing, and fixed security headers.
+
+When the child is ready, Control returns a URL whose one-use exchange bearer exists only
+in the fragment. A content-blind bootstrap clears the fragment before submitting the
+bearer to the same-origin authorize endpoint; the response installs a distinct rotating
+HttpOnly session cookie. Exchange, rotation, authorization, and revocation are narrow
+PostgreSQL CAS functions. Preview Edge cannot read or mutate session rows directly.
+
+The standalone Preview Owner owns the official `TunnelRegistry`, the Runner WebSocket
+lifecycle, and the TLS 1.3 mTLS relay listener. Runner tunnel registration is issued and
+revoked only through incarnation-bound SECURITY DEFINER functions that require the
+current Runner connection secret and active `runner_control` certificate fingerprint;
+the executor has no direct registration-table access. Each relayed request carries the
+canonical Preview host and fixed response policy. The receiving Owner re-authorizes the
+session hash and host, rebuilds and compares the complete durable Preview grant, then
+compares the exact Placement ID, Runner/generation, routing generation, Gateway, and
+relay subject before touching its local official Runner session. Revoked sessions,
+same-Runner cross-Preview substitution, and any grant or Placement mutation fail closed.
+
+These contracts have local unit and disposable PostgreSQL 16/18 evidence. They do not
+replace deployed NetworkPolicy, external PKI rotation, multi-replica failure drills,
+authenticated browser E2E, rollback, or protected exact-image admission evidence.
+
+## Official upstream synchronization candidate: `e179bc42`
+
+The 2026-09-02 synchronization candidate merges official
+`e179bc422643c994e864bf34922bc54b5d4ab03b` into the frozen Runtime candidate
+`26ba2667833ca91cd047ac4a44576a67b4f31713`, then replays the self-service onboarding
+commits. The final `332daef5` to `e179bc42` increment applied without textual conflicts;
+the earlier replay conflicts were limited to `omnigent/host/connect.py` and `uv.lock`.
+The resolved Host path preserves the official caller-provided lifecycle lock while
+retaining the managed Host factory seam. Dependency metadata keeps official 0.13.0
+groups and the downstream `saas` extra.
 
 A separate semantic audit found that the new official shared read session could bypass
 the managed Store session initializer even though Git reported no conflict. Managed
@@ -2157,11 +2205,14 @@ execution now bypasses that shared session whenever an initializer is installed;
 single-user execution continues to use the official shared-read optimization. Focused
 SQLite and PostgreSQL tests cover the initializer boundary and cross-workspace denial.
 
-The regenerated two-entry Patch Replay covers exactly `omnigent/db/utils.py`,
-`omnigent/host/connect.py`, and `omnigent/llms/_usage_observer.py` and applies cleanly to
-the pinned official revision. The local Upstream Delta report passes with ten direct
-official files, 165 net-added official lines, two active patches, no forbidden file or
-reverse dependency, and a 0.999 isolated-code ratio.
+The regenerated three-entry Patch Replay covers exactly `omnigent/db/utils.py`,
+`omnigent/host/connect.py`, `omnigent/llms/_usage_observer.py`, and
+`omnigent/runtime/agent_cache.py` and applies cleanly to the pinned official revision.
+The local Upstream Delta report passes at the current intrusion ceiling with ten direct
+official files, 485 net-added official lines, three active patches, no forbidden file
+or reverse dependency, and a 0.998 isolated-code ratio. Any additional direct upstream
+file or more than 15 net-added official lines must first remove or reduce an existing
+intrusion; the budget may not be silently widened.
 
 Advancing the upstream revision invalidates the previous candidate approval binding. The
 new candidate is therefore deliberately `review_required`: all eleven ADRs remain

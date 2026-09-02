@@ -6,13 +6,14 @@ import asyncio
 import ipaddress
 import json
 import re
+import socket
 import ssl
 import struct
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Collection, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from saas.control_plane import PreviewRouteGrant, RunnerTunnelPlacement
@@ -33,6 +34,16 @@ _MAX_INTEGER = (1 << 63) - 1
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _REQUEST_HEADERS = frozenset(
     {"accept", "accept-encoding", "accept-language", "content-type", "user-agent"}
+)
+_ROUTE_RESPONSE_HEADERS = frozenset(
+    {
+        "Content-Security-Policy",
+        "Cross-Origin-Opener-Policy",
+        "Cross-Origin-Resource-Policy",
+        "Referrer-Policy",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+    }
 )
 _RESPONSE_HEADERS = frozenset(
     {"cache-control", "content-language", "content-type", "etag", "last-modified"}
@@ -102,6 +113,180 @@ class PreviewRelayEndpoint:
             or not 1 <= self.port <= 65_535
         ):
             raise ValueError("Preview Relay endpoint is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewRelayEndpointPolicy:
+    """Deployment allowlist for one directory-selected Relay endpoint.
+
+    DNS names are accepted only below an explicit cluster suffix. Every
+    resolved address must then fall inside an explicit cluster CIDR, so a
+    permitted-looking name cannot rebind to loopback, link-local, metadata, or
+    an unrelated private network. The returned endpoint is pinned to one
+    validated numeric address while retaining the directory-selected TLS name.
+    """
+
+    allowed_dns_suffixes: tuple[str, ...]
+    allowed_cidrs: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+    allowed_ports: frozenset[int]
+
+    def __post_init__(self) -> None:
+        suffixes = tuple(self._normalize_suffix(value) for value in self.allowed_dns_suffixes)
+        if (
+            not suffixes
+            or len(set(suffixes)) != len(suffixes)
+            or not self.allowed_cidrs
+            or not self.allowed_ports
+            or any(
+                isinstance(port, bool) or not 1 <= port <= 65_535 for port in self.allowed_ports
+            )
+        ):
+            raise ValueError("Preview Relay endpoint policy is invalid")
+        object.__setattr__(self, "allowed_dns_suffixes", suffixes)
+
+    @staticmethod
+    def _normalize_suffix(value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Preview Relay DNS suffix is invalid")
+        suffix = value.strip().lower().rstrip(".").lstrip(".")
+        if not suffix or not _INTERNAL_HOST.fullmatch(suffix):
+            raise ValueError("Preview Relay DNS suffix is invalid")
+        return suffix
+
+    @classmethod
+    def from_strings(
+        cls,
+        *,
+        allowed_dns_suffixes: Collection[str],
+        allowed_cidrs: Collection[str],
+        allowed_ports: Collection[int],
+    ) -> PreviewRelayEndpointPolicy:
+        try:
+            networks = tuple(ipaddress.ip_network(value, strict=True) for value in allowed_cidrs)
+        except ValueError as exc:
+            raise ValueError("Preview Relay cluster CIDR is invalid") from exc
+        return cls(
+            allowed_dns_suffixes=tuple(allowed_dns_suffixes),
+            allowed_cidrs=networks,
+            allowed_ports=frozenset(allowed_ports),
+        )
+
+    def require_allowed_port(self, port: int) -> None:
+        if port not in self.allowed_ports:
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_denied", "Preview Relay endpoint is not allowed"
+            )
+
+    def require_allowed_name(self, value: str) -> str:
+        name = value.lower().rstrip(".")
+        if not _INTERNAL_HOST.fullmatch(name) or not any(
+            name == suffix or name.endswith(f".{suffix}") for suffix in self.allowed_dns_suffixes
+        ):
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_denied", "Preview Relay endpoint is not allowed"
+            )
+        return name
+
+    def require_allowed_address(self, value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_denied", "Preview Relay endpoint is not allowed"
+            ) from exc
+        if (
+            address.is_unspecified
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or not any(address in network for network in self.allowed_cidrs)
+        ):
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_denied", "Preview Relay endpoint is not allowed"
+            )
+        return address
+
+
+def resolve_policy_bound_preview_endpoint(
+    endpoint: PreviewRelayEndpoint,
+    policy: PreviewRelayEndpointPolicy,
+    *,
+    getaddrinfo: Callable[..., object] | None = None,
+) -> PreviewRelayEndpoint:
+    """Validate and pin one server-selected endpoint under the shared policy."""
+
+    if not isinstance(endpoint, PreviewRelayEndpoint):
+        raise PreviewRelayTransportError(
+            "preview_relay_endpoint_invalid", "Preview Relay endpoint is invalid"
+        )
+    resolver = socket.getaddrinfo if getaddrinfo is None else getaddrinfo
+    policy.require_allowed_port(endpoint.port)
+    server_name = policy.require_allowed_name(endpoint.server_name)
+    try:
+        literal = ipaddress.ip_address(endpoint.connect_host)
+    except ValueError:
+        literal = None
+    if literal is None:
+        connect_name = policy.require_allowed_name(endpoint.connect_host)
+        try:
+            answers = cast(
+                list[tuple[int, int, int, str, tuple[object, ...]]],
+                resolver(
+                    connect_name,
+                    endpoint.port,
+                    family=socket.AF_UNSPEC,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+                ),
+            )
+        except OSError as exc:
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_unavailable",
+                "Preview Relay endpoint is unavailable",
+            ) from exc
+        addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+        for family, socket_type, protocol, _canonical_name, socket_address in answers:
+            if (
+                family not in {socket.AF_INET, socket.AF_INET6}
+                or socket_type != socket.SOCK_STREAM
+                or protocol not in {0, socket.IPPROTO_TCP}
+                or not socket_address
+                or not isinstance(socket_address[0], str)
+            ):
+                continue
+            addresses.add(policy.require_allowed_address(socket_address[0]))
+        if not addresses:
+            raise PreviewRelayTransportError(
+                "preview_relay_endpoint_unavailable",
+                "Preview Relay endpoint is unavailable",
+            )
+        pinned = min(addresses, key=lambda address: (address.version, int(address)))
+    else:
+        pinned = policy.require_allowed_address(str(literal))
+    return PreviewRelayEndpoint(str(pinned), endpoint.port, server_name)
+
+
+class PolicyBoundPreviewRelayEndpointResolver:
+    """Pin directory endpoints to policy-validated DNS answers."""
+
+    def __init__(
+        self,
+        directory: PreviewRelayEndpointResolver,
+        policy: PreviewRelayEndpointPolicy,
+        *,
+        getaddrinfo: Callable[..., object] | None = None,
+    ) -> None:
+        self._directory = directory
+        self._policy = policy
+        self._getaddrinfo = socket.getaddrinfo if getaddrinfo is None else getaddrinfo
+
+    def resolve(self, placement: RunnerTunnelPlacement) -> PreviewRelayEndpoint:
+        return resolve_policy_bound_preview_endpoint(
+            self._directory.resolve(placement),
+            self._policy,
+            getaddrinfo=self._getaddrinfo,
+        )
 
 
 def _require_tls13(context: ssl.SSLContext, *, server: bool) -> None:
@@ -211,6 +396,32 @@ def _headers(value: object, *, allowed: frozenset[str]) -> dict[str, str]:
     return result
 
 
+def _route_response_headers(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != _ROUTE_RESPONSE_HEADERS:
+        raise ValueError("route response headers are invalid")
+    result: dict[str, str] = {}
+    total = 0
+    for raw_name, raw_value in value.items():
+        if (
+            not isinstance(raw_name, str)
+            or raw_name not in _ROUTE_RESPONSE_HEADERS
+            or not isinstance(raw_value, str)
+            or not raw_value
+            or "\r" in raw_value
+            or "\n" in raw_value
+            or "\x00" in raw_value
+        ):
+            raise ValueError("route response header is invalid")
+        size = len(raw_name.encode("ascii")) + len(raw_value.encode("utf-8"))
+        if size > _MAX_HEADER_VALUE_BYTES:
+            raise ValueError("route response header is oversized")
+        total += size
+        result[raw_name] = raw_value
+    if total > _MAX_REQUEST_HEAD_BYTES // 2:
+        raise ValueError("route response headers are oversized")
+    return result
+
+
 def _request_document(
     encoded: bytes,
     body: bytes,
@@ -240,9 +451,11 @@ def _request_document(
                 {
                     "expires_at",
                     "opaque_preview_key",
+                    "preview_host",
                     "preview_id",
                     "preview_token_hash",
                     "project_id",
+                    "response_headers",
                     "run_fence_token",
                     "run_id",
                     "runner_connection_generation",
@@ -279,17 +492,22 @@ def _request_document(
             route_document["runner_connection_generation"]
         )
         opaque_key = route_document["opaque_preview_key"]
+        preview_host = route_document["preview_host"]
         preview_token_hash = route_document["preview_token_hash"]
         if (
             route_runner_id != runner_id
             or route_connection_generation != connection_generation
             or not isinstance(opaque_key, str)
             or not _OPAQUE_PREVIEW_KEY.fullmatch(opaque_key)
+            or not isinstance(preview_host, str)
+            or preview_host != preview_host.lower()
+            or not _INTERNAL_HOST.fullmatch(preview_host)
             or not isinstance(preview_token_hash, str)
             or not _HEX_SHA256.fullmatch(preview_token_hash)
         ):
             raise ValueError
         headers = _headers(request_document["headers"], allowed=_REQUEST_HEADERS)
+        response_headers = _route_response_headers(route_document["response_headers"])
         method = request_document["method"]
         path = request_document["path"]
         query = request_document["query"]
@@ -326,8 +544,9 @@ def _request_document(
             opaque_preview_key=opaque_key,
             preview_token_hash=preview_token_hash,
             upstream_request_headers=headers,
-            response_headers={},
+            response_headers=response_headers,
             expires_at=expires_at,
+            preview_host=preview_host,
         )
         placement = RunnerTunnelPlacement(
             placement_id=placement_id,
@@ -358,6 +577,9 @@ def _encoded_request(
         or placement.lease_expires_at.tzinfo is None
         or placement.lease_expires_at <= datetime.now(timezone.utc)
         or route.expires_at.tzinfo is None
+        or not route.preview_host
+        or route.preview_host != route.preview_host.lower()
+        or not _INTERNAL_HOST.fullmatch(route.preview_host)
         or len(request.body) > maximum_request_bytes
         or request.headers != route.upstream_request_headers
     ):
@@ -382,9 +604,11 @@ def _encoded_request(
         "route": {
             "expires_at": route.expires_at.astimezone(timezone.utc).isoformat(),
             "opaque_preview_key": route.opaque_preview_key,
+            "preview_host": route.preview_host,
             "preview_id": str(route.preview_id),
             "preview_token_hash": route.preview_token_hash,
             "project_id": str(route.project_id),
+            "response_headers": route.response_headers,
             "run_fence_token": route.run_fence_token,
             "run_id": str(route.run_id),
             "runner_connection_generation": route.runner_connection_generation,
@@ -915,8 +1139,11 @@ class MutualTlsPreviewRelayClient:
 __all__ = [
     "MutualTlsPreviewRelayClient",
     "MutualTlsPreviewRelayServer",
+    "PolicyBoundPreviewRelayEndpointResolver",
     "PreviewGatewayCertificateAuthorizer",
     "PreviewRelayEndpoint",
+    "PreviewRelayEndpointPolicy",
     "PreviewRelayEndpointResolver",
     "PreviewRelayTransportError",
+    "resolve_policy_bound_preview_endpoint",
 ]

@@ -35,10 +35,30 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
     policy = EVALUATOR.read_text(encoding="utf-8")
     trusted_inputs = _array_values(policy, "POSTGRESQL_N1_TRUSTED_INPUTS")
 
-    assert len(trusted_inputs) == 20
+    assert len(trusted_inputs) == 21
     for trusted_input in trusted_inputs:
         path, expected_digest = trusted_input.split("|", 1)
-        assert hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest() == expected_digest
+        observed_digest = hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest()
+        assert observed_digest == expected_digest, (
+            f"trusted input digest drift for {path}: "
+            f"observed {observed_digest}, expected {expected_digest}"
+        )
+
+
+def test_every_workflow_pytest_source_is_a_trusted_candidate_input() -> None:
+    policy = EVALUATOR.read_text(encoding="utf-8")
+    trusted_paths = {
+        row.split("|", 1)[0] for row in _array_values(policy, "POSTGRESQL_N1_TRUSTED_INPUTS")
+    }
+    workflow_test_sources = set(
+        re.findall(
+            r"tests/(?:[A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_.-]+\.py",
+            N1_WORKFLOW.read_text(encoding="utf-8"),
+        )
+    )
+
+    assert workflow_test_sources
+    assert workflow_test_sources <= trusted_paths
 
 
 def test_candidate_run_title_binds_pr_base_and_head() -> None:

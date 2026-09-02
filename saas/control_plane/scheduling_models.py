@@ -181,6 +181,10 @@ class RunDispatchRecord(SaasBase):
     pool_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_runner_pools.id", ondelete="RESTRICT"), nullable=False
     )
+    execution_profile_id: Mapped[UUID] = mapped_column(nullable=False)
+    execution_profile_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    egress_policy_id: Mapped[UUID] = mapped_column(nullable=False)
+    egress_policy_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     queue_class: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     required_capabilities: Mapped[list[str]] = mapped_column(sa.JSON, nullable=False)
     requirements_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -195,6 +199,8 @@ class RunDispatchRecord(SaasBase):
     dispatch_generation: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     released_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     dead_letter_reason: Mapped[str | None] = mapped_column(sa.String(256))
+    recovery_quarantined_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    recovery_quarantine_reason: Mapped[str | None] = mapped_column(sa.String(128))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -212,11 +218,47 @@ class RunDispatchRecord(SaasBase):
             name="fk_run_dispatch_run_scope",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ("execution_profile_id", "tenant_id", "space_id", "project_id"),
+            (
+                "saas_execution_profiles.id",
+                "saas_execution_profiles.tenant_id",
+                "saas_execution_profiles.space_id",
+                "saas_execution_profiles.project_id",
+            ),
+            name="fk_run_dispatch_execution_profile_scope",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ("egress_policy_id", "tenant_id", "space_id", "project_id"),
+            (
+                "saas_egress_policies.id",
+                "saas_egress_policies.tenant_id",
+                "saas_egress_policies.space_id",
+                "saas_egress_policies.project_id",
+            ),
+            name="fk_run_dispatch_egress_policy_scope",
+            ondelete="RESTRICT",
+        ),
         sa.CheckConstraint(
             f"status IN ({_values(DISPATCH_STATUSES)})", name="ck_run_dispatch_status"
         ),
         sa.CheckConstraint("length(queue_class) > 0", name="ck_run_dispatch_queue_nonempty"),
         sa.CheckConstraint("length(requirements_hash) = 64", name="ck_run_dispatch_hash"),
+        sa.CheckConstraint(
+            "length(execution_profile_hash) = 64",
+            name="ck_run_dispatch_execution_profile_binding",
+        ),
+        sa.CheckConstraint(
+            "length(egress_policy_hash) = 64",
+            name="ck_run_dispatch_egress_policy_binding",
+        ),
+        sa.CheckConstraint(
+            "(recovery_quarantined_at IS NULL AND recovery_quarantine_reason IS NULL) OR "
+            "(recovery_quarantined_at IS NOT NULL "
+            "AND length(recovery_quarantine_reason) > 0)",
+            name="ck_run_dispatch_recovery_quarantine",
+        ),
         sa.CheckConstraint("cost_units > 0", name="ck_run_dispatch_cost"),
         sa.CheckConstraint("max_wait_at > eligible_at", name="ck_run_dispatch_wait_window"),
         sa.CheckConstraint("dispatch_generation >= 0", name="ck_run_dispatch_generation"),

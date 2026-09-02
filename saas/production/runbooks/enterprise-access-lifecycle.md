@@ -21,7 +21,7 @@ cover directory synchronization or prove SSO/SCIM production readiness.
    Tenant Member, per-user Space access, and invitation-expiry indexes without changing
    either lifecycle state machine.
 2. Reapply `saas/control_plane/postgresql_roles.psql` and confirm all 57 control-plane
-   and 17 Runtime tables still use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
+   and 18 Runtime tables still use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW
    LEVEL SECURITY`. Governance logins must remain `NOSUPERUSER NOBYPASSRLS`.
 3. Register the enterprise router only through `SaasHttpIntegration`. The routes
    require an authenticated HttpOnly Cookie, trusted Origin, CSRF token, current

@@ -193,6 +193,15 @@ class ExecutionProfileRecord(SaasBase):
             "project_id",
             "status",
         ),
+        sa.Index(
+            "uq_execution_profile_active_scope",
+            "tenant_id",
+            "space_id",
+            "project_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'active'"),
+            postgresql_where=sa.text("status = 'active'"),
+        ),
     )
 
 

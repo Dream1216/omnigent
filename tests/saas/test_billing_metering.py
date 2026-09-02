@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -18,7 +19,9 @@ from saas.control_plane import (
     BillingMeteringReceiptRecord,
     CapabilityTokenRecord,
     ControlPlaneOutboxEvent,
+    EgressPolicyRecord,
     ExecutionControlPlane,
+    ExecutionProfileRecord,
     ExecutionRevisionSet,
     GlobalUser,
     ProjectMembershipRecord,
@@ -53,7 +56,7 @@ class _Fixture:
 
 
 @pytest.fixture
-def metering() -> _Fixture:
+def metering() -> Iterator[_Fixture]:
     engine = sa.create_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -77,6 +80,8 @@ def metering() -> _Fixture:
         uuid4(),
         uuid4(),
     )
+    execution_profile_id = uuid4()
+    execution_profile_hash = "4" * 64
     context = RequestContext(
         actor_id=owner_id,
         tenant_id=tenant_id,
@@ -169,6 +174,51 @@ def metering() -> _Fixture:
                 version=1,
             )
         )
+        egress_policy_id = uuid4()
+        db.add(
+            EgressPolicyRecord(
+                id=egress_policy_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                created_by=owner_id,
+                name="metering-default-deny",
+                rules=[],
+                rules_hash="0" * 64,
+                allow_private_destinations=False,
+                status="active",
+                version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ExecutionProfileRecord(
+                id=execution_profile_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                created_by=owner_id,
+                name="metering-managed-default",
+                sandbox_backend="linux_bwrap",
+                network_mode="proxy_only",
+                root_read_only=True,
+                run_as_uid=65532,
+                run_as_gid=65532,
+                no_new_privileges=True,
+                host_socket_access=False,
+                syscall_profile_ref="oci-default-v1",
+                cpu_millis=1000,
+                memory_bytes=512 * 1024 * 1024,
+                pids_limit=128,
+                allowed_tools=["shell"],
+                approval_required_tools=[],
+                denied_tools=[],
+                config_hash=execution_profile_hash,
+                status="active",
+                version=1,
+            )
+        )
 
     execution.configure_quota(
         context,
@@ -215,6 +265,8 @@ def metering() -> _Fixture:
         run_id=run_id,
         pool_id=pool_id,
         required_capabilities=["shell"],
+        execution_profile_id=execution_profile_id,
+        execution_profile_hash=execution_profile_hash,
         eligible_at=now - timedelta(seconds=1),
         maximum_wait=timedelta(hours=1),
     )

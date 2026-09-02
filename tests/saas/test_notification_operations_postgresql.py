@@ -223,6 +223,41 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts(
         authority = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         connection.exec_driver_sql(authority)
         connection.exec_driver_sql(authority)
+        policy_roles = {
+            policy: set(roles)
+            for policy, roles in connection.execute(
+                sa.text(
+                    "SELECT policyname, roles FROM pg_policies WHERE schemaname = 'public' "
+                    "AND policyname = ANY(:policies)"
+                ),
+                {
+                    "policies": [
+                        "rls_approval_work_approval_scheduler_source",
+                        "rls_saas_notification_deliveries_governance_insert",
+                        "rls_saas_notification_deliveries_bound_insert",
+                        "rls_saas_notification_deliveries_source_exact_read",
+                    ]
+                },
+            )
+        }
+        source_roles = {
+            "saas_approval_scheduler_enterprise",
+            "saas_approval_scheduler_privacy",
+            "saas_approval_scheduler_audit",
+            "saas_approval_scheduler_support_customer",
+            "saas_approval_scheduler_support_staff",
+        }
+        assert policy_roles == {
+            "rls_approval_work_approval_scheduler_source": source_roles,
+            "rls_saas_notification_deliveries_governance_insert": {"saas_platform"},
+            "rls_saas_notification_deliveries_bound_insert": source_roles
+            | {
+                "saas_notification_scheduler",
+                "saas_governance",
+                "saas_platform_governance",
+            },
+            "rls_saas_notification_deliveries_source_exact_read": source_roles,
+        }
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")

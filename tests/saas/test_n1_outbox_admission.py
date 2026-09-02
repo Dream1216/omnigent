@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -108,9 +109,9 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
         "p0s3 N-1 Outbox compatibility guards are absent or disabled"
     )
     assert public_execute_revoke < guard_verification
-    compat_grants = source[
-        source.index("REVOKE ALL ON SCHEMA public FROM saas_dispatcher_n1_compat") :
-    ]
+    compat_grants = source[source.index("-- Fixed 9451a64 query projection.") :]
+    assert "SCHEMA public FROM saas_dispatcher_n1_compat" not in source
+    assert "SCHEMA public TO saas_dispatcher_n1_compat" not in source
     assert "GRANT SELECT, UPDATE ON saas_control_plane_outbox" not in compat_grants
     assert "id, published_at, available_at, claimed_at, created_at, claim_token" in compat_grants
     assert (
@@ -121,7 +122,7 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
     schema_contract = source.index(
         "-- This authority body is intentionally replayable at the two supported"
     )
-    first_acl_mutation = source.index("GRANT USAGE ON SCHEMA public")
+    first_acl_mutation = source.index("REVOKE ALL PRIVILEGES ON")
     rate_projection = source.index("-- Rate-limit state is reachable only through")
     assert schema_contract < first_acl_mutation < rate_projection
     assert "schema_revision IN ('p0s000000003', 'p0s000000004')" in source
@@ -139,6 +140,144 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
     assert privacy_guard < privacy_projection
 
 
+def test_n1_roles_replay_p0s8_through_p0s11_reuse_exact_p0s7_rate_contracts() -> None:
+    source = _roles_source()
+    revision_guard = source[
+        source.index("IF revision_rows <> 1") : source.index(
+            "SELECT count(*) > 0", source.index("IF revision_rows <> 1")
+        )
+    ]
+    consume_contract = source[
+        source.index("= CASE schema_revision") : source.index(
+            "END", source.index("= CASE schema_revision")
+        )
+    ]
+    constraint_contract = source[
+        source.index("schema_revision = 'p0s000000005'") : source.index(
+            "OR rate_index_contract_hash", source.index("schema_revision = 'p0s000000005'")
+        )
+    ]
+    p0s7_consume_hash = "8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112"
+    supported_revisions = tuple(re.findall(r"'(p0s[0-9]{9})'", revision_guard))
+    consume_hashes = dict(
+        re.findall(
+            r"WHEN '(p0s[0-9]{9})' THEN\s*'([0-9a-f]{64})'",
+            consume_contract,
+        )
+    )
+    forward_revisions = (
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    )
+    normalized_constraint_contract = " ".join(constraint_contract.split())
+
+    assert supported_revisions == (
+        "p0s000000003",
+        "p0s000000004",
+        "p0s000000005",
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    )
+    assert tuple(consume_hashes) == (
+        "p0s000000005",
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    )
+    assert {revision: consume_hashes[revision] for revision in forward_revisions} == dict.fromkeys(
+        forward_revisions, p0s7_consume_hash
+    )
+    assert {
+        revision for revision, digest in consume_hashes.items() if digest == p0s7_consume_hash
+    } == set(forward_revisions)
+    assert (
+        "schema_revision IN ( 'p0s000000006', 'p0s000000007', "
+        "'p0s000000008', 'p0s000000009', 'p0s000000010', 'p0s000000011' )"
+        in normalized_constraint_contract
+    )
+    assert set(re.findall(r"'((?:p0s)[0-9]{9})'", normalized_constraint_contract)) == {
+        "p0s000000005",
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    }
+
+
+def test_n1_incoming_membership_filter_is_pg16_admin_only_and_pg15_fail_closed() -> None:
+    root = Path(__file__).resolve().parents[2]
+    principals = _principals_source()
+    roles = _roles_source()
+    migration = (
+        root / "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
+    ).read_text(encoding="utf-8")
+    admission = (root / "saas/n1_outbox_admission.py").read_text(encoding="utf-8")
+    blocks = (
+        principals[
+            principals.index("IF EXISTS (") : principals.index(
+                ") THEN", principals.index("IF EXISTS (")
+            )
+        ],
+        roles[
+            roles.index("SELECT count(*) INTO n1_incoming_memberships") : roles.index(
+                "IF n1_incoming_memberships",
+                roles.index("SELECT count(*) INTO n1_incoming_memberships"),
+            )
+        ],
+        roles[
+            roles.index("SELECT count(*), min(membership.member)") : roles.index(
+                "IF incoming_count > 1",
+                roles.index("SELECT count(*), min(membership.member)"),
+            )
+        ],
+        migration[
+            migration.index("incoming_members =") : migration.index(
+                "fixed_membership =", migration.index("incoming_members =")
+            )
+        ],
+        admission[
+            admission.index("incoming_members =") : admission.index(
+                "login_incoming_members =", admission.index("incoming_members =")
+            )
+        ],
+    )
+    expected_active_edge = (
+        "NOTmembership.admin_optionORCOALESCE((to_jsonb(membership)->>"
+        "'inherit_option')::boolean,true)ORCOALESCE((to_jsonb(membership)->>"
+        "'set_option')::boolean,true)"
+    )
+
+    for block in blocks:
+        assert expected_active_edge in "".join(block.split()).replace('"', "")
+
+    # Missing PG15 fields resolve to True, so even ADMIN-only membership stays
+    # active. Only PG16+'s explicit (ADMIN, no-INHERIT, no-SET) tuple is inert.
+    def is_active(admin: bool, inherit: bool | None, can_set: bool | None) -> bool:
+        return (
+            not admin
+            or (True if inherit is None else inherit)
+            or (True if can_set is None else can_set)
+        )
+
+    assert not is_active(True, False, False)
+    assert is_active(True, None, None)
+    assert is_active(False, False, False)
+    assert is_active(True, True, False)
+    assert is_active(True, False, True)
+
+
 def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
     isolated_postgres_url: str,
 ) -> None:
@@ -147,16 +286,27 @@ def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
     admin_engine = sa.create_engine(isolated_postgres_url)
     login_name = f"n1_compat_login_{uuid4().hex[:12]}"
     extra_member = f"n1_compat_extra_{uuid4().hex[:12]}"
+    management_role = f"n1_compat_manager_{uuid4().hex[:12]}"
     password = uuid4().hex + uuid4().hex
     admission_engine: sa.Engine | None = None
     login_created = False
     extra_member_created = False
+    management_role_created = False
     reverse_roles_created: set[str] = set()
     schema_name = f"n1_compat_owned_{uuid4().hex[:12]}"
 
     try:
         with admin_engine.begin() as connection:
             command.upgrade(_migration_config(connection), "p0s000000003")
+            database_name = connection.scalar(sa.text("SELECT current_database()"))
+            assert isinstance(database_name, str)
+            quoted_database = connection.dialect.identifier_preparer.quote(database_name)
+            # The database-owner phase revokes PUBLIC CONNECT. Production's
+            # ACL converger restores CONNECT to each exact NOLOGIN base role,
+            # never to the ephemeral service login itself.
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO saas_dispatcher_n1_compat"
+            )
 
             # Credential material is supplied by the external provisioning
             # boundary.  Production replaces this test-only value with a
@@ -199,8 +349,18 @@ def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
         # production admission remains independently closed.
         with admin_engine.begin() as connection:
             quoted_login = connection.dialect.identifier_preparer.quote(login_name)
+            quoted_management = connection.dialect.identifier_preparer.quote(management_role)
             connection.exec_driver_sql(f"REVOKE saas_dispatcher_n1_compat FROM {quoted_login}")
             connection.exec_driver_sql(_roles_source())
+            connection.exec_driver_sql(
+                f"CREATE ROLE {quoted_management} NOLOGIN INHERIT NOSUPERUSER "
+                "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            )
+            management_role_created = True
+            connection.exec_driver_sql(
+                "GRANT saas_dispatcher_n1_compat "
+                f"TO {quoted_management} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"
+            )
             connection.exec_driver_sql(
                 f"GRANT saas_dispatcher_n1_compat TO {quoted_login} WITH INHERIT TRUE, SET FALSE"
             )
@@ -665,17 +825,30 @@ def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
                 "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
             )
             extra_member_created = True
-            connection.exec_driver_sql(
-                f"GRANT saas_dispatcher_n1_compat TO {quoted_extra} WITH INHERIT TRUE, SET FALSE"
+        for membership_options in (
+            "ADMIN FALSE, INHERIT FALSE, SET FALSE",
+            "ADMIN TRUE, INHERIT TRUE, SET FALSE",
+            "ADMIN TRUE, INHERIT FALSE, SET TRUE",
+        ):
+            with admin_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT saas_dispatcher_n1_compat TO {quoted_extra} WITH {membership_options}"
+                )
+            _assert_secret_free_rejection(
+                admission_engine,
+                expected_login=login_name,
+                forbidden_values=(login_name, password),
             )
-        _assert_secret_free_rejection(
-            admission_engine,
-            expected_login=login_name,
-            forbidden_values=(login_name, password),
-        )
+            with admin_engine.begin() as connection:
+                connection.exec_driver_sql(f"REVOKE saas_dispatcher_n1_compat FROM {quoted_extra}")
 
         # roles.sql must reject the same ambiguous incoming membership before
         # reconverging the fixed-column bridge.
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT saas_dispatcher_n1_compat TO {quoted_extra} "
+                "WITH ADMIN FALSE, INHERIT FALSE, SET FALSE"
+            )
         _assert_roles_replay_rejected(admin_engine)
 
         with admin_engine.begin() as connection:
@@ -692,8 +865,14 @@ def test_real_postgresql_n1_compat_login_admission_and_roles_replay(
         with admin_engine.begin() as connection:
             quoted_login = connection.dialect.identifier_preparer.quote(login_name)
             quoted_extra = connection.dialect.identifier_preparer.quote(extra_member)
+            quoted_management = connection.dialect.identifier_preparer.quote(management_role)
             if extra_member_created:
                 connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_extra}")
+            if management_role_created:
+                connection.exec_driver_sql(
+                    f"REVOKE saas_dispatcher_n1_compat FROM {quoted_management}"
+                )
+                connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_management}")
             for reverse_role in sorted(reverse_roles_created):
                 quoted_reverse = connection.dialect.identifier_preparer.quote(reverse_role)
                 connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_reverse}")
@@ -751,6 +930,22 @@ def test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_mark
             "p0s000000007",
             "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
         ),
+        (
+            "p0s000000008",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
+        (
+            "p0s000000009",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
+        (
+            "p0s000000010",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
+        (
+            "p0s000000011",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
     ],
 )
 def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
@@ -776,7 +971,15 @@ def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
 
 @pytest.mark.parametrize(
     "schema_revision",
-    ["p0s000000005", "p0s000000006", "p0s000000007"],
+    [
+        "p0s000000005",
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    ],
 )
 def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
     isolated_postgres_url: str,
@@ -832,7 +1035,14 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         status_tamper,
         privacy_trigger_tamper,
     ]
-    if schema_revision in {"p0s000000006", "p0s000000007"}:
+    if schema_revision in {
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    }:
         drifts.append(
             "UPDATE public.saas_registration_rate_limit_policies "
             "SET limit_count = 61 WHERE action = 'registration.request' "
@@ -859,7 +1069,17 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         engine.dispose()
 
 
-@pytest.mark.parametrize("schema_revision", ["p0s000000006", "p0s000000007"])
+@pytest.mark.parametrize(
+    "schema_revision",
+    [
+        "p0s000000006",
+        "p0s000000007",
+        "p0s000000008",
+        "p0s000000009",
+        "p0s000000010",
+        "p0s000000011",
+    ],
+)
 def test_real_postgresql_rate_limit_authority_replay_removes_poisoned_acls(
     isolated_postgres_url: str,
     schema_revision: str,

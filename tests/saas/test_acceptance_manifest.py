@@ -65,7 +65,7 @@ def test_acceptance_manifest_rejects_stale_adr_approval_status(
     ) in validate_manifest(repo, manifest)
 
 
-def test_current_adr_gate_binds_exact_successor_ci() -> None:
+def test_current_adr_gate_is_pending_and_preserves_prior_successor_ci() -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads(
         (repo / "saas/acceptance/p0-p6-evidence.json").read_text(encoding="utf-8")
@@ -82,7 +82,11 @@ def test_current_adr_gate_binds_exact_successor_ci() -> None:
     )
     evidence_path = "saas/acceptance/p0-adr-approval-evidence-ci-33468247922.json"
 
-    assert gate["status"] == "passed"
+    baseline = json.loads((repo / "saas/production/baseline.json").read_text(encoding="utf-8"))
+
+    assert gate["status"] == "pending"
+    assert baseline["approval"]["state"] == "review_required"
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000011")
     assert approval_path in gate["evidence"]
     assert evidence_path in gate["evidence"]
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -52,6 +53,33 @@ class OutboxPublisher(Protocol):
         aggregate_key: str,
         payload: dict[str, object],
     ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class OutboxClaimRoute:
+    """One exact database-side route owned by a specialized dispatcher.
+
+    Filtering while rows are selected prevents a narrow production worker from
+    leasing unrelated events and then relying on a catch-all publisher.  The
+    three immutable facts correspond to the Outbox envelope and its canonical
+    nested domain event type.
+    """
+
+    aggregate_type: str
+    event_type: str
+    payload_event_type: str
+
+    def __post_init__(self) -> None:
+        values = (self.aggregate_type, self.event_type, self.payload_event_type)
+        if any(_SAFE_ERROR_CODE.fullmatch(value) is None for value in values):
+            raise ValueError("Outbox claim route is invalid")
+
+    def predicate(self) -> sa.ColumnElement[bool]:
+        return sa.and_(
+            ControlPlaneOutboxEvent.aggregate_type == self.aggregate_type,
+            ControlPlaneOutboxEvent.event_type == self.event_type,
+            ControlPlaneOutboxEvent.payload["event_type"].as_string() == self.payload_event_type,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +176,7 @@ class OutboxDispatcher:
         lease_duration: timedelta = timedelta(seconds=30),
         max_backoff: timedelta = timedelta(minutes=5),
         max_attempts: int = 8,
+        claim_routes: Collection[OutboxClaimRoute] | None = None,
     ) -> None:
         if lease_duration <= timedelta(0) or max_backoff <= timedelta(0):
             raise ValueError("Outbox lease and backoff must be positive")
@@ -158,6 +187,15 @@ class OutboxDispatcher:
         self._lease_duration = lease_duration
         self._max_backoff = max_backoff
         self._max_attempts = max_attempts
+        if claim_routes is None:
+            self._claim_routes: tuple[OutboxClaimRoute, ...] | None = None
+        else:
+            routes = tuple(claim_routes)
+            if not routes or any(not isinstance(route, OutboxClaimRoute) for route in routes):
+                raise ValueError("Outbox claim routes must be a non-empty route collection")
+            if len(set(routes)) != len(routes):
+                raise ValueError("Outbox claim routes must be unique")
+            self._claim_routes = routes
 
     def dispatch_once(
         self, *, batch_size: int = 100, now: datetime | None = None
@@ -268,6 +306,8 @@ class OutboxDispatcher:
                 .order_by(ControlPlaneOutboxEvent.created_at, ControlPlaneOutboxEvent.id)
                 .limit(batch_size)
             )
+            if self._claim_routes is not None:
+                query = query.where(sa.or_(*(route.predicate() for route in self._claim_routes)))
             if db.bind is not None and db.bind.dialect.name == "postgresql":
                 query = query.with_for_update(skip_locked=True)
             candidate_ids = list(db.execute(query).scalars())

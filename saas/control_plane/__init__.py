@@ -347,6 +347,7 @@ from saas.control_plane.onboarding_workflow import (
 )
 from saas.control_plane.outbox import (
     DispatchResult,
+    OutboxClaimRoute,
     OutboxDispatcher,
     OutboxPublisher,
     OutboxPublishError,
@@ -777,6 +778,7 @@ __all__ = [
     "OnboardingWorkflowResult",
     "OperationBatchItemRecord",
     "OperationBatchRecord",
+    "OutboxClaimRoute",
     "OutboxDispatcher",
     "OutboxPublishError",
     "OutboxPublisher",

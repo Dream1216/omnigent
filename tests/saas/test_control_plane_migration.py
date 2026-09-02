@@ -21,6 +21,41 @@ from psycopg import sql
 from saas.control_plane import SaasBase
 from saas.scripts.build_n1_compat import materialize_n1_compat
 
+_P0S11_SOURCE_ROLES = (
+    "saas_approval_scheduler_audit",
+    "saas_approval_scheduler_enterprise",
+    "saas_approval_scheduler_privacy",
+    "saas_approval_scheduler_support_customer",
+    "saas_approval_scheduler_support_staff",
+)
+_P0S11_POLICY_ROLES = {
+    (
+        "saas_approval_work_items",
+        "rls_approval_work_approval_scheduler_source",
+    ): _P0S11_SOURCE_ROLES,
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_governance_insert",
+    ): ("saas_platform",),
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_bound_insert",
+    ): tuple(
+        sorted(
+            (
+                "saas_governance",
+                "saas_notification_scheduler",
+                "saas_platform_governance",
+                *_P0S11_SOURCE_ROLES,
+            )
+        )
+    ),
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_source_exact_read",
+    ): _P0S11_SOURCE_ROLES,
+}
+
 
 def _migration_config(connection: sa.Connection) -> Config:
     root = Path(__file__).resolve().parents[2]
@@ -31,6 +66,105 @@ def _migration_config(connection: sa.Connection) -> Config:
     )
     config.attributes["connection"] = connection
     return config
+
+
+def _p0s11_policy_projection(connection: sa.Connection) -> dict[tuple[str, str], tuple]:
+    projection: dict[tuple[str, str], tuple] = {}
+    for table, policy in _P0S11_POLICY_ROLES:
+        row = connection.execute(
+            sa.text(
+                "SELECT policy.oid::bigint AS oid, policy.polcmd AS command, "
+                "policy.polpermissive AS permissive, "
+                "pg_catalog.pg_get_expr(policy.polqual, policy.polrelid) AS qualifier, "
+                "pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid) AS with_check, "
+                "ARRAY(SELECT CASE WHEN role_oid = 0 THEN 'PUBLIC' ELSE role.rolname END "
+                "FROM pg_catalog.unnest(policy.polroles) AS role_oid "
+                "LEFT JOIN pg_catalog.pg_roles AS role ON role.oid = role_oid "
+                "ORDER BY 1) AS roles "
+                "FROM pg_catalog.pg_policy AS policy "
+                "JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid "
+                "JOIN pg_catalog.pg_namespace AS namespace "
+                "ON namespace.oid = relation.relnamespace "
+                "WHERE namespace.nspname = 'public' AND relation.relname = :table "
+                "AND policy.polname = :policy"
+            ),
+            {"table": table, "policy": policy},
+        ).one()
+        projection[(table, policy)] = (*row[:-1], tuple(row.roles))
+    return projection
+
+
+def _insert_execution_profile(
+    connection: sa.Connection,
+    *,
+    profile_id: UUID,
+    tenant_id: UUID,
+    space_id: UUID,
+    project_id: UUID,
+    egress_policy_id: UUID,
+    actor_id: UUID,
+    name: str,
+    status: str,
+    version: int,
+) -> None:
+    table = SaasBase.metadata.tables["saas_execution_profiles"]
+    connection.execute(
+        sa.insert(table),
+        {
+            "id": profile_id,
+            "tenant_id": tenant_id,
+            "space_id": space_id,
+            "project_id": project_id,
+            "egress_policy_id": egress_policy_id,
+            "created_by": actor_id,
+            "name": name,
+            "sandbox_backend": "linux_bwrap",
+            "network_mode": "proxy_only",
+            "root_read_only": True,
+            "run_as_uid": 65532,
+            "run_as_gid": 65532,
+            "no_new_privileges": True,
+            "host_socket_access": False,
+            "syscall_profile_ref": "runtime/default",
+            "cpu_millis": 1000,
+            "memory_bytes": 1_073_741_824,
+            "pids_limit": 256,
+            "allowed_tools": ["shell"],
+            "approval_required_tools": [],
+            "denied_tools": [],
+            "config_hash": "a" * 64,
+            "status": status,
+            "version": version,
+        },
+    )
+
+
+def _insert_egress_policy(
+    connection: sa.Connection,
+    *,
+    policy_id: UUID,
+    tenant_id: UUID,
+    space_id: UUID,
+    project_id: UUID,
+    actor_id: UUID,
+) -> None:
+    table = SaasBase.metadata.tables["saas_egress_policies"]
+    connection.execute(
+        sa.insert(table),
+        {
+            "id": policy_id,
+            "tenant_id": tenant_id,
+            "space_id": space_id,
+            "project_id": project_id,
+            "created_by": actor_id,
+            "name": "default-deny",
+            "rules": ["GET example.com/"],
+            "rules_hash": "e" * 64,
+            "allow_private_destinations": False,
+            "status": "active",
+            "version": 1,
+        },
+    )
 
 
 def _render_static_sql(node: ast.AST) -> str | None:
@@ -105,7 +239,82 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000007"
+        assert revision == "p0s000000011"
+        dispatch_profile = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys("saas_run_dispatches")
+            if foreign_key["name"] == "fk_run_dispatch_execution_profile_scope"
+        )
+        assert dispatch_profile["constrained_columns"] == [
+            "execution_profile_id",
+            "tenant_id",
+            "space_id",
+            "project_id",
+        ]
+        assert dispatch_profile["referred_table"] == "saas_execution_profiles"
+        assert dispatch_profile["referred_columns"] == [
+            "id",
+            "tenant_id",
+            "space_id",
+            "project_id",
+        ]
+        assert dispatch_profile["options"].get("ondelete") == "RESTRICT"
+        dispatch_egress = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys("saas_run_dispatches")
+            if foreign_key["name"] == "fk_run_dispatch_egress_policy_scope"
+        )
+        assert dispatch_egress["constrained_columns"] == [
+            "egress_policy_id",
+            "tenant_id",
+            "space_id",
+            "project_id",
+        ]
+        assert dispatch_egress["referred_table"] == "saas_egress_policies"
+        assert dispatch_egress["referred_columns"] == [
+            "id",
+            "tenant_id",
+            "space_id",
+            "project_id",
+        ]
+        assert dispatch_egress["options"].get("ondelete") == "RESTRICT"
+        dispatch_columns = {
+            str(column["name"]): column for column in inspector.get_columns("saas_run_dispatches")
+        }
+        assert dispatch_columns["execution_profile_id"]["nullable"] is False
+        assert dispatch_columns["execution_profile_hash"]["nullable"] is False
+        assert dispatch_columns["egress_policy_id"]["nullable"] is False
+        assert dispatch_columns["egress_policy_hash"]["nullable"] is False
+        dispatch_checks = {
+            str(check["name"]) for check in inspector.get_check_constraints("saas_run_dispatches")
+        }
+        assert {
+            "ck_run_dispatch_execution_profile_binding",
+            "ck_run_dispatch_egress_policy_binding",
+        } <= dispatch_checks
+        active_profile_index = next(
+            index
+            for index in inspector.get_indexes("saas_execution_profiles")
+            if index["name"] == "uq_execution_profile_active_scope"
+        )
+        assert active_profile_index["column_names"] == [
+            "tenant_id",
+            "space_id",
+            "project_id",
+        ]
+        assert active_profile_index["unique"] == 1
+        declared_profile_index = next(
+            index
+            for index in SaasBase.metadata.tables["saas_execution_profiles"].indexes
+            if index.name == "uq_execution_profile_active_scope"
+        )
+        assert declared_profile_index.unique
+        assert str(declared_profile_index.dialect_options["sqlite"]["where"]) == (
+            "status = 'active'"
+        )
+        assert str(declared_profile_index.dialect_options["postgresql"]["where"]) == (
+            "status = 'active'"
+        )
         first_run_scope = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_tenant_onboardings")
@@ -159,11 +368,333 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         assert "ix_invitation_tenant_status_expiry" in {
             value["name"] for value in inspector.get_indexes("saas_membership_invitations")
         }
+        runner_fence_index = next(
+            index
+            for index in inspector.get_indexes("saas_worktree_instances")
+            if index["name"] == "uq_worktree_runner_run_fence_v1"
+        )
+        assert runner_fence_index["column_names"] == ["run_id", "run_fence_token"]
+        assert runner_fence_index["unique"] == 1
 
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())
         assert remaining_tables <= {"saas_alembic_version"}
     engine.dispose()
+
+
+def test_dispatch_profile_binding_migration_requires_drained_p0s7_and_replays() -> None:
+    engine = sa.create_engine("sqlite://")
+    new_columns = {
+        "execution_profile_id",
+        "execution_profile_hash",
+        "egress_policy_id",
+        "egress_policy_hash",
+        "recovery_quarantined_at",
+        "recovery_quarantine_reason",
+    }
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000007")
+        identifiers = tuple(uuid4().hex for _ in range(5))
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_run_dispatches "
+                "(run_id, tenant_id, space_id, project_id, pool_id, queue_class, "
+                "required_capabilities, requirements_hash, cost_units, eligible_at, "
+                "max_wait_at, status, selected_runner_id, selected_failure_domain, "
+                "dispatch_generation, released_at, dead_letter_reason) VALUES "
+                "(:run_id, :tenant_id, :space_id, :project_id, :pool_id, "
+                "'interactive', '[]', :requirements_hash, 1, :eligible_at, :max_wait_at, "
+                "'pending', NULL, NULL, 0, NULL, NULL)"
+            ),
+            {
+                "run_id": identifiers[0],
+                "tenant_id": identifiers[1],
+                "space_id": identifiers[2],
+                "project_id": identifiers[3],
+                "pool_id": identifiers[4],
+                "requirements_hash": "a" * 64,
+                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
+                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+            },
+        )
+
+        with pytest.raises(RuntimeError) as rejected:
+            command.upgrade(config, "p0s000000008")
+        assert str(rejected.value) == (
+            "cannot apply p0s000000008: pre-upgrade dispatch drain required; "
+            "saas_run_dispatches must be empty"
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000007"
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 1
+        assert new_columns.isdisjoint(
+            {
+                str(column["name"])
+                for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+            }
+        )
+
+        connection.execute(sa.text("DELETE FROM saas_run_dispatches"))
+        command.upgrade(config, "p0s000000008")
+        assert new_columns <= {
+            str(column["name"])
+            for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+        }
+        migrated_columns = {
+            str(column["name"]): column
+            for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+        }
+        assert migrated_columns["execution_profile_id"]["nullable"] is False
+        assert migrated_columns["execution_profile_hash"]["nullable"] is False
+        assert migrated_columns["egress_policy_id"]["nullable"] is False
+        assert migrated_columns["egress_policy_hash"]["nullable"] is False
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000008"
+        )
+
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_run_dispatches "
+                "(run_id, tenant_id, space_id, project_id, pool_id, "
+                "execution_profile_id, execution_profile_hash, "
+                "egress_policy_id, egress_policy_hash, queue_class, "
+                "required_capabilities, requirements_hash, cost_units, eligible_at, "
+                "max_wait_at, status, selected_runner_id, selected_failure_domain, "
+                "dispatch_generation, released_at, dead_letter_reason, "
+                "recovery_quarantined_at, recovery_quarantine_reason) VALUES "
+                "(:run_id, :tenant_id, :space_id, :project_id, :pool_id, "
+                ":execution_profile_id, :execution_profile_hash, "
+                ":egress_policy_id, :egress_policy_hash, 'interactive', '[]', "
+                ":requirements_hash, 1, :eligible_at, :max_wait_at, "
+                "'pending', NULL, NULL, 0, NULL, NULL, NULL, NULL)"
+            ),
+            {
+                "run_id": identifiers[0],
+                "tenant_id": identifiers[1],
+                "space_id": identifiers[2],
+                "project_id": identifiers[3],
+                "pool_id": identifiers[4],
+                "execution_profile_id": uuid4().hex,
+                "execution_profile_hash": "b" * 64,
+                "egress_policy_id": uuid4().hex,
+                "egress_policy_hash": "c" * 64,
+                "requirements_hash": "d" * 64,
+                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
+                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+            },
+        )
+        with pytest.raises(RuntimeError) as rejected_downgrade:
+            command.downgrade(config, "p0s000000007")
+        assert str(rejected_downgrade.value) == (
+            "cannot downgrade p0s000000008: pre-downgrade dispatch drain required; "
+            "saas_run_dispatches must be empty"
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000008"
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 1
+        assert new_columns <= {
+            str(column["name"])
+            for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+        }
+
+        connection.execute(sa.text("DELETE FROM saas_run_dispatches"))
+        command.downgrade(config, "p0s000000007")
+        assert new_columns.isdisjoint(
+            {
+                str(column["name"])
+                for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+            }
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000007"
+        )
+
+        command.upgrade(config, "p0s000000008")
+        assert new_columns <= {
+            str(column["name"])
+            for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+        }
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000008"
+        )
+        assert "uq_execution_profile_active_scope" in {
+            str(index["name"])
+            for index in sa.inspect(connection).get_indexes("saas_execution_profiles")
+        }
+    engine.dispose()
+
+
+def test_dispatch_profile_binding_migration_rejects_ambiguous_active_profiles() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000007")
+        tenant_id = uuid4()
+        space_id = uuid4()
+        project_id = uuid4()
+        egress_policy_id = uuid4()
+        actor_id = uuid4()
+        first_profile_id = uuid4()
+        second_profile_id = uuid4()
+        _insert_execution_profile(
+            connection,
+            profile_id=first_profile_id,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            egress_policy_id=egress_policy_id,
+            actor_id=actor_id,
+            name="active-primary",
+            status="active",
+            version=1,
+        )
+        _insert_execution_profile(
+            connection,
+            profile_id=second_profile_id,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            egress_policy_id=egress_policy_id,
+            actor_id=actor_id,
+            name="active-ambiguous",
+            status="active",
+            version=2,
+        )
+
+        with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+            command.upgrade(config, "p0s000000008")
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000007"
+        )
+        assert "execution_profile_id" not in {
+            str(column["name"])
+            for column in sa.inspect(connection).get_columns("saas_run_dispatches")
+        }
+
+        connection.execute(
+            sa.text("UPDATE saas_execution_profiles SET status = 'retired' WHERE id = :id"),
+            {"id": second_profile_id.hex},
+        )
+        command.upgrade(config, "p0s000000008")
+        assert "uq_execution_profile_active_scope" in {
+            str(index["name"])
+            for index in sa.inspect(connection).get_indexes("saas_execution_profiles")
+        }
+
+        with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+            _insert_execution_profile(
+                connection,
+                profile_id=uuid4(),
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                actor_id=actor_id,
+                name="active-rejected",
+                status="active",
+                version=3,
+            )
+        _insert_execution_profile(
+            connection,
+            profile_id=uuid4(),
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            egress_policy_id=egress_policy_id,
+            actor_id=actor_id,
+            name="retired-allowed",
+            status="retired",
+            version=4,
+        )
+        _insert_execution_profile(
+            connection,
+            profile_id=uuid4(),
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=uuid4(),
+            egress_policy_id=egress_policy_id,
+            actor_id=actor_id,
+            name="other-project-active",
+            status="active",
+            version=1,
+        )
+    engine.dispose()
+
+
+def test_dispatch_profile_binding_migration_freezes_writers_before_admission() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "saas/control_plane/migrations/versions/p0s000000008_dispatch_profile_binding.py"
+    ).read_text(encoding="utf-8")
+    guard = source[source.index("def _require_dispatch_drain") : source.index("def upgrade")]
+    upgrade = source[source.index("def upgrade") : source.index("def downgrade")]
+    downgrade = source[source.index("def downgrade") :]
+
+    assert guard.index(
+        "LOCK TABLE public.saas_run_dispatches IN ACCESS EXCLUSIVE MODE"
+    ) < guard.index("ALTER TABLE public.saas_run_dispatches NO FORCE ROW LEVEL SECURITY")
+    assert guard.index(
+        "ALTER TABLE public.saas_run_dispatches NO FORCE ROW LEVEL SECURITY"
+    ) < guard.index("SELECT 1 FROM public.saas_run_dispatches LIMIT 1")
+    assert guard.index("SELECT 1 FROM public.saas_run_dispatches LIMIT 1") < guard.index(
+        'op.execute("ALTER TABLE public.saas_run_dispatches FORCE ROW LEVEL SECURITY")'
+    )
+    assert guard.index("SET updated_at = updated_at WHERE 1 = 0") < guard.index(
+        "SELECT 1 FROM saas_run_dispatches LIMIT 1"
+    )
+    assert upgrade.index("_require_pre_upgrade_dispatch_drain()") < upgrade.index(
+        'op.batch_alter_table("saas_run_dispatches")'
+    )
+    assert upgrade.index("_require_pre_upgrade_dispatch_drain()") < upgrade.index(
+        '"uq_execution_profile_active_scope"'
+    )
+    assert upgrade.index('"uq_execution_profile_active_scope"') < upgrade.index(
+        'op.batch_alter_table("saas_run_dispatches")'
+    )
+    assert upgrade.index('op.batch_alter_table("saas_run_dispatches")') < upgrade.index(
+        "_restore_postgresql_force_rls()"
+    )
+    assert downgrade.index("_require_pre_downgrade_dispatch_drain()") < downgrade.index(
+        "_drop_postgresql_executor_profile_policies()"
+    )
+    assert downgrade.index("_require_pre_downgrade_dispatch_drain()") < downgrade.index(
+        'op.batch_alter_table("saas_run_dispatches")'
+    )
+    assert downgrade.index('op.batch_alter_table("saas_run_dispatches")') < downgrade.index(
+        "_restore_postgresql_force_rls()"
+    )
+    assert downgrade.index('op.batch_alter_table("saas_run_dispatches")') < downgrade.index(
+        'op.drop_index("uq_execution_profile_active_scope"'
+    )
+
+
+def test_dispatch_profile_binding_migration_scopes_executor_profile_reads() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "saas/control_plane/migrations/versions/p0s000000008_dispatch_profile_binding.py"
+    ).read_text(encoding="utf-8")
+
+    assert "rls_saas_{table}_dispatch_executor_select" in source
+    assert "rls_saas_{table}_dispatch_executor_lock" in source
+    assert "rls_saas_secret_bindings_dispatch_executor_select" in source
+    assert 'for table in ("saas_egress_policies", "saas_execution_profiles")' in source
+    assert "pg_has_role(current_user, 'saas_executor', 'member')" in source
+    assert "current_setting('app.tenant_id', true)" in source
+    assert "current_setting('app.space_id', true)" in source
+    assert "current_setting('app.project_id', true)" in source
+    assert "FOR UPDATE USING ({_EXECUTOR_SCOPE}) WITH CHECK (false)" in source
+    upgrade = source[source.index("def upgrade") : source.index("def downgrade")]
+    assert upgrade.index("_install_postgresql_executor_profile_policies()") < upgrade.index(
+        "_restore_postgresql_force_rls()"
+    )
+
+    authority = (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+    assert "GRANT UPDATE (id) ON saas_egress_policies TO saas_executor;" in authority
+    assert "GRANT UPDATE (id) ON saas_execution_profiles TO saas_executor;" in authority
+    assert "dispatch profile lock authority projection rejected" in authority
 
 
 def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> None:
@@ -524,6 +1055,422 @@ def test_registration_subject_lock_budget_migration_is_exact_and_reversible(
         engine.dispose()
 
 
+def test_real_postgresql_dispatch_profile_binding_requires_drain_and_round_trips(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    schema_owner = f"p0s8_schema_owner_{uuid4().hex[:12]}"
+    quoted_owner = engine.dialect.identifier_preparer.quote(schema_owner)
+    database_name = sa.engine.make_url(isolated_postgres_url).database
+    assert database_name is not None
+    quoted_database = engine.dialect.identifier_preparer.quote(database_name)
+    administrator = ""
+    actor_id = uuid4()
+    tenant_id = uuid4()
+    space_id = uuid4()
+    project_id = uuid4()
+    task_id = uuid4()
+    run_id = uuid4()
+    placement_id = uuid4()
+    pool_id = uuid4()
+    egress_policy_id = uuid4()
+    profile_id = uuid4()
+    new_columns = {
+        "execution_profile_id",
+        "execution_profile_hash",
+        "egress_policy_id",
+        "egress_policy_hash",
+        "recovery_quarantined_at",
+        "recovery_quarantine_reason",
+    }
+    try:
+        with engine.begin() as connection:
+            administrator = str(connection.scalar(sa.text("SELECT current_user")))
+            connection.exec_driver_sql(
+                f"CREATE ROLE {quoted_owner} NOLOGIN INHERIT NOSUPERUSER "
+                "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            )
+            connection.exec_driver_sql(f"ALTER SCHEMA public OWNER TO {quoted_owner}")
+            connection.exec_driver_sql(
+                f"GRANT CONNECT, CREATE, TEMPORARY ON DATABASE {quoted_database} TO {quoted_owner}"
+            )
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000007")
+            connection.exec_driver_sql("RESET ROLE")
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_global_users (id, status, security_version) "
+                    "VALUES (:actor_id, 'active', 1)"
+                ),
+                {"actor_id": actor_id},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_tenants "
+                    "(id, slug, name, status, plan, home_region) VALUES "
+                    "(:tenant_id, :slug, 'p0s8 migration', 'active', 'team', 'cn-east-1')"
+                ),
+                {"tenant_id": tenant_id, "slug": f"p0s8-{tenant_id.hex}"},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_spaces (id, tenant_id, slug, name, status) VALUES "
+                    "(:space_id, :tenant_id, 'p0s8', 'p0s8 migration', 'active')"
+                ),
+                {"space_id": space_id, "tenant_id": tenant_id},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_projects "
+                    "(id, tenant_id, space_id, name, visibility, created_by, status, "
+                    "authorization_version) VALUES "
+                    "(:project_id, :tenant_id, :space_id, 'p0s8 migration', "
+                    "'restricted', :actor_id, 'active', 1)"
+                ),
+                {
+                    "project_id": project_id,
+                    "tenant_id": tenant_id,
+                    "space_id": space_id,
+                    "actor_id": actor_id,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_tasks "
+                    "(id, tenant_id, space_id, project_id, created_by, title, version) VALUES "
+                    "(:task_id, :tenant_id, :space_id, :project_id, :actor_id, "
+                    "'p0s8 migration', 1)"
+                ),
+                {
+                    "task_id": task_id,
+                    "tenant_id": tenant_id,
+                    "space_id": space_id,
+                    "project_id": project_id,
+                    "actor_id": actor_id,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runs "
+                    "(id, tenant_id, space_id, project_id, task_id, created_by, status, "
+                    "version, event_sequence, queue_class, priority, idempotency_key, "
+                    "request_hash, input, product_revision, upstream_revision, "
+                    "schema_revision, adapter_contract_version, fence_token) VALUES "
+                    "(:run_id, :tenant_id, :space_id, :project_id, :task_id, :actor_id, "
+                    "'queued', 1, 0, 'interactive', 0, :idempotency_key, :request_hash, "
+                    "CAST(:input AS jsonb), 'product', 'upstream', 'p0s000000007', "
+                    "'0.2.0', 0)"
+                ),
+                {
+                    "run_id": run_id,
+                    "tenant_id": tenant_id,
+                    "space_id": space_id,
+                    "project_id": project_id,
+                    "task_id": task_id,
+                    "actor_id": actor_id,
+                    "idempotency_key": f"p0s8-{run_id}",
+                    "request_hash": "a" * 64,
+                    "input": "{}",
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runtime_placements "
+                    "(id, runtime_type, data_region, failure_domain, database_cluster_ref, "
+                    "object_store_ref, kms_key_ref, official_schema_revision, capacity_class, "
+                    "status) VALUES "
+                    "(:placement_id, 'omnigent', 'cn-east-1', 'cn-east-1a', 'db-p0s8', "
+                    "'objects-p0s8', 'kms-p0s8', 'runtime-schema-v1', 'shared-small', 'active')"
+                ),
+                {"placement_id": placement_id},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_runner_pools "
+                    "(id, placement_id, failure_domain, name, queue_class, capacity_slots, "
+                    "reserved_slots, status, protocol_version, source_revision, "
+                    "schema_revision, adapter_contract_version) VALUES "
+                    "(:pool_id, :placement_id, 'cn-east-1a', 'p0s8 migration', "
+                    "'interactive', 1, 0, 'active', 2, 'upstream', "
+                    "'runtime-schema-v1', '0.2.0')"
+                ),
+                {"pool_id": pool_id, "placement_id": placement_id},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_run_dispatches "
+                    "(run_id, tenant_id, space_id, project_id, pool_id, queue_class, "
+                    "required_capabilities, requirements_hash, cost_units, eligible_at, "
+                    "max_wait_at, status, selected_runner_id, selected_failure_domain, "
+                    "dispatch_generation, released_at, dead_letter_reason) VALUES "
+                    "(:run_id, :tenant_id, :space_id, :project_id, :pool_id, "
+                    "'interactive', CAST(:capabilities AS jsonb), :requirements_hash, 1, "
+                    ":eligible_at, :max_wait_at, 'pending', NULL, NULL, 0, NULL, NULL)"
+                ),
+                {
+                    "run_id": run_id,
+                    "tenant_id": tenant_id,
+                    "space_id": space_id,
+                    "project_id": project_id,
+                    "pool_id": pool_id,
+                    "capabilities": "[]",
+                    "requirements_hash": "b" * 64,
+                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
+                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                },
+            )
+
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
+            assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 0
+            config = _migration_config(connection)
+            with pytest.raises(RuntimeError) as rejected:
+                command.upgrade(config, "p0s000000008")
+            assert str(rejected.value) == (
+                "cannot apply p0s000000008: pre-upgrade dispatch drain required; "
+                "saas_run_dispatches must be empty"
+            )
+            assert connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_catalog.pg_class "
+                    "WHERE oid = 'public.saas_run_dispatches'::regclass"
+                )
+            )
+            connection.exec_driver_sql("RESET ROLE")
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000007"
+            )
+            assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 1
+            assert new_columns.isdisjoint(
+                {
+                    str(column)
+                    for column in connection.execute(
+                        sa.text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'public' "
+                            "AND table_name = 'saas_run_dispatches'"
+                        )
+                    ).scalars()
+                }
+            )
+
+            connection.execute(sa.text("DELETE FROM saas_run_dispatches"))
+            _insert_egress_policy(
+                connection,
+                policy_id=egress_policy_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                actor_id=actor_id,
+            )
+            _insert_execution_profile(
+                connection,
+                profile_id=profile_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                actor_id=actor_id,
+                name="active-primary",
+                status="active",
+                version=1,
+            )
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
+            command.upgrade(config, "p0s000000008")
+            assert "AccessExclusiveLock" in set(
+                connection.execute(
+                    sa.text(
+                        "SELECT lock.mode FROM pg_catalog.pg_locks AS lock "
+                        "WHERE lock.pid = pg_catalog.pg_backend_pid() "
+                        "AND lock.relation = 'public.saas_run_dispatches'::regclass "
+                        "AND lock.granted"
+                    )
+                ).scalars()
+            )
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000008"
+            )
+            assert new_columns <= {
+                str(column)
+                for column in connection.execute(
+                    sa.text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'saas_run_dispatches'"
+                    )
+                ).scalars()
+            }
+            nullability = {
+                str(row.column_name): str(row.is_nullable)
+                for row in connection.execute(
+                    sa.text(
+                        "SELECT column_name, is_nullable FROM information_schema.columns "
+                        "WHERE table_schema = 'public' "
+                        "AND table_name = 'saas_run_dispatches' "
+                        "AND column_name IN "
+                        "('execution_profile_id', 'execution_profile_hash', "
+                        "'egress_policy_id', 'egress_policy_hash')"
+                    )
+                )
+            }
+            assert nullability == {
+                "egress_policy_hash": "NO",
+                "egress_policy_id": "NO",
+                "execution_profile_hash": "NO",
+                "execution_profile_id": "NO",
+            }
+
+            active_index_definition = connection.scalar(
+                sa.text(
+                    "SELECT indexdef FROM pg_catalog.pg_indexes "
+                    "WHERE schemaname = 'public' "
+                    "AND tablename = 'saas_execution_profiles' "
+                    "AND indexname = 'uq_execution_profile_active_scope'"
+                )
+            )
+            assert active_index_definition is not None
+            normalized_index_definition = str(active_index_definition).lower()
+            assert "create unique index" in normalized_index_definition
+            assert "tenant_id, space_id, project_id" in normalized_index_definition
+            assert "where" in normalized_index_definition
+            assert "status" in normalized_index_definition
+            assert "'active'" in normalized_index_definition
+
+            connection.exec_driver_sql("RESET ROLE")
+            secondary_profile_id = uuid4()
+            with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+                _insert_execution_profile(
+                    connection,
+                    profile_id=secondary_profile_id,
+                    tenant_id=tenant_id,
+                    space_id=space_id,
+                    project_id=project_id,
+                    egress_policy_id=egress_policy_id,
+                    actor_id=actor_id,
+                    name="active-rejected",
+                    status="active",
+                    version=2,
+                )
+            _insert_execution_profile(
+                connection,
+                profile_id=secondary_profile_id,
+                tenant_id=tenant_id,
+                space_id=space_id,
+                project_id=project_id,
+                egress_policy_id=egress_policy_id,
+                actor_id=actor_id,
+                name="retired-allowed",
+                status="retired",
+                version=2,
+            )
+            dispatch_table = SaasBase.metadata.tables["saas_run_dispatches"]
+            connection.execute(
+                sa.insert(dispatch_table),
+                {
+                    "run_id": run_id,
+                    "tenant_id": tenant_id,
+                    "space_id": space_id,
+                    "project_id": project_id,
+                    "pool_id": pool_id,
+                    "execution_profile_id": profile_id,
+                    "execution_profile_hash": "a" * 64,
+                    "egress_policy_id": egress_policy_id,
+                    "egress_policy_hash": "e" * 64,
+                    "queue_class": "interactive",
+                    "required_capabilities": [],
+                    "requirements_hash": "b" * 64,
+                    "cost_units": 1,
+                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
+                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                    "status": "pending",
+                    "dispatch_generation": 0,
+                },
+            )
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
+            with pytest.raises(RuntimeError) as rejected_downgrade:
+                command.downgrade(config, "p0s000000007")
+            assert str(rejected_downgrade.value) == (
+                "cannot downgrade p0s000000008: pre-downgrade dispatch drain required; "
+                "saas_run_dispatches must be empty"
+            )
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000008"
+            )
+            assert connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_catalog.pg_class "
+                    "WHERE oid = 'public.saas_run_dispatches'::regclass"
+                )
+            )
+            assert new_columns <= {
+                str(column)
+                for column in connection.execute(
+                    sa.text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'saas_run_dispatches'"
+                    )
+                ).scalars()
+            }
+
+            connection.exec_driver_sql("RESET ROLE")
+            connection.execute(sa.text("DELETE FROM saas_run_dispatches"))
+            connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
+            command.downgrade(config, "p0s000000007")
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000007"
+            )
+            assert new_columns.isdisjoint(
+                {
+                    str(column)
+                    for column in connection.execute(
+                        sa.text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'public' "
+                            "AND table_name = 'saas_run_dispatches'"
+                        )
+                    ).scalars()
+                }
+            )
+            assert connection.scalar(
+                sa.text("SELECT to_regclass('public.uq_execution_profile_active_scope') IS NULL")
+            )
+
+            command.upgrade(config, "p0s000000008")
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000008"
+            )
+            assert new_columns <= {
+                str(column)
+                for column in connection.execute(
+                    sa.text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'saas_run_dispatches'"
+                    )
+                ).scalars()
+            }
+            assert connection.scalar(
+                sa.text(
+                    "SELECT to_regclass('public.uq_execution_profile_active_scope') IS NOT NULL"
+                )
+            )
+            assert connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_catalog.pg_class "
+                    "WHERE oid = 'public.saas_run_dispatches'::regclass"
+                )
+            )
+    finally:
+        if administrator:
+            quoted_administrator = engine.dialect.identifier_preparer.quote(administrator)
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"REASSIGN OWNED BY {quoted_owner} TO {quoted_administrator}"
+                )
+                connection.exec_driver_sql(f"DROP OWNED BY {quoted_owner}")
+                connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_owner}")
+        engine.dispose()
+
+
 def test_registration_rate_limit_migration_declares_exact_force_rls_policies() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (
@@ -642,7 +1589,10 @@ def test_control_plane_principal_bootstrap_is_atomic_and_separate_from_alembic()
     assert wrapper.index("BEGIN;") < wrapper.index("\\ir postgresql_principals.sql")
     assert wrapper.index("\\ir postgresql_principals.sql") < wrapper.index("COMMIT;")
     assert "EXECUTE 'CREATE ROLE ' || quote_ident(principal_name)" in body
-    assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION" in body
+    assert "NOLOGIN NOCREATEROLE INHERIT CONNECTION LIMIT -1" in body
+    assert "immutable role flags are unsafe" in body
+    assert "' NOSUPERUSER" not in body
+    assert "' NOBYPASSRLS" not in body
     assert "|| ' RESET ALL'" in body
     assert "saas_runtime_provider_journal" in body
     assert (
@@ -736,7 +1686,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000007"
+                == "p0s000000011"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -1375,6 +2325,15 @@ def test_real_postgresql_pinned_n1_outbox_compatibility_bridge(
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
+        database_name = connection.scalar(sa.text("SELECT current_database()"))
+        assert isinstance(database_name, str)
+        quoted_database = connection.dialect.identifier_preparer.quote(database_name)
+        # The database-owner phase revokes PUBLIC CONNECT. The external N-1
+        # credential boundary grants the exact dormant base role before a
+        # patched worker LOGIN is bound to it.
+        connection.exec_driver_sql(
+            f"GRANT CONNECT ON DATABASE {quoted_database} TO saas_dispatcher_n1_compat"
+        )
         connection.execute(
             sa.text(
                 "INSERT INTO saas_platform_staff_principals "
@@ -1712,6 +2671,122 @@ def test_real_postgresql_pinned_n1_outbox_compatibility_bridge(
                 expected_login=login_role,
             )
             assert len(fingerprint) == 64
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_login}"
+                )
+            try:
+                with pytest.raises(RuntimeError) as direct_login_connect:
+                    patched_admission.catalog_fingerprint(
+                        login_engine,
+                        expected_login=login_role,
+                    )
+                assert str(direct_login_connect.value) == (
+                    "N-1 Outbox compatibility catalog admission rejected"
+                )
+                assert direct_login_connect.value.__suppress_context__
+            finally:
+                with engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"REVOKE CONNECT ON DATABASE {quoted_database} FROM {quoted_login}"
+                    )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT CREATE ON DATABASE {quoted_database} TO saas_dispatcher_n1_compat"
+                )
+            try:
+                with pytest.raises(RuntimeError) as direct_database_create:
+                    patched_admission.catalog_fingerprint(
+                        login_engine,
+                        expected_login=login_role,
+                    )
+                assert str(direct_database_create.value) == (
+                    "N-1 Outbox compatibility catalog admission rejected"
+                )
+                assert direct_database_create.value.__suppress_context__
+            finally:
+                with engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"REVOKE CREATE ON DATABASE {quoted_database} "
+                        "FROM saas_dispatcher_n1_compat"
+                    )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} "
+                    "TO saas_dispatcher_n1_compat WITH GRANT OPTION"
+                )
+            try:
+                with pytest.raises(RuntimeError) as database_grant_option:
+                    patched_admission.catalog_fingerprint(
+                        login_engine,
+                        expected_login=login_role,
+                    )
+                assert str(database_grant_option.value) == (
+                    "N-1 Outbox compatibility catalog admission rejected"
+                )
+                assert database_grant_option.value.__suppress_context__
+            finally:
+                with engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"REVOKE GRANT OPTION FOR CONNECT ON DATABASE {quoted_database} "
+                        "FROM saas_dispatcher_n1_compat"
+                    )
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO PUBLIC"
+                )
+            try:
+                with pytest.raises(RuntimeError) as public_database_connect:
+                    patched_admission.catalog_fingerprint(
+                        login_engine,
+                        expected_login=login_role,
+                    )
+                assert str(public_database_connect.value) == (
+                    "N-1 Outbox compatibility catalog admission rejected"
+                )
+                assert public_database_connect.value.__suppress_context__
+            finally:
+                with engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"REVOKE CONNECT ON DATABASE {quoted_database} FROM PUBLIC"
+                    )
+
+            with engine.begin() as connection:
+                other_database = connection.scalar(
+                    sa.text(
+                        "SELECT datname FROM pg_database "
+                        "WHERE datallowconn AND datname <> current_database() "
+                        "ORDER BY datname LIMIT 1"
+                    )
+                )
+                assert isinstance(other_database, str)
+                quoted_other_database = connection.dialect.identifier_preparer.quote(
+                    other_database
+                )
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_other_database} "
+                    "TO saas_dispatcher_n1_compat"
+                )
+            try:
+                with pytest.raises(RuntimeError) as cross_database_connect:
+                    patched_admission.catalog_fingerprint(
+                        login_engine,
+                        expected_login=login_role,
+                    )
+                assert str(cross_database_connect.value) == (
+                    "N-1 Outbox compatibility catalog admission rejected"
+                )
+                assert cross_database_connect.value.__suppress_context__
+            finally:
+                with engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"REVOKE CONNECT ON DATABASE {quoted_other_database} "
+                        "FROM saas_dispatcher_n1_compat"
+                    )
 
             # Outbox DDL is a drain boundary. Even an additive column that the
             # fixed ACL does not expose must fail the pre-run catalog recheck.
@@ -2149,6 +3224,67 @@ def test_real_postgresql_p0s3_rejects_preexisting_n1_compat_member(
         engine.dispose()
 
 
+def test_real_postgresql_pg16_n1_admin_only_management_edge_is_inert(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    management_role = f"n1_management_{uuid4().hex[:12]}"
+    management_role_created = False
+    try:
+        with engine.begin() as connection:
+            server_version_num = int(connection.scalar(sa.text("SHOW server_version_num")))
+            if server_version_num < 160000:
+                pytest.skip("PostgreSQL 16+ membership option columns are required")
+
+            command.upgrade(_migration_config(connection), "p0s000000002")
+            connection.exec_driver_sql(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles "
+                "WHERE rolname = 'saas_dispatcher_n1_compat') THEN "
+                "CREATE ROLE saas_dispatcher_n1_compat NOLOGIN NOSUPERUSER NOCREATEDB "
+                "NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT; END IF; END $$"
+            )
+            quoted_management = connection.dialect.identifier_preparer.quote(management_role)
+            connection.exec_driver_sql(
+                f"CREATE ROLE {quoted_management} NOLOGIN INHERIT NOSUPERUSER "
+                "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            )
+            management_role_created = True
+            connection.exec_driver_sql(
+                "GRANT saas_dispatcher_n1_compat "
+                f"TO {quoted_management} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"
+            )
+
+            root = Path(__file__).resolve().parents[2]
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
+            )
+            command.upgrade(_migration_config(connection), "p0s000000003")
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+            )
+            membership = connection.execute(
+                sa.text(
+                    "SELECT membership.admin_option, membership.inherit_option, "
+                    "membership.set_option FROM pg_auth_members AS membership "
+                    "JOIN pg_roles AS member ON member.oid = membership.member "
+                    "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
+                    "WHERE member.rolname = :member "
+                    "AND granted.rolname = 'saas_dispatcher_n1_compat'"
+                ),
+                {"member": management_role},
+            ).one()
+            assert tuple(membership) == (True, False, False)
+    finally:
+        if management_role_created:
+            with engine.begin() as connection:
+                quoted_management = connection.dialect.identifier_preparer.quote(management_role)
+                connection.exec_driver_sql(
+                    f"REVOKE saas_dispatcher_n1_compat FROM {quoted_management}"
+                )
+                connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_management}")
+        engine.dispose()
+
+
 def test_real_postgresql_outbox_downgrade_nonbypass_owner_sees_evidence(
     isolated_postgres_url: str,
 ) -> None:
@@ -2214,6 +3350,10 @@ def test_real_postgresql_outbox_downgrade_nonbypass_owner_sees_evidence(
                 "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
             )
             connection.exec_driver_sql(f"GRANT {quoted_probe} TO {quoted_admin}")
+            # postgresql_database.psql revokes PUBLIC schema reachability.  A
+            # synthetic table owner still needs explicit name-resolution
+            # authority before this test can exercise FORCE RLS semantics.
+            connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_probe}")
             connection.exec_driver_sql(
                 f"ALTER TABLE public.saas_control_plane_outbox OWNER TO {quoted_probe}"
             )
@@ -2985,3 +4125,65 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
             column["name"] for column in downgraded.get_columns("saas_enterprise_scim_directories")
         }
     engine.dispose()
+
+
+def test_real_postgresql_p0s11_policy_role_scope_round_trip(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000010")
+            predecessor = _p0s11_policy_projection(connection)
+            assert {row[-1] for row in predecessor.values()} == {("PUBLIC",)}
+
+            command.upgrade(config, "p0s000000011")
+            successor = _p0s11_policy_projection(connection)
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000011"
+            )
+            for key, target_roles in _P0S11_POLICY_ROLES.items():
+                assert successor[key][:-1] == predecessor[key][:-1]
+                assert successor[key][-1] == tuple(sorted(target_roles))
+
+            command.downgrade(config, "p0s000000010")
+            assert _p0s11_policy_projection(connection) == predecessor
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000010"
+            )
+
+            command.upgrade(config, "head")
+            assert _p0s11_policy_projection(connection) == successor
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000011"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_real_postgresql_p0s11_rejects_predecessor_policy_role_drift(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000010")
+            connection.exec_driver_sql(
+                "ALTER POLICY rls_approval_work_approval_scheduler_source "
+                "ON public.saas_approval_work_items TO saas_platform"
+            )
+            drifted = _p0s11_policy_projection(connection)
+
+        with pytest.raises(RuntimeError, match="P0S11 upgrade policy role projection drifted"):
+            with engine.begin() as connection:
+                command.upgrade(_migration_config(connection), "head")
+
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000010"
+            )
+            assert _p0s11_policy_projection(connection) == drifted
+    finally:
+        engine.dispose()

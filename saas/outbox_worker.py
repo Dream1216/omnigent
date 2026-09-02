@@ -6,8 +6,10 @@ import importlib
 import logging
 import os
 import signal
+import stat
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, cast
 
 import sqlalchemy as sa
@@ -15,6 +17,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
+from saas.control_plane.postgresql_role_authority import (
+    count_direct_acl_authorities,
+    count_global_acl_authorities,
+    count_owned_catalog_authorities,
+)
 from saas.onboarding_composition import validate_production_outbox_publisher
 
 _LOGGER = logging.getLogger("omnigent-saas-outbox")
@@ -152,7 +159,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     with engine.connect() as connection:
         schema_facts = connection.execute(
             sa.text(
-                "SELECT current_schema(), current_schemas(false), "
+                "SELECT current_database(), current_schema(), current_schemas(false), "
                 "has_schema_privilege(current_user, 'public', 'CREATE'), "
                 "has_database_privilege(current_user, current_database(), 'TEMP')"
             )
@@ -248,8 +255,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "AND object.nspname <> 'information_schema' UNION ALL "
                 "SELECT 1 FROM pg_database object "
                 "CROSS JOIN LATERAL aclexplode(object.datacl) grant_acl "
-                "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE object.datname = current_database() UNION ALL "
+                "JOIN login ON grant_acl.grantee = login.oid UNION ALL "
                 "SELECT 1 FROM pg_default_acl defaults "
                 "CROSS JOIN LATERAL aclexplode(defaults.defaclacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid UNION ALL "
@@ -274,10 +280,26 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "ON object.nspowner = login.oid WHERE object.nspname !~ '^pg_' "
                 "AND object.nspname <> 'information_schema' UNION ALL "
                 "SELECT 1 FROM pg_database object JOIN login ON object.datdba = login.oid "
-                "WHERE object.datname = current_database()) "
+                ") "
                 "SELECT count(*) FROM direct_authority"
             )
         ).scalar_one()
+        login_catalog_authority = count_direct_acl_authorities(
+            connection,
+            role=str(facts[0]),
+        ) + count_owned_catalog_authorities(
+            connection,
+            role=str(facts[0]),
+            include_role_settings=False,
+        )
+        base_catalog_authority = count_global_acl_authorities(
+            connection,
+            role="saas_dispatcher",
+        ) + count_owned_catalog_authorities(
+            connection,
+            role="saas_dispatcher",
+            include_role_settings=True,
+        )
         base_relation_acls = connection.execute(
             sa.text(
                 "SELECT namespace.nspname, relation.relname, relation.relkind, "
@@ -321,6 +343,18 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "ORDER BY acl.privilege_type"
             )
         ).all()
+        base_database_acls = connection.execute(
+            sa.text(
+                "SELECT object.datname, acl.privilege_type, "
+                "acl.grantor = object.datdba AS granted_by_database_owner, "
+                "acl.is_grantable "
+                "FROM pg_database AS object "
+                "JOIN pg_roles AS dispatcher ON dispatcher.rolname = 'saas_dispatcher' "
+                "CROSS JOIN LATERAL aclexplode(object.datacl) AS acl "
+                "WHERE acl.grantee = dispatcher.oid "
+                "ORDER BY object.datname, acl.privilege_type"
+            )
+        ).all()
         base_non_relation_authority = connection.execute(
             sa.text(
                 "WITH dispatcher AS ("
@@ -338,10 +372,6 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "JOIN dispatcher ON acl.grantee = dispatcher.oid "
                 "WHERE namespace.nspname !~ '^pg_' "
                 "AND namespace.nspname <> 'information_schema' UNION ALL "
-                "SELECT 1 FROM pg_database object "
-                "CROSS JOIN LATERAL aclexplode(object.datacl) acl "
-                "JOIN dispatcher ON acl.grantee = dispatcher.oid "
-                "WHERE object.datname = current_database() UNION ALL "
                 "SELECT 1 FROM pg_default_acl defaults "
                 "CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl "
                 "JOIN dispatcher ON acl.grantee = dispatcher.oid UNION ALL "
@@ -367,8 +397,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "WHERE object.nspname !~ '^pg_' "
                 "AND object.nspname <> 'information_schema' UNION ALL "
                 "SELECT 1 FROM pg_database object JOIN dispatcher "
-                "ON object.datdba = dispatcher.oid "
-                "WHERE object.datname = current_database()) "
+                "ON object.datdba = dispatcher.oid) "
                 "SELECT count(*) FROM unexpected"
             )
         ).scalar_one()
@@ -628,7 +657,13 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 """
             )
         ).one()
-    current_schema, search_path, can_create_in_schema, can_create_temporary_schema = schema_facts
+    (
+        database_name,
+        current_schema,
+        search_path,
+        can_create_in_schema,
+        can_create_temporary_schema,
+    ) = schema_facts
     if current_schema != "public" or list(search_path) != ["public"] or can_create_in_schema:
         raise RuntimeError("Outbox database login must use only the public search_path")
     if can_create_temporary_schema:
@@ -673,11 +708,11 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     if (
         len(login_memberships) != 1
         or login_memberships[0][0] != "saas_dispatcher"
-        or tuple(login_memberships[0][1:]) != (False, True, True)
+        or tuple(login_memberships[0][1:]) != (False, True, False)
         or base_memberships
     ):
         raise RuntimeError("Outbox database login has unsafe role membership options")
-    if direct_login_authority:
+    if direct_login_authority or login_catalog_authority:
         raise RuntimeError("Outbox database login must not hold direct database authority")
     relation_acl_facts = {
         (str(row[0]), str(row[1]), str(row[2]), str(row[3]), bool(row[4]))
@@ -688,6 +723,9 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
         for row in base_column_acls
     }
     schema_acl_facts = {(str(row[0]), str(row[1]), bool(row[2])) for row in base_schema_acls}
+    database_acl_facts = {
+        (str(row[0]), str(row[1]), bool(row[2]), bool(row[3])) for row in base_database_acls
+    }
     if (
         relation_acl_facts != _EXPECTED_DISPATCHER_RELATION_ACLS
         or len(relation_acl_facts) != len(_EXPECTED_DISPATCHER_RELATION_ACLS)
@@ -695,7 +733,10 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
         or len(column_acl_facts) != len(_EXPECTED_DISPATCHER_COLUMN_ACLS)
         or schema_acl_facts != _EXPECTED_DISPATCHER_SCHEMA_ACLS
         or len(schema_acl_facts) != len(_EXPECTED_DISPATCHER_SCHEMA_ACLS)
+        or database_acl_facts != {(database_name, "CONNECT", True, False)}
+        or len(database_acl_facts) != 1
         or base_non_relation_authority
+        or base_catalog_authority
     ):
         raise RuntimeError("saas_dispatcher has an unsafe direct or delegable authority set")
     if (
@@ -795,18 +836,71 @@ def _positive_number(name: str, default: str, *, integer: bool = False) -> float
     return value
 
 
+def _load_dispatcher_database_url() -> str:
+    """Load one dispatcher DSN without requiring secret material in the environment.
+
+    The direct variable remains supported for existing downstream consumers,
+    but deployments must select exactly one source.  The production onboarding
+    manifest uses the file form staged as an owner-only regular file.
+    """
+
+    direct = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", "")
+    file_name = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE", "")
+    if bool(direct.strip()) == bool(file_name.strip()):
+        raise RuntimeError("exactly one Outbox control-plane database URL source is required")
+    if direct.strip():
+        if direct != direct.strip() or "\x00" in direct or "\n" in direct or "\r" in direct:
+            raise RuntimeError("Outbox control-plane database URL is malformed")
+        return direct
+    if file_name != file_name.strip() or "\x00" in file_name:
+        raise RuntimeError("Outbox control-plane database URL file is malformed")
+    path = Path(file_name)
+    if not path.is_absolute():
+        raise RuntimeError("Outbox control-plane database URL file must be absolute")
+    try:
+        metadata = path.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o400
+            or not 0 < metadata.st_size <= 16 * 1024
+        ):
+            raise RuntimeError("Outbox control-plane database URL file is unsafe")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            observed = os.fstat(descriptor)
+            if (
+                observed.st_dev != metadata.st_dev
+                or observed.st_ino != metadata.st_ino
+                or stat.S_IMODE(observed.st_mode) != 0o400
+            ):
+                raise RuntimeError("Outbox control-plane database URL file changed")
+            raw = os.read(descriptor, 16 * 1024 + 1)
+        finally:
+            os.close(descriptor)
+        value = raw.decode("utf-8").rstrip("\r\n")
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError):
+        raise RuntimeError("Outbox control-plane database URL file cannot be read") from None
+    if not value or value != value.strip() or "\x00" in value or "\n" in value or "\r" in value:
+        raise RuntimeError("Outbox control-plane database URL file is malformed")
+    return value
+
+
 def main() -> int:
     """Load a publisher adapter and run one RLS-constrained worker process."""
 
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-    database_url = os.environ.get("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", "").strip()
     publisher_reference = os.environ.get("OMNIGENT_SAAS_OUTBOX_PUBLISHER", "").strip()
-    if not database_url:
-        raise RuntimeError("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL is required")
     if not publisher_reference:
         raise RuntimeError("OMNIGENT_SAAS_OUTBOX_PUBLISHER is required")
+    database_url = _load_dispatcher_database_url()
 
     engine = sa.create_engine(database_url, pool_pre_ping=True)
+    publisher: OutboxPublisher | None = None
     try:
         verify_dispatcher_database_role(engine)
         sessions = sessionmaker(engine, expire_on_commit=False, class_=Session)
@@ -816,11 +910,8 @@ def main() -> int:
         )
         if max_attempts > 32:
             raise RuntimeError("OMNIGENT_SAAS_OUTBOX_MAX_ATTEMPTS must not exceed 32")
-        dispatcher = OutboxDispatcher(
-            sessions,
-            _load_publisher(publisher_reference),
-            max_attempts=max_attempts,
-        )
+        publisher = _load_publisher(publisher_reference)
+        dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
         stop = threading.Event()
 
         def _stop(_signum: int, _frame: object) -> None:
@@ -851,6 +942,12 @@ def main() -> int:
         _LOGGER.info("Outbox worker stopped: %s", stats)
         return 0
     finally:
+        close = getattr(publisher, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - never disclose adapter shutdown details.
+                _LOGGER.error("Outbox publisher shutdown failed")
         engine.dispose()
 
 

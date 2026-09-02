@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-08-31",
+  "audit_verified_at": "2026-09-02",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/workflows/saas-",
@@ -18,7 +18,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "e5d9bc8ac650"
+    "ga1b2c3d4e5f"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -29,6 +29,7 @@
     "conversation_items": ["workspace_id", "conversation_id", "id", "created_at"],
     "conversation_labels": ["workspace_id", "conversation_id", "key"],
     "conversations": ["workspace_id", "id"],
+    "connections": ["workspace_id", "user_id", "provider", "account_id"],
     "device_grants": ["workspace_id", "id"],
     "files": ["workspace_id", "id"],
     "hosts": ["workspace_id", "host_id"],
@@ -48,6 +49,6 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "3369b36cd5a8feb7dfb497195f1f5902ed716f30",
-  "upstream_version": "0.12.0.dev0"
+  "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
+  "upstream_version": "0.13.0.dev0"
 }

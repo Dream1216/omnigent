@@ -81,8 +81,8 @@ def test_n1_compat_builder_applies_only_the_pinned_security_patch() -> None:
         "base_commit": "9451a64c1affa06630b9105bf39b56bb89feba3b",
         "contract_version": "p0s3-n1-outbox-security-compat-v1",
         "materialized_source": None,
-        "patch_sha256": "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23",
-        "patched_tree_hash": "git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73",
+        "patch_sha256": "0a17dc7164f222505d51122e85ea35296b201443cb80ea17ba4278b6072ef194",
+        "patched_tree_hash": "git-sha1:0386790351b7da9cf026756ae688ad36b879e20d",
         "required_schema_revision": "p0s000000003",
         "schema_change_policy": {
             "outbox_ddl_requires_worker_drain": True,
@@ -126,7 +126,10 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     current_contract_checkout = current_contract["steps"][0]
     assert current_contract_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
     assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in current_contract_commands
-    assert current_contract["services"]["postgres"]["image"] == "postgres:18"
+    assert current_contract["services"]["postgres"]["image"] == (
+        "postgres:18.6-trixie@"
+        "sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+    )
     assert "--no-install-local --no-config" in current_contract_commands
     n1_postgresql = jobs["verify-postgresql-n1"]
     assert n1_postgresql["services"]["postgres"]["image"] == (
@@ -167,13 +170,14 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "test_real_postgresql_n1_compat_login_admission_and_roles_replay" in (
         n1_postgresql_commands
     )
+    assert "test_pg16_runner_direct_authority_is_fail_closed" in n1_postgresql_commands
     assert "p0s000000004" in n1_postgresql_commands
     assert "postgresql-n1.xml" in n1_postgresql_commands
     assert source.count("-c pyproject.toml --confcutdir=tests") == 3
     assert 'root.tag != "testsuites" or len(root) != 1' in n1_postgresql_commands
     assert 'root[0].tag != "testsuite"' in n1_postgresql_commands
     assert "suite = root[0]" in n1_postgresql_commands
-    assert '"tests": 3' in n1_postgresql_commands
+    assert '"tests": 4' in n1_postgresql_commands
     assert '"skipped": 0' in n1_postgresql_commands
     expected_paths = {
         ".github/actions/compat-smoke-saas-n1-gate/**",
@@ -205,9 +209,9 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     assert "N1_BASE_COMMIT: 9451a64c1affa06630b9105bf39b56bb89feba3b" in source
     assert (
         "N1_PATCH_SHA256: "
-        "a2bd67715c30998b6ca4eb309a27f664f3ed26c83a7d90f022dd33145682ce23" in source
+        "0a17dc7164f222505d51122e85ea35296b201443cb80ea17ba4278b6072ef194" in source
     )
-    assert "N1_PATCHED_TREE_HASH: git-sha1:8a9f1e75a2eb85b3f17d8947491cea166d750e73" in source
+    assert "N1_PATCHED_TREE_HASH: git-sha1:0386790351b7da9cf026756ae688ad36b879e20d" in source
     assert "N1_SCHEMA_REVISION: p0s000000003" in source
     assert "N1_IMAGE_NAME: omnigent-saas-n1-compat" in source
     assert workflow["env"]["N1_BUILDX_VERSION"] == "v0.36.1"
@@ -398,6 +402,12 @@ def test_n1_compat_builder_materializes_deterministic_git_free_source(
     assert "forbidden_column_acl" in admission
     assert "forbidden_relation_acl" in admission
     assert "direct_catalog_authority" in admission
+    assert "database_acl_facts" in admission
+    assert "database_ownership" in admission
+    assert "public_database_authority" in admission
+    assert "grantor.oid = database.datdba" in admission
+    assert "acldefault('d', database.datdba)" in admission
+    assert '[(str(identity[2]), _COMPAT_ROLE, "CONNECT", False, True, True)]' in admission
     assert "non_system_schema_ownership" in admission
     assert "executable_security_definers" in admission
     assert "effective_database_temp" in admission
