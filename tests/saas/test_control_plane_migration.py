@@ -368,6 +368,13 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         assert "ix_invitation_tenant_status_expiry" in {
             value["name"] for value in inspector.get_indexes("saas_membership_invitations")
         }
+        runner_fence_index = next(
+            index
+            for index in inspector.get_indexes("saas_worktree_instances")
+            if index["name"] == "uq_worktree_runner_run_fence_v1"
+        )
+        assert runner_fence_index["column_names"] == ["run_id", "run_fence_token"]
+        assert runner_fence_index["unique"] == 1
 
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())

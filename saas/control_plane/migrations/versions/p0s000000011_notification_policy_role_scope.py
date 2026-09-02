@@ -117,6 +117,16 @@ def _transition_policy_roles(
 
 def upgrade() -> None:
     if op.get_bind().dialect.name != "postgresql":
+        # P0S10 installs this Runner-only uniqueness boundary inside its
+        # PostgreSQL authority phase.  The ORM exposes the same invariant to
+        # every supported development/test dialect, so mirror the index here
+        # for non-PostgreSQL databases and keep Alembic autogenerate clean.
+        op.create_index(
+            "uq_worktree_runner_run_fence_v1",
+            "saas_worktree_instances",
+            ("run_id", "run_fence_token"),
+            unique=True,
+        )
         return
     predecessor: dict[tuple[str, str], tuple[str, ...]] = dict.fromkeys(
         _TARGET_POLICY_ROLES, _PUBLIC
@@ -130,6 +140,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     if op.get_bind().dialect.name != "postgresql":
+        op.drop_index(
+            "uq_worktree_runner_run_fence_v1",
+            table_name="saas_worktree_instances",
+        )
         return
     predecessor: dict[tuple[str, str], tuple[str, ...]] = dict.fromkeys(
         _TARGET_POLICY_ROLES, _PUBLIC
