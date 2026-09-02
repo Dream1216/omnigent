@@ -4,7 +4,7 @@
   "evidence_kind": "production_enterprise_acceptance",
   "reviewed_at": "2026-09-02",
   "revision_contract": {
-    "upstream_revision": "5dd1735a78579741623a809181e9c057f4447ff4",
+    "upstream_revision": "c724c5744593a24130ce6e426f09ba78aa00b23c",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p0s000000011"
   },
