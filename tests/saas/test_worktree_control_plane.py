@@ -650,11 +650,9 @@ def test_worktree_heartbeat_stale_cas_and_authority_do_not_extend_expiry(
         assert record.lease_expires_at == lease.expires_at.replace(tzinfo=None)
 
 
-def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order() -> None:
-    postgres_url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
-    if not postgres_url:
-        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required for lock-order acceptance")
-
+def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order(
+    isolated_postgres_url: str,
+) -> None:
     from tests.saas.test_worktree_postgresql import (
         _migrate,
         _role_factory,
@@ -662,7 +660,7 @@ def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order() -> None
     )
 
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(postgres_url, pool_size=6, max_overflow=0)
+    engine = sa.create_engine(isolated_postgres_url, pool_size=6, max_overflow=0)
     placement_id = uuid4()
     scope = {
         "actor": uuid4(),
