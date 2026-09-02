@@ -19,7 +19,7 @@ concurrency:
 jobs:
   compatibility-gate:
     runs-on: ubuntu-latest
-    # The official 332daef5 suite plus PG18 restore and hard-sandbox gates
+    # The official e179bc42 suite plus PG18 restore and hard-sandbox gates
     # measured 19m55s before runner teardown. Keep deterministic headroom so a
     # fully successful exact-SHA run is not reclassified as cancelled at 20m.
     timeout-minutes: 45
