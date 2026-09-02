@@ -1069,6 +1069,7 @@ def test_dynamic_owner_policy_survives_restore_owner_change(
                 "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
             )
             connection.exec_driver_sql(f"GRANT {quoted_owner} TO {quoted_original}")
+            connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_owner}")
             connection.exec_driver_sql(
                 f"ALTER TABLE public.saas_registration_rate_limit_policies OWNER TO {quoted_owner}"
             )
@@ -1130,13 +1131,22 @@ def test_dynamic_owner_policy_survives_restore_owner_change(
                     f"OWNER TO {quoted_original}"
                 )
         with rate_limit_postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(f"REVOKE USAGE ON SCHEMA public FROM {quoted_owner}")
             connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_owner}")
 
 
 def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succeeds(
-    rate_limit_postgresql_engine: Engine,
+    isolated_postgres_url: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
+    rate_limit_postgresql_engine = sa.create_engine(isolated_postgres_url)
+    request.addfinalizer(rate_limit_postgresql_engine.dispose)
+    with rate_limit_postgresql_engine.begin() as connection:
+        command.upgrade(_migration_config(connection), "head")
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
     assert (
         _consume_result(
             _limiter(rate_limit_postgresql_engine),
@@ -1212,7 +1222,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            "p0s000000008"
+            "p0s000000011"
         )
         assert (
             connection.scalar(

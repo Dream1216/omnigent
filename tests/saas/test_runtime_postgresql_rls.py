@@ -97,9 +97,16 @@ def production_runtime_engines(
         connection.exec_driver_sql("GRANT USAGE ON SCHEMA public TO omnigent_runtime_app")
         database_name = connection.exec_driver_sql("SELECT current_database()").scalar_one()
         connection.exec_driver_sql(
+            f"GRANT CONNECT ON DATABASE {quote(database_name)} TO "
+            f"{quote(official_owner)}, omnigent_runtime_app"
+        )
+        connection.exec_driver_sql(
             f"GRANT CREATE ON DATABASE {quote(database_name)} TO {quote(official_owner)}"
         )
-        connection.exec_driver_sql(f"GRANT omnigent_runtime_app TO {quote(runtime_login)}")
+        connection.exec_driver_sql(
+            f"GRANT omnigent_runtime_app TO {quote(runtime_login)} "
+            "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )
 
     owner_engine = sa.create_engine(
         base_url.set(username=official_owner, password=password),
@@ -118,6 +125,9 @@ def production_runtime_engines(
         owner_engine.dispose()
         with admin.begin() as connection:
             administrator = connection.exec_driver_sql("SELECT current_user").scalar_one()
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quote(database_name)} FROM omnigent_runtime_app"
+            )
             connection.exec_driver_sql(
                 f"REASSIGN OWNED BY {quote(official_owner)} TO {quote(administrator)}"
             )

@@ -140,7 +140,7 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
     assert privacy_guard < privacy_projection
 
 
-def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() -> None:
+def test_n1_roles_replay_p0s8_through_p0s11_reuse_exact_p0s7_rate_contracts() -> None:
     source = _roles_source()
     revision_guard = source[
         source.index("IF revision_rows <> 1") : source.index(
@@ -170,6 +170,7 @@ def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     )
     normalized_constraint_contract = " ".join(constraint_contract.split())
 
@@ -182,6 +183,7 @@ def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     )
     assert tuple(consume_hashes) == (
         "p0s000000005",
@@ -190,6 +192,7 @@ def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     )
     assert {revision: consume_hashes[revision] for revision in forward_revisions} == dict.fromkeys(
         forward_revisions, p0s7_consume_hash
@@ -199,7 +202,8 @@ def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() ->
     } == set(forward_revisions)
     assert (
         "schema_revision IN ( 'p0s000000006', 'p0s000000007', "
-        "'p0s000000008', 'p0s000000009', 'p0s000000010' )" in normalized_constraint_contract
+        "'p0s000000008', 'p0s000000009', 'p0s000000010', 'p0s000000011' )"
+        in normalized_constraint_contract
     )
     assert set(re.findall(r"'((?:p0s)[0-9]{9})'", normalized_constraint_contract)) == {
         "p0s000000005",
@@ -208,6 +212,7 @@ def test_n1_roles_replay_p0s8_through_p0s10_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     }
 
 
@@ -937,6 +942,10 @@ def test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_mark
             "p0s000000010",
             "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
         ),
+        (
+            "p0s000000011",
+            "ALTER TABLE public.saas_registration_rate_limits NO FORCE ROW LEVEL SECURITY",
+        ),
     ],
 )
 def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
@@ -969,6 +978,7 @@ def test_real_postgresql_current_schema_object_drift_rejects_roles_replay(
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     ],
 )
 def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
@@ -1031,6 +1041,7 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     }:
         drifts.append(
             "UPDATE public.saas_registration_rate_limit_policies "
@@ -1066,6 +1077,7 @@ def test_real_postgresql_exact_catalog_contract_rejects_semantic_drift(
         "p0s000000008",
         "p0s000000009",
         "p0s000000010",
+        "p0s000000011",
     ],
 )
 def test_real_postgresql_rate_limit_authority_replay_removes_poisoned_acls(

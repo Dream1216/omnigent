@@ -41,7 +41,12 @@ class _Result:
 
 @dataclass(frozen=True, slots=True)
 class _AuthorityFacts:
-    schema: tuple[str, tuple[str, ...], bool] = ("public", ("public",), False)
+    schema: tuple[str, str, tuple[str, ...], bool] = (
+        "omnigent",
+        "public",
+        ("public",),
+        False,
+    )
     login: tuple[str, str, bool, bool, bool, bool, bool, bool, bool] = (
         "registration_login",
         "registration_login",
@@ -63,10 +68,18 @@ class _AuthorityFacts:
         True,
     )
     memberships: tuple[tuple[str, bool, bool, bool], ...] = (
-        ("saas_registration", False, True, True),
+        ("saas_registration", False, True, False),
     )
     base_memberships: tuple[tuple[str, bool, bool, bool], ...] = ()
     direct_object_authorities: int = 0
+    direct_catalog_acl_authorities: int = 0
+    login_owned_catalog_authorities: int = 0
+    base_global_acl_authorities: int = 0
+    base_owned_catalog_authorities: int = 0
+    base_database_acls: tuple[tuple[str, str, bool, bool], ...] = (
+        ("omnigent", "CONNECT", True, False),
+    )
+    base_database_owners: int = 0
     server_version_num: int = 180000
     status_delegable_authorities: int = 0
     status_column_authorities: tuple[tuple[str, str, str], ...] = tuple(
@@ -100,8 +113,21 @@ class _Connection:
             return _Result(self._facts.login)
         if "direct_authority" in sql:
             return _Result(self._facts.direct_object_authorities)
+        if "omnigent_role_direct_acl_authority" in sql:
+            return _Result(self._facts.direct_catalog_acl_authorities)
+        if "omnigent_role_global_acl_authority" in sql:
+            return _Result(self._facts.base_global_acl_authorities)
+        if "omnigent_role_owned_catalog_authority" in sql:
+            assert parameters is not None
+            if parameters["include_role_settings"]:
+                return _Result(self._facts.base_owned_catalog_authorities)
+            return _Result(self._facts.login_owned_catalog_authorities)
         if "delegable_authority AS" in sql:
             return _Result(self._facts.status_delegable_authorities)
+        if "granted_by_database_owner" in sql:
+            return _Result(list(self._facts.base_database_acls))
+        if "object.datdba = base_role.oid" in sql:
+            return _Result(self._facts.base_database_owners)
         if "server_version_num" in sql:
             return _Result(self._facts.server_version_num)
         if "has_column_privilege(CAST(:expected_role" in sql:
@@ -147,7 +173,7 @@ def test_authority_validator_accepts_exact_non_bypass_login() -> None:
 def test_status_authority_uses_dedicated_status_role() -> None:
     facts = replace(
         _AuthorityFacts(),
-        memberships=(("saas_onboarding_status", False, True, True),),
+        memberships=(("saas_onboarding_status", False, True, False),),
     )
 
     verify_onboarding_database_authority(_engine(facts), authority="status")
@@ -156,7 +182,7 @@ def test_status_authority_uses_dedicated_status_role() -> None:
 def test_status_authority_rejects_grant_options_and_default_acl_authority() -> None:
     facts = replace(
         _AuthorityFacts(),
-        memberships=(("saas_onboarding_status", False, True, True),),
+        memberships=(("saas_onboarding_status", False, True, False),),
         status_delegable_authorities=1,
     )
     engine = _PostgresqlEngine(facts)
@@ -180,7 +206,7 @@ def test_status_authority_checks_maintain_only_when_supported(
 ) -> None:
     facts = replace(
         _AuthorityFacts(),
-        memberships=(("saas_onboarding_status", False, True, True),),
+        memberships=(("saas_onboarding_status", False, True, False),),
         server_version_num=server_version_num,
     )
     engine = _PostgresqlEngine(facts)
@@ -214,7 +240,7 @@ def test_status_authority_rejects_base_role_privilege_drift(
 ) -> None:
     facts = replace(
         _AuthorityFacts(),
-        memberships=(("saas_onboarding_status", False, True, True),),
+        memberships=(("saas_onboarding_status", False, True, False),),
         **{field: value},
     )
 
@@ -228,12 +254,15 @@ def test_status_authority_rejects_base_role_privilege_drift(
         (
             replace(
                 _AuthorityFacts(),
-                schema=("public", ("private", "public"), False),
+                schema=("omnigent", "public", ("private", "public"), False),
             ),
             "search_path",
         ),
         (
-            replace(_AuthorityFacts(), schema=("public", ("public",), True)),
+            replace(
+                _AuthorityFacts(),
+                schema=("omnigent", "public", ("public",), True),
+            ),
             "search_path",
         ),
         (
@@ -282,7 +311,7 @@ def test_status_authority_rejects_base_role_privilege_drift(
                 _AuthorityFacts(),
                 memberships=(
                     ("saas_platform", False, True, True),
-                    ("saas_registration", False, True, True),
+                    ("saas_registration", False, True, False),
                 ),
             ),
             "inherit only saas_registration",
@@ -297,6 +326,36 @@ def test_status_authority_rejects_base_role_privilege_drift(
         (
             replace(_AuthorityFacts(), direct_object_authorities=1),
             "must not own objects or receive direct object grants",
+        ),
+        (
+            replace(_AuthorityFacts(), direct_catalog_acl_authorities=1),
+            "must not own objects or receive direct object grants",
+        ),
+        (
+            replace(_AuthorityFacts(), login_owned_catalog_authorities=1),
+            "must not own objects or receive direct object grants",
+        ),
+        (
+            replace(
+                _AuthorityFacts(),
+                base_database_acls=(
+                    ("omnigent", "CONNECT", True, False),
+                    ("other", "CONNECT", True, False),
+                ),
+            ),
+            "exact current-database direct base-role CONNECT ACL",
+        ),
+        (
+            replace(_AuthorityFacts(), base_database_owners=1),
+            "exact current-database direct base-role CONNECT ACL",
+        ),
+        (
+            replace(_AuthorityFacts(), base_global_acl_authorities=1),
+            "base role has unsafe catalog authority",
+        ),
+        (
+            replace(_AuthorityFacts(), base_owned_catalog_authorities=1),
+            "base role has unsafe catalog authority",
         ),
     ],
 )
@@ -342,7 +401,7 @@ def test_authority_validator_rejects_elevated_base_role(elevated_index: int) -> 
     [
         ("saas_registration", True, True, True),
         ("saas_registration", False, False, True),
-        ("saas_registration", False, True, False),
+        ("saas_registration", False, True, True),
     ],
 )
 def test_authority_validator_rejects_unsafe_membership_options(

@@ -86,7 +86,7 @@ def test_current_adr_gate_is_pending_and_preserves_prior_successor_ci() -> None:
 
     assert gate["status"] == "pending"
     assert baseline["approval"]["state"] == "review_required"
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000010")
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000011")
     assert approval_path in gate["evidence"]
     assert evidence_path in gate["evidence"]
 

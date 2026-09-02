@@ -332,6 +332,20 @@ def test_pg_trgm_contract_pins_all_members_and_both_operator_classes() -> None:
     } == migration._PG_TRGM_OPCLASS_CONTRACTS
 
 
+def test_pg_trgm_member_projection_is_independent_of_database_collation() -> None:
+    rows = [
+        ("pg_proc", "function similarity_dist(text,text)", 10),
+        ("pg_proc", "function similarity(text,text)", 10),
+        ("pg_operator", "operator %(text,text)", 10),
+    ]
+
+    assert migration._canonical_pg_trgm_members(rows) == [
+        ["pg_operator", "operator %(text,text)", 10],
+        ["pg_proc", "function similarity(text,text)", 10],
+        ["pg_proc", "function similarity_dist(text,text)", 10],
+    ]
+
+
 class _FakeEngine:
     def __init__(self, events: list[str], name: str) -> None:
         self._events = events

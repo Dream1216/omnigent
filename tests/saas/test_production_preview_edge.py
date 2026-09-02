@@ -19,7 +19,7 @@ def _release(source: str, product: str) -> dict[str, str]:
         "OMNIGENT_SAAS_PRODUCT_REVISION": product,
         "OMNIGENT_SAAS_IMAGE_DIGEST": "sha256:" + "b" * 64,
         "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "official0001",
-        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000010",
+        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000011",
     }
 
 

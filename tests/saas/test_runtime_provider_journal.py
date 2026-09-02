@@ -518,6 +518,22 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
     database_name = database_url.database
     assert database_name is not None
     quoted_database = owner_engine.dialect.identifier_preparer.quote(database_name)
+    other_database_name = f"runtime_journal_other_{uuid4().hex[:12]}"
+    quoted_other_database = owner_engine.dialect.identifier_preparer.quote(other_database_name)
+    foreign_data_wrapper_name = f"runtime_journal_fdw_{uuid4().hex[:12]}"
+    foreign_server_name = f"runtime_journal_server_{uuid4().hex[:12]}"
+    quoted_foreign_data_wrapper = owner_engine.dialect.identifier_preparer.quote(
+        foreign_data_wrapper_name
+    )
+    quoted_foreign_server = owner_engine.dialect.identifier_preparer.quote(foreign_server_name)
+    cluster_admin_engine = sa.create_engine(
+        isolated_postgres_url,
+        hide_parameters=True,
+        isolation_level="AUTOCOMMIT",
+    )
+    with owner_engine.connect() as connection:
+        database_owner = str(connection.scalar(sa.text("SELECT current_user")))
+    quoted_database_owner = owner_engine.dialect.identifier_preparer.quote(database_owner)
     login_role = f"runtime_journal_login_{uuid4().hex[:12]}"
     login_password = f"journal-{uuid4().hex}-{uuid4().hex}"
     quoted_login = owner_engine.dialect.identifier_preparer.quote(login_role)
@@ -551,8 +567,26 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                 "NOBYPASSRLS INHERIT CONNECTION LIMIT -1"
             )
             connection.exec_driver_sql(f"ALTER ROLE {quoted_login} SET search_path = public")
-            connection.exec_driver_sql(f"GRANT {_JOURNAL_ROLE} TO {quoted_login}")
+            connection.exec_driver_sql(
+                f"GRANT {_JOURNAL_ROLE} TO {quoted_login} "
+                "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+            )
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO {_JOURNAL_ROLE}"
+            )
+            connection.exec_driver_sql(
+                f"CREATE FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper} NO HANDLER"
+            )
+            connection.exec_driver_sql(
+                f"CREATE SERVER {quoted_foreign_server} "
+                f"FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper}"
+            )
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"CREATE DATABASE {quoted_other_database} TEMPLATE template0"
+            )
 
+        with owner_engine.begin() as connection:
             manual_rows = connection.execute(
                 sa.text(
                     "SELECT id, status, version, failure_stage, compensation_cursor, "
@@ -883,6 +917,119 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             max_overflow=0,
         )
         journal = PostgresqlRuntimeProviderOperationJournal(journal_engine)
+
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} TO {quoted_login}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} FROM {quoted_login}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} TO {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="base role authority is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} FROM {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        journal = PostgresqlRuntimeProviderOperationJournal(journal_engine)
+
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"GRANT {_JOURNAL_ROLE} TO {quoted_login} WITH SET TRUE")
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="membership is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(f"GRANT {_JOURNAL_ROLE} TO {quoted_login} WITH SET FALSE")
+        journal_engine.dispose()
+        PostgresqlRuntimeProviderOperationJournal(journal_engine)
+
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CREATE ON DATABASE {quoted_database} TO {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="base role authority is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CREATE ON DATABASE {quoted_database} FROM {_JOURNAL_ROLE}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT TEMPORARY ON DATABASE {quoted_database} TO {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="must not create temporary objects"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE TEMPORARY ON DATABASE {quoted_database} FROM {_JOURNAL_ROLE}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO {_JOURNAL_ROLE} WITH GRANT OPTION"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="base role authority is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE GRANT OPTION FOR CONNECT ON DATABASE {quoted_database} "
+                f"FROM {_JOURNAL_ROLE} CASCADE"
+            )
+        journal_engine.dispose()
+        PostgresqlRuntimeProviderOperationJournal(journal_engine)
+
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO {quoted_login}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} FROM {quoted_login}"
+            )
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_login}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="base role authority is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} FROM {_JOURNAL_ROLE}"
+            )
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {_JOURNAL_ROLE}"
+            )
+        journal_engine.dispose()
+        with pytest.raises(RuntimeError, match="base role authority is unsafe"):
+            PostgresqlRuntimeProviderOperationJournal(journal_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+        journal_engine.dispose()
+        PostgresqlRuntimeProviderOperationJournal(journal_engine)
 
         with pytest.raises(RuntimeError):
             PostgresqlRuntimeProviderOperationJournal(owner_engine)
@@ -1299,7 +1446,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
         with owner_engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000008"
+                == "p0s000000011"
             )
             assert (
                 connection.scalar(
@@ -1324,7 +1471,21 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             journal_engine.dispose()
         if assumed_engine is not None:
             assumed_engine.dispose()
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+            connection.exec_driver_sql(
+                f"DROP DATABASE IF EXISTS {quoted_other_database} WITH (FORCE)"
+            )
         with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_database} FROM {_JOURNAL_ROLE}"
+            )
+            connection.exec_driver_sql(f"DROP SERVER IF EXISTS {quoted_foreign_server} CASCADE")
+            connection.exec_driver_sql(
+                f"DROP FOREIGN DATA WRAPPER IF EXISTS {quoted_foreign_data_wrapper} CASCADE"
+            )
             login_exists = connection.scalar(
                 sa.text("SELECT 1 FROM pg_roles WHERE rolname = :role"),
                 {"role": login_role},
@@ -1332,4 +1493,5 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             if login_exists:
                 connection.exec_driver_sql(f"DROP OWNED BY {quoted_login}")
                 connection.exec_driver_sql(f"DROP ROLE {quoted_login}")
+        cluster_admin_engine.dispose()
         owner_engine.dispose()

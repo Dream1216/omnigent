@@ -126,7 +126,10 @@ def test_n1_compat_image_workflow_is_fixed_signed_and_production_blocked() -> No
     current_contract_checkout = current_contract["steps"][0]
     assert current_contract_checkout["with"]["ref"] == "${{ env.CANDIDATE_REVISION }}"
     assert 'git rev-parse HEAD)" == "$CANDIDATE_REVISION"' in current_contract_commands
-    assert current_contract["services"]["postgres"]["image"] == "postgres:18"
+    assert current_contract["services"]["postgres"]["image"] == (
+        "postgres:18.6-trixie@"
+        "sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+    )
     assert "--no-install-local --no-config" in current_contract_commands
     n1_postgresql = jobs["verify-postgresql-n1"]
     assert n1_postgresql["services"]["postgres"]["image"] == (

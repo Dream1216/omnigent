@@ -92,7 +92,7 @@ RUNNER_DATABASE_FLEET_RECEIPT_PRIVATE_KEY_FILE_ENV = (
     "OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_PRIVATE_KEY_FILE"
 )
 
-_SCHEMA_REVISION = "p0s000000010"
+_SCHEMA_REVISION = "p0s000000011"
 _RUNNER_BASE_ROLE = "saas_runner_agent"
 _RUNNER_ROLE_PATTERN = r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -1753,7 +1753,7 @@ def _validate_evidence_context(context: RunnerDatabaseFleetEvidenceContext) -> N
     _nonzero_match(context.product_revision, _FULL_GIT_SHA, field="product_revision")
     _nonzero_match(context.image_digest, _IMAGE_DIGEST, field="image_digest")
     if context.schema_revision != _SCHEMA_REVISION:
-        raise RunnerDatabaseFleetError("schema_revision must be p0s000000010")
+        raise RunnerDatabaseFleetError("schema_revision must be p0s000000011")
     _dns_label(context.namespace, field="namespace")
     _nonzero_match(
         context.release_incarnation,

@@ -148,8 +148,8 @@ def test_current_schema_head_is_the_successor_decision_target() -> None:
     require_current_approval_history(_repo())
     baseline = _baseline()
 
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000010"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000010"  # type: ignore[index]
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000011"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000011"  # type: ignore[index]
     assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
     assert "record" not in baseline["approval"]  # type: ignore[operator]
     assert all(adr["status"] == "proposed" for adr in baseline["adrs"])  # type: ignore[index]

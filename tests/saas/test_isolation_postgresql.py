@@ -611,14 +611,20 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_app")
             _set_scope(connection, tenant_id=scope["tenant"], space_id=scope["space"])
-            for table in (
-                "saas_egress_policies",
-                "saas_execution_profiles",
-                "saas_secret_bindings",
-                "saas_preview_leases",
-            ):
-                assert (
-                    connection.execute(sa.text(f"SELECT count(*) FROM {table}")).scalar_one() == 1
+            expected_rows = {
+                "saas_egress_policies": 2,
+                "saas_execution_profiles": 2,
+                "saas_secret_bindings": 1,
+                "saas_preview_leases": 1,
+            }
+            for table, expected_count in expected_rows.items():
+                visible_scopes = connection.execute(
+                    sa.text(f"SELECT tenant_id, space_id, project_id FROM {table}")
+                ).all()
+                assert len(visible_scopes) == expected_count
+                assert all(
+                    tuple(row) == (scope["tenant"], scope["space"], scope["project"])
+                    for row in visible_scopes
                 )
 
     first, second = scopes
@@ -831,6 +837,24 @@ def test_real_postgresql_isolation_issue_and_redeem_use_project_bound_dispatch(
             pool_id=pool_id,
             placement_id=placement_id,
             now=now,
+        )
+        # This case exercises the first real grant issue/redeem path.  The
+        # shared isolation fixture includes an already-issued grant and secret
+        # lease for read/RLS coverage, so remove only that seeded authority
+        # before asking the control plane to issue the canonical replacement.
+        assert (
+            connection.execute(
+                sa.text("DELETE FROM saas_secret_access_leases WHERE id = :id"),
+                {"id": scope["secret_lease"]},
+            ).rowcount
+            == 1
+        )
+        assert (
+            connection.execute(
+                sa.text("DELETE FROM saas_run_isolation_grants WHERE id = :id"),
+                {"id": scope["grant"]},
+            ).rowcount
+            == 1
         )
         connection.execute(
             sa.text("UPDATE saas_execution_profiles SET status = 'retired' WHERE id = :bound"),

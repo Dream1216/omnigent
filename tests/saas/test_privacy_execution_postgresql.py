@@ -321,7 +321,11 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 connection.execute(
                     sa.text("SELECT version_num FROM saas_alembic_version")
                 ).scalar_one()
-                == "p0s000000008"
+                == "p0s000000011"
+            )
+            connection.exec_driver_sql(
+                f'GRANT CONNECT ON DATABASE "{database_name}" TO '
+                "saas_privacy_dispatcher, saas_privacy_verifier"
             )
             connection.exec_driver_sql(
                 f'CREATE ROLE "{dispatcher_login_role}" LOGIN PASSWORD '
@@ -329,14 +333,18 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 "NOSUPERUSER NOBYPASSRLS INHERIT"
             )
             connection.exec_driver_sql(
-                f'GRANT saas_privacy_dispatcher TO "{dispatcher_login_role}"'
+                f'GRANT saas_privacy_dispatcher TO "{dispatcher_login_role}" '
+                "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
             )
             connection.exec_driver_sql(
                 f'CREATE ROLE "{verifier_login_role}" LOGIN PASSWORD '
                 f"'{verifier_login_password}' "
                 "NOSUPERUSER NOBYPASSRLS INHERIT"
             )
-            connection.exec_driver_sql(f'GRANT saas_privacy_verifier TO "{verifier_login_role}"')
+            connection.exec_driver_sql(
+                f'GRANT saas_privacy_verifier TO "{verifier_login_role}" '
+                "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+            )
         with owner_engine.begin() as connection:
             _seed_privacy_execution(
                 connection,

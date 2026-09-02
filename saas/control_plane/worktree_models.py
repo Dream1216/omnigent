@@ -409,6 +409,12 @@ class WorktreeInstanceRecord(SaasBase):
                 "('reserved', 'materializing', 'ready', 'checkpointing')"
             ),
         ),
+        sa.Index(
+            "uq_worktree_runner_run_fence_v1",
+            "run_id",
+            "run_fence_token",
+            unique=True,
+        ),
         sa.Index("ix_worktree_scope_status", "tenant_id", "space_id", "project_id", "status"),
         sa.Index("ix_worktree_run_status", "run_id", "status"),
         sa.Index(

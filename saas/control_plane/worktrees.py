@@ -84,6 +84,21 @@ def _canonical_hash(payload: object) -> str:
     return sha256(encoded.encode()).hexdigest()
 
 
+def _worktree_integrity_constraint(error: IntegrityError) -> str | None:
+    """Resolve exact PostgreSQL or SQLite Worktree uniqueness failures."""
+
+    diagnostic = getattr(error.orig, "diag", None)
+    name = getattr(diagnostic, "constraint_name", None)
+    if isinstance(name, str) and name:
+        return name
+    message = str(error.orig)
+    if "saas_worktree_instances.run_id, saas_worktree_instances.run_fence_token" in message:
+        return "uq_worktree_runner_run_fence_v1"
+    if "saas_worktree_instances.change_set_id" in message:
+        return "uq_worktree_active_writer"
+    return None
+
+
 class WorktreeControlPlaneError(RuntimeError):
     """Stable fail-closed error surface for Worktree lifecycle operations."""
 
@@ -397,17 +412,87 @@ class WorktreeControlPlane:
         trace = _text(trace_id, field="trace_id", maximum=128)
         action = "worktree.write" if access_mode == "writer" else "worktree.read"
         if self._runner_rpc:
-            return self._allocate_postgresql_runner(
-                capability_token=capability_token,
-                runner_id=runner_id,
-                run_id=run_id,
-                change_set_id=change_set_id,
-                access_mode=access_mode,
-                reserved_bytes=reserved_bytes,
-                lease_duration=lease_duration,
-                trace_id=trace,
-                rebuild_from_id=rebuild_from_id,
-            )
+            resolved_rebuild_from_id = rebuild_from_id
+            if access_mode == "writer" and rebuild_from_id is None:
+                existing, replay_source = (
+                    self._visible_postgresql_runner_existing_allocation_rebuild_source(
+                        runner_id=runner_id,
+                        run_id=run_id,
+                        change_set_id=change_set_id,
+                    )
+                )
+                if existing:
+                    resolved_rebuild_from_id = replay_source
+            try:
+                return self._allocate_postgresql_runner(
+                    capability_token=capability_token,
+                    runner_id=runner_id,
+                    run_id=run_id,
+                    change_set_id=change_set_id,
+                    access_mode=access_mode,
+                    reserved_bytes=reserved_bytes,
+                    lease_duration=lease_duration,
+                    trace_id=trace,
+                    rebuild_from_id=resolved_rebuild_from_id,
+                )
+            except WorktreeControlPlaneError as error:
+                if access_mode != "writer" or rebuild_from_id is not None:
+                    raise
+                visible_source: UUID | None = None
+                if error.code == "runner_worktree_rebuild_source_required":
+                    # The SECURITY DEFINER allocator intentionally requires an
+                    # explicit recovery source. Resolve it only after the RPC
+                    # has ruled out same-fence replay/duplicate and only through
+                    # the Runner RLS projection.
+                    visible_source = self._visible_postgresql_runner_rebuild_source(
+                        change_set_id=change_set_id
+                    )
+                    if visible_source is None:
+                        # Another exact request can consume the source after the
+                        # first RPC but before this projection. Recover its
+                        # immutable request identity instead of returning a
+                        # misleading source-required error after commit.
+                        existing, replay_source = (
+                            self._visible_postgresql_runner_existing_allocation_rebuild_source(
+                                runner_id=runner_id,
+                                run_id=run_id,
+                                change_set_id=change_set_id,
+                            )
+                        )
+                        if existing:
+                            visible_source = replay_source
+                elif (
+                    error.code == "runner_worktree_run_already_allocated"
+                    and resolved_rebuild_from_id is None
+                ):
+                    # A concurrent/lost-response recovery may have consumed the
+                    # old source between discovery and RPC. The immutable first
+                    # event retains the original source ID so the exact request
+                    # identity, Worktree ID, and lease token can be replayed.
+                    existing, replay_source = (
+                        self._visible_postgresql_runner_existing_allocation_rebuild_source(
+                            runner_id=runner_id,
+                            run_id=run_id,
+                            change_set_id=change_set_id,
+                        )
+                    )
+                    if existing:
+                        visible_source = replay_source
+                else:
+                    raise
+                if visible_source is None:
+                    raise
+                return self._allocate_postgresql_runner(
+                    capability_token=capability_token,
+                    runner_id=runner_id,
+                    run_id=run_id,
+                    change_set_id=change_set_id,
+                    access_mode=access_mode,
+                    reserved_bytes=reserved_bytes,
+                    lease_duration=lease_duration,
+                    trace_id=trace,
+                    rebuild_from_id=visible_source,
+                )
         try:
             capability = self._scheduler.verify_capability(
                 capability_token=capability_token,
@@ -512,6 +597,22 @@ class WorktreeControlPlane:
                     raise WorktreeControlPlaneError(
                         "changeset_unavailable", "ChangeSet is unavailable for allocation"
                     )
+                existing_worktree = db.scalar(
+                    sa.select(WorktreeInstanceRecord.id).where(
+                        WorktreeInstanceRecord.run_id == run.id,
+                        WorktreeInstanceRecord.run_fence_token == run.fence_token,
+                    )
+                )
+                if existing_worktree is not None:
+                    raise WorktreeControlPlaneError(
+                        "worktree_run_already_allocated",
+                        "Run fence already owns a Worktree",
+                    )
+                if rebuild_from_id is not None and access_mode != "writer":
+                    raise WorktreeControlPlaneError(
+                        "worktree_rebuild_requires_writer",
+                        "Only a writer Worktree can consume a rebuild source",
+                    )
                 source: WorktreeInstanceRecord | None = None
                 if rebuild_from_id is not None:
                     source = db.scalar(
@@ -522,11 +623,26 @@ class WorktreeControlPlane:
                     if (
                         source is None
                         or source.change_set_id != change_set_id
+                        or source.access_mode != "writer"
+                        or not source.dirty
                         or source.status != "rebuild_pending"
                         or source.recovery_artifact_ref is None
                     ):
                         raise WorktreeControlPlaneError(
                             "worktree_rebuild_source_invalid", "Rebuild source is unavailable"
+                        )
+                if access_mode == "writer":
+                    rebuild_pending = db.scalar(
+                        sa.select(WorktreeInstanceRecord.id).where(
+                            WorktreeInstanceRecord.change_set_id == change_set_id,
+                            WorktreeInstanceRecord.access_mode == "writer",
+                            WorktreeInstanceRecord.status == "rebuild_pending",
+                        )
+                    )
+                    if rebuild_pending is not None and rebuild_from_id is None:
+                        raise WorktreeControlPlaneError(
+                            "worktree_rebuild_source_required",
+                            "Checkpointed recovery must be consumed by an explicit rebuild",
                         )
                 quota = db.scalar(
                     sa.select(WorktreeQuotaRecord)
@@ -566,18 +682,6 @@ class WorktreeControlPlane:
                         "worktree_storage_quota_exceeded", "Reserved Worktree storage is exhausted"
                     )
                 if access_mode == "writer":
-                    rebuild_pending = db.scalar(
-                        sa.select(WorktreeInstanceRecord.id).where(
-                            WorktreeInstanceRecord.change_set_id == change_set_id,
-                            WorktreeInstanceRecord.access_mode == "writer",
-                            WorktreeInstanceRecord.status == "rebuild_pending",
-                        )
-                    )
-                    if rebuild_pending is not None and rebuild_from_id is None:
-                        raise WorktreeControlPlaneError(
-                            "worktree_rebuild_source_required",
-                            "Checkpointed recovery must be consumed by an explicit rebuild",
-                        )
                     active_writer = db.scalar(
                         sa.select(WorktreeInstanceRecord.id).where(
                             WorktreeInstanceRecord.change_set_id == change_set_id,
@@ -671,8 +775,20 @@ class WorktreeControlPlane:
                     expires_at,
                 )
         except IntegrityError as exc:
+            constraint = _worktree_integrity_constraint(exc)
+            if constraint == "uq_worktree_active_writer":
+                raise WorktreeControlPlaneError(
+                    "changeset_writer_conflict",
+                    "Concurrent ChangeSet writer allocation lost",
+                ) from exc
+            if constraint == "uq_worktree_runner_run_fence_v1":
+                raise WorktreeControlPlaneError(
+                    "worktree_run_already_allocated",
+                    "Run fence already owns a Worktree",
+                ) from exc
             raise WorktreeControlPlaneError(
-                "changeset_writer_conflict", "Concurrent ChangeSet writer allocation lost"
+                "worktree_authority_inconsistent",
+                "Worktree allocation constraint rejected",
             ) from exc
 
     def begin_materialization(
@@ -1857,6 +1973,95 @@ class WorktreeControlPlane:
             lease_token=raw_lease_token,
             expires_at=_aware(row["lease_expires_at"]),
         )
+
+    def _visible_postgresql_runner_rebuild_source(
+        self,
+        *,
+        change_set_id: UUID,
+    ) -> UUID | None:
+        """Return the one valid recovery source exposed by Runner RLS."""
+
+        with self._session_factory() as db:
+            sources = tuple(
+                db.scalars(
+                    sa.select(WorktreeInstanceRecord.id)
+                    .where(
+                        WorktreeInstanceRecord.change_set_id == change_set_id,
+                        WorktreeInstanceRecord.access_mode == "writer",
+                        WorktreeInstanceRecord.status == "rebuild_pending",
+                        WorktreeInstanceRecord.dirty.is_(True),
+                        WorktreeInstanceRecord.recovery_artifact_ref.is_not(None),
+                    )
+                    .order_by(WorktreeInstanceRecord.id)
+                    .limit(2)
+                )
+            )
+        if len(sources) > 1:
+            raise WorktreeControlPlaneError(
+                "runner_worktree_rebuild_source_invalid",
+                "Runner database authority exposed an ambiguous rebuild source",
+            )
+        return sources[0] if sources else None
+
+    def _visible_postgresql_runner_existing_allocation_rebuild_source(
+        self,
+        *,
+        runner_id: UUID,
+        run_id: UUID,
+        change_set_id: UUID,
+    ) -> tuple[bool, UUID | None]:
+        """Recover one active allocation's original rebuild source for replay."""
+
+        with self._session_factory() as db:
+            rows = tuple(
+                db.execute(
+                    sa.select(
+                        WorktreeEventRecord.event_type,
+                        WorktreeEventRecord.payload,
+                    )
+                    .join(
+                        WorktreeInstanceRecord,
+                        WorktreeInstanceRecord.id == WorktreeEventRecord.worktree_id,
+                    )
+                    .where(
+                        WorktreeInstanceRecord.runner_id == runner_id,
+                        WorktreeInstanceRecord.run_id == run_id,
+                        WorktreeInstanceRecord.change_set_id == change_set_id,
+                        WorktreeInstanceRecord.status.in_(ACTIVE_WORKTREE_STATUSES),
+                        WorktreeEventRecord.sequence == 1,
+                    )
+                    .order_by(WorktreeInstanceRecord.id)
+                    .limit(2)
+                ).all()
+            )
+        if len(rows) > 1:
+            raise WorktreeControlPlaneError(
+                "runner_worktree_rebuild_source_invalid",
+                "Runner database authority exposed ambiguous allocation evidence",
+            )
+        if not rows:
+            return False, None
+        event_type, payload = rows[0]
+        if not isinstance(payload, dict) or "rebuild_from_id" not in payload:
+            raise WorktreeControlPlaneError(
+                "runner_worktree_rebuild_source_invalid",
+                "Runner allocation evidence is incomplete",
+            )
+        raw_source = payload["rebuild_from_id"]
+        if event_type == "worktree.created" and raw_source is None:
+            return True, None
+        if event_type != "worktree.rebuilt" or not isinstance(raw_source, str):
+            raise WorktreeControlPlaneError(
+                "runner_worktree_rebuild_source_invalid",
+                "Runner allocation evidence has an invalid rebuild source",
+            )
+        try:
+            return True, UUID(raw_source)
+        except ValueError as error:
+            raise WorktreeControlPlaneError(
+                "runner_worktree_rebuild_source_invalid",
+                "Runner allocation evidence has an invalid rebuild source",
+            ) from error
 
     def _transition_postgresql_runner(
         self,

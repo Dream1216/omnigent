@@ -1315,6 +1315,25 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
     schema_password = f"schema-{uuid4().hex}"
     external_schema = f"dispatcher_external_{suffix}"
     quoted_external_schema = owner_engine.dialect.identifier_preparer.quote(external_schema)
+    foreign_data_wrapper = f"dispatcher_fdw_{suffix}"
+    foreign_server = f"dispatcher_server_{suffix}"
+    quoted_foreign_data_wrapper = owner_engine.dialect.identifier_preparer.quote(
+        foreign_data_wrapper
+    )
+    quoted_foreign_server = owner_engine.dialect.identifier_preparer.quote(foreign_server)
+    base = sa.engine.make_url(isolated_postgres_url)
+    database_name = base.database
+    assert database_name is not None
+    quoted_database = owner_engine.dialect.identifier_preparer.quote(database_name)
+    other_database_name = f"dispatcher_other_{uuid4().hex[:12]}"
+    quoted_other_database = owner_engine.dialect.identifier_preparer.quote(other_database_name)
+    cluster_admin_engine = sa.create_engine(
+        isolated_postgres_url,
+        isolation_level="AUTOCOMMIT",
+    )
+    with owner_engine.connect() as connection:
+        database_owner = str(connection.scalar(sa.text("SELECT current_user")))
+    quoted_database_owner = owner_engine.dialect.identifier_preparer.quote(database_owner)
     with owner_engine.begin() as connection:
         _migrate(connection, root)
         connection.exec_driver_sql(
@@ -1330,11 +1349,19 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
                 NOSUPERUSER NOBYPASSRLS INHERIT;
             CREATE ROLE {schema_login} LOGIN PASSWORD '{schema_password}'
                 NOSUPERUSER NOBYPASSRLS INHERIT;
-            GRANT saas_dispatcher TO {dispatcher_login};
-            GRANT saas_app TO {wrong_login};
-            GRANT saas_dispatcher, saas_app TO {mixed_login};
-            GRANT saas_dispatcher TO {schema_login};
+            GRANT saas_dispatcher TO {dispatcher_login}
+                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+            GRANT saas_app TO {wrong_login}
+                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+            GRANT saas_dispatcher, saas_app TO {mixed_login}
+                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+            GRANT saas_dispatcher TO {schema_login}
+                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
+            GRANT CONNECT ON DATABASE {quoted_database} TO saas_dispatcher, saas_app;
             ALTER ROLE {schema_login} SET search_path = pg_catalog, public;
+            CREATE FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper} NO HANDLER;
+            CREATE SERVER {quoted_foreign_server}
+                FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper};
             CREATE SCHEMA {quoted_external_schema};
             CREATE SEQUENCE {quoted_external_schema}.probe_sequence;
             CREATE VIEW {quoted_external_schema}.probe_view AS SELECT 1 AS id;
@@ -1344,8 +1371,9 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
             REVOKE ALL ON FUNCTION {quoted_external_schema}.probe_function() FROM PUBLIC;
             """
         )
+    with cluster_admin_engine.connect() as connection:
+        connection.exec_driver_sql(f"CREATE DATABASE {quoted_other_database} TEMPLATE template0")
 
-    base = sa.engine.make_url(isolated_postgres_url)
     dispatcher_engine = sa.create_engine(
         base.set(username=dispatcher_login, password=dispatcher_password),
         pool_pre_ping=True,
@@ -1362,10 +1390,110 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
         base.set(username=schema_login, password=schema_password),
         pool_pre_ping=True,
     )
-    database_name = base.database
-    assert database_name is not None
-    quoted_database = owner_engine.dialect.identifier_preparer.quote(database_name)
     try:
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} TO {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} FROM {dispatcher_login}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} TO saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe direct or delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} FROM saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT saas_dispatcher TO {dispatcher_login} WITH SET TRUE"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe role membership options"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT saas_dispatcher TO {dispatcher_login} WITH SET FALSE"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} FROM {dispatcher_login}"
+            )
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {dispatcher_login}"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="direct database authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe direct or delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} FROM saas_dispatcher"
+            )
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe direct or delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+        dispatcher_engine.dispose()
+        verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CREATE ON DATABASE {quoted_database} TO saas_dispatcher"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe direct or delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CREATE ON DATABASE {quoted_database} FROM saas_dispatcher"
+            )
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO saas_dispatcher WITH GRANT OPTION"
+            )
+        dispatcher_engine.dispose()
+        with pytest.raises(RuntimeError, match="unsafe direct or delegable authority"):
+            verify_dispatcher_database_role(dispatcher_engine)
+        with owner_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE GRANT OPTION FOR CONNECT ON DATABASE {quoted_database} "
+                "FROM saas_dispatcher CASCADE"
+            )
+        dispatcher_engine.dispose()
         verify_dispatcher_database_role(dispatcher_engine)
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(f"GRANT TEMPORARY ON DATABASE {quoted_database} TO PUBLIC")
@@ -1533,15 +1661,29 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
         wrong_engine.dispose()
         mixed_engine.dispose()
         schema_engine.dispose()
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+            connection.exec_driver_sql(
+                f"DROP DATABASE IF EXISTS {quoted_other_database} WITH (FORCE)"
+            )
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(
                 f"REVOKE TEMPORARY ON DATABASE {quoted_database} FROM PUBLIC"
+            )
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_database} FROM saas_dispatcher, saas_app"
             )
             connection.exec_driver_sql(
                 "REVOKE INSERT (id), REFERENCES (id) ON saas_control_plane_outbox FROM PUBLIC"
             )
             connection.exec_driver_sql(
                 "REVOKE UPDATE (id), REFERENCES (id) ON saas_outbox_quarantine_events FROM PUBLIC"
+            )
+            connection.exec_driver_sql(f"DROP SERVER IF EXISTS {quoted_foreign_server} CASCADE")
+            connection.exec_driver_sql(
+                f"DROP FOREIGN DATA WRAPPER IF EXISTS {quoted_foreign_data_wrapper} CASCADE"
             )
             connection.exec_driver_sql(f"DROP SCHEMA IF EXISTS {quoted_external_schema} CASCADE")
             connection.exec_driver_sql(f"DROP OWNED BY {dispatcher_login}")
@@ -1552,4 +1694,5 @@ def test_real_postgresql_outbox_worker_rejects_privileged_or_wrong_service_login
             connection.exec_driver_sql(f"DROP ROLE {wrong_login}")
             connection.exec_driver_sql(f"DROP ROLE {mixed_login}")
             connection.exec_driver_sql(f"DROP ROLE {schema_login}")
+        cluster_admin_engine.dispose()
         owner_engine.dispose()

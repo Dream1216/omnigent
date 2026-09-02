@@ -41,6 +41,11 @@ from saas.control_plane.onboarding_workflow import (
     TenantOnboardingWorkflow,
 )
 from saas.control_plane.outbox import OutboxPublisher
+from saas.control_plane.postgresql_role_authority import (
+    count_direct_acl_authorities,
+    count_global_acl_authorities,
+    count_owned_catalog_authorities,
+)
 from saas.control_plane.runtime_provider import ProductionRuntimePartitionAdapter
 
 OnboardingDatabaseAuthority = Literal["registration", "onboarding", "execution", "status"]
@@ -416,7 +421,7 @@ def verify_onboarding_database_authority(
     with engine.connect() as connection:
         schema_facts = connection.execute(
             sa.text(
-                "SELECT current_schema(), current_schemas(false), "
+                "SELECT current_database(), current_schema(), current_schemas(false), "
                 "has_schema_privilege(current_user, 'public', 'CREATE')"
             )
         ).one()
@@ -464,44 +469,77 @@ def verify_onboarding_database_authority(
             sa.text(
                 "WITH login AS (SELECT oid FROM pg_roles WHERE rolname = current_user), "
                 "direct_authority AS ("
-                "SELECT 1 FROM pg_class object "
-                "JOIN pg_namespace namespace ON namespace.oid = object.relnamespace "
+                "SELECT 1 FROM pg_database object JOIN login ON object.datdba = login.oid "
+                "UNION ALL SELECT 1 FROM pg_namespace object "
+                "JOIN login ON object.nspowner = login.oid "
+                "UNION ALL SELECT 1 FROM pg_class object "
                 "CROSS JOIN LATERAL aclexplode(object.relacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE namespace.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_attribute attribute "
-                "JOIN pg_class object ON object.oid = attribute.attrelid "
-                "JOIN pg_namespace namespace ON namespace.oid = object.relnamespace "
+                "UNION ALL SELECT 1 FROM pg_attribute attribute "
                 "CROSS JOIN LATERAL aclexplode(attribute.attacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE namespace.nspname = 'public' AND attribute.attnum > 0 UNION ALL "
-                "SELECT 1 FROM pg_proc object "
-                "JOIN pg_namespace namespace ON namespace.oid = object.pronamespace "
+                "WHERE attribute.attnum > 0 AND NOT attribute.attisdropped "
+                "UNION ALL SELECT 1 FROM pg_proc object "
                 "CROSS JOIN LATERAL aclexplode(object.proacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE namespace.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_namespace object "
+                "UNION ALL SELECT 1 FROM pg_type object "
+                "CROSS JOIN LATERAL aclexplode(object.typacl) grant_acl "
+                "JOIN login ON grant_acl.grantee = login.oid "
+                "UNION ALL SELECT 1 FROM pg_namespace object "
                 "CROSS JOIN LATERAL aclexplode(object.nspacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE object.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_database object "
+                "UNION ALL SELECT 1 FROM pg_database object "
                 "CROSS JOIN LATERAL aclexplode(object.datacl) grant_acl "
                 "JOIN login ON grant_acl.grantee = login.oid "
-                "WHERE object.datname = current_database() UNION ALL "
-                "SELECT 1 FROM pg_default_acl defaults JOIN login "
+                "UNION ALL SELECT 1 FROM pg_default_acl defaults "
+                "CROSS JOIN LATERAL aclexplode(defaults.defaclacl) grant_acl "
+                "JOIN login ON grant_acl.grantee = login.oid "
+                "UNION ALL SELECT 1 FROM pg_default_acl defaults JOIN login "
                 "ON defaults.defaclrole = login.oid UNION ALL "
                 "SELECT 1 FROM pg_class object "
-                "JOIN pg_namespace namespace ON namespace.oid = object.relnamespace "
                 "JOIN login ON object.relowner = login.oid "
-                "WHERE namespace.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_proc object "
-                "JOIN pg_namespace namespace ON namespace.oid = object.pronamespace "
+                "UNION ALL SELECT 1 FROM pg_proc object "
                 "JOIN login ON object.proowner = login.oid "
-                "WHERE namespace.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_namespace object JOIN login ON object.nspowner = login.oid "
-                "WHERE object.nspname = 'public') "
+                "UNION ALL SELECT 1 FROM pg_type object "
+                "JOIN login ON object.typowner = login.oid) "
                 "SELECT count(*) FROM direct_authority"
             )
+        ).scalar_one()
+        login_catalog_authorities = count_direct_acl_authorities(
+            connection,
+            role=str(login_facts[0]),
+        ) + count_owned_catalog_authorities(
+            connection,
+            role=str(login_facts[0]),
+            include_role_settings=False,
+        )
+        base_catalog_authorities = count_global_acl_authorities(
+            connection,
+            role=expected_role,
+        ) + count_owned_catalog_authorities(
+            connection,
+            role=expected_role,
+            include_role_settings=True,
+        )
+        base_database_acls = connection.execute(
+            sa.text(
+                "SELECT object.datname, acl.privilege_type, "
+                "acl.grantor = object.datdba AS granted_by_database_owner, "
+                "acl.is_grantable FROM pg_database AS object "
+                "JOIN pg_roles AS base_role ON base_role.rolname = :expected_role "
+                "CROSS JOIN LATERAL aclexplode(object.datacl) AS acl "
+                "WHERE acl.grantee = base_role.oid "
+                "ORDER BY object.datname, acl.privilege_type"
+            ),
+            {"expected_role": expected_role},
+        ).all()
+        base_database_owners = connection.execute(
+            sa.text(
+                "SELECT count(*) FROM pg_database AS object "
+                "JOIN pg_roles AS base_role ON object.datdba = base_role.oid "
+                "WHERE base_role.rolname = :expected_role"
+            ),
+            {"expected_role": expected_role},
         ).scalar_one()
         status_column_authorities: tuple[tuple[str, str, str], ...] = ()
         status_table_authorities: tuple[tuple[str, str], ...] = ()
@@ -553,7 +591,7 @@ def verify_onboarding_database_authority(
                         "UNION ALL SELECT 1 FROM pg_database object "
                         "CROSS JOIN LATERAL aclexplode(object.datacl) grant_acl "
                         "JOIN base_role ON grant_acl.grantee = base_role.oid "
-                        "WHERE object.datname = current_database() AND grant_acl.is_grantable "
+                        "WHERE grant_acl.is_grantable "
                         "UNION ALL SELECT 1 FROM pg_class object "
                         "JOIN pg_namespace namespace ON namespace.oid = object.relnamespace "
                         "JOIN base_role ON object.relowner = base_role.oid "
@@ -571,7 +609,6 @@ def verify_onboarding_database_authority(
                         "WHERE object.nspname = 'public' "
                         "UNION ALL SELECT 1 FROM pg_database object "
                         "JOIN base_role ON object.datdba = base_role.oid "
-                        "WHERE object.datname = current_database() "
                         "UNION ALL SELECT 1 FROM pg_default_acl defaults "
                         "JOIN base_role ON defaults.defaclrole = base_role.oid "
                         "LEFT JOIN pg_namespace namespace "
@@ -652,7 +689,7 @@ def verify_onboarding_database_authority(
                 ).all()
             )
 
-    current_schema, search_path, can_create_in_schema = schema_facts
+    database_name, current_schema, search_path, can_create_in_schema = schema_facts
     if current_schema != "public" or list(search_path) != ["public"] or can_create_in_schema:
         raise RuntimeError(f"{authority} database login must use only the public search_path")
     (
@@ -682,14 +719,28 @@ def verify_onboarding_database_authority(
         raise RuntimeError(f"{expected_role} must remain a NOLOGIN non-bypass base role")
     if len(login_memberships) != 1 or login_memberships[0][0] != expected_role:
         raise RuntimeError(f"{authority} database login must inherit only {expected_role}")
-    if tuple(login_memberships[0][1:]) != (False, True, True):
+    if tuple(login_memberships[0][1:]) != (False, True, False):
         raise RuntimeError(f"{authority} database login has unsafe role membership options")
     if base_memberships:
         raise RuntimeError(f"{expected_role} must not inherit another database role")
-    if direct_object_authorities:
+    if direct_object_authorities or login_catalog_authorities:
         raise RuntimeError(
             f"{authority} database login must not own objects or receive direct object grants"
         )
+    database_acl_facts = {
+        (str(row[0]), str(row[1]), bool(row[2]), bool(row[3])) for row in base_database_acls
+    }
+    if (
+        database_acl_facts != {(str(database_name), "CONNECT", True, False)}
+        or len(database_acl_facts) != 1
+        or base_database_owners
+    ):
+        raise RuntimeError(
+            f"{expected_role} database authority must have the exact current-database "
+            "direct base-role CONNECT ACL"
+        )
+    if base_catalog_authorities:
+        raise RuntimeError(f"{expected_role} base role has unsafe catalog authority")
     if authority == "status" and status_delegable_authorities:
         raise RuntimeError(
             "status base role must not own objects, hold grant options, or define default ACLs"

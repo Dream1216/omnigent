@@ -562,6 +562,20 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         assert len(posture) == 2
         assert all(not superuser and not bypass for _role, superuser, bypass in posture)
 
+        # The p0s8 profile-binding downgrade is intentionally fail-closed: all
+        # dispatches must be drained before its binding columns can be removed.
+        # This isolated fixture owns only the dispatch created above, so remove
+        # it to establish the schema-migration precondition. Production drain
+        # orchestration remains a separate runbook and admission concern.
+        assert (
+            connection.execute(
+                sa.text("DELETE FROM saas_run_dispatches WHERE run_id = :run"),
+                {"run": run_id},
+            ).rowcount
+            == 1
+        )
+        assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 0
+
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection

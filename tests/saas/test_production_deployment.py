@@ -978,7 +978,7 @@ def test_beta_database_contract_requires_external_cnpg_postgresql18_admission() 
     ordered_contract = (
         "`postgresql_principals.sql`",
         "`postgresql_database.sql`",
-        "`p0s000000010`",
+        "`p0s000000011`",
         "`postgresql_roles.sql`",
         "`saas/control_plane/postgresql_runner_agent_cluster.psql`",
         "**Freeze the coupled evidence.**",

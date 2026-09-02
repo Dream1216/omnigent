@@ -10,7 +10,7 @@ POSTGRESQL_N1_CHECK="verify-postgresql-n1"
 POSTGRESQL_N1_WORKFLOW_NAME="SaaS N-1 compatibility image"
 POSTGRESQL_N1_WORKFLOW_ID="342012814"
 POSTGRESQL_N1_WORKFLOW_PATH=".github/workflows/saas-n1-compat-image.yml"
-POSTGRESQL_N1_WORKFLOW_SHA256="12e3e6899dbc54809021dbe5daa93abc0c700daa0824a62fa77c0c8003d1f816"
+POSTGRESQL_N1_WORKFLOW_SHA256="2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
 POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 
 # Candidate inputs that can change pytest collection, dependency resolution,
@@ -24,7 +24,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/conftest.py|a7a137d49f0ac6664381d89a2e21ef56db2cb6918907460ed253045f9605a4d8"
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
-  "tests/saas/test_n1_compat_patch.py|c7c470a1b06d8cd8e65b999509ea6584398deb41259a54690cda9836929ed5e9"
+  "tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475"
   "tests/saas/test_image_supply_chain.py|95983d457312e98f82594cdc4b889811acdaa61211efd63c8e92a061d9f0e2c1"
   "saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d"
   "saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
@@ -34,9 +34,9 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
   "tests/saas/test_n1_merge_gate_candidate.py|c9baabea918c29c0653d44772b521dc7ef8ad2a9643eeed48dea405c98379d1e"
   "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
-  "tests/saas/test_n1_outbox_admission.py|52cb1cd86491a5041bffc4756a9a914aff9874defca8f263739f1d441ec0a34c"
-  "tests/saas/test_control_plane_migration.py|7063f73f64fd8d0fa9104e36366ce19842bf1295287418261c1991fef8e5736c"
-  "tests/saas/test_production_runner_postgresql.py|a43eeba59145a358df154d27b00d592ff8430d548690d6b59432382e70c9f40b"
+  "tests/saas/test_n1_outbox_admission.py|f8ee207f9169a733605759ac27da15ecaaa9c457ad23d92476c49146c6face31"
+  "tests/saas/test_control_plane_migration.py|677d1a231f6719cce93531d17de8d9c3629d4bccb81a8876f34fff360e9b970a"
+  "tests/saas/test_production_runner_postgresql.py|36767e5a2d11b331bce12ed69e9a1c1d136c74374136a40c988769a05c683069"
 )
 
 POSTGRESQL_N1_PATHS=(

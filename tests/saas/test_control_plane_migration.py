@@ -21,6 +21,41 @@ from psycopg import sql
 from saas.control_plane import SaasBase
 from saas.scripts.build_n1_compat import materialize_n1_compat
 
+_P0S11_SOURCE_ROLES = (
+    "saas_approval_scheduler_audit",
+    "saas_approval_scheduler_enterprise",
+    "saas_approval_scheduler_privacy",
+    "saas_approval_scheduler_support_customer",
+    "saas_approval_scheduler_support_staff",
+)
+_P0S11_POLICY_ROLES = {
+    (
+        "saas_approval_work_items",
+        "rls_approval_work_approval_scheduler_source",
+    ): _P0S11_SOURCE_ROLES,
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_governance_insert",
+    ): ("saas_platform",),
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_bound_insert",
+    ): tuple(
+        sorted(
+            (
+                "saas_governance",
+                "saas_notification_scheduler",
+                "saas_platform_governance",
+                *_P0S11_SOURCE_ROLES,
+            )
+        )
+    ),
+    (
+        "saas_notification_deliveries",
+        "rls_saas_notification_deliveries_source_exact_read",
+    ): _P0S11_SOURCE_ROLES,
+}
+
 
 def _migration_config(connection: sa.Connection) -> Config:
     root = Path(__file__).resolve().parents[2]
@@ -31,6 +66,32 @@ def _migration_config(connection: sa.Connection) -> Config:
     )
     config.attributes["connection"] = connection
     return config
+
+
+def _p0s11_policy_projection(connection: sa.Connection) -> dict[tuple[str, str], tuple]:
+    projection: dict[tuple[str, str], tuple] = {}
+    for table, policy in _P0S11_POLICY_ROLES:
+        row = connection.execute(
+            sa.text(
+                "SELECT policy.oid::bigint AS oid, policy.polcmd AS command, "
+                "policy.polpermissive AS permissive, "
+                "pg_catalog.pg_get_expr(policy.polqual, policy.polrelid) AS qualifier, "
+                "pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid) AS with_check, "
+                "ARRAY(SELECT CASE WHEN role_oid = 0 THEN 'PUBLIC' ELSE role.rolname END "
+                "FROM pg_catalog.unnest(policy.polroles) AS role_oid "
+                "LEFT JOIN pg_catalog.pg_roles AS role ON role.oid = role_oid "
+                "ORDER BY 1) AS roles "
+                "FROM pg_catalog.pg_policy AS policy "
+                "JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid "
+                "JOIN pg_catalog.pg_namespace AS namespace "
+                "ON namespace.oid = relation.relnamespace "
+                "WHERE namespace.nspname = 'public' AND relation.relname = :table "
+                "AND policy.polname = :policy"
+            ),
+            {"table": table, "policy": policy},
+        ).one()
+        projection[(table, policy)] = (*row[:-1], tuple(row.roles))
+    return projection
 
 
 def _insert_execution_profile(
@@ -178,7 +239,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000010"
+        assert revision == "p0s000000011"
         dispatch_profile = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_run_dispatches")
@@ -1618,7 +1679,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000010"
+                == "p0s000000011"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -3282,6 +3343,10 @@ def test_real_postgresql_outbox_downgrade_nonbypass_owner_sees_evidence(
                 "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
             )
             connection.exec_driver_sql(f"GRANT {quoted_probe} TO {quoted_admin}")
+            # postgresql_database.psql revokes PUBLIC schema reachability.  A
+            # synthetic table owner still needs explicit name-resolution
+            # authority before this test can exercise FORCE RLS semantics.
+            connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_probe}")
             connection.exec_driver_sql(
                 f"ALTER TABLE public.saas_control_plane_outbox OWNER TO {quoted_probe}"
             )
@@ -4053,3 +4118,65 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
             column["name"] for column in downgraded.get_columns("saas_enterprise_scim_directories")
         }
     engine.dispose()
+
+
+def test_real_postgresql_p0s11_policy_role_scope_round_trip(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000010")
+            predecessor = _p0s11_policy_projection(connection)
+            assert {row[-1] for row in predecessor.values()} == {("PUBLIC",)}
+
+            command.upgrade(config, "p0s000000011")
+            successor = _p0s11_policy_projection(connection)
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000011"
+            )
+            for key, target_roles in _P0S11_POLICY_ROLES.items():
+                assert successor[key][:-1] == predecessor[key][:-1]
+                assert successor[key][-1] == tuple(sorted(target_roles))
+
+            command.downgrade(config, "p0s000000010")
+            assert _p0s11_policy_projection(connection) == predecessor
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000010"
+            )
+
+            command.upgrade(config, "head")
+            assert _p0s11_policy_projection(connection) == successor
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000011"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_real_postgresql_p0s11_rejects_predecessor_policy_role_drift(
+    isolated_postgres_url: str,
+) -> None:
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "p0s000000010")
+            connection.exec_driver_sql(
+                "ALTER POLICY rls_approval_work_approval_scheduler_source "
+                "ON public.saas_approval_work_items TO saas_platform"
+            )
+            drifted = _p0s11_policy_projection(connection)
+
+        with pytest.raises(RuntimeError, match="P0S11 upgrade policy role projection drifted"):
+            with engine.begin() as connection:
+                command.upgrade(_migration_config(connection), "head")
+
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+                "p0s000000010"
+            )
+            assert _p0s11_policy_projection(connection) == drifted
+    finally:
+        engine.dispose()

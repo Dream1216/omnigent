@@ -39,6 +39,12 @@ def _postgres_url() -> str:
 
 
 def _migrate(connection: sa.Connection, root: Path) -> None:
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_principals.sql").read_text(encoding="utf-8")
+    )
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
+    )
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
@@ -407,7 +413,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
     leases = [result for result in results if not isinstance(result, WorktreeControlPlaneError)]
     errors = [result for result in results if isinstance(result, WorktreeControlPlaneError)]
     assert len(leases) == 1
-    assert len(errors) == 1 and errors[0].code == "changeset_writer_conflict"
+    assert len(errors) == 1 and errors[0].code == "worktree_run_already_allocated"
     lease = leases[0]
 
     with pytest.raises(DBAPIError):

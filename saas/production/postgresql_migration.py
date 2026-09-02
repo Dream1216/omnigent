@@ -14,7 +14,7 @@ import os
 import re
 import stat
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -206,25 +206,25 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "e5d9bc8ac650",
-        "p0s000000010",
+        "p0s000000011",
     ): "3cb5ec014f391ecd3ddd30af9d6372582bb70d4c2060f1782dcc6248bb719c2b",
     (
         18,
         "e5d9bc8ac650",
-        "p0s000000010",
+        "p0s000000011",
     ): "f48b8e306eedd550140e5d3ed956ad84ea4bf5b0649e779aff81bce749343d71",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "e5d9bc8ac650",
-        "p0s000000010",
-    ): "b0fc13c0021ad3350c7f3c89f857292b3d19972314d9c9633c60804bfed61a52",
+        "p0s000000011",
+    ): "61719e082be9d2567eb787e069652d8c8d43dcc51ceea3e8f595962b6417b519",
     (
         18,
         "e5d9bc8ac650",
-        "p0s000000010",
-    ): "dc2193af26cdbb9e2c082ecfb900cd34885ac8490e75f6c0ffb21352c2c46256",
+        "p0s000000011",
+    ): "1c9cc53a884eee05ca28d55c76ad7ca1a104ddf2a7dfc9399b2b679bcba85995",
 }
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -2069,10 +2069,7 @@ def _pg_trgm_security_catalog(
             "AND extension.extname = 'pg_trgm' ORDER BY 1, 2"
         )
     ).all()
-    members = [
-        [str(class_name), str(description), int(owner_oid)]
-        for class_name, description, owner_oid in member_rows
-    ]
+    members = _canonical_pg_trgm_members(member_rows)
     if tuple((row[0], row[1]) for row in members) != expected_members or any(
         row[2] != 10 for row in members
     ):
@@ -2377,6 +2374,18 @@ def _pg_trgm_security_catalog(
         "opclasses": opclasses,
         "indexes": indexes,
     }
+
+
+def _canonical_pg_trgm_members(member_rows: Iterable[Any]) -> list[list[str | int]]:
+    """Canonicalize extension members independently of database collation."""
+
+    return sorted(
+        [
+            [str(class_name), str(description), int(owner_oid)]
+            for class_name, description, owner_oid in member_rows
+        ],
+        key=lambda row: (str(row[0]), str(row[1])),
+    )
 
 
 def _preflight_pg_trgm_extension(connection: Connection, *, official_owner: str) -> None:

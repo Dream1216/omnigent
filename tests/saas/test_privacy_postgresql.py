@@ -1042,9 +1042,10 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
 
 def test_real_postgresql_registration_erasure_evidence_blocks_downgrade(
     request: pytest.FixtureRequest,
+    isolated_postgres_url: str,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     suffix = uuid4().hex[:12]
     principal_id = uuid4()
     target_user_id = uuid4()

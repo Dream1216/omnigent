@@ -192,13 +192,33 @@ def _production_status_service(engine: Engine) -> Iterator[OnboardingStatusServi
     suffix = uuid4().hex[:12]
     login = f"onboarding_status_{suffix}"
     password = f"Onboarding-Status-{uuid4().hex}"
+    added_connect = False
     with engine.begin() as connection:
         quoted_login = connection.dialect.identifier_preparer.quote(login)
+        database_name = engine.url.database
+        assert database_name is not None
+        quoted_database = connection.dialect.identifier_preparer.quote(database_name)
+        existing_database_acls = connection.scalar(
+            sa.text(
+                "SELECT count(*) FROM pg_database AS database "
+                "JOIN pg_roles AS role ON role.rolname = 'saas_onboarding_status' "
+                "CROSS JOIN LATERAL aclexplode(database.datacl) AS acl "
+                "WHERE database.datname = current_database() AND acl.grantee = role.oid"
+            )
+        )
+        added_connect = existing_database_acls == 0
+        if added_connect:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database} TO saas_onboarding_status"
+            )
         connection.exec_driver_sql(
             f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS "
             f"PASSWORD '{password}'"
         )
-        connection.exec_driver_sql(f"GRANT saas_onboarding_status TO {quoted_login}")
+        connection.exec_driver_sql(
+            f"GRANT saas_onboarding_status TO {quoted_login} "
+            "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )
         connection.exec_driver_sql(f"ALTER ROLE {quoted_login} SET search_path = public")
     status_engine = sa.create_engine(
         engine.url.set(username=login, password=password),
@@ -211,6 +231,13 @@ def _production_status_service(engine: Engine) -> Iterator[OnboardingStatusServi
         with engine.begin() as connection:
             quoted_login = connection.dialect.identifier_preparer.quote(login)
             connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quoted_login}")
+            database_name = engine.url.database
+            assert database_name is not None
+            quoted_database = connection.dialect.identifier_preparer.quote(database_name)
+            if added_connect:
+                connection.exec_driver_sql(
+                    f"REVOKE CONNECT ON DATABASE {quoted_database} FROM saas_onboarding_status"
+                )
 
 
 def _policy() -> OnboardingPolicy:
@@ -1630,10 +1657,61 @@ def test_production_composition_requires_four_exact_login_authorities_and_sealed
     }
     created_logins: list[str] = []
     login_engines: dict[str, Engine] = {}
+    added_connect_roles: list[str] = []
+    database_name = postgresql_engine.url.database
+    assert database_name is not None
+    other_database_name = f"onboarding_other_{suffix}"
+    foreign_data_wrapper_name = f"onboarding_fdw_{suffix}"
+    foreign_server_name = f"onboarding_server_{suffix}"
+    quote = postgresql_engine.dialect.identifier_preparer.quote
+    quoted_other_database = quote(other_database_name)
+    quoted_foreign_data_wrapper = quote(foreign_data_wrapper_name)
+    quoted_foreign_server = quote(foreign_server_name)
+    cluster_admin_engine = sa.create_engine(
+        postgresql_engine.url,
+        isolation_level="AUTOCOMMIT",
+    )
+    with postgresql_engine.connect() as connection:
+        database_owner = str(connection.scalar(sa.text("SELECT current_user")))
+    quoted_database_owner = quote(database_owner)
 
     try:
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"CREATE DATABASE {quoted_other_database} TEMPLATE template0"
+            )
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT, CREATE, TEMPORARY ON DATABASE "
+                f"{quoted_other_database} FROM PUBLIC"
+            )
         with postgresql_engine.begin() as connection:
             quote = connection.dialect.identifier_preparer.quote
+            quoted_database = quote(database_name)
+            connection.exec_driver_sql(
+                f"CREATE FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper} NO HANDLER"
+            )
+            connection.exec_driver_sql(
+                f"CREATE SERVER {quoted_foreign_server} "
+                f"FOREIGN DATA WRAPPER {quoted_foreign_data_wrapper}"
+            )
+            for base_role in sorted(role_by_authority.values()):
+                existing_database_acls = connection.scalar(
+                    sa.text(
+                        "SELECT count(*) FROM pg_database AS database "
+                        "JOIN pg_roles AS role ON role.rolname = :role "
+                        "CROSS JOIN LATERAL aclexplode(database.datacl) AS acl "
+                        "WHERE database.datname = current_database() "
+                        "AND acl.grantee = role.oid"
+                    ),
+                    {"role": base_role},
+                )
+                if existing_database_acls == 0:
+                    added_connect_roles.append(base_role)
+            if added_connect_roles:
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO "
+                    + ", ".join(added_connect_roles)
+                )
             for authority, base_role in role_by_authority.items():
                 login = login_by_authority[authority]
                 quoted_login = quote(login)
@@ -1643,7 +1721,10 @@ def test_production_composition_requires_four_exact_login_authorities_and_sealed
                     f"PASSWORD '{password}'"
                 )
                 created_logins.append(login)
-                connection.exec_driver_sql(f"GRANT {base_role} TO {quoted_login}")
+                connection.exec_driver_sql(
+                    f"GRANT {base_role} TO {quoted_login} "
+                    "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+                )
                 connection.exec_driver_sql(f"ALTER ROLE {quoted_login} SET search_path = public")
 
         for authority, login in login_by_authority.items():
@@ -1653,6 +1734,149 @@ def test_production_composition_requires_four_exact_login_authorities_and_sealed
             )
             login_engines[authority] = engine
             verify_onboarding_database_authority(engine, authority=authority)
+
+        status_login = login_by_authority["status"]
+        registration_login = login_by_authority["registration"]
+        quoted_registration_login = quote(registration_login)
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} "
+                f"TO {quoted_registration_login}"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="direct object grants"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} "
+                f"FROM {quoted_registration_login}"
+            )
+            connection.exec_driver_sql(
+                f"GRANT USAGE ON FOREIGN SERVER {quoted_foreign_server} TO saas_registration"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="unsafe catalog authority"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE USAGE ON FOREIGN SERVER {quoted_foreign_server} FROM saas_registration"
+            )
+        login_engines["registration"].dispose()
+        verify_onboarding_database_authority(
+            login_engines["registration"], authority="registration"
+        )
+
+        with postgresql_engine.begin() as connection:
+            quoted_status_login = connection.dialect.identifier_preparer.quote(status_login)
+            connection.exec_driver_sql(
+                f"GRANT saas_onboarding_status TO {quoted_status_login} WITH SET TRUE"
+            )
+        login_engines["status"].dispose()
+        with pytest.raises(RuntimeError, match="unsafe role membership options"):
+            verify_onboarding_database_authority(login_engines["status"], authority="status")
+        with postgresql_engine.begin() as connection:
+            quoted_status_login = connection.dialect.identifier_preparer.quote(status_login)
+            connection.exec_driver_sql(
+                f"GRANT saas_onboarding_status TO {quoted_status_login} WITH SET FALSE"
+            )
+        login_engines["status"].dispose()
+        verify_onboarding_database_authority(login_engines["status"], authority="status")
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO {quoted_registration_login}"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="direct object grants"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} "
+                f"FROM {quoted_registration_login}"
+            )
+
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_registration_login}"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="must not own objects"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+
+        for privilege in ("CREATE", "TEMPORARY"):
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"GRANT {privilege} ON DATABASE {quote(database_name)} TO saas_registration"
+                )
+            login_engines["registration"].dispose()
+            with pytest.raises(RuntimeError, match="exact current-database direct base-role"):
+                verify_onboarding_database_authority(
+                    login_engines["registration"], authority="registration"
+                )
+            with postgresql_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"REVOKE {privilege} ON DATABASE {quote(database_name)} FROM saas_registration"
+                )
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quote(database_name)} "
+                "TO saas_registration WITH GRANT OPTION"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="exact current-database direct base-role"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE GRANT OPTION FOR CONNECT ON DATABASE {quote(database_name)} "
+                "FROM saas_registration CASCADE"
+            )
+
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_other_database} TO saas_registration"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="exact current-database direct base-role"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"REVOKE CONNECT ON DATABASE {quoted_other_database} FROM saas_registration"
+            )
+
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO saas_registration"
+            )
+        login_engines["registration"].dispose()
+        with pytest.raises(RuntimeError, match="exact current-database direct base-role"):
+            verify_onboarding_database_authority(
+                login_engines["registration"], authority="registration"
+            )
+        with cluster_admin_engine.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+            )
+        login_engines["registration"].dispose()
+        verify_onboarding_database_authority(
+            login_engines["registration"], authority="registration"
+        )
 
         # A grant option on an already-allowed column does not change the
         # effective projection returned by has_column_privilege().  The verifier
@@ -1767,8 +1991,28 @@ def test_production_composition_requires_four_exact_login_authorities_and_sealed
     finally:
         for engine in login_engines.values():
             engine.dispose()
-        if created_logins:
-            with postgresql_engine.begin() as connection:
-                quote = connection.dialect.identifier_preparer.quote
+        with cluster_admin_engine.connect() as connection:
+            other_database_exists = connection.scalar(
+                sa.text("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :name)"),
+                {"name": other_database_name},
+            )
+            if other_database_exists:
+                connection.exec_driver_sql(
+                    f"ALTER DATABASE {quoted_other_database} OWNER TO {quoted_database_owner}"
+                )
+                connection.exec_driver_sql(f"DROP DATABASE {quoted_other_database} WITH (FORCE)")
+        cluster_admin_engine.dispose()
+        with postgresql_engine.begin() as connection:
+            quote = connection.dialect.identifier_preparer.quote
+            connection.exec_driver_sql(f"DROP SERVER IF EXISTS {quoted_foreign_server} CASCADE")
+            connection.exec_driver_sql(
+                f"DROP FOREIGN DATA WRAPPER IF EXISTS {quoted_foreign_data_wrapper} CASCADE"
+            )
+            if created_logins:
                 for login in reversed(created_logins):
                     connection.exec_driver_sql(f"DROP ROLE IF EXISTS {quote(login)}")
+            if added_connect_roles:
+                connection.exec_driver_sql(
+                    f"REVOKE CONNECT ON DATABASE {quote(database_name)} FROM "
+                    + ", ".join(added_connect_roles)
+                )

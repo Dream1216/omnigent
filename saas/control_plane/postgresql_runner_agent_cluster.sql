@@ -52,7 +52,7 @@ BEGIN
     END IF;
     EXECUTE 'SELECT version_num FROM public.saas_alembic_version'
     INTO STRICT schema_head;
-    IF schema_head <> 'p0s000000010' THEN
+    IF schema_head <> 'p0s000000011' THEN
         RAISE EXCEPTION
             'Runner cluster admission rejected: P0S10 authority is unavailable';
     END IF;

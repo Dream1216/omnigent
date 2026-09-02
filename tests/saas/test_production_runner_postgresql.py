@@ -441,7 +441,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 )
             )
             connection.exec_driver_sql(
-                "UPDATE saas_alembic_version SET version_num = 'p0s000000010'"
+                "UPDATE saas_alembic_version SET version_num = 'p0s000000011'"
             )
         subprocess.run(
             [psql, "-X", "--no-password", "-f", str(wrapper)],
@@ -616,7 +616,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     "last_heartbeat_at, registered_at) VALUES "
                     "(:id, :pool, :placement, 'runner-production-1', 'cn-east-1a', "
                     "'online', 3, :token_hash, 2, :product, :schema, :adapter, "
-                    "CAST(:capabilities AS jsonb), :capabilities_hash, 2, 1, :now, :now)"
+                    "CAST(:capabilities AS jsonb), :capabilities_hash, 1, 0, :now, :now)"
                 ),
                 {
                     "id": runner_id,
@@ -1022,6 +1022,20 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             execution_envelope=envelope,
         )
 
+        with owner_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_runner_registrations SET active_leases = 1 WHERE id = :runner_id"
+                ),
+                {"runner_id": runner_id},
+            )
+        with pytest.raises(RunnerControlError) as busy_claim_boundary:
+            _verify_runner_agent_database_authority(
+                login_engine,
+                runner_id=runner_id,
+                connection_generation=3,
+            )
+        assert busy_claim_boundary.value.code == "runner_executor_not_ready"
         loaded_run, loaded_execution = executor._load_run(lease)
         assert loaded_run.id == run_id
         assert loaded_execution.launch_argv == execution_spec.launch_argv
@@ -1069,6 +1083,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
         worktree_control = WorktreeControlPlane(sessions)
         isolation_control = IsolationControlPlane(sessions)
         rebuild_source_id = uuid4()
+        ambiguous_rebuild_source_id = uuid4()
         historical_worktrees = [
             {
                 "id": rebuild_source_id,
@@ -1077,6 +1092,14 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 "dirty": True,
                 "recovery": "artifact://runner/rebuild-source",
                 "fence": 101,
+            },
+            {
+                "id": ambiguous_rebuild_source_id,
+                "status": "rebuild_pending",
+                "access_mode": "writer",
+                "dirty": True,
+                "recovery": "artifact://runner/ambiguous-rebuild-source",
+                "fence": 109,
             },
             {
                 "id": uuid4(),
@@ -1185,7 +1208,52 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     "WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id"
                 ),
                 {"ids": [str(item["id"]) for item in historical_worktrees]},
-            ).all() == [rebuild_source_id]
+            ).all() == sorted([rebuild_source_id, ambiguous_rebuild_source_id])
+        with pytest.raises(WorktreeControlPlaneError) as readonly_rebuild:
+            worktree_control.allocate_worktree(
+                capability_token=capability_token,
+                runner_id=runner_id,
+                run_id=run_id,
+                change_set_id=change_set_id,
+                access_mode="readonly",
+                reserved_bytes=1024,
+                lease_duration=timedelta(seconds=60),
+                trace_id="runner-agent-postgresql-readonly-rebuild",
+                rebuild_from_id=rebuild_source_id,
+                now=now,
+            )
+        assert readonly_rebuild.value.code == "runner_worktree_rebuild_requires_writer"
+        with pytest.raises(WorktreeControlPlaneError) as ambiguous_rebuild:
+            worktree_control.allocate_worktree(
+                capability_token=capability_token,
+                runner_id=runner_id,
+                run_id=run_id,
+                change_set_id=change_set_id,
+                access_mode="writer",
+                reserved_bytes=1024,
+                lease_duration=timedelta(seconds=60),
+                trace_id="runner-agent-postgresql-ambiguous-rebuild",
+                now=now,
+            )
+        assert ambiguous_rebuild.value.code == "runner_worktree_rebuild_source_invalid"
+        with owner_engine.begin() as connection:
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT count(*) FROM saas_worktree_instances "
+                        "WHERE run_id = :run_id AND run_fence_token = 7"
+                    ),
+                    {"run_id": run_id},
+                )
+                == 0
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_worktree_instances SET status = 'released', "
+                    "released_at = :now WHERE id = :source"
+                ),
+                {"now": now, "source": ambiguous_rebuild_source_id},
+            )
         worktree_lease = worktree_control.allocate_worktree(
             capability_token=capability_token,
             runner_id=runner_id,
@@ -1195,7 +1263,6 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             reserved_bytes=1024,
             lease_duration=timedelta(seconds=60),
             trace_id="runner-agent-postgresql",
-            rebuild_from_id=rebuild_source_id,
             now=now,
         )
         replayed_worktree_lease = worktree_control.allocate_worktree(
@@ -1207,10 +1274,22 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             reserved_bytes=1024,
             lease_duration=timedelta(seconds=60),
             trace_id="runner-agent-postgresql-retry-after-lost-response",
-            rebuild_from_id=rebuild_source_id,
             now=now + timedelta(seconds=30),
         )
         assert replayed_worktree_lease == worktree_lease
+        with pytest.raises(WorktreeControlPlaneError) as altered_same_fence:
+            worktree_control.allocate_worktree(
+                capability_token=capability_token,
+                runner_id=runner_id,
+                run_id=run_id,
+                change_set_id=change_set_id,
+                access_mode="writer",
+                reserved_bytes=2048,
+                lease_duration=timedelta(seconds=60),
+                trace_id="runner-agent-postgresql-altered-same-fence",
+                now=now + timedelta(seconds=31),
+            )
+        assert altered_same_fence.value.code == "runner_worktree_run_already_allocated"
         with login_engine.connect() as connection:
             assert (
                 connection.scalar(
@@ -2561,6 +2640,14 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 {"valid": requirements_hash, "run_id": run_id},
             )
 
+        with owner_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_runner_registrations SET active_leases = 0 WHERE id = :runner_id"
+                ),
+                {"runner_id": runner_id},
+            )
+
         # Every catalog surface is re-read before a claim. Direct core-catalog
         # grants, PUBLIC expansion, grant-option drift, RLS flag drift,
         # ownership, per-database role settings, and an extra schema all poison
@@ -2763,6 +2850,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
     schema_owner = f"saas_test_runner_down_{suffix}"
     runner_id = uuid4()
     login = _runner_agent_database_login(runner_id, 1)
+    password = f"Runner-Drain-{uuid4().hex}"
     login_engine: sa.Engine | None = None
     login_connection: sa.Connection | None = None
     quoted_owner = owner_engine.dialect.identifier_preparer.quote(schema_owner)
@@ -2785,18 +2873,19 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
             )
             connection.exec_driver_sql(
                 f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
-                "NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8"
+                "NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8 "
+                f"PASSWORD '{password}'"
             )
             connection.exec_driver_sql(
                 f"GRANT saas_runner_agent TO {quoted_login} "
                 "WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
             )
 
-        login_engine = sa.create_engine(owner_engine.url.set(username=login))
+        login_engine = sa.create_engine(owner_engine.url.set(username=login, password=password))
         login_connection = login_engine.connect()
         assert login_connection.scalar(sa.text("SELECT current_user")) == login
 
-        def p0s10_projection() -> tuple[object, ...]:
+        def current_projection() -> tuple[object, ...]:
             with owner_engine.connect() as connection:
                 return (
                     connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")),
@@ -2826,8 +2915,8 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                     ),
                 )
 
-        before = p0s10_projection()
-        assert before == ("p0s000000010", 18, 19, 2)
+        before = current_projection()
+        assert before == ("p0s000000011", 18, 19, 2)
         with pytest.raises(sa.exc.DBAPIError, match="must be drained before downgrade"):
             with owner_engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
@@ -2835,7 +2924,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                     _saas_migration_config(connection),
                     "p0s000000009",
                 )
-        assert p0s10_projection() == before
+        assert current_projection() == before
 
         login_connection.close()
         login_connection = None
@@ -2892,14 +2981,14 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
 
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
-            command.upgrade(_saas_migration_config(connection), "p0s000000010")
+            command.upgrade(_saas_migration_config(connection), "p0s000000011")
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
             )
         # The roles projection re-verifies the exact policy/function digests,
         # owners, FORCE RLS flags, and sole Runner EXECUTE edges.  Reaching the
-        # identical structural projection proves a clean p0s10 restoration.
-        assert p0s10_projection() == before
+        # identical structural projection proves a clean current-head restoration.
+        assert current_projection() == before
     finally:
         if login_connection is not None:
             login_connection.close()
@@ -3015,7 +3104,7 @@ def test_pg16_runner_direct_authority_is_fail_closed(
                 )
 
         before = mutation_projection()
-        assert before == ("p0s000000010", 0, 0, 0, 0, 0)
+        assert before == ("p0s000000011", 0, 0, 0, 0, 0)
         with pytest.raises(RunnerControlError) as rejected:
             _verify_runner_agent_database_authority(
                 login_engine,

@@ -206,7 +206,8 @@ BEGIN
         'p0s000000007',
         'p0s000000008',
         'p0s000000009',
-        'p0s000000010'
+        'p0s000000010',
+        'p0s000000011'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -635,6 +636,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000010' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000011' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -720,7 +723,7 @@ BEGIN
        OR (
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
-              'p0s000000010'
+              'p0s000000010', 'p0s000000011'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1114,7 +1117,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('p0s000000009', 'p0s000000010') THEN
+    IF schema_revision NOT IN ('p0s000000009', 'p0s000000010', 'p0s000000011') THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
             WHERE to_regclass('public.' || expected.table_name) IS NOT NULL
@@ -3935,7 +3938,7 @@ BEGIN
         'text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,'
         'boolean,boolean,text)'
     );
-    IF schema_revision <> 'p0s000000010' THEN
+    IF schema_revision NOT IN ('p0s000000010', 'p0s000000011') THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
            OR worktree_authority_function IS NOT NULL

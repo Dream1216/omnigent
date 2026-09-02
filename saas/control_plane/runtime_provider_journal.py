@@ -16,6 +16,11 @@ from sqlalchemy.engine import Engine
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.control_plane.db_models import RuntimeProviderOperationJournalRecord
+from saas.control_plane.postgresql_role_authority import (
+    count_direct_acl_authorities,
+    count_global_acl_authorities,
+    count_owned_catalog_authorities,
+)
 from saas.control_plane.runtime_provider import (
     RuntimeProviderError,
     RuntimeProviderFailureDisposition,
@@ -236,7 +241,7 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
     with engine.connect() as connection:
         schema_facts = connection.execute(
             sa.text(
-                "SELECT current_schema(), current_schemas(false), "
+                "SELECT current_database(), current_schema(), current_schemas(false), "
                 "has_schema_privilege(current_user, 'public', 'USAGE'), "
                 "has_schema_privilege(current_user, 'public', 'CREATE'), "
                 "has_database_privilege(current_user, current_database(), 'TEMP')"
@@ -314,8 +319,7 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
                 "WHERE object.nspname = 'public' UNION ALL "
                 "SELECT 1 FROM pg_database object "
                 "CROSS JOIN LATERAL aclexplode(object.datacl) acl "
-                "JOIN login ON acl.grantee = login.oid "
-                "WHERE object.datname = current_database() UNION ALL "
+                "JOIN login ON acl.grantee = login.oid UNION ALL "
                 "SELECT 1 FROM pg_default_acl defaults "
                 "CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl "
                 "JOIN login ON acl.grantee = login.oid UNION ALL "
@@ -335,11 +339,26 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
                 "WHERE namespace.nspname = 'public' UNION ALL "
                 "SELECT 1 FROM pg_namespace object JOIN login "
                 "ON object.nspowner = login.oid WHERE object.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_database object JOIN login ON object.datdba = login.oid "
-                "WHERE object.datname = current_database()) "
+                "SELECT 1 FROM pg_database object JOIN login ON object.datdba = login.oid) "
                 "SELECT count(*) FROM direct_authority"
             )
         ).scalar_one()
+        login_catalog_authority = count_direct_acl_authorities(
+            connection,
+            role=str(login_facts[0]),
+        ) + count_owned_catalog_authorities(
+            connection,
+            role=str(login_facts[0]),
+            include_role_settings=False,
+        )
+        base_catalog_authority = count_global_acl_authorities(
+            connection,
+            role=_JOURNAL_ROLE,
+        ) + count_owned_catalog_authorities(
+            connection,
+            role=_JOURNAL_ROLE,
+            include_role_settings=True,
+        )
         direct_login_non_system_authority = connection.execute(
             sa.text(
                 "WITH login AS (SELECT oid FROM pg_roles WHERE rolname = current_user), "
@@ -451,6 +470,18 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
             ),
             {"role": _JOURNAL_ROLE},
         ).all()
+        database_acls = connection.execute(
+            sa.text(
+                "SELECT object.datname, acl.privilege_type, "
+                "acl.grantor = object.datdba AS granted_by_database_owner, "
+                "acl.is_grantable FROM pg_database AS object "
+                "JOIN pg_roles AS journal ON journal.rolname = :role "
+                "CROSS JOIN LATERAL aclexplode(object.datacl) AS acl "
+                "WHERE acl.grantee = journal.oid "
+                "ORDER BY object.datname, acl.privilege_type"
+            ),
+            {"role": _JOURNAL_ROLE},
+        ).all()
         base_other_authority = connection.execute(
             sa.text(
                 "WITH journal AS (SELECT oid FROM pg_roles WHERE rolname = :role), "
@@ -465,10 +496,6 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
                 "CROSS JOIN LATERAL aclexplode(object.typacl) acl "
                 "JOIN journal ON acl.grantee = journal.oid "
                 "WHERE namespace.nspname = 'public' UNION ALL "
-                "SELECT 1 FROM pg_database object "
-                "CROSS JOIN LATERAL aclexplode(object.datacl) acl "
-                "JOIN journal ON acl.grantee = journal.oid "
-                "WHERE object.datname = current_database() UNION ALL "
                 "SELECT 1 FROM pg_default_acl defaults "
                 "CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl "
                 "JOIN journal ON acl.grantee = journal.oid UNION ALL "
@@ -490,8 +517,7 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
                 "JOIN journal ON object.nspowner = journal.oid "
                 "WHERE object.nspname = 'public' UNION ALL "
                 "SELECT 1 FROM pg_database object "
-                "JOIN journal ON object.datdba = journal.oid "
-                "WHERE object.datname = current_database()) "
+                "JOIN journal ON object.datdba = journal.oid) "
                 "SELECT count(*) FROM unexpected"
             ),
             {"role": _JOURNAL_ROLE},
@@ -708,6 +734,7 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
         ).scalar_one()
 
     (
+        database_name,
         current_schema,
         search_path,
         can_use_schema,
@@ -755,11 +782,11 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
     if (
         len(login_memberships) != 1
         or login_memberships[0][0] != _JOURNAL_ROLE
-        or tuple(login_memberships[0][1:]) != (False, True, True)
+        or tuple(login_memberships[0][1:]) != (False, True, False)
         or base_memberships
     ):
         raise RuntimeError("Runtime Provider journal LOGIN membership is unsafe")
-    if direct_login_authority or direct_login_non_system_authority:
+    if direct_login_authority or direct_login_non_system_authority or login_catalog_authority:
         raise RuntimeError("Runtime Provider journal LOGIN has direct database authority")
     relation_acl_facts = {
         (str(row[0]), str(row[1]), str(row[2]), bool(row[3])) for row in relation_acls
@@ -768,13 +795,19 @@ def verify_runtime_provider_journal_database_role(engine: Engine) -> None:
         (str(row[0]), str(row[1]), str(row[2]), bool(row[3])) for row in column_acls
     }
     schema_acl_facts = {(str(row[0]), str(row[1]), bool(row[2])) for row in schema_acls}
+    database_acl_facts = {
+        (str(row[0]), str(row[1]), bool(row[2]), bool(row[3])) for row in database_acls
+    }
     if (
         relation_acl_facts != _EXPECTED_RELATION_ACLS
         or column_acl_facts != _EXPECTED_COLUMN_ACLS
         or schema_acl_facts != {("public", "USAGE", False)}
+        or database_acl_facts != {(database_name, "CONNECT", True, False)}
+        or len(database_acl_facts) != 1
         or base_other_authority
         or base_non_system_authority
         or effective_non_system_schema_authority
+        or base_catalog_authority
     ):
         raise RuntimeError("Runtime Provider journal base role authority is unsafe")
     if forbidden_tables:

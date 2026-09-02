@@ -53,6 +53,7 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
     assert "saas/control_plane/onboarding_status.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/runtime_provider.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/runtime_provider_journal.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/postgresql_role_authority.py" in REQUIRED_WHEEL_PATHS
     assert (
         "saas/control_plane/migrations/versions/p0s000000003_outbox_quarantine.py"
         in REQUIRED_WHEEL_PATHS
@@ -84,6 +85,10 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
     assert (
         "saas/control_plane/migrations/versions/"
         "p0s000000010_runner_agent_database_authority.py" in REQUIRED_WHEEL_PATHS
+    )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000011_notification_policy_role_scope.py" in REQUIRED_WHEEL_PATHS
     )
     assert "saas/control_plane/preview_models.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/preview_execution.py" in REQUIRED_WHEEL_PATHS
