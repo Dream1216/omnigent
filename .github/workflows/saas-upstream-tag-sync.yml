@@ -1,0 +1,64 @@
+name: SaaS Upstream Tag Mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: saas-upstream-tag-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    name: Mirror immutable official tags
+    if: github.repository == 'Dream1216/omnigent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out downstream repository and tags
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Fetch official tags into an isolated namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags --no-recurse-submodules \
+            https://github.com/omnigent-ai/omnigent.git \
+            '+refs/tags/*:refs/saas-official-tags/*'
+
+      - name: Reject moved tags and mirror missing tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -a missing=()
+
+          while read -r official_ref; do
+            tag="${official_ref#refs/saas-official-tags/}"
+            local_ref="refs/tags/$tag"
+            official_oid="$(git rev-parse "$official_ref")"
+
+            if git show-ref --verify --quiet "$local_ref"; then
+              local_oid="$(git rev-parse "$local_ref")"
+              if [ "$local_oid" != "$official_oid" ]; then
+                echo "Official tag moved or downstream tag conflicts: $tag" >&2
+                exit 1
+              fi
+              continue
+            fi
+
+            missing+=("$official_ref:$local_ref")
+          done < <(git for-each-ref --format='%(refname)' refs/saas-official-tags/)
+
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All official tags are already mirrored."
+            exit 0
+          fi
+
+          git push --atomic origin "${missing[@]}"
+          printf 'Mirrored %s immutable official tag(s).\n' "${#missing[@]}"
