@@ -1256,10 +1256,15 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
     monkeypatch.setattr(context.executor, "_allocate_execution", allocated)
     monkeypatch.setattr(context.executor, "_finish_preparation", lambda *_args: None)
     context.executor._worktree_heartbeat_interval_seconds = 0.01
-    context.executor._worktree_heartbeat_timeout_seconds = 1
+    context.executor._worktree_heartbeat_timeout_seconds = 5
     assert (
         await context.executor.execute(context.lease, cancellation=asyncio.Event()) == "succeeded"
     )
+    # Remove the cadence race before forcing an artificial 120 ms expiry.
+    # Finalization must perform its own authoritative renewal before the
+    # checkpoint starts; the test restarts the background heartbeat only after
+    # that renewal has succeeded and the checkpoint is demonstrably blocked.
+    await context.executor._stop_worktree_heartbeat(active, require_healthy=True)
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=0.12)
     async with active.heartbeat_lock:
@@ -1274,17 +1279,51 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
     original_put = artifact_store.put
     upload_started = threading.Event()
     release_upload = threading.Event()
+    original_renew_fence = context.executor._worktree_adapter.renew_fence
+    renew_fence_count = 0
+    renew_fence_condition = threading.Condition()
 
     def delayed_put(artifact):
         upload_started.set()
-        assert release_upload.wait(timeout=2)
+        assert release_upload.wait(timeout=10)
         return original_put(artifact)
 
+    def counted_renew_fence(*args, **kwargs):
+        nonlocal renew_fence_count
+        mutation = original_renew_fence(*args, **kwargs)
+        with renew_fence_condition:
+            renew_fence_count += 1
+            renew_fence_condition.notify_all()
+        return mutation
+
+    def wait_for_renew_fence_after(previous_count: int) -> bool:
+        with renew_fence_condition:
+            return renew_fence_condition.wait_for(
+                lambda: renew_fence_count > previous_count,
+                timeout=5,
+            )
+
     monkeypatch.setattr(artifact_store, "put", delayed_put)
+    monkeypatch.setattr(
+        context.executor._worktree_adapter,
+        "renew_fence",
+        counted_renew_fence,
+    )
     preparation = asyncio.create_task(
         context.executor.prepare_finalization(context.lease, result="succeeded")
     )
-    assert await asyncio.to_thread(upload_started.wait, 1)
+    assert await asyncio.to_thread(upload_started.wait, 5)
+    with renew_fence_condition:
+        pre_checkpoint_renewals = renew_fence_count
+    heartbeat_stop = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        context.executor._heartbeat_worktree(active, heartbeat_stop),
+        name=f"worktree-heartbeat-{context.lease.run_id}",
+    )
+    with context.executor._lock:
+        active.heartbeat_stop = heartbeat_stop
+        active.heartbeat_task = heartbeat
+    assert await asyncio.to_thread(wait_for_renew_fence_after, pre_checkpoint_renewals)
     await asyncio.sleep(0.2)
     assert datetime.now(timezone.utc) > expires_at
     release_upload.set()
@@ -1507,6 +1546,11 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     environment = _HeartbeatBoundEnvironment(asyncio.Event())
     active.prepared = cast(PreparedRunnerIsolation, _ImmediatePrepared(environment))
     original_heartbeat = context.executor._worktree_adapter.heartbeat
+    successful_heartbeat = original_heartbeat(
+        active.worktree_lease,
+        lease_duration=timedelta(seconds=context.executor._worktree_lease_seconds),
+        physical_worktree=active.physical_worktree,
+    )
     heartbeat_started = asyncio.Event()
     release_response = threading.Event()
     heartbeat_count = 0
@@ -1515,12 +1559,11 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     def returns_too_late(*args, **kwargs):
         nonlocal heartbeat_count
         heartbeat_count += 1
-        mutation = original_heartbeat(*args, **kwargs)
         if heartbeat_count == 1:
-            return mutation
+            return successful_heartbeat
         loop.call_soon_threadsafe(heartbeat_started.set)
         assert release_response.wait(timeout=2)
-        return mutation
+        return successful_heartbeat
 
     def allocated(_lease: RunnerControlClientLease):
         with context.executor._lock:
