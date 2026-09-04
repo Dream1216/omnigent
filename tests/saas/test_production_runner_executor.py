@@ -1175,15 +1175,26 @@ async def test_active_command_keeps_heartbeat_through_terminal_preparation(
     active.prepared = cast(PreparedRunnerIsolation, _ImmediatePrepared(environment))
     original_heartbeat = context.executor._worktree_adapter.heartbeat
     heartbeat_count = 0
+    heartbeat_condition = threading.Condition()
     loop = asyncio.get_running_loop()
 
     def counted_heartbeat(*args, **kwargs):
         nonlocal heartbeat_count
         mutation = original_heartbeat(*args, **kwargs)
-        heartbeat_count += 1
-        if heartbeat_count == 2:
+        with heartbeat_condition:
+            heartbeat_count += 1
+            completed_command = heartbeat_count == 2
+            heartbeat_condition.notify_all()
+        if completed_command:
             loop.call_soon_threadsafe(completed.set)
         return mutation
+
+    def wait_for_heartbeat_after(previous_count: int) -> bool:
+        with heartbeat_condition:
+            return heartbeat_condition.wait_for(
+                lambda: heartbeat_count > previous_count,
+                timeout=5,
+            )
 
     def prepared(_lease: RunnerControlClientLease):
         with context.executor._lock:
@@ -1194,24 +1205,29 @@ async def test_active_command_keeps_heartbeat_through_terminal_preparation(
     monkeypatch.setattr(context.executor, "_finish_preparation", lambda *_args: None)
     monkeypatch.setattr(context.executor._worktree_adapter, "heartbeat", counted_heartbeat)
     context.executor._worktree_heartbeat_interval_seconds = 0.01
-    context.executor._worktree_heartbeat_timeout_seconds = 1
+    # The production response window is 50 seconds for this 300-second lease.
+    # Keep this test bounded while leaving enough headroom for an xdist worker's
+    # SQLite renewal to run under a loaded shared CI host.
+    context.executor._worktree_heartbeat_timeout_seconds = 5
 
     original_expiry = active.worktree_lease.expires_at
     assert (
         await context.executor.execute(context.lease, cancellation=asyncio.Event()) == "succeeded"
     )
-    assert heartbeat_count >= 2
+    with heartbeat_condition:
+        assert heartbeat_count >= 2
+        post_execute_count = heartbeat_count
     assert active.worktree_lease.expires_at >= original_expiry
     assert not active.lease_lost
-    post_execute_count = heartbeat_count
-    await asyncio.sleep(0.04)
-    assert heartbeat_count > post_execute_count
+    assert await asyncio.to_thread(wait_for_heartbeat_after, post_execute_count)
 
     result = await context.executor.prepare_finalization(context.lease, result="succeeded")
     await context.executor.prepare_terminal_transition(context.lease)
-    stopped_count = heartbeat_count
+    with heartbeat_condition:
+        stopped_count = heartbeat_count
     await asyncio.sleep(0.04)
-    assert heartbeat_count == stopped_count
+    with heartbeat_condition:
+        assert heartbeat_count == stopped_count
     _terminalize(context, result)
     await context.executor.finalize(context.lease, result=result)
 
