@@ -60,6 +60,13 @@ _EXIT_TIMEOUT = 15.0
 _OVERVIEW_DRAIN_TIMEOUT = 6.0
 _EXPECT_SUBAGENT_TIMEOUT = 30.0
 
+# The worker response alone is allowed 240 seconds below.  Override the
+# suite-wide 180-second cap so a loaded CI runner cannot kill this PTY test
+# before its own bounded completion and teardown deadlines can report the
+# actual product result.  The workflow's 35-minute shard limit remains the
+# outer fail-safe.
+pytestmark = pytest.mark.timeout(420, method="thread")
+
 
 def _check_worker_harness_available(harness: str, omnigent_python: Path) -> None:
     """
