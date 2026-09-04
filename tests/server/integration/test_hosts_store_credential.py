@@ -321,6 +321,7 @@ async def test_concurrent_writes_to_one_host_are_serialized(
     assert conn is not None
 
     arrivals: list[str] = []
+    first_arrived = asyncio.Event()
     release_first = asyncio.Event()
     stop = asyncio.Event()
 
@@ -344,6 +345,7 @@ async def test_concurrent_writes_to_one_host_are_serialized(
             # missing the second frame would arrive while the first is pending.
             if not first_seen:
                 first_seen = True
+                first_arrived.set()
                 await release_first.wait()
             await comm.send_input(
                 {
@@ -367,6 +369,11 @@ async def test_concurrent_writes_to_one_host_are_serialized(
                     json={"kind": "key", "secret": "sk-1"},
                 )
             )
+            # Establish which request owns the lock before scheduling its
+            # contender.  ``create_task`` ordering is not a FIFO guarantee, so
+            # starting both tasks before this point makes the test assert on
+            # scheduler choice instead of credential-write serialization.
+            await asyncio.wait_for(first_arrived.wait(), timeout=1.0)
             second = asyncio.create_task(
                 client.post(
                     f"/v1/hosts/{_HOST_ID}/harnesses/codex/credential",

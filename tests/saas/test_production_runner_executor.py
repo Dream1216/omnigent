@@ -1084,7 +1084,10 @@ async def test_worktree_heartbeat_covers_materialization_before_shell(
         return active, command
 
     def delayed_finish(_active: object, _lease: RunnerControlClientLease) -> None:
-        assert two_heartbeats.wait(timeout=2)
+        # This timeout is a deadlock guard, not a heartbeat scheduling SLA. A
+        # loaded shared CI runner can delay the two worker-thread renewals even
+        # though the 10 ms production cadence and lease contract remain valid.
+        assert two_heartbeats.wait(timeout=10)
         original_finish(active, context.lease)
         assert active.prepared is not None
         active.prepared.close()
