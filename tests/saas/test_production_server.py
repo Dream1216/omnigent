@@ -9,7 +9,7 @@ import traceback
 import types
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -22,6 +22,10 @@ from omnigent.db.db_models import current_workspace_id
 from omnigent.runtime import init as init_runtime
 from omnigent.server import app as official_server_app
 from saas.compatibility import OmnigentStoreAdapter
+from saas.control_plane.client_network import (
+    TrustedClientNetworkConfig,
+    TrustedClientNetworkResolver,
+)
 from saas.control_plane.http_auth import SaasAuthContextMiddleware
 from saas.production import server as server_module
 from saas.production.artifact_store import (
@@ -214,6 +218,27 @@ def _fake_official_app(*, integration, **_dependencies: Any) -> FastAPI:
     return app
 
 
+class _OnboardingServiceStub:
+    def require_network_rate_limit(self, *_args: object, **_kwargs: object) -> None:
+        pass
+
+
+class _OnboardingHttpServices:
+    def __init__(self) -> None:
+        self.closed = 0
+        self.onboarding = _OnboardingServiceStub()
+        self.onboarding_status = object()
+        self.onboarding_client_network = TrustedClientNetworkResolver(TrustedClientNetworkConfig())
+        self.integration_kwargs = {
+            "onboarding": self.onboarding,
+            "onboarding_status": self.onboarding_status,
+            "onboarding_client_network": self.onboarding_client_network,
+        }
+
+    def close(self) -> None:
+        self.closed += 1
+
+
 def test_import_is_side_effect_free_with_no_configuration() -> None:
     # Collection imported the module without config, DB, migration, or app construction.
     assert callable(server_module.main)
@@ -403,8 +428,14 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
     sessions = _sessions()
     monkeypatch.setattr(server_module, "create_omnigent_saas_app", _fake_official_app)
     try:
-        services = build_production_saas_services(_config(tmp_path), sessions)
+        onboarding = _OnboardingHttpServices()
+        services = build_production_saas_services(
+            _config(tmp_path),
+            sessions,
+            onboarding=cast(Any, onboarding),
+        )
         assert services.integration.public_api_router is not None
+        assert services.integration.onboarding_ui_router is not None
         assert isinstance(services.integration.runtime_store_adapter, OmnigentStoreAdapter)
         assert (
             services.integration.runtime_store_adapter.adapter_contract_version
@@ -415,10 +446,15 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
             {"https://next.example.test"}
         )
 
+        built_onboarding = _OnboardingHttpServices()
         built = build_production_server(
             _config(tmp_path),
             sessions,
             official=_official(),
+            onboarding=cast(Any, built_onboarding),
+        )
+        assert {"/signup", "/signup/verify", "/signup/status"}.issubset(
+            {getattr(route, "path", None) for route in built.app.routes}
         )
         runtime_context_middleware = next(
             middleware
@@ -453,6 +489,10 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
             }
             assert version.headers["cache-control"] == "no-store"
         built.close()
+        built.close()
+        assert built_onboarding.closed == 1
+        services.close()
+        assert onboarding.closed == 1
     finally:
         sessions.close()
 
@@ -990,6 +1030,58 @@ def test_build_lineage_mismatch_prevents_every_database_connection(
     with pytest.raises(ProductionServerCompositionError, match="does not match"):
         server_module.main()
     assert connections == 0
+
+
+def test_main_injects_production_onboarding_before_server_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    sessions = _sessions()
+    onboarding = _OnboardingHttpServices()
+    observed: dict[str, object] = {}
+
+    class StopBuild(RuntimeError):
+        pass
+
+    def stop_build(
+        supplied_config: ProductionServerConfig,
+        supplied_sessions: RoleSessionFactories,
+        **kwargs: object,
+    ) -> None:
+        observed.update(kwargs)
+        assert supplied_config is config
+        assert supplied_sessions is sessions
+        raise StopBuild
+
+    monkeypatch.setattr(server_module, "load_production_server_config", lambda: config)
+    monkeypatch.setattr(server_module, "verify_installed_build_lineage", lambda _config: None)
+    monkeypatch.setattr(
+        server_module,
+        "lock_down_ambient_cloud_file_providers",
+        lambda _environment: None,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "load_external_adapters",
+        lambda _config: ProductionExternalAdapters(),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_role_session_factories",
+        lambda *_args, **_kwargs: sessions,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "build_production_onboarding_http_services",
+        lambda: onboarding,
+    )
+    monkeypatch.setattr(server_module, "build_production_server", stop_build)
+
+    with pytest.raises(StopBuild):
+        server_module.main()
+
+    assert observed["onboarding"] is onboarding
 
 
 def test_build_lineage_accepts_exact_installed_revision(

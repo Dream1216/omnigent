@@ -53,6 +53,10 @@ from saas.control_plane.identity import IdentityManagementService, PasswordCrede
 from saas.control_plane.lifecycle import MembershipLifecycleService
 from saas.control_plane.public_api import PublicApiExecutionService
 from saas.control_plane.resolver import RuntimeCompatibilityPolicy, SqlAlchemyContextResolver
+from saas.production.onboarding import (
+    ProductionOnboardingHttpServices,
+    build_production_onboarding_http_services,
+)
 from saas.production.server_config import (
     ProductionServerConfig,
     load_production_server_config,
@@ -342,12 +346,29 @@ class ProductionReadiness:
             self._executor.shutdown(wait=False, cancel_futures=True)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ProductionSaasServices:
-    """SaaS integration plus its readiness authority."""
+    """SaaS integration plus owned readiness and onboarding authorities."""
 
     integration: SaasHttpIntegration
     readiness: ProductionReadiness
+    onboarding: ProductionOnboardingHttpServices | None = field(
+        default=None,
+        repr=False,
+    )
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def close(self) -> None:
+        """Idempotently release every process-owned dependency."""
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.readiness.close()
+        finally:
+            if self.onboarding is not None:
+                self.onboarding.close()
 
 
 @dataclass(slots=True)
@@ -430,12 +451,11 @@ class BuiltProductionServer:
     port: int
     sessions: RoleSessionFactories
     official: OfficialRuntimeDependencies
+    services: ProductionSaasServices
 
     def close(self) -> None:
         try:
-            readiness = getattr(self.app.state, "production_saas_readiness", None)
-            if isinstance(readiness, ProductionReadiness):
-                readiness.close()
+            self.services.close()
             self.official.close()
         finally:
             self.sessions.close()
@@ -991,9 +1011,10 @@ def build_production_saas_services(
     sessions: RoleSessionFactories,
     *,
     external: ProductionExternalAdapters | None = None,
+    onboarding: ProductionOnboardingHttpServices | None = None,
     extra_readiness_checks: Mapping[str, ReadinessCheck] | None = None,
 ) -> ProductionSaasServices:
-    """Build Tenant authentication/context and stable public Run API services."""
+    """Build Tenant authentication, onboarding, and stable public Run API services."""
 
     adapters = external or ProductionExternalAdapters()
     checks: dict[str, ReadinessCheck] = {
@@ -1081,6 +1102,11 @@ def build_production_saas_services(
         runtime_store_adapter=OmnigentStoreAdapter(config.adapter_contract_version),
         api_credentials=cast(ApiCredentialService, api_credentials),
         public_api_execution=public_execution,
+        onboarding=None if onboarding is None else onboarding.onboarding,
+        onboarding_status=None if onboarding is None else onboarding.onboarding_status,
+        onboarding_client_network=(
+            None if onboarding is None else onboarding.onboarding_client_network
+        ),
     )
     if "preview" in config.capabilities:
         from saas.production.preview_control import (
@@ -1118,7 +1144,11 @@ def build_production_saas_services(
     except Exception:
         readiness.close()
         raise
-    return ProductionSaasServices(integration=integration, readiness=readiness)
+    return ProductionSaasServices(
+        integration=integration,
+        readiness=readiness,
+        onboarding=onboarding,
+    )
 
 
 def build_production_server(
@@ -1127,6 +1157,7 @@ def build_production_server(
     *,
     official: OfficialRuntimeDependencies | None = None,
     external: ProductionExternalAdapters | None = None,
+    onboarding: ProductionOnboardingHttpServices | None = None,
     extra_readiness_checks: Mapping[str, ReadinessCheck] | None = None,
 ) -> BuiltProductionServer:
     """Build the app only after every mandatory dependency passes readiness."""
@@ -1143,10 +1174,13 @@ def build_production_server(
             config,
             sessions,
             external=external,
+            onboarding=onboarding,
             extra_readiness_checks=readiness_checks,
         )
     except Exception:
         official_dependencies.close()
+        if onboarding is not None:
+            onboarding.close()
         raise
     app_dependencies = official_dependencies.as_app_dependencies()
     # These official lifespan jobs run before request middleware can bind a
@@ -1156,23 +1190,32 @@ def build_production_server(
         config.official_builtin_agent_seed_enabled
         or config.official_cross_workspace_scheduler_enabled
     ):
+        services.close()
+        official_dependencies.close()
         raise ProductionServerCompositionError(
             "context-free official lifespan jobs cannot be enabled in production"
         )
     app_dependencies["scheduled_task_store"] = None
-    app = create_omnigent_saas_app(
-        integration=services.integration,
-        suppress_context_free_builtin_seed=True,
-        **app_dependencies,
-    )
+    try:
+        app = create_omnigent_saas_app(
+            integration=services.integration,
+            suppress_context_free_builtin_seed=True,
+            **app_dependencies,
+        )
+    except Exception:
+        services.close()
+        official_dependencies.close()
+        raise
     app.state.production_saas_readiness = services.readiness
     app.state.production_saas_version = dict(config.version_document)
+    app.state.production_saas_services = services
     return BuiltProductionServer(
         app=app,
         host=config.host,
         port=config.port,
         sessions=sessions,
         official=official_dependencies,
+        services=services,
     )
 
 
@@ -1199,7 +1242,13 @@ def main() -> None:
     sessions = create_role_session_factories(config, verify_state=_verify_postgresql_state)
     built: BuiltProductionServer | None = None
     try:
-        built = build_production_server(config, sessions, external=external)
+        onboarding = build_production_onboarding_http_services()
+        built = build_production_server(
+            config,
+            sessions,
+            external=external,
+            onboarding=onboarding,
+        )
         import uvicorn
 
         from omnigent.runner.transports.ws_tunnel.limits import (
