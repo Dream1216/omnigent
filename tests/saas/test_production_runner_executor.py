@@ -1194,7 +1194,10 @@ async def test_active_command_keeps_heartbeat_through_terminal_preparation(
     monkeypatch.setattr(context.executor, "_finish_preparation", lambda *_args: None)
     monkeypatch.setattr(context.executor._worktree_adapter, "heartbeat", counted_heartbeat)
     context.executor._worktree_heartbeat_interval_seconds = 0.01
-    context.executor._worktree_heartbeat_timeout_seconds = 1
+    # The production response window is 50 seconds for this 300-second lease.
+    # Keep this test bounded while leaving enough headroom for an xdist worker's
+    # SQLite renewal to run under a loaded shared CI host.
+    context.executor._worktree_heartbeat_timeout_seconds = 5
 
     original_expiry = active.worktree_lease.expires_at
     assert (
