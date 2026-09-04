@@ -43,6 +43,12 @@ _SAFE_CONFIG: Mapping[str, frozenset[str]] = MappingProxyType(
 )
 _ROOT_MARKER = ".omnigent-runner-mirror-root.json"
 _ACTIVE_DIRECTORY = "active"
+_FETCH_ONLY_CONFIG: Mapping[str, str] = MappingProxyType(
+    {
+        "gc.auto": "0",
+        "maintenance.auto": "false",
+    }
+)
 
 
 class RepositoryMirrorError(ValueError):
@@ -828,6 +834,17 @@ def _initialize_bare_mirror(path: Path) -> None:
             allowed_exit_codes=frozenset({0, 5}),
         )
     _run_git(path, ["config", "--local", "core.filemode", "true"])
+    for key, value in _FETCH_ONLY_CONFIG.items():
+        _run_git(path, ["config", "--local", key, value])
+
+
+def _remove_fetch_only_config(mirror: Path) -> None:
+    for key in _FETCH_ONLY_CONFIG:
+        _run_git(
+            mirror,
+            ["config", "--local", "--unset-all", key],
+            allowed_exit_codes=frozenset({0, 5}),
+        )
 
 
 def _normalize_mirror_permissions(mirror: Path) -> None:
@@ -1091,6 +1108,7 @@ def _provision_binding(
         refspecs=_refspecs(binding),
         credential_file=binding.credential_file,
     )
+    _remove_fetch_only_config(mirror)
     _normalize_mirror_permissions(mirror)
     if _read_refs(mirror) != _expected_internal_refs(binding):
         raise RepositoryMirrorError("repository SHA changed during fetch")

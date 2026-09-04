@@ -81,6 +81,8 @@ class LocalRepositoryFetcher:
     ) -> None:
         assert source_url.startswith("https://example.test/")
         assert credential_file.read_text(encoding="ascii").find(self.secret) >= 0
+        assert _git("-C", str(mirror), "config", "--get", "gc.auto") == "0\n"
+        assert _git("-C", str(mirror), "config", "--get", "maintenance.auto") == "false\n"
         command = (
             "/usr/bin/git",
             "-C",
@@ -234,6 +236,8 @@ def test_provisions_atomic_credential_free_bare_mirror_and_reverifies(
     assert "remote." not in config
     assert "credential." not in config
     assert "alias." not in config
+    assert "gc.auto" not in config
+    assert "maintenance.auto" not in config
     assert not (mirror / "hooks").exists()
     assert not (mirror / "FETCH_HEAD").exists()
 
