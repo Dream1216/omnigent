@@ -1507,6 +1507,11 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     environment = _HeartbeatBoundEnvironment(asyncio.Event())
     active.prepared = cast(PreparedRunnerIsolation, _ImmediatePrepared(environment))
     original_heartbeat = context.executor._worktree_adapter.heartbeat
+    successful_heartbeat = original_heartbeat(
+        active.worktree_lease,
+        lease_duration=timedelta(seconds=context.executor._worktree_lease_seconds),
+        physical_worktree=active.physical_worktree,
+    )
     heartbeat_started = asyncio.Event()
     release_response = threading.Event()
     heartbeat_count = 0
@@ -1515,12 +1520,11 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     def returns_too_late(*args, **kwargs):
         nonlocal heartbeat_count
         heartbeat_count += 1
-        mutation = original_heartbeat(*args, **kwargs)
         if heartbeat_count == 1:
-            return mutation
+            return successful_heartbeat
         loop.call_soon_threadsafe(heartbeat_started.set)
         assert release_response.wait(timeout=2)
-        return mutation
+        return successful_heartbeat
 
     def allocated(_lease: RunnerControlClientLease):
         with context.executor._lock:
