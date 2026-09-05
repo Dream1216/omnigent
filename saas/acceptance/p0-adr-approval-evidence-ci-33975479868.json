@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "evidence_id": "p0-adr-approval-evidence-ci-33975479868",
+  "evidence_kind": "adr-approval-evidence-successor-ci-not-production-proof",
+  "recorded_at": "2026-09-06",
+  "repository": "Dream1216/omnigent",
+  "branch": "codex/p0s12-approval-closure-20260905",
+  "source_revision": "249c34c1e1dd10cc463e976e0422cebf8ea7afea",
+  "source_tree": "2b31e93ca715702f894c949df2eb67e169301cd6",
+  "base_revision": "a2ab077c74e1d7bffa494bdc26ce1af887e06570",
+  "tested_pull_request_merge_revision": "371d78f514117b6921398973372517fd0bfe90aa",
+  "tested_pull_request_merge_tree": "2b31e93ca715702f894c949df2eb67e169301cd6",
+  "pull_request": 33,
+  "pull_request_url": "https://github.com/Dream1216/omnigent/pull/33",
+  "github_actions": {
+    "workflow": "SaaS upstream compatibility",
+    "workflow_path": ".github/workflows/saas-upstream-compat.yml",
+    "workflow_sha256": "e16f3107bb8759a97f8ed7a168cfa864bd08e4dce892b32ca5161cbf305b51d4",
+    "exact_source_push": {
+      "event": "push",
+      "run_id": 33975451216,
+      "run_attempt": 1,
+      "run_url": "https://github.com/Dream1216/omnigent/actions/runs/33975451216",
+      "job_id": 101331228416,
+      "job_url": "https://github.com/Dream1216/omnigent/actions/runs/33975451216/job/101331228416",
+      "head_sha": "249c34c1e1dd10cc463e976e0422cebf8ea7afea",
+      "conclusion": "success",
+      "artifact": {
+        "id": 9972414339,
+        "name": "upstream-delta-report",
+        "size_in_bytes": 14881,
+        "archive_sha256": "2e680be3001288af59f42f25786e6cfc59cd1ba3d526917bc6c2ed475a8e8167"
+      }
+    },
+    "event": "pull_request",
+    "run_id": 33975479868,
+    "run_attempt": 1,
+    "run_url": "https://github.com/Dream1216/omnigent/actions/runs/33975479868",
+    "job_id": 101331305838,
+    "job_url": "https://github.com/Dream1216/omnigent/actions/runs/33975479868/job/101331305838",
+    "check_name": "compatibility-gate",
+    "pull_request_head_sha": "249c34c1e1dd10cc463e976e0422cebf8ea7afea",
+    "temporary_merge_revision": "371d78f514117b6921398973372517fd0bfe90aa",
+    "temporary_merge_parents": [
+      "a2ab077c74e1d7bffa494bdc26ce1af887e06570",
+      "249c34c1e1dd10cc463e976e0422cebf8ea7afea"
+    ],
+    "temporary_merge_tree": "2b31e93ca715702f894c949df2eb67e169301cd6",
+    "conclusion": "success",
+    "artifact": {
+      "id": 9972495008,
+      "name": "upstream-delta-report",
+      "size_in_bytes": 14880,
+      "archive_sha256": "e4a460c6a58796be276b5b5688b813a80831f4426bb22e2b984e33afe2cd7b11"
+    }
+  },
+  "additional_exact_head_gates": {
+    "n1_push": {
+      "run_id": 33975451264,
+      "conclusion": "success"
+    },
+    "n1_pull_request": {
+      "run_id": 33975479899,
+      "conclusion": "success"
+    },
+    "ci_regression": {
+      "run_id": 33975480019,
+      "run_attempt": 2,
+      "conclusion": "success",
+      "note": "The failed misc timing test from attempt 1 passed without a source change in attempt 2."
+    }
+  },
+  "adr_approval": {
+    "status": "pass",
+    "approval_readiness": "approved",
+    "approval_mode": "sole-owner-risk-waiver",
+    "governance_classification": "degraded",
+    "candidate_id": "omnigent-saas-p0s12-platform-smtp-2026-09-05",
+    "approval_record": "saas/production/adr-approvals/omnigent-saas-p0s12-platform-smtp-2026-09-05-8457cc9758444570.json",
+    "approval_record_sha256": "9401fbbbaa7c2ef8b77acd25e9122ac93d60604ad8707c4a6c389532bf8124e2",
+    "implementation_revision": "57c6ea714c71c3f0f01945d7e2e4f99cba3354b5",
+    "reviewed_commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+    "decision_merge_commit_sha": "a2ab077c74e1d7bffa494bdc26ce1af887e06570",
+    "decision_bundle_sha256": "8457cc9758444570e2be9c51c8f0ce89c4825b7ca039333c87854a63e42359d5",
+    "technical_owner_acceptance_count": 11,
+    "live_github_verification": true,
+    "metrics": {
+      "decision_file_count": 11,
+      "required_signing_role_count": 4,
+      "configured_authority_role_count": 8,
+      "signature_count": 1,
+      "technical_owner_confirmation_count": 11
+    },
+    "blockers": [],
+    "violations": []
+  },
+  "acceptance_ledger": {
+    "closed_gate": "p0-approved-production-adrs-and-owners",
+    "passed_gate_count_before": 40,
+    "passed_gate_count_after": 41,
+    "pending_gate_count_after": 10,
+    "p0_status": "in_progress",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "independent four-party product architecture security and SRE review",
+    "signed registry publication vulnerability or license admission",
+    "one-hour production Canary or 900-second production N-1 rollback",
+    "production deployment recovery SLO deletion enterprise or commercial admission",
+    "release GO"
+  ],
+  "evidence_successor_policy": "This committed machine evidence record binds the approved P0S12 platform and SMTP ADR bundle to PR 33 Compatibility run 33975479868, which is attached to pull-request head 249c34c1e1dd10cc463e976e0422cebf8ea7afea and executed against a byte-identical temporary merge tree. This evidence-only successor still requires its own exact-head Compatibility and N-1 judgments before merge. Signed production image publication remains a separate protected workflow against final main and is not proven by this record."
+}

@@ -18,6 +18,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/acceptance/p0-adr-approval-contract-ci-31276530223.json",
     "saas/acceptance/p0-adr-approval-evidence-ci-33468247922.json",
     "saas/acceptance/p0-adr-approval-evidence-ci-33667448251.json",
+    "saas/acceptance/p0-adr-approval-evidence-ci-33975479868.json",
     "saas/acceptance/p0-n1-security-compat-image-candidate-ci-33020428815.json",
     "saas/acceptance/pc1-platform-security-ci-31187073403.json",
     "saas/acceptance/pc1-platform-security-image-candidate-ci-31187141816.json",

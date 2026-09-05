@@ -61,11 +61,14 @@ gate therefore show implemented controls, not a passed gate.
 
 The ADR gate additionally uses `check_adr_approvals` from the existing upstream
 compatibility workflow. Its structural report may pass while approval readiness is blocked.
-The gate stays pending until a merged decision PR has exact-head Reviews from
-all technical owners and four distinct authorized humans, a successor PR adds
-the append-only record, live Review verification passes, and that exact CI
-evidence is added to the ledger. A proposed ADR document, empty authority map,
-single collaborator, or green structural check is not approval evidence.
+Standard mode requires exact-head Reviews from all technical owners and four distinct
+authorized humans. The active P0S12 candidate instead uses the explicitly degraded
+sole-owner risk-waiver policy: PR 32 binds the reviewed implementation and PR 33 adds
+the append-only record only after the named repository owner authored and merged the
+exact decision head, retained administrator permission, and obtained exact-head
+Compatibility. `p0-adr-approval-evidence-ci-33975479868.json` binds the successor
+merge and both push and pull-request Compatibility artifacts, and closes only this ADR
+gate. It does not represent independent four-party review or production authorization.
 
 The P4 records separately close the credential-free Repository/ChangeSet/
 Worktree control plane, the physical Git/filesystem Runner adapter, the
