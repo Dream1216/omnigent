@@ -64,6 +64,9 @@
           <button id="notification-operations-link" data-testid="nav-notifications" data-permission="platform.notification.read" type="button" hidden>
             <span>08</span><strong>NOTIFY OPS</strong><small>审批与投递</small>
           </button>
+          <button id="email-configuration-link" data-testid="nav-email" data-permission="platform.email_configuration.read" data-view="email" type="button" hidden>
+            <span>09</span><strong>EMAIL</strong><small>SMTP 投递</small>
+          </button>
         </nav>
 
         <div class="boundary-note">
@@ -312,6 +315,45 @@
           </form>
           <div class="audit-ledger" data-testid="audit-list" id="audit-list"></div>
           <button class="load-more" data-testid="audit-more" id="audit-more" type="button" hidden>CONTINUE CHAIN ↓</button>
+        </section>
+
+        <section class="console-view email-configuration-view" data-testid="view-email" data-view-panel="email" hidden>
+          <header class="view-heading email-heading">
+            <div><p class="kicker">09 / DELIVERY INFRASTRUCTURE</p><h1>邮件投递</h1><p>配置注册验证邮件使用的 SMTP Transport。密码只写入一次并由 KMS / Vault 加密，后台永不回显；Worker 每次投递读取当前启用版本。</p></div>
+            <div class="email-state-card"><span>ACTIVE TRANSPORT</span><strong id="email-transport-state">NOT CONFIGURED</strong><small id="email-version">VERSION 0</small></div>
+          </header>
+
+          <div class="email-boundary-strip" data-testid="email-security-boundary">
+            <div><span>TLS POLICY</span><strong>STARTTLS / IMPLICIT TLS ONLY</strong></div>
+            <div><span>SECRET POSTURE</span><strong>WRITE-ONLY · NON-EXPORTING</strong></div>
+            <div><span>DELIVERY SEMANTICS</span><strong>OUTBOX · STABLE MESSAGE-ID</strong></div>
+          </div>
+
+          <div class="email-configuration-layout">
+            <form class="work-panel email-configuration-form" data-testid="email-configuration-form" id="email-configuration-form">
+              <div class="panel-heading"><span>SMTP CONNECTION</span><small id="email-password-state">PASSWORD NOT SET</small></div>
+              <label class="email-enable-row"><input data-testid="email-enabled" id="email-enabled" type="checkbox"><span><strong>ENABLE SMTP</strong><small>启用后，新的注册验证邮件由该配置投递。</small></span></label>
+              <div class="email-form-grid">
+                <label class="email-wide"><span>SMTP HOST</span><input autocomplete="off" data-testid="email-host" id="email-host" maxlength="253" placeholder="smtp.example.com" required></label>
+                <label><span>PORT</span><input data-testid="email-port" id="email-port" max="65535" min="1" type="number" value="587" required></label>
+                <label><span>SECURITY</span><select data-testid="email-security" id="email-security"><option value="starttls">STARTTLS</option><option value="tls">IMPLICIT TLS</option></select></label>
+                <label class="email-wide"><span>USERNAME</span><input autocomplete="off" data-testid="email-username" id="email-username" maxlength="320" required></label>
+                <label class="email-wide"><span>PASSWORD / LEAVE EMPTY TO PRESERVE</span><input autocomplete="new-password" data-testid="email-password" id="email-password" maxlength="4096" type="password"></label>
+                <label><span>FROM ADDRESS</span><input autocomplete="off" data-testid="email-from" id="email-from" maxlength="320" placeholder="verify@example.com" required type="email"></label>
+                <label><span>REPLY-TO / OPTIONAL</span><input autocomplete="off" data-testid="email-reply-to" id="email-reply-to" maxlength="320" type="email"></label>
+                <label><span>TIMEOUT / SECONDS</span><input data-testid="email-timeout" id="email-timeout" max="30" min="0.1" step="0.1" type="number" value="10" required></label>
+              </div>
+              <button class="primary-action" data-testid="email-save" id="email-save" type="submit">SAVE ENCRYPTED CONFIGURATION ↗</button>
+            </form>
+
+            <form class="work-panel email-test-panel" data-testid="email-test-form" id="email-test-form">
+              <div class="panel-heading"><span>LIVE DELIVERY TEST</span><small>FRESH AUTH REQUIRED</small></div>
+              <div class="email-test-signal"><span id="email-test-index">01</span><div><strong>验证真实投递路径</strong><p>测试会连接当前 SMTP、完成 TLS 与认证并发送一封不含注册 Token 的诊断邮件。收件人仅以 SHA-256 写入 Receipt。</p></div></div>
+              <label><span>TEST RECIPIENT</span><input autocomplete="off" data-testid="email-test-recipient" id="email-test-recipient" maxlength="320" placeholder="you@example.com" required type="email"></label>
+              <button class="primary-action" data-testid="email-test-send" id="email-test-send" type="submit">SEND CONFIGURATION TEST ↗</button>
+              <aside class="email-warning"><strong>SMTP IDEMPOTENCY BOUNDARY</strong><p>SMTP 协议没有供应商级幂等键。系统使用稳定 Message-ID 降低重复投递概率，但网络结果不确定时仍按 Outbox 至少一次语义处理。</p></aside>
+            </form>
+          </div>
         </section>
       </main>
 

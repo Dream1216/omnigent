@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import smtplib
 import traceback
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,8 @@ from saas.onboarding_email import (
     EmailVerificationDeliveryError,
     ResendEmailVerificationConfig,
     ResendEmailVerificationSender,
+    SmtpEmailVerificationConfig,
+    SmtpEmailVerificationSender,
 )
 
 _NOW = datetime(2026, 9, 2, 0, 0, tzinfo=timezone.utc)
@@ -35,6 +38,45 @@ _PROVIDER_MESSAGE_ID = UUID("49a3999c-0ce1-4ea6-ab68-afcd6dc2e794")
 _RECIPIENT = "owner@example.test"
 _TOKEN = "test/token+with?reserved=characters"
 _PROVIDER_TOKEN = "test-provider-token"
+_SMTP_PASSWORD = "smtp-password value"
+
+
+class _SmtpConnection:
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.login_values: tuple[str, str] | None = None
+        self.messages: list[tuple[object, str | None, list[str] | None]] = []
+        self.quit_called = False
+        self.close_called = False
+
+    def ehlo(self) -> tuple[int, bytes]:
+        return (250, b"ok")
+
+    def starttls(self, *, context: object) -> tuple[int, bytes]:
+        del context
+        return (220, b"ready")
+
+    def login(self, user: str, password: str) -> tuple[int, bytes]:
+        self.login_values = (user, password)
+        if self.failure is not None:
+            raise self.failure
+        return (235, b"authenticated")
+
+    def send_message(
+        self,
+        msg: object,
+        from_addr: str | None = None,
+        to_addrs: list[str] | None = None,
+    ) -> dict[str, tuple[int, bytes]]:
+        self.messages.append((msg, from_addr, to_addrs))
+        return {}
+
+    def quit(self) -> tuple[int, bytes]:
+        self.quit_called = True
+        return (221, b"bye")
+
+    def close(self) -> None:
+        self.close_called = True
 
 
 @pytest.fixture
@@ -396,6 +438,150 @@ def test_resend_sender_makes_transport_failure_content_blind(
     assert _RECIPIENT not in rendered_traceback
     assert _TOKEN not in rendered_traceback
     assert _PROVIDER_TOKEN not in rendered_traceback
+
+
+def test_smtp_sender_uses_authenticated_tls_safe_headers_and_stable_message_id() -> None:
+    connection = _SmtpConnection()
+    config = SmtpEmailVerificationConfig(
+        public_origin="https://next.jxhh.com",
+        host="smtp.example.test",
+        port=587,
+        security="starttls",
+        username="smtp-user@example.test",
+        password=_SMTP_PASSWORD,
+        from_address="verify@example.test",
+        reply_to_address="support@example.test",
+    )
+    sender = SmtpEmailVerificationSender(config, connection_factory=lambda config: connection)
+
+    sender.send_verification(event_id=_EVENT_ID, message=_message())
+
+    assert connection.login_values == ("smtp-user@example.test", _SMTP_PASSWORD)
+    assert connection.quit_called
+    assert not connection.close_called
+    assert len(connection.messages) == 1
+    raw_message, from_addr, to_addrs = connection.messages[0]
+    message = cast(object, raw_message)
+    assert message["From"] == "Omnigent <verify@example.test>"  # type: ignore[index]
+    assert message["To"] == _RECIPIENT  # type: ignore[index]
+    assert message["Reply-To"] == "support@example.test"  # type: ignore[index]
+    assert message["Message-ID"] == f"<{_EVENT_ID}@example.test>"  # type: ignore[index]
+    assert "#token=test%2Ftoken%2Bwith%3Freserved%3Dcharacters" in message.get_content()  # type: ignore[attr-defined]
+    assert from_addr == "verify@example.test"
+    assert to_addrs == [_RECIPIENT]
+    assert _SMTP_PASSWORD not in repr(config)
+    assert _SMTP_PASSWORD not in repr(sender)
+
+
+def test_smtp_sender_emits_bounded_configuration_test_without_verification_secret() -> None:
+    connection = _SmtpConnection()
+    sender = SmtpEmailVerificationSender(
+        SmtpEmailVerificationConfig(
+            public_origin="https://next.jxhh.com",
+            host="smtp.example.test",
+            port=465,
+            security="tls",
+            username="smtp-user",
+            password=_SMTP_PASSWORD,
+            from_address="verify@example.test",
+        ),
+        connection_factory=lambda config: connection,
+    )
+
+    test_id = UUID("223e4567-e89b-12d3-a456-426614174000")
+    sender.send_test(
+        recipient="ops@example.test",
+        configuration_version=7,
+        test_id=test_id,
+    )
+
+    raw_message = connection.messages[0][0]
+    assert raw_message["Subject"] == "Omnigent SMTP configuration test"  # type: ignore[index]
+    assert raw_message["Message-ID"] == (  # type: ignore[index]
+        f"<smtp-config-v7-test-{test_id}@example.test>"
+    )
+    assert "Configuration version: 7" in raw_message.get_content()  # type: ignore[attr-defined]
+    assert _TOKEN not in raw_message.get_content()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        {"host": "https://smtp.example.test"},
+        {"host": "localhost"},
+        {"port": 0},
+        {"port": True},
+        {"security": "plain"},
+        {"username": "user\nBcc: victim@example.test"},
+        {"password": "password\r\n"},
+        {"reply_to_address": "invalid"},
+        {"timeout_seconds": 30.1},
+    ),
+)
+def test_smtp_config_rejects_unsafe_values(values: dict[str, object]) -> None:
+    arguments: dict[str, object] = {
+        "public_origin": "https://next.jxhh.com",
+        "host": "smtp.example.test",
+        "port": 587,
+        "security": "starttls",
+        "username": "smtp-user",
+        "password": _SMTP_PASSWORD,
+        "from_address": "verify@example.test",
+    }
+    arguments.update(values)
+    with pytest.raises(ValueError):
+        SmtpEmailVerificationConfig(**arguments)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "retryable", "pre_side_effect"),
+    (
+        (
+            smtplib.SMTPAuthenticationError(535, b"credential-secret"),
+            "email_verification_provider_authentication_rejected",
+            False,
+            True,
+        ),
+        (
+            smtplib.SMTPServerDisconnected("recipient-secret"),
+            "email_verification_provider_unavailable",
+            True,
+            False,
+        ),
+    ),
+)
+def test_smtp_sender_classifies_failures_without_secret_leak(
+    failure: Exception,
+    code: str,
+    retryable: bool,
+    pre_side_effect: bool,
+) -> None:
+    connection = _SmtpConnection(failure)
+    sender = SmtpEmailVerificationSender(
+        SmtpEmailVerificationConfig(
+            public_origin="https://next.jxhh.com",
+            host="smtp.example.test",
+            port=587,
+            security="starttls",
+            username="smtp-user",
+            password=_SMTP_PASSWORD,
+            from_address="verify@example.test",
+        ),
+        connection_factory=lambda config: connection,
+    )
+
+    with pytest.raises(EmailVerificationDeliveryError) as raised:
+        sender.send_verification(event_id=_EVENT_ID, message=_message())
+
+    assert raised.value.code == code
+    assert raised.value.retryable is retryable
+    assert raised.value.pre_side_effect is pre_side_effect
+    assert connection.close_called
+    rendered = "".join(
+        traceback.format_exception(type(raised.value), raised.value, raised.value.__traceback__)
+    )
+    assert _SMTP_PASSWORD not in rendered
+    assert _RECIPIENT not in rendered
 
 
 @pytest.mark.parametrize(

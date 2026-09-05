@@ -239,15 +239,72 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
         assert not connection.execute(
             sa.text("SELECT pg_has_role(current_user, 'saas_platform', 'member')")
         ).scalar_one()
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_email_provider_configurations "
+                "(purpose, enabled, host, port, security, username, password_ciphertext, "
+                "from_address, timeout_seconds, version, updated_by_principal_id, updated_at) "
+                "VALUES ('onboarding_verification', true, 'smtp.example.test', 587, "
+                "'starttls', 'smtp-user', 'kms-ciphertext', 'verify@example.test', 10, 1, "
+                ":principal, now())"
+            ),
+            {"principal": operator_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_email_provider_configuration_receipts "
+                "(id, purpose, configuration_version, actor_principal_id, action, "
+                "configuration_hash, password_rotated, occurred_at) VALUES "
+                "(:id, 'onboarding_verification', 1, :principal, 'configured', "
+                ":configuration_hash, true, now())"
+            ),
+            {
+                "id": uuid4(),
+                "principal": operator_id,
+                "configuration_hash": "d" * 64,
+            },
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_app_login")
+        connection.execute(
+            sa.text("SELECT set_config('app.platform_principal_id', :value, true)"),
+            {"value": str(roleless_id)},
+        )
         assert (
             connection.execute(
                 sa.text("SELECT count(*) FROM saas_platform_tenant_projections")
             ).scalar_one()
             == 0
         )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_email_provider_configurations")
+            ).scalar_one()
+            == 0
+        )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_onboarding")
+        assert (
+            connection.execute(
+                sa.text(
+                    "SELECT host FROM saas_email_provider_configurations "
+                    "WHERE purpose = 'onboarding_verification'"
+                )
+            ).scalar_one()
+            == "smtp.example.test"
+        )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_onboarding")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_email_provider_configurations SET enabled = false "
+                    "WHERE purpose = 'onboarding_verification'"
+                )
+            )
 
     with pytest.raises(DBAPIError):
         with engine.begin() as connection:
@@ -319,5 +376,10 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_governance_login")
             connection.execute(sa.text("SELECT * FROM saas_global_users"))
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(sa.text("DELETE FROM saas_email_provider_configuration_receipts"))
+        connection.execute(sa.text("DELETE FROM saas_email_provider_configurations"))
 
     engine.dispose()

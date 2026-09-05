@@ -400,7 +400,7 @@ def _insert_registration_probe(
     )
 
 
-def test_onboarding_roles_and_all_111_control_plane_tables_are_force_rls(
+def test_onboarding_roles_and_all_113_control_plane_tables_are_force_rls(
     postgresql_engine: Engine,
 ) -> None:
     with postgresql_engine.begin() as connection:
@@ -428,7 +428,7 @@ def test_onboarding_roles_and_all_111_control_plane_tables_are_force_rls(
                 {"table_names": sorted(CONTROL_PLANE_RLS_TABLES)},
             ).scalars()
         )
-        assert len(CONTROL_PLANE_RLS_TABLES) == 111
+        assert len(CONTROL_PLANE_RLS_TABLES) == 113
         assert protected == CONTROL_PLANE_RLS_TABLES
 
         email_index = connection.execute(

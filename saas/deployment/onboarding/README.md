@@ -43,8 +43,25 @@ are part of the migration/admission contract.
 
 `omnigent-saas-onboarding-keys` contains `envelope.json` and `rate-limit.json`.
 The same immutable key-ring revisions are mounted by Server and Worker during a
-rotation overlap. Only the Worker mounts `omnigent-saas-email-provider` and the
-Runtime Provider Secret. The provider token is never an environment value.
+rotation overlap. Only the Worker mounts the Runtime Provider Secret. The
+delivery mode is explicit:
+
+- `OMNIGENT_SAAS_EMAIL_DELIVERY_MODE=resend` preserves the original contract.
+  Only this mode mounts `omnigent-saas-email-provider`; the provider token is
+  never an environment value.
+- `OMNIGENT_SAAS_EMAIL_DELIVERY_MODE=platform_smtp` reads the enabled SMTP
+  version from `saas_email_provider_configurations` for every Outbox delivery.
+  Do not mount the Resend Secret or set `OMNIGENT_SAAS_EMAIL_FROM` in this mode.
+  Configure exactly one existing non-exporting credential backend with
+  `OMNIGENT_CREDENTIAL_CIPHER=kms|vault` and its key identifier. The SMTP
+  password is decrypted only at the delivery boundary and is never returned by
+  the Platform API.
+
+Before switching to `platform_smtp`, migrate to `p0s000000012`, inject
+`EmailProviderConfigurationService` into `create_platform_admin_app`, save and
+test an enabled configuration in `/saas/admin`, and drain the old Resend
+generation. A disabled or unreadable SMTP configuration fails closed onto the
+bounded Outbox retry path; it never falls back to Resend.
 
 Each PostgreSQL DSN is a complete `postgresql+psycopg` URL containing
 `sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt`; its username must
@@ -71,12 +88,14 @@ slice does not copy or modify the uncommitted downstream production Server WIP.
 ## Network and rollout boundary
 
 The Worker has no ingress. Its base egress is limited to DNS and the rendered
-PostgreSQL CIDR. Provider egress is intentionally absent: the production
-overlay must add a CNI-native FQDN allowlist for exactly `api.resend.com`, or a
-reviewed fixed mail relay after the Sender gains explicit proxy configuration.
-An arbitrary-public-`443` rule is forbidden because this Pod holds database,
-envelope, rate-limit, Provider and Runtime Provider authorities. The Server
-retains its existing ingress policy and receives no Provider egress requirement.
+PostgreSQL CIDR. Provider egress is intentionally absent: Resend mode adds only
+the CNI-native `api.resend.com:443` FQDN rule; Platform SMTP adds only the
+pre-approved relay hostname/IP and the configured TLS port. The UI cannot widen
+NetworkPolicy, so changing the SMTP host or port requires a separately reviewed
+egress change. Arbitrary public `443`, `465` or `587` egress is forbidden because
+this Pod holds database, envelope, rate-limit, email and Runtime Provider
+authorities. The Server retains its existing ingress policy and needs no email
+provider egress.
 
 Roll forward in this order: expand canonical role manifest, run migration and
 approve its new receipt, create immutable Secrets, deploy one Worker canary,

@@ -73,6 +73,31 @@ role. Destructive User/Tenant deletion and production release remain separate ga
   `support_agent`, `billing_operator` and `compliance_operator`. The machine-readable
   catalog is authoritative; wildcard and `allow_all` permissions are prohibited.
 
+## P0S12 SMTP configuration
+
+- Build one `EmailProviderConfigurationService` from the Platform application
+  session factory, the existing `PlatformAuthorizationService`, the public
+  Tenant Origin, and `build_secret_cipher()`. Refuse application startup for
+  this capability when no KMS or Vault Transit backend is configured; do not
+  add a local encryption-key fallback.
+- Pass that service as `email_configuration=` to
+  `create_platform_admin_app`. Keep `platform.email_configuration.manage` and
+  `.test` on fresh Staff authentication. The browser must never receive or log
+  the plaintext password or stored ciphertext; an empty password on a later
+  save means preserve the current ciphertext.
+- Use the `platform_smtp` Worker mode only after a live test succeeds from the
+  exact deployed network. The Worker login inherits only `saas_onboarding`, can
+  select the configuration table, and cannot read receipts or mutate either
+  SMTP table.
+- Permit egress only to the reviewed relay and TLS port. STARTTLS downgrade,
+  certificate-validation bypass, plaintext SMTP, arbitrary relay hosts and
+  provider fallback are prohibited. A host/port change is not operationally
+  complete until the NetworkPolicy allowlist changes under separate review.
+- Preserve `saas_email_provider_configuration_receipts` as append-only normal
+  operations evidence. A Platform test stores only a recipient hash and sends
+  no registration token. SMTP delivery remains at-least-once; the stable
+  Message-ID reduces duplicates but is not an exactly-once claim.
+
 ## Projection safety
 
 - The projector accepts explicit Tenant/User metadata inputs only. It stores no code,
@@ -160,6 +185,9 @@ uv run pytest -q \
   tests/saas/test_platform_lifecycle.py \
   tests/saas/test_platform_lifecycle_http.py \
   tests/saas/test_platform_governed_access.py \
+  tests/saas/test_email_provider_configuration.py \
+  tests/saas/test_email_provider_http.py \
+  tests/saas/test_onboarding_email.py \
   tests/saas/test_http_cookie_auth.py
 
 export OMNIGENT_SAAS_TEST_POSTGRES_URL=\

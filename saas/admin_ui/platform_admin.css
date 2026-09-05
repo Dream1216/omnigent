@@ -237,6 +237,51 @@ label > span { color: var(--muted); font: 700 7px var(--mono); letter-spacing: .
 .support-request .panel-heading { margin-bottom: 4px; }
 .primary-action { width: 100%; margin-top: 6px; }
 
+.email-heading { align-items: center; }
+.email-state-card {
+  min-width: 220px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: linear-gradient(135deg, rgb(124 231 225 / 8%), transparent 65%);
+}
+.email-state-card span, .email-state-card small { display: block; color: var(--muted); font: 7px var(--mono); letter-spacing: .13em; }
+.email-state-card strong { display: block; margin: 12px 0 9px; color: var(--amber); font: 800 20px var(--display); letter-spacing: .06em; }
+.email-state-card[data-enabled="true"] strong { color: var(--green); }
+.email-boundary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin-top: 28px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.email-boundary-strip > div { padding: 17px; background: var(--night-raised); }
+.email-boundary-strip span { display: block; color: var(--muted); font: 7px var(--mono); letter-spacing: .13em; }
+.email-boundary-strip strong { display: block; margin-top: 9px; color: var(--cyan); font: 800 10px var(--mono); letter-spacing: .06em; }
+.email-configuration-layout { display: grid; grid-template-columns: minmax(420px, 1.35fr) minmax(300px, .65fr); gap: 1px; margin-top: 1px; border: 1px solid var(--line); background: var(--line); }
+.email-configuration-form, .email-test-panel { display: grid; align-content: start; gap: 20px; }
+.email-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.email-form-grid .email-wide { grid-column: 1 / -1; }
+.email-enable-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--night-raised);
+}
+.email-enable-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--cyan); }
+.email-enable-row > span { display: block; }
+.email-enable-row strong { display: block; color: var(--paper); font: 800 10px var(--mono); letter-spacing: .08em; }
+.email-enable-row small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; }
+.email-test-signal { display: grid; grid-template-columns: 46px 1fr; gap: 15px; align-items: start; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.email-test-signal > span { color: var(--amber); font: 800 34px/.8 var(--display); }
+.email-test-signal strong { font: 800 18px var(--display); }
+.email-test-signal p, .email-warning p { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.65; }
+.email-warning { margin-top: 8px; padding: 15px; border: 1px solid var(--amber); background: rgb(240 180 41 / 5%); }
+.email-warning strong { color: var(--amber); font: 800 8px var(--mono); letter-spacing: .09em; }
+
 .audit-filter { grid-template-columns: 1fr 170px auto auto; gap: 0; padding: 0; }
 .audit-filter label { padding: 10px 14px; border-right: 1px solid var(--line); }
 .audit-filter input { border: 0; padding: 6px 0 0; }
@@ -305,7 +350,8 @@ label > span { color: var(--muted); font: 700 7px var(--mono); letter-spacing: .
   .realm-lock { display: none; }
   .console-shell { grid-template-columns: 190px minmax(0, 1fr); }
   .metric-grid { grid-template-columns: 1fr 1fr; }
-  .overview-grid, .split-layout, .support-layout { grid-template-columns: 1fr; }
+  .overview-grid, .split-layout, .support-layout, .email-configuration-layout { grid-template-columns: 1fr; }
+  .email-boundary-strip { grid-template-columns: 1fr; }
   .audit-filter { grid-template-columns: 1fr 1fr; }
   .audit-filter button { border-top: 1px solid var(--line); }
 }
@@ -321,6 +367,9 @@ label > span { color: var(--muted); font: 700 7px var(--mono); letter-spacing: .
   .console-nav button small { display: none; }
   .console-view { padding: 28px 16px; }
   .view-heading { display: block; }
+  .email-state-card { margin-top: 20px; }
+  .email-form-grid { grid-template-columns: 1fr; }
+  .email-form-grid .email-wide { grid-column: auto; }
   .view-total, .clock-card { display: none; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .filter-strip, .audit-filter { grid-template-columns: 1fr; }

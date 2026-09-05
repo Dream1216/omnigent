@@ -808,7 +808,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                     {"tables": sorted(CONTROL_PLANE_RLS_TABLES)},
                 ).scalars()
             )
-            assert len(CONTROL_PLANE_RLS_TABLES) == 111
+            assert len(CONTROL_PLANE_RLS_TABLES) == 113
             assert forced_tables == CONTROL_PLANE_RLS_TABLES
             role_facts = connection.execute(
                 sa.text(

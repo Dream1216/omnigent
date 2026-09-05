@@ -207,7 +207,8 @@ BEGIN
         'p0s000000008',
         'p0s000000009',
         'p0s000000010',
-        'p0s000000011'
+        'p0s000000011',
+        'p0s000000012'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -638,6 +639,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000011' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000012' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -723,7 +726,7 @@ BEGIN
        OR (
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
-              'p0s000000010', 'p0s000000011'
+              'p0s000000010', 'p0s000000011', 'p0s000000012'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1063,6 +1066,89 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     saas_self_service_events
 TO saas_platform;
 
+-- P0S12 adds Platform-managed SMTP. Keep the authority body replayable at the
+-- P0S11 rollback point while rejecting a partial P0S12 object set and removing
+-- both table-level and column-level grants before rebuilding the exact profile.
+DO $$
+DECLARE
+    schema_revision text;
+    target_role text;
+    target_table text;
+    target_privilege text;
+    column_list text;
+    named_principals constant text[] := ARRAY[
+        'saas_app', 'saas_authenticator', 'saas_governance', 'saas_dispatcher',
+        'saas_dispatcher_n1_compat', 'saas_executor', 'saas_runner_agent',
+        'saas_secret_broker', 'saas_preview_gateway', 'saas_preview_edge',
+        'saas_preview_owner', 'saas_webhook_dispatcher', 'saas_billing',
+        'saas_metering', 'saas_public_api', 'saas_platform',
+        'saas_platform_authenticator', 'saas_platform_app',
+        'saas_platform_governance', 'saas_platform_projector',
+        'saas_platform_support', 'saas_privacy_executor',
+        'saas_privacy_dispatcher', 'saas_privacy_verifier',
+        'saas_notification_scheduler', 'saas_notification_dispatcher',
+        'saas_notification_directory', 'saas_approval_scheduler_enterprise',
+        'saas_approval_scheduler_privacy', 'saas_approval_scheduler_audit',
+        'saas_approval_scheduler_support_customer',
+        'saas_approval_scheduler_support_staff', 'saas_registration',
+        'saas_onboarding', 'saas_onboarding_status',
+        'saas_runtime_provider_journal'
+    ];
+BEGIN
+    SELECT version_num INTO STRICT schema_revision
+    FROM public.saas_alembic_version;
+    IF to_regclass('public.saas_email_provider_configurations') IS NULL
+       AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
+        IF schema_revision = 'p0s000000012' THEN
+            RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+    IF schema_revision <> 'p0s000000012'
+       OR to_regclass('public.saas_email_provider_configurations') IS NULL
+       OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
+        RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
+    END IF;
+
+    FOREACH target_table IN ARRAY ARRAY[
+        'saas_email_provider_configurations',
+        'saas_email_provider_configuration_receipts'
+    ]
+    LOOP
+        EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+            quote_ident(target_table) || ' FROM PUBLIC';
+        SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum)
+        INTO column_list
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = ('public.' || quote_ident(target_table))::regclass
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped;
+        FOREACH target_role IN ARRAY named_principals
+        LOOP
+            EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.' ||
+                quote_ident(target_table) || ' FROM ' || quote_ident(target_role);
+            FOREACH target_privilege IN ARRAY
+                ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+            LOOP
+                EXECUTE 'REVOKE ' || target_privilege || ' (' || column_list ||
+                    ') ON TABLE public.' || quote_ident(target_table) ||
+                    ' FROM ' || quote_ident(target_role);
+            END LOOP;
+        END LOOP;
+    END LOOP;
+
+    GRANT SELECT, INSERT, UPDATE ON saas_email_provider_configurations
+    TO saas_platform_app;
+    GRANT SELECT, INSERT ON saas_email_provider_configuration_receipts
+    TO saas_platform_app;
+    GRANT SELECT ON saas_email_provider_configurations TO saas_onboarding;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON
+        saas_email_provider_configurations,
+        saas_email_provider_configuration_receipts
+    TO saas_platform_governance, saas_platform;
+END
+$$;
+
 -- P0S9 Preview is split into a browser Edge (content-blind token routines) and
 -- a placement-bound Owner.  Keep this projection conditional so the same
 -- authority body remains replayable at every supported schema-forward rollback
@@ -1117,7 +1203,9 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('p0s000000009', 'p0s000000010', 'p0s000000011') THEN
+    IF schema_revision NOT IN (
+        'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012'
+    ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
             WHERE to_regclass('public.' || expected.table_name) IS NOT NULL
@@ -3937,7 +4025,7 @@ BEGIN
         'text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,'
         'boolean,boolean,text)'
     );
-    IF schema_revision NOT IN ('p0s000000010', 'p0s000000011') THEN
+    IF schema_revision NOT IN ('p0s000000010', 'p0s000000011', 'p0s000000012') THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
            OR worktree_authority_function IS NOT NULL
@@ -4445,6 +4533,36 @@ BEGIN
           )
     ) THEN
         RAISE EXCEPTION 'P0S10 Runner identity function authority rejected';
+    END IF;
+END
+$$;
+
+-- The global least-privilege projection above revokes every application ACL
+-- before rebuilding domain roles. Restore the additive P0S12 grants last so
+-- the same file remains valid at the P0S11 rollback point.
+DO $$
+DECLARE
+    schema_revision text;
+BEGIN
+    SELECT version_num INTO STRICT schema_revision
+    FROM public.saas_alembic_version;
+    IF schema_revision = 'p0s000000012' THEN
+        IF to_regclass('public.saas_email_provider_configurations') IS NULL
+           OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
+            RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
+        END IF;
+        GRANT SELECT, INSERT, UPDATE ON saas_email_provider_configurations
+        TO saas_platform_app;
+        GRANT SELECT, INSERT ON saas_email_provider_configuration_receipts
+        TO saas_platform_app;
+        GRANT SELECT ON saas_email_provider_configurations TO saas_onboarding;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON
+            saas_email_provider_configurations,
+            saas_email_provider_configuration_receipts
+        TO saas_platform_governance, saas_platform;
+    ELSIF to_regclass('public.saas_email_provider_configurations') IS NOT NULL
+       OR to_regclass('public.saas_email_provider_configuration_receipts') IS NOT NULL THEN
+        RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
     END IF;
 END
 $$;

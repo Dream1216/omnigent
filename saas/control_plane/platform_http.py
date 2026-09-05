@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
 from saas.control_plane.platform_governed_access import (
@@ -46,6 +46,10 @@ from saas.control_plane.privacy_operations import (
 )
 
 if TYPE_CHECKING:
+    from saas.control_plane.email_provider import (
+        EmailProviderConfigurationService,
+        EmailProviderConfigurationView,
+    )
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
@@ -53,6 +57,7 @@ if TYPE_CHECKING:
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _MAX_PRIVACY_COMMAND_BYTES = 16 * 1024
+_MAX_EMAIL_CONFIGURATION_BYTES = 16 * 1024
 _PrivacyCommandT = TypeVar("_PrivacyCommandT", bound=BaseModel)
 
 
@@ -174,6 +179,28 @@ class _PrivacyOperationDecisionCommand(_StrictPrivacyOperationCommand):
     ]
 
 
+class _EmailConfigurationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0)
+    enabled: bool
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
+    security: Literal["starttls", "tls"]
+    username: str = Field(min_length=1, max_length=320)
+    password: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+    from_address: str = Field(min_length=3, max_length=320)
+    reply_to_address: str | None = Field(default=None, max_length=320)
+    timeout_seconds: float = Field(gt=0, le=30)
+
+
+class _EmailConfigurationTestCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=1)
+    recipient: str = Field(min_length=3, max_length=320)
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -190,6 +217,24 @@ def _parse_privacy_operation_command(
         raise PlatformSecurityError(
             "platform_privacy_invalid", "Privacy operation command is invalid"
         ) from error
+
+
+def _parse_email_command(
+    body: bytes,
+    content_type: str,
+    model: type[_PrivacyCommandT],
+) -> _PrivacyCommandT:
+    media_type = content_type.partition(";")[0].strip().lower()
+    if media_type != "application/json" or not body or len(body) > _MAX_EMAIL_CONFIGURATION_BYTES:
+        raise PlatformSecurityError(
+            "platform_email_configuration_invalid", "SMTP configuration is invalid"
+        )
+    try:
+        return model.model_validate_json(body)
+    except ValidationError:
+        raise PlatformSecurityError(
+            "platform_email_configuration_invalid", "SMTP configuration is invalid"
+        ) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +298,7 @@ def create_platform_admin_app(
     privacy_operations: PrivacyOperationService | None = None,
     approval_operations: ApprovalOperationsProtocol | None = None,
     notification_operations: NotificationOperationsProtocol | None = None,
+    email_configuration: EmailProviderConfigurationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -362,6 +408,14 @@ def create_platform_admin_app(
                 "Platform Privacy operation authority is unavailable",
             )
         return privacy_operations
+
+    def email_configuration_service() -> EmailProviderConfigurationService:
+        if email_configuration is None:
+            raise PlatformSecurityError(
+                "platform_email_configuration_unavailable",
+                "Platform email configuration authority is unavailable",
+            )
+        return email_configuration
 
     async def privacy_operation_command_context(
         request: Request,
@@ -474,8 +528,72 @@ def create_platform_admin_app(
             "capabilities": {
                 "notification_operations_enabled": (
                     approval_operations is not None and notification_operations is not None
-                )
+                ),
+                "email_configuration_enabled": email_configuration is not None,
             },
+        }
+
+    @app.get("/v2/platform-admin/email-configuration")
+    def get_email_configuration(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = email_configuration_service().get(principal)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_email_configuration_payload(value),
+        }
+
+    @app.put("/v2/platform-admin/email-configuration")
+    async def put_email_configuration(request: Request) -> dict[str, object]:
+        from saas.control_plane.email_provider import SmtpConfigurationUpdate
+
+        principal, _token = authenticate(request)
+        command = _parse_email_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _EmailConfigurationCommand,
+        )
+        value = email_configuration_service().update(
+            principal,
+            expected_version=command.expected_version,
+            configuration=SmtpConfigurationUpdate(
+                enabled=command.enabled,
+                host=command.host,
+                port=command.port,
+                security=command.security,
+                username=command.username,
+                password=(
+                    command.password.get_secret_value() if command.password is not None else None
+                ),
+                from_address=command.from_address,
+                reply_to_address=command.reply_to_address,
+                timeout_seconds=command.timeout_seconds,
+            ),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_email_configuration_payload(value),
+        }
+
+    @app.post("/v2/platform-admin/email-configuration/test", status_code=202)
+    async def test_email_configuration(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_email_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _EmailConfigurationTestCommand,
+        )
+        email_configuration_service().send_test(
+            principal,
+            recipient=command.recipient,
+            expected_version=command.expected_version,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "status": "accepted",
+            "configuration_version": command.expected_version,
         }
 
     @app.get("/v2/platform-admin/permissions")
@@ -1787,6 +1905,32 @@ def _operation_payload(value: AdminOperationView) -> dict[str, object]:
         "version": value.version,
         "created_at": value.created_at.isoformat(),
         "updated_at": value.updated_at.isoformat(),
+    }
+
+
+def _email_configuration_payload(
+    value: EmailProviderConfigurationView,
+) -> dict[str, object]:
+    return {
+        "purpose": value.purpose,
+        "provider": "smtp",
+        "configured": value.configured,
+        "enabled": value.enabled,
+        "host": value.host,
+        "port": value.port,
+        "security": value.security,
+        "username": value.username,
+        "from_address": value.from_address,
+        "reply_to_address": value.reply_to_address,
+        "timeout_seconds": value.timeout_seconds,
+        "password_configured": value.password_configured,
+        "version": value.version,
+        "updated_by_principal_id": (
+            str(value.updated_by_principal_id)
+            if value.updated_by_principal_id is not None
+            else None
+        ),
+        "updated_at": value.updated_at.isoformat() if value.updated_at is not None else None,
     }
 
 
