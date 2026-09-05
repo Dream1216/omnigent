@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "candidate_id": "omnigent-saas-p0s12-platform-smtp-2026-09-05",
-  "implementation_revision": "c1f8bf34142b0116651dc98b3ce8dbbee3975521",
-  "evidence_revision": "c1f8bf34142b0116651dc98b3ce8dbbee3975521",
+  "implementation_revision": "57c6ea714c71c3f0f01945d7e2e4f99cba3354b5",
+  "evidence_revision": "57c6ea714c71c3f0f01945d7e2e4f99cba3354b5",
   "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
   "adapter_contract_version": "0.2.0",
   "control_plane_schema_revision": "p0s000000012",
@@ -21,5 +21,5 @@
     "saas/production/adrs/ADR-010-identity-and-management-web-security.md",
     "saas/production/adrs/ADR-011-feature-flag-and-configuration.md"
   ],
-  "decision_bundle_sha256": "a1be28303e50b63c8dc6edffda5472535515de2ee43b6b9f4f36a49223e03109"
+  "decision_bundle_sha256": "8457cc9758444570e2be9c51c8f0ce89c4825b7ca039333c87854a63e42359d5"
 }
