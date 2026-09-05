@@ -195,7 +195,9 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
 
 
 def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_eleven_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 111
+    assert len(CONTROL_PLANE_RLS_TABLES) == 113
+    assert "saas_email_provider_configurations" in CONTROL_PLANE_RLS_TABLES
+    assert "saas_email_provider_configuration_receipts" in CONTROL_PLANE_RLS_TABLES
     assert "saas_registration_rate_limit_policies" in CONTROL_PLANE_RLS_TABLES
     assert "saas_registration_rate_limits" in CONTROL_PLANE_RLS_TABLES
     assert "saas_runtime_provider_operation_journal" in CONTROL_PLANE_RLS_TABLES

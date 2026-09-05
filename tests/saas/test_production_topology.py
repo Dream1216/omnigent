@@ -47,7 +47,7 @@ def test_release_enables_only_closed_p0s10_preview_profile() -> None:
     items = _items("kubernetes.production.yaml")
     release = _release(items)
 
-    assert release["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] == "p0s000000011"
+    assert release["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] == "p0s000000012"
     assert release["OMNIGENT_SAAS_CAPABILITIES"] == "tenant,run,runner,preview"
     assert release["OMNIGENT_SAAS_PREVIEW_ADAPTER_FACTORY"] == (
         "saas.production.preview_readiness:build_remote_tls_preview_readiness"

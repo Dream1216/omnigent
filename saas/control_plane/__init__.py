@@ -130,6 +130,13 @@ from saas.control_plane.db_models import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.email_provider import (
+    ConfiguredSmtpEmailVerificationSender,
+    EmailProviderConfigurationReader,
+    EmailProviderConfigurationService,
+    EmailProviderConfigurationView,
+    SmtpConfigurationUpdate,
+)
 from saas.control_plane.enterprise_access import (
     EnterpriseAccessPreflightView,
     EnterpriseAccessService,
@@ -403,9 +410,14 @@ from saas.control_plane.platform_lifecycle import (
     PlatformLifecycleTargetPreview,
 )
 from saas.control_plane.platform_models import (
+    EMAIL_PROVIDER_PURPOSES,
+    EMAIL_PROVIDER_RECEIPT_ACTIONS,
+    EMAIL_PROVIDER_SECURITY_MODES,
     PLATFORM_ASSIGNMENT_STATUSES,
     PLATFORM_ROLES,
     PLATFORM_STAFF_STATUSES,
+    EmailProviderConfigurationReceiptRecord,
+    EmailProviderConfigurationRecord,
     PlatformAuthSessionRecord,
     PlatformLifecycleOperationRecord,
     PlatformRoleAssignmentRecord,
@@ -605,6 +617,9 @@ from saas.control_plane.worktrees import (
 
 __all__ = [
     "BILLING_ADMIN_ROUTE_PERMISSIONS",
+    "EMAIL_PROVIDER_PURPOSES",
+    "EMAIL_PROVIDER_RECEIPT_ACTIONS",
+    "EMAIL_PROVIDER_SECURITY_MODES",
     "ENTERPRISE_ADMIN_ROUTE_PERMISSIONS",
     "MEMBER_ADMIN_ROUTE_PERMISSIONS",
     "PERMISSION_CATALOG",
@@ -670,6 +685,7 @@ __all__ = [
     "ClaimedPrivacyBackupItem",
     "ClaimedPrivacyWorkItem",
     "CompositeRemovalImpactProvider",
+    "ConfiguredSmtpEmailVerificationSender",
     "ContextSnapshotError",
     "ContextSnapshotPolicy",
     "ContextSnapshotService",
@@ -687,6 +703,11 @@ __all__ = [
     "EffectCallRecord",
     "EffectCallState",
     "EgressPolicyRecord",
+    "EmailProviderConfigurationReader",
+    "EmailProviderConfigurationReceiptRecord",
+    "EmailProviderConfigurationRecord",
+    "EmailProviderConfigurationService",
+    "EmailProviderConfigurationView",
     "EmailVerificationChallengeRecord",
     "EmailVerificationMessage",
     "EmailVerificationSender",
@@ -982,6 +1003,7 @@ __all__ = [
     "SharedRegistrationRateLimitJanitor",
     "SharedRegistrationRateLimiter",
     "SignedAuditExport",
+    "SmtpConfigurationUpdate",
     "SourceApprovalAudienceRouter",
     "SourceApprovalNotifier",
     "SourceApprovalProjectionBridge",

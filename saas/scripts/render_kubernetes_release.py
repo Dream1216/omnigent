@@ -55,7 +55,7 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000011"
+_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000012"
 _TEMPLATE_SERVICE_LOGINS: Final = {
     service: "replace_runtime_login" if service == "runtime" else f"replace_{service}_login"
     for service in EXPECTED_PRODUCTION_SERVICE_ROLES
@@ -1265,7 +1265,7 @@ def _render_release_documents(
         ),
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
             spec.control_plane_schema_revision,
-            "p0s000000011",
+            "p0s000000012",
         ),
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (
             spec.adapter_contract_version,

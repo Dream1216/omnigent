@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "policy_id": "omnigent-saas-slo-capacity-v1",
-  "reviewed_at": "2026-09-02",
+  "reviewed_at": "2026-09-05",
   "revision_contract": {
     "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000011"
+    "control_plane_schema_revision": "p0s000000012"
   },
   "evidence_directory": "saas/production/slo-capacity-evidence",
   "max_evidence_age_days": 35,

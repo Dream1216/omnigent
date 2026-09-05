@@ -808,7 +808,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                     {"tables": sorted(CONTROL_PLANE_RLS_TABLES)},
                 ).scalars()
             )
-            assert len(CONTROL_PLANE_RLS_TABLES) == 111
+            assert len(CONTROL_PLANE_RLS_TABLES) == 113
             assert forced_tables == CONTROL_PLANE_RLS_TABLES
             role_facts = connection.execute(
                 sa.text(
@@ -1446,7 +1446,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
         with owner_engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000011"
+                == "p0s000000012"
             )
             assert (
                 connection.scalar(

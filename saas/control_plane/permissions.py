@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-08-25.p1-onboarding-ops"
+POLICY_VERSION: Final = "2026-09-05.p2-smtp-admin"
 
 
 class PermissionScope(StrEnum):
@@ -347,6 +347,32 @@ _DEFINITIONS = (
         audit_event="platform.notification_template.changed",
     ),
     _permission(
+        "platform.email_configuration.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/email-configuration",),
+        ui_surface="email-configuration",
+        audit_event="platform.email_configuration.read",
+    ),
+    _permission(
+        "platform.email_configuration.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        api_surfaces=("PUT /v2/platform-admin/email-configuration",),
+        ui_surface="email-configuration",
+        audit_event="platform.email_configuration.changed",
+    ),
+    _permission(
+        "platform.email_configuration.test",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("POST /v2/platform-admin/email-configuration/test",),
+        ui_surface="email-configuration",
+        audit_event="platform.email_configuration.tested",
+    ),
+    _permission(
         "platform.runner.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
@@ -635,6 +661,9 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.notification.read",
                 "platform.notification.replay",
                 "platform.notification_template.manage",
+                "platform.email_configuration.read",
+                "platform.email_configuration.manage",
+                "platform.email_configuration.test",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",
@@ -657,6 +686,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.operations.read",
                 "platform.onboarding.read",
                 "platform.notification.read",
+                "platform.email_configuration.read",
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",

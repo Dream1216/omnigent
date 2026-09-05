@@ -13,6 +13,7 @@
     support: [],
     audit: [],
     operations: [],
+    emailConfiguration: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
     view: "overview",
@@ -151,6 +152,9 @@
     notificationLink.hidden = !Boolean(
       state.context?.capabilities?.notification_operations_enabled
     );
+    $("#email-configuration-link").hidden = !Boolean(
+      state.context?.capabilities?.email_configuration_enabled
+    );
     document.querySelectorAll("[data-permission]").forEach((button) => {
       const permitted = can(button.dataset.permission);
       button.disabled = !permitted;
@@ -186,6 +190,7 @@
       support: () => loadSupport(false),
       privacy: () => window.OmnigentPrivacy?.load(),
       audit: () => loadAudit(false),
+      email: loadEmailConfiguration,
     };
     if (loaders[view]) await loaders[view]();
     state.loaded.add(view);
@@ -252,6 +257,78 @@
     $("#operations-count").textContent = can("platform.operations.read") ? String(state.operations.filter((item) => item.status?.startsWith("pending")).length).padStart(2, "0") : "—";
     renderPosture();
     renderAttention();
+  }
+
+  function renderEmailConfiguration() {
+    const item = state.emailConfiguration || {
+      configured: false,
+      enabled: false,
+      version: 0,
+      port: 587,
+      security: "starttls",
+      timeout_seconds: 10,
+    };
+    $("#email-enabled").checked = Boolean(item.enabled);
+    $("#email-host").value = item.host || "";
+    $("#email-port").value = String(item.port || 587);
+    $("#email-security").value = item.security || "starttls";
+    $("#email-username").value = item.username || "";
+    $("#email-password").value = "";
+    $("#email-from").value = item.from_address || "";
+    $("#email-reply-to").value = item.reply_to_address || "";
+    $("#email-timeout").value = String(item.timeout_seconds || 10);
+    $("#email-version").textContent = `VERSION ${item.version || 0}`;
+    $("#email-password-state").textContent = item.password_configured
+      ? "PASSWORD ENCRYPTED / PRESERVED"
+      : "PASSWORD REQUIRED";
+    const status = item.enabled ? "SMTP ENABLED" : item.configured ? "SMTP DISABLED" : "NOT CONFIGURED";
+    $("#email-transport-state").textContent = status;
+    $(".email-state-card").dataset.enabled = String(Boolean(item.enabled));
+    $("#email-save").disabled = !mutationReady("platform.email_configuration.manage");
+    $("#email-test-send").disabled = !mutationReady("platform.email_configuration.test") || !item.configured;
+  }
+
+  async function loadEmailConfiguration() {
+    state.emailConfiguration = await api("/v2/platform-admin/email-configuration");
+    renderEmailConfiguration();
+  }
+
+  async function saveEmailConfiguration(event) {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    const password = $("#email-password").value;
+    const payload = await api("/v2/platform-admin/email-configuration", {
+      method: "PUT",
+      body: {
+        expected_version: state.emailConfiguration?.version || 0,
+        enabled: $("#email-enabled").checked,
+        host: $("#email-host").value.trim(),
+        port: Number($("#email-port").value),
+        security: $("#email-security").value,
+        username: $("#email-username").value.trim(),
+        password: password === "" ? null : password,
+        from_address: $("#email-from").value.trim(),
+        reply_to_address: $("#email-reply-to").value.trim() || null,
+        timeout_seconds: Number($("#email-timeout").value),
+      },
+    });
+    state.emailConfiguration = payload;
+    renderEmailConfiguration();
+    toast(`SMTP configuration V${payload.version} saved`, "success");
+  }
+
+  async function sendEmailConfigurationTest(event) {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    const recipient = $("#email-test-recipient").value.trim();
+    const payload = await api("/v2/platform-admin/email-configuration/test", {
+      method: "POST",
+      body: {
+        expected_version: state.emailConfiguration?.version || 0,
+        recipient,
+      },
+    });
+    toast(`SMTP test accepted for configuration V${payload.configuration_version}`, "success");
   }
 
   function renderUsers() {
@@ -874,6 +951,8 @@
   $("#audit-filter-form").addEventListener("submit", (event) => { event.preventDefault(); void run(() => loadAudit(false)); });
   $("#audit-more").addEventListener("click", () => void run(() => loadAudit(true)));
   $("#audit-export-open").addEventListener("click", () => void run(requestAuditExport));
+  $("#email-configuration-form").addEventListener("submit", (event) => void run(() => saveEmailConfiguration(event)));
+  $("#email-test-form").addEventListener("submit", (event) => void run(() => sendEmailConfigurationTest(event)));
   $("#operations-toggle").addEventListener("click", openOperations);
   $("#operations-close").addEventListener("click", closeOperations);
   $("#operations-drawer").addEventListener("keydown", trapOperationsFocus);

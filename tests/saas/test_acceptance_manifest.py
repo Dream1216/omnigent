@@ -65,7 +65,7 @@ def test_acceptance_manifest_rejects_stale_adr_approval_status(
     ) in validate_manifest(repo, manifest)
 
 
-def test_current_adr_gate_passes_with_current_bundle_successor_ci() -> None:
+def test_current_adr_gate_retains_prior_evidence_while_p0s12_is_pending() -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads(
         (repo / "saas/acceptance/p0-p6-evidence.json").read_text(encoding="utf-8")
@@ -89,10 +89,10 @@ def test_current_adr_gate_passes_with_current_bundle_successor_ci() -> None:
 
     baseline = json.loads((repo / "saas/production/baseline.json").read_text(encoding="utf-8"))
 
-    assert gate["status"] == "passed"
-    assert baseline["approval"]["state"] == "approved"
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000011")
-    assert baseline["approval"]["record"] == approval_path
+    assert gate["status"] == "pending"
+    assert baseline["approval"]["state"] == "review_required"
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000012")
+    assert baseline["approval"]["record"] is None
     assert prior_approval_path in gate["evidence"]
     assert approval_path in gate["evidence"]
     assert prior_evidence_path in gate["evidence"]

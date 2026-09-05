@@ -286,6 +286,16 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
     assert version_error.value.code == "public_schema_inventory_drifted"
 
 
+def test_source_pinned_catalog_digests_cover_the_current_schema_head() -> None:
+    expected = {
+        (16, "ga1b2c3d4e5f", "p0s000000012"),
+        (18, "ga1b2c3d4e5f", "p0s000000012"),
+    }
+
+    assert expected <= set(migration._PUBLIC_SCHEMA_INVENTORY_SHA256)
+    assert expected <= set(migration._SOURCE_SECURITY_CATALOG_SHA256)
+
+
 def test_source_security_catalog_normalizes_roles_and_rejects_acl_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

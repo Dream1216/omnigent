@@ -35,9 +35,17 @@ import sqlalchemy as sa
 from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.stores.credential_store.secret_cipher import (
+    SecretCipher,
+    build_secret_cipher,
+)
 from saas.control_plane.client_network import (
     TrustedClientNetworkConfig,
     TrustedClientNetworkResolver,
+)
+from saas.control_plane.email_provider import (
+    ConfiguredSmtpEmailVerificationSender,
+    EmailProviderConfigurationReader,
 )
 from saas.control_plane.onboarding import (
     OnboardingPlan,
@@ -149,8 +157,9 @@ class ProductionOnboardingWorkerConfig:
     registration_database_url: str = field(repr=False)
     onboarding_database_url: str = field(repr=False)
     execution_database_url: str = field(repr=False)
-    email_from_address: str
-    email_provider_token: str = field(repr=False)
+    email_delivery_mode: str
+    email_from_address: str | None
+    email_provider_token: str | None = field(repr=False)
     email_timeout_seconds: float
     runtime_provider_factory: str
     workflow: TenantOnboardingWorkflowConfig
@@ -187,7 +196,9 @@ class ProductionOnboardingOutboxPublisher:
     """Validated publisher plus lifecycle of its non-dispatcher authorities."""
 
     composition: TenantOnboardingComposition
-    email_sender: ResendEmailVerificationSender = field(repr=False)
+    email_sender: ResendEmailVerificationSender | ConfiguredSmtpEmailVerificationSender = field(
+        repr=False
+    )
     runtime: ProductionRuntimePartitionAdapter = field(repr=False)
     _engines: tuple[Engine, ...] = field(repr=False)
 
@@ -594,17 +605,28 @@ def load_production_onboarding_worker_config(
         or attribute.startswith("_")
     ):
         raise ProductionOnboardingConfigError("OMNIGENT_SAAS_RUNTIME_PROVIDER_FACTORY is invalid")
-    token_name = "OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE"
-    token_path = _regular_file(source, token_name, maximum_bytes=_MAX_SECRET_BYTES)
-    token_bytes = _read_bytes(token_path, token_name, maximum_bytes=_MAX_SECRET_BYTES).rstrip(
-        b"\r\n"
-    )
-    try:
-        provider_token = token_bytes.decode("ascii")
-    except UnicodeError:
-        raise ProductionOnboardingConfigError(f"{token_name} is invalid") from None
-    if not provider_token or provider_token != provider_token.strip():
-        raise ProductionOnboardingConfigError(f"{token_name} is invalid")
+    email_delivery_mode = source.get("OMNIGENT_SAAS_EMAIL_DELIVERY_MODE", "resend")
+    if email_delivery_mode not in {"resend", "platform_smtp"}:
+        raise ProductionOnboardingConfigError(
+            "OMNIGENT_SAAS_EMAIL_DELIVERY_MODE must be resend or platform_smtp"
+        )
+    provider_token: str | None = None
+    email_from_address: str | None = None
+    if email_delivery_mode == "resend":
+        token_name = "OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE"
+        token_path = _regular_file(source, token_name, maximum_bytes=_MAX_SECRET_BYTES)
+        token_bytes = _read_bytes(
+            token_path,
+            token_name,
+            maximum_bytes=_MAX_SECRET_BYTES,
+        ).rstrip(b"\r\n")
+        try:
+            provider_token = token_bytes.decode("ascii")
+        except UnicodeError:
+            raise ProductionOnboardingConfigError(f"{token_name} is invalid") from None
+        if not provider_token or provider_token != provider_token.strip():
+            raise ProductionOnboardingConfigError(f"{token_name} is invalid")
+        email_from_address = _required(source, "OMNIGENT_SAAS_EMAIL_FROM")
     return ProductionOnboardingWorkerConfig(
         common=common,
         registration_database_url=_database_url(
@@ -614,7 +636,8 @@ def load_production_onboarding_worker_config(
             source, service="onboarding", bindings=common.bindings
         ),
         execution_database_url=_database_url(source, service="executor", bindings=common.bindings),
-        email_from_address=_required(source, "OMNIGENT_SAAS_EMAIL_FROM"),
+        email_delivery_mode=email_delivery_mode,
+        email_from_address=email_from_address,
         email_provider_token=provider_token,
         email_timeout_seconds=cast(
             float,
@@ -749,6 +772,7 @@ def build_production_onboarding_outbox_composition(
     *,
     engine_factory: Callable[[str], Engine] = _new_engine,
     runtime_loader: Callable[[str], ProductionRuntimePartitionAdapter] = _load_runtime_adapter,
+    secret_cipher_loader: Callable[[], SecretCipher | None] = build_secret_cipher,
 ) -> ProductionOnboardingOutboxPublisher:
     """Build the worker publisher without acquiring the dispatcher login."""
 
@@ -757,7 +781,7 @@ def build_production_onboarding_outbox_composition(
     onboarding_engine = engine_factory(config.onboarding_database_url)
     execution_engine = engine_factory(config.execution_database_url)
     engines = (registration_engine, onboarding_engine, execution_engine)
-    sender: ResendEmailVerificationSender | None = None
+    sender: ResendEmailVerificationSender | ConfiguredSmtpEmailVerificationSender | None = None
     try:
         if len({id(engine) for engine in engines}) != 3:
             raise ProductionOnboardingConfigError(
@@ -770,14 +794,35 @@ def build_production_onboarding_outbox_composition(
             registration_sessions,
             subject_keyring=config.common.rate_limit_keyring,
         )
-        sender = ResendEmailVerificationSender(
-            ResendEmailVerificationConfig(
-                public_origin=config.common.public_origin,
-                from_address=config.email_from_address,
-                provider_token=config.email_provider_token,
-                timeout_seconds=config.email_timeout_seconds,
+        if config.email_delivery_mode == "platform_smtp":
+            try:
+                secret_cipher = secret_cipher_loader()
+            except Exception:  # noqa: BLE001 - redact deployment cipher details.
+                raise ProductionOnboardingConfigError(
+                    "Platform SMTP secret cipher is unavailable"
+                ) from None
+            if secret_cipher is None:
+                raise ProductionOnboardingConfigError(
+                    "Platform SMTP requires a configured KMS or Vault secret cipher"
+                )
+            sender = ConfiguredSmtpEmailVerificationSender(
+                EmailProviderConfigurationReader(
+                    onboarding_sessions,
+                    secret_cipher=secret_cipher,
+                    public_origin=config.common.public_origin,
+                )
             )
-        )
+        else:
+            if config.email_from_address is None or config.email_provider_token is None:
+                raise ProductionOnboardingConfigError("Resend email configuration is incomplete")
+            sender = ResendEmailVerificationSender(
+                ResendEmailVerificationConfig(
+                    public_origin=config.common.public_origin,
+                    from_address=config.email_from_address,
+                    provider_token=config.email_provider_token,
+                    timeout_seconds=config.email_timeout_seconds,
+                )
+            )
         runtime = runtime_loader(config.runtime_provider_factory)
         composition = create_tenant_onboarding_composition(
             TenantOnboardingDependencies(

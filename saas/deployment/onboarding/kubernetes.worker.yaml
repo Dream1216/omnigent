@@ -15,6 +15,9 @@ items:
       namespace: omnigent
     data:
       OMNIGENT_SAAS_PUBLIC_ORIGIN: https://next.jxhh.com
+      # Set to platform_smtp only after p0s000000012, the Platform Admin
+      # configuration service and an exact SMTP egress allowlist are active.
+      OMNIGENT_SAAS_EMAIL_DELIVERY_MODE: resend
       OMNIGENT_SAAS_EMAIL_FROM: replace-verified-sender@example.invalid
       OMNIGENT_SAAS_EMAIL_TIMEOUT_SECONDS: "10"
       OMNIGENT_SAAS_RUNTIME_PROVIDER_FACTORY: replace.runtime:build_production_runtime
@@ -160,7 +163,8 @@ items:
           ports:
             - {protocol: UDP, port: 53}
             - {protocol: TCP, port: 53}
-        # Provider egress is deliberately absent. The production overlay must
-        # add a CNI-native api.resend.com FQDN rule or a reviewed explicit mail
-        # relay after the Sender supports that fixed proxy. Arbitrary public
-        # TCP/443 is forbidden because this Pod holds multiple authorities.
+        # Provider egress is deliberately absent. Resend mode requires a
+        # CNI-native api.resend.com:443 FQDN rule. platform_smtp mode requires
+        # only the pre-approved relay hostname/IP and configured TCP port.
+        # Arbitrary public egress is forbidden because this Pod holds multiple
+        # authorities.

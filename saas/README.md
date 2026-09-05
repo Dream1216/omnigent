@@ -63,7 +63,7 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000011` extends the forced-RLS control plane
+- candidate schema revision `p0s000000012` extends the forced-RLS control plane
   through exact dispatch/profile binding, Preview execution sessions, and
   per-Runner-incarnation database authority. The preceding approved p0s7 record
   remains immutable history; this successor requires a new decision and
@@ -73,6 +73,32 @@ treating code contracts as production Provider evidence:
   drift must fail closed before Beta. Enterprise Production Admission further
   requires narrow RPCs or transition triggers for every Runner-mutated
   Worktree, quota, Preview, and Outbox state change.
+
+### Platform-managed SMTP
+
+The P0S12 candidate adds a Platform Console email surface backed by two
+forced-RLS tables. A freshly authenticated `platform_operator` can configure,
+disable and live-test an authenticated SMTP relay; a
+`platform_security_auditor` can inspect non-secret metadata only. Configuration
+uses compare-and-swap versions, writes the password through the existing
+non-exporting KMS/Vault `SecretCipher`, never returns ciphertext or plaintext to
+the browser, and appends content-blind configuration/test Receipts. Test
+recipient addresses are retained only as SHA-256 digests.
+
+`create_platform_admin_app(..., email_configuration=service)` exposes:
+
+- `GET|PUT /v2/platform-admin/email-configuration`;
+- `POST /v2/platform-admin/email-configuration/test`;
+- the `EMAIL / SMTP 投递` Staff Console view under `/saas/admin`.
+
+The Outbox Worker selects this transport only when
+`OMNIGENT_SAAS_EMAIL_DELIVERY_MODE=platform_smtp`. It loads the current enabled
+version through the read-only `saas_onboarding` role and decrypts the password at
+the send boundary. STARTTLS and implicit TLS validate system trust roots;
+plaintext SMTP is rejected. SMTP has no provider idempotency key, so delivery
+retains Outbox at-least-once semantics and a stable per-event `Message-ID` rather
+than claiming exactly-once delivery. A missing/disabled/corrupt configuration
+fails closed and does not fall back to Resend.
 
 The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
 the non-secret Provider type/revision/hash before any external effect, keeps old

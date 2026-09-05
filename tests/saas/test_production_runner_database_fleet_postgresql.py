@@ -143,7 +143,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     product_revision = _build_info.COMMIT_SHA
     assert len(product_revision) == 40
     image_digest = "sha256:" + "b" * 64
-    schema_revision = "p0s000000011"
+    schema_revision = "p0s000000012"
     capabilities = ("shell",)
     capabilities_sha256 = _capabilities_sha256(capabilities)
     suffix = uuid4().hex[:12]

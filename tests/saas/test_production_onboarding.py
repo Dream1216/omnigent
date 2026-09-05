@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 
 import saas.production.onboarding as production_onboarding
 from saas.control_plane.db_models import SaasBase
+from saas.control_plane.email_provider import ConfiguredSmtpEmailVerificationSender
 from saas.control_plane.runtime_provider import ProductionRuntimePartitionAdapter
 from saas.production.onboarding import (
     ProductionOnboardingConfigError,
@@ -153,6 +154,29 @@ def test_worker_config_is_distinct_from_dispatcher_and_status(tmp_path: Path) ->
     assert "resend-token-value" not in repr(config)
 
 
+def test_worker_config_supports_platform_managed_smtp_without_resend_secret(
+    tmp_path: Path,
+) -> None:
+    source = _environment(tmp_path)
+    source["OMNIGENT_SAAS_EMAIL_DELIVERY_MODE"] = "platform_smtp"
+    source.pop("OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE")
+    source.pop("OMNIGENT_SAAS_EMAIL_FROM")
+
+    config = load_production_onboarding_worker_config(source)
+
+    assert config.email_delivery_mode == "platform_smtp"
+    assert config.email_provider_token is None
+    assert config.email_from_address is None
+
+
+def test_worker_config_rejects_unknown_email_delivery_mode(tmp_path: Path) -> None:
+    source = _environment(tmp_path)
+    source["OMNIGENT_SAAS_EMAIL_DELIVERY_MODE"] = "smtp"
+
+    with pytest.raises(ProductionOnboardingConfigError, match="must be resend or platform_smtp"):
+        load_production_onboarding_worker_config(source)
+
+
 def test_manifest_rejects_old_profile_without_three_onboarding_roles(tmp_path: Path) -> None:
     source = _environment(tmp_path)
     path = Path(source["OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE"])
@@ -271,6 +295,14 @@ class _Runtime:
         return None
 
 
+class _Cipher:
+    def encrypt(self, plaintext: str, *, context: object) -> str:
+        return f"encrypted:{plaintext}"
+
+    def decrypt(self, ciphertext: str, *, context: object) -> str | None:
+        return "smtp-password"
+
+
 def test_worker_builder_returns_validated_zero_dispatcher_publisher(tmp_path: Path) -> None:
     source = _environment(tmp_path)
     runtime = cast(ProductionRuntimePartitionAdapter, _Runtime())
@@ -290,6 +322,38 @@ def test_worker_builder_returns_validated_zero_dispatcher_publisher(tmp_path: Pa
         assert len(publisher._engines) == 3
     finally:
         publisher.close()
+
+
+def test_worker_builder_uses_platform_managed_smtp_and_requires_secret_cipher(
+    tmp_path: Path,
+) -> None:
+    source = _environment(tmp_path)
+    source["OMNIGENT_SAAS_EMAIL_DELIVERY_MODE"] = "platform_smtp"
+    source.pop("OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE")
+    source.pop("OMNIGENT_SAAS_EMAIL_FROM")
+    runtime = cast(ProductionRuntimePartitionAdapter, _Runtime())
+
+    publisher = build_production_onboarding_outbox_composition(
+        source,
+        engine_factory=_sqlite_engine_factory,
+        runtime_loader=lambda _reference: runtime,
+        secret_cipher_loader=_Cipher,
+    )
+    try:
+        assert isinstance(
+            publisher.email_sender,
+            ConfiguredSmtpEmailVerificationSender,
+        )
+    finally:
+        publisher.close()
+
+    with pytest.raises(ProductionOnboardingConfigError, match="requires a configured KMS"):
+        build_production_onboarding_outbox_composition(
+            source,
+            engine_factory=_sqlite_engine_factory,
+            runtime_loader=lambda _reference: runtime,
+            secret_cipher_loader=lambda: None,
+        )
 
 
 def test_exported_outbox_factory_is_zero_argument(
@@ -351,6 +415,7 @@ def test_worker_manifest_keeps_provider_and_domain_authorities_out_of_server() -
     network = next(item for item in items if item.get("kind") == "NetworkPolicy")
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     names = {entry["name"] for entry in container["env"]}
+    release = next(item for item in items if item.get("kind") == "ConfigMap")
 
     assert "OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE" in names
     assert "OMNIGENT_SAAS_REGISTRATION_DATABASE_URL_FILE" in names
@@ -358,6 +423,7 @@ def test_worker_manifest_keeps_provider_and_domain_authorities_out_of_server() -
     assert "OMNIGENT_SAAS_EXECUTOR_DATABASE_URL_FILE" in names
     assert "OMNIGENT_SAAS_ONBOARDING_STATUS_DATABASE_URL_FILE" not in names
     assert "OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE" in names
+    assert release["data"]["OMNIGENT_SAAS_EMAIL_DELIVERY_MODE"] == "resend"
     assert network["spec"]["ingress"] == []
     rendered_network = json.dumps(network["spec"]["egress"], sort_keys=True)
     assert "0.0.0.0/0" not in rendered_network

@@ -642,7 +642,7 @@ def _verify_runner_agent_database_authority(
             ).one()
             if (
                 required_registration_status not in {"draining", "online"}
-                or revision != "p0s000000011"
+                or revision != "p0s000000012"
                 or tuple(identity_matches)
                 != (
                     True,
@@ -1595,7 +1595,7 @@ def runner_agent_database_authority_contract_sha256(*, server_major: int = 18) -
         "policy_relation_count": _RUNNER_AGENT_POLICY_RELATION_COUNT,
         "policy_sha256s": sorted(_RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR[server_major]),
         "role": _RUNNER_AGENT_DATABASE_ROLE,
-        "schema_revision": "p0s000000011",
+        "schema_revision": "p0s000000012",
         "select_columns": sorted(_RUNNER_AGENT_SELECT_COLUMNS),
         "select_tables": sorted(_RUNNER_AGENT_SELECT_TABLES),
         "server_major": server_major,

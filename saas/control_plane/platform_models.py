@@ -29,6 +29,14 @@ PLATFORM_OPERATION_ACTIONS = (
     "identity_conflict_assign",
     "identity_conflict_block",
 )
+EMAIL_PROVIDER_PURPOSES = ("onboarding_verification",)
+EMAIL_PROVIDER_SECURITY_MODES = ("starttls", "tls")
+EMAIL_PROVIDER_RECEIPT_ACTIONS = (
+    "configured",
+    "disabled",
+    "test_succeeded",
+    "test_failed",
+)
 
 
 class PlatformStaffPrincipalRecord(SaasBase):
@@ -228,6 +236,97 @@ class PlatformUserProjectionRecord(SaasBase):
         sa.CheckConstraint("security_version > 0", name="ck_platform_user_security_version"),
         sa.CheckConstraint("source_version > 0", name="ck_platform_user_source_version"),
         sa.Index("ix_platform_user_projection_list", "status", "user_id"),
+    )
+
+
+class EmailProviderConfigurationRecord(SaasBase):
+    """Platform-owned SMTP metadata plus non-exporting KMS/Vault ciphertext."""
+
+    __tablename__ = "saas_email_provider_configurations"
+
+    purpose: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    host: Mapped[str] = mapped_column(sa.String(253), nullable=False)
+    port: Mapped[int] = mapped_column(nullable=False)
+    security: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    username: Mapped[str] = mapped_column(sa.String(320), nullable=False)
+    password_ciphertext: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    from_address: Mapped[str] = mapped_column(sa.String(320), nullable=False)
+    reply_to_address: Mapped[str | None] = mapped_column(sa.String(320))
+    timeout_seconds: Mapped[float] = mapped_column(nullable=False, default=10.0)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_by_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"purpose IN ({_values(EMAIL_PROVIDER_PURPOSES)})",
+            name="ck_email_provider_configuration_purpose",
+        ),
+        sa.CheckConstraint(
+            f"security IN ({_values(EMAIL_PROVIDER_SECURITY_MODES)})",
+            name="ck_email_provider_configuration_security",
+        ),
+        sa.CheckConstraint(
+            "port >= 1 AND port <= 65535", name="ck_email_provider_configuration_port"
+        ),
+        sa.CheckConstraint(
+            "timeout_seconds > 0 AND timeout_seconds <= 30",
+            name="ck_email_provider_configuration_timeout",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_email_provider_configuration_version"),
+        sa.CheckConstraint(
+            "length(host) > 0 AND length(username) > 0 AND "
+            "length(password_ciphertext) > 0 AND length(from_address) > 0",
+            name="ck_email_provider_configuration_required_values",
+        ),
+    )
+
+
+class EmailProviderConfigurationReceiptRecord(SaasBase):
+    """Append-only, content-blind evidence for SMTP configuration actions."""
+
+    __tablename__ = "saas_email_provider_configuration_receipts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    purpose: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    configuration_version: Mapped[int] = mapped_column(nullable=False)
+    actor_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    configuration_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    password_rotated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    recipient_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"purpose IN ({_values(EMAIL_PROVIDER_PURPOSES)})",
+            name="ck_email_provider_receipt_purpose",
+        ),
+        sa.CheckConstraint(
+            f"action IN ({_values(EMAIL_PROVIDER_RECEIPT_ACTIONS)})",
+            name="ck_email_provider_receipt_action",
+        ),
+        sa.CheckConstraint("configuration_version > 0", name="ck_email_provider_receipt_version"),
+        sa.CheckConstraint(
+            "length(configuration_hash) = 64", name="ck_email_provider_receipt_hash"
+        ),
+        sa.CheckConstraint(
+            "recipient_hash IS NULL OR length(recipient_hash) = 64",
+            name="ck_email_provider_receipt_recipient_hash",
+        ),
+        sa.Index(
+            "ix_email_provider_receipt_purpose_time",
+            "purpose",
+            "occurred_at",
+            "id",
+        ),
     )
 
 

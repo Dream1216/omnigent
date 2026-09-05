@@ -21,9 +21,11 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
 from sqlalchemy.orm import sessionmaker
 
+from omnigent.stores.credential_store.secret_cipher import SecretContext
 from saas.control_plane import (
     AuditSigningKey,
     DeletionEvidenceKey,
+    EmailProviderConfigurationService,
     GlobalUser,
     IdentityConflict,
     PlatformAuthorizationService,
@@ -43,6 +45,7 @@ from saas.control_plane import (
     create_platform_admin_app,
 )
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
+from saas.onboarding_email import SmtpEmailVerificationConfig
 
 _AUDIENCE = "omnigent-platform-admin"
 _COOKIE = "__Host-omnigent_platform_session"
@@ -72,6 +75,35 @@ class PlatformAdminFixture:
     privacy_user_id: UUID
     privacy_request_user_id: UUID
     privacy_manifest_id: UUID
+
+
+class _BrowserSecretCipher:
+    def encrypt(self, plaintext: str, *, context: SecretContext) -> str:
+        return f"browser-cipher::{plaintext[::-1]}"
+
+    def decrypt(self, ciphertext: str, *, context: SecretContext) -> str | None:
+        if not ciphertext.startswith("browser-cipher::"):
+            return None
+        return ciphertext.removeprefix("browser-cipher::")[::-1]
+
+
+class _BrowserSmtpTestSender:
+    def __init__(self, config: SmtpEmailVerificationConfig) -> None:
+        self.config = config
+
+    def send_test(
+        self,
+        *,
+        recipient: str,
+        configuration_version: int,
+        test_id: UUID,
+    ) -> None:
+        assert recipient == "release-owner@example.test"
+        assert configuration_version == 1
+        assert isinstance(test_id, UUID)
+
+    def close(self) -> None:
+        return None
 
 
 def _write_certificate(directory: Path) -> tuple[Path, Path]:
@@ -299,6 +331,13 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         lifecycle=privacy,
         locator_key=PrivacyLocatorKey("p1-browser-locator", b"l" * 32),
     )
+    email_configuration = EmailProviderConfigurationService(
+        factory,
+        authorization=authorization,
+        secret_cipher=_BrowserSecretCipher(),
+        public_origin="https://next.jxhh.com",
+        smtp_sender_factory=_BrowserSmtpTestSender,
+    )
     privacy_actor = sessions.validate_session(
         issued["auditor"].token,
         origin=origin,
@@ -332,6 +371,7 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         governed_access=governed,
         privacy=privacy,
         privacy_operations=privacy_operations,
+        email_configuration=email_configuration,
     )
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
@@ -428,6 +468,26 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         expect(operator.locator("#metric-users")).to_have_text("01")
         expect(operator.get_by_test_id("nav-audit")).to_be_disabled()
 
+        operator.get_by_test_id("nav-email").click()
+        expect(operator.get_by_test_id("view-email")).to_be_visible()
+        expect(operator.locator("#email-transport-state")).to_have_text("NOT CONFIGURED")
+        operator.get_by_test_id("email-enabled").check()
+        operator.get_by_test_id("email-host").fill("smtp.example.test")
+        operator.get_by_test_id("email-port").fill("587")
+        operator.get_by_test_id("email-username").fill("mailer@example.test")
+        operator.get_by_test_id("email-password").fill("browser-smtp-secret")
+        operator.get_by_test_id("email-from").fill("verify@example.test")
+        operator.get_by_test_id("email-reply-to").fill("support@example.test")
+        operator.get_by_test_id("email-save").click()
+        expect(operator.locator("#email-transport-state")).to_have_text("SMTP ENABLED")
+        expect(operator.get_by_test_id("email-password")).to_have_value("")
+        expect(operator.locator("#email-password-state")).to_have_text(
+            "PASSWORD ENCRYPTED / PRESERVED"
+        )
+        operator.get_by_test_id("email-test-recipient").fill("release-owner@example.test")
+        operator.get_by_test_id("email-test-send").click()
+        expect(operator.get_by_test_id("toast-stack")).to_contain_text("SMTP test accepted")
+
         operator.get_by_test_id("nav-users").click()
         expect(operator.get_by_test_id("view-users")).to_be_visible()
         operator.get_by_test_id(f"user-suspend-{fixture.user_id}").click()
@@ -512,6 +572,10 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
 
         expect(auditor.get_by_test_id("nav-audit")).to_be_enabled()
         expect(auditor.get_by_test_id("view-privacy")).not_to_contain_text("START DELETION")
+        auditor.get_by_test_id("nav-email").click()
+        expect(auditor.get_by_test_id("view-email")).to_be_visible()
+        expect(auditor.get_by_test_id("email-save")).to_be_disabled()
+        expect(auditor.get_by_test_id("email-test-send")).to_be_disabled()
     finally:
         auditor_context.close()
 
