@@ -1,0 +1,126 @@
+{
+  "adapter_contract_version": "0.2.0",
+  "approval_mode": "sole-owner-risk-waiver",
+  "authority_bundle_sha256": "5111b8a419061ae2e2cdaa1282f2a76807d27037db875cbcc56df2dbd34b6159",
+  "candidate_id": "omnigent-saas-p0s12-platform-smtp-2026-09-05",
+  "control_plane_schema_revision": "p0s000000012",
+  "decision_bundle_sha256": "8457cc9758444570e2be9c51c8f0ce89c4825b7ca039333c87854a63e42359d5",
+  "decision_registry_sha256": "74d5eafe18f856e21fcfcb69b4759b7cc4bfb006f5419c7bdfe9572707cf3619",
+  "deployment_scope": "single-region-multi-az",
+  "evidence_revision": "57c6ea714c71c3f0f01945d7e2e4f99cba3354b5",
+  "generated_at": "2026-09-05T15:33:43Z",
+  "governance_classification": "degraded",
+  "implementation_revision": "57c6ea714c71c3f0f01945d7e2e4f99cba3354b5",
+  "merge_commit_sha": "a2ab077c74e1d7bffa494bdc26ce1af887e06570",
+  "merge_strategy": "merge-commit",
+  "merged_at": "2026-09-05T15:31:40Z",
+  "merged_by": "Dream1216",
+  "pull_request": 32,
+  "pull_request_author": "Dream1216",
+  "pull_request_url": "https://github.com/Dream1216/omnigent/pull/32",
+  "repository": "Dream1216/omnigent",
+  "reviewed_commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+  "schema_version": 2,
+  "state": "approved",
+  "target_branch": "main",
+  "target_repository": "Dream1216/omnigent",
+  "technical_owner_acceptances": [
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-001",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "platform-architecture"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-002",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "runtime-compatibility"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-003",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "control-plane"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-004",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "execution-platform"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-005",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "security"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-006",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "site-reliability"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-007",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "billing-platform"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-008",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "control-plane"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-009",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "product-owner"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-010",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "security"
+    },
+    {
+      "acceptance_mode": "sole-owner-risk-waiver",
+      "adr_id": "ADR-011",
+      "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+      "login": "Dream1216",
+      "owner_role": "platform-architecture"
+    }
+  ],
+  "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
+  "waiver_signature": {
+    "authorization_source": "authenticated-repository-owner-directive",
+    "authorized_at": "2026-08-08T22:07:14Z",
+    "check_run_id": 101320326777,
+    "check_run_url": "https://github.com/Dream1216/omnigent/actions/runs/33971356226/job/101320326777",
+    "ci_name": "compatibility-gate",
+    "commit_sha": "cd29f3dc766b9812ea38efcd4d16a9b4bd3a707e",
+    "github_actor_type": "User",
+    "github_user_id": 39821512,
+    "login": "Dream1216",
+    "repository_permission": "admin",
+    "review_due_at": "2027-02-04T22:07:14Z",
+    "risk_acceptance": [
+      "independent product architecture security and SRE review is waived",
+      "separation of duties is not present",
+      "single-person error or compromise can approve all eleven ADRs",
+      "production verification gates remain independent and are not waived"
+    ]
+  }
+}
