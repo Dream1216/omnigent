@@ -28,6 +28,7 @@ _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
+_RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _APPROVED_UV_VERSION = "0.12.1"
@@ -530,6 +531,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '--signer-workflow "$SIGNER_WORKFLOW"',
         "--source-ref refs/heads/main",
         '--source-digest "$PRODUCT_REVISION"',
+        "name: Verify published image runtime revision",
+        "--entrypoint /opt/venv/bin/python",
+        "actual=_build_info.COMMIT_SHA",
         "production_deployment_receipt: null",
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
@@ -538,6 +542,27 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("protected release must sign the wheel and both OCI images")
     if workflow.count("push-to-registry: true") != 2 or workflow.count("push: true") != 2:
         violations.append("protected release must publish exactly two signed OCI images")
+    runtime_verification = _named_workflow_step(
+        workflow, "Verify published image runtime revision"
+    )
+    runtime_verification_contract = {
+        "omnigent-saas-server@${{ steps.build-server.outputs.digest }}",
+        "omnigent-saas-host@${{ steps.build-host.outputs.digest }}",
+        'for image in "$SERVER_IMAGE" "$HOST_IMAGE"; do',
+        "--pull always --platform linux/amd64 --network none",
+        "--entrypoint /opt/venv/bin/python",
+        "actual=_build_info.COMMIT_SHA",
+        '"$PRODUCT_REVISION"',
+    }
+    if (
+        runtime_verification is None
+        or any(fragment not in runtime_verification for fragment in runtime_verification_contract)
+        or workflow.index("name: Verify published image runtime revision")
+        > workflow.index("name: Sign server image provenance with GitHub OIDC")
+    ):
+        violations.append(
+            "protected release must verify both published runtime revisions before signing"
+        )
 
     action = _read_repository_contract(
         repo,
@@ -649,6 +674,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="production Dockerfile",
         violations=violations,
     )
+    runtime_revision_binder = _read_repository_contract(
+        repo,
+        _RUNTIME_REVISION_BINDER,
+        label="runtime build revision binder",
+        violations=violations,
+    )
     uv_lock = _read_repository_contract(
         repo,
         "uv.lock",
@@ -673,9 +704,17 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="host CLI filesystem normalizer",
         violations=violations,
     )
-    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest, host_cli_normalizer):
+    if None in (
+        dockerfile,
+        runtime_revision_binder,
+        uv_lock,
+        pnpm_lock,
+        cli_manifest,
+        host_cli_normalizer,
+    ):
         return violations
     assert dockerfile is not None
+    assert runtime_revision_binder is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
     assert cli_manifest is not None
@@ -703,6 +742,33 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if "UV_NO_INSTALLER_METADATA=1" not in dockerfile:
         violations.append(
             "production Python installs must disable nondeterministic uv installer metadata"
+        )
+    revision_build_contract = {
+        "ARG SOURCE_REVISION",
+        "/build/saas/scripts/bind_runtime_build_revision.py",
+        '--source-revision "${SOURCE_REVISION}"',
+        '--source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        "from omnigent import _build_info",
+        "actual=_build_info.COMMIT_SHA",
+        "actual == expected",
+    }
+    revision_binder_contract = {
+        're.compile(r"^[0-9a-f]{40}$")',
+        'distribution("omnigent")',
+        'locate_file("omnigent/_build_info.py")',
+        "resolved.relative_to(prefix)",
+        "os.replace(temporary, resolved)",
+        'namespace.get("COMMIT_SHA") != source_revision',
+        'namespace.get("BUILD_TIME_EPOCH") != source_date_epoch',
+    }
+    if (
+        any(fragment not in dockerfile for fragment in revision_build_contract)
+        or dockerfile.count("/build/saas/scripts/bind_runtime_build_revision.py") != 2
+        or dockerfile.count("actual=_build_info.COMMIT_SHA") != 2
+        or any(fragment not in runtime_revision_binder for fragment in revision_binder_contract)
+    ):
+        violations.append(
+            "production Python installs and executable stages must bind the exact runtime revision"
         )
     core_bytecode_contract = {
         "> /tmp/venv-seed-pyc.sha256",

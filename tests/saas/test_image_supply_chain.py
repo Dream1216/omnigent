@@ -253,6 +253,7 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
         ".github/ci-deps/package.json",
+        "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
     ):
         target = repo / relative
@@ -305,6 +306,25 @@ def test_generic_docker_build_has_reproducible_epoch_fallback() -> None:
 
 def test_image_material_lock_contract_is_valid() -> None:
     assert validate_image_material_lock(_repo()) == []
+
+
+def test_image_material_lock_rejects_missing_runtime_revision_binding(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    target = "/build/saas/scripts/bind_runtime_build_revision.py"
+    assert source.count(target) == 2
+    dockerfile.write_text(
+        source.replace(target, "true # revision binding removed", 1),
+        encoding="utf-8",
+    )
+
+    assert (
+        "production Python installs and executable stages must bind the exact runtime revision"
+        in validate_image_material_lock(repo)
+    )
 
 
 def test_host_pnpm_normalizer_canonicalizes_json_wall_clock(tmp_path: Path) -> None:
@@ -979,6 +999,28 @@ def test_candidate_contract_rejects_unprotected_or_unsigned_release(tmp_path: Pa
 
     assert "protected signed release workflow contract is incomplete" in violations
     assert "protected release must sign the wheel and both OCI images" in violations
+
+
+def test_candidate_contract_rejects_missing_published_runtime_revision_check(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text(encoding="utf-8")
+    target = "      - name: Verify published image runtime revision\n"
+    assert target in source
+    workflow.write_text(
+        source.replace(target, "      - name: Trust published image labels only\n", 1),
+        encoding="utf-8",
+    )
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert "protected signed release workflow contract is incomplete" in violations
+    assert (
+        "protected release must verify both published runtime revisions before signing"
+        in violations
+    )
 
 
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
