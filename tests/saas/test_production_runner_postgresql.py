@@ -3104,7 +3104,7 @@ def test_pg16_runner_direct_authority_is_fail_closed(
                 )
 
         before = mutation_projection()
-        assert before == ("p0s000000011", 0, 0, 0, 0, 0)
+        assert before == ("p0s000000012", 0, 0, 0, 0, 0)
         with pytest.raises(RunnerControlError) as rejected:
             _verify_runner_agent_database_authority(
                 login_engine,
