@@ -249,11 +249,11 @@ def _material_lock_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     for relative in (
         "deploy/docker/Dockerfile",
-        "setup.py",
         "uv.lock",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
         ".github/ci-deps/package.json",
+        "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
     ):
         target = repo / relative
@@ -314,7 +314,7 @@ def test_image_material_lock_rejects_missing_runtime_revision_binding(
     repo = _material_lock_repo(tmp_path)
     dockerfile = repo / "deploy/docker/Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
-    target = 'export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"'
+    target = "/build/saas/scripts/bind_runtime_build_revision.py"
     assert source.count(target) == 2
     dockerfile.write_text(
         source.replace(target, "true # revision binding removed", 1),

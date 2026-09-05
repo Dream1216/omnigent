@@ -177,12 +177,12 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml
 # to /opt/venv and ``--no-editable`` makes the root package and SDK path deps
 # self-contained, so the host image never needs a second dependency-resolving
 # pip install to escape /build/*.pth references.
-RUN if [ "${SOURCE_REVISION}" = "unknown" ]; then \
-      unset OMNIGENT_BUILD_COMMIT_SHA; \
-    else \
-      export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"; \
+RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
+ && if [ "${SOURCE_REVISION}" != "unknown" ]; then \
+      /opt/venv/bin/python -B -I /build/saas/scripts/bind_runtime_build_revision.py \
+        --source-revision "${SOURCE_REVISION}" \
+        --source-date-epoch "${SOURCE_DATE_EPOCH}"; \
     fi \
- && uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-core-pyc.sha256 \
  && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256
@@ -209,11 +209,6 @@ RUN test -f ./omnigent/server/static/web-ui/index.html \
 # with `--build-arg OMNIGENT_EXTRAS=kubernetes` (comma-separate for several).
 ARG OMNIGENT_EXTRAS=
 RUN set -eu; \
-    if [ "${SOURCE_REVISION}" = "unknown" ]; then \
-        unset OMNIGENT_BUILD_COMMIT_SHA; \
-    else \
-        export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"; \
-    fi; \
     set -- --extra saas; \
     if [ -n "${OMNIGENT_EXTRAS}" ]; then \
         extras="$(printf '%s' "${OMNIGENT_EXTRAS}" | tr ',' ' ')"; \
@@ -227,6 +222,11 @@ RUN set -eu; \
     fi; \
     uv sync --frozen --active --package omnigent --no-dev --no-editable \
       --no-cache --reinstall-package omnigent "$@"; \
+    if [ "${SOURCE_REVISION}" != "unknown" ]; then \
+      /opt/venv/bin/python -B -I /build/saas/scripts/bind_runtime_build_revision.py \
+        --source-revision "${SOURCE_REVISION}" \
+        --source-date-epoch "${SOURCE_DATE_EPOCH}"; \
+    fi; \
     installed="$(python -c 'import importlib.metadata as m; print(m.version("psycopg"))')"; \
     [ "${installed}" = "${PSYCOPG_VERSION}" ] || { \
       echo "ERROR: uv.lock installed psycopg ${installed}, expected ${PSYCOPG_VERSION}." >&2; \

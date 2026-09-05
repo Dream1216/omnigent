@@ -117,64 +117,6 @@ def test_node_version_probe_failure_fails() -> None:
     assert "OMNIGENT_SKIP_WEB_UI=true" in message
 
 
-def test_build_commit_sha_override_wins_without_git(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _load_setup_module()
-    revision = "a" * 40
-    monkeypatch.setenv("OMNIGENT_BUILD_COMMIT_SHA", revision)
-    git_probe = mock.Mock(side_effect=AssertionError("git must not be consulted"))
-
-    with mock.patch.object(module.subprocess, "run", git_probe):
-        assert module._git_sha() == revision
-
-    git_probe.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "revision",
-    ["", "unknown", "A" * 40, "a" * 39, "g" * 40, "a" * 41],
-)
-def test_build_commit_sha_override_rejects_noncanonical_revision(
-    monkeypatch: pytest.MonkeyPatch,
-    revision: str,
-) -> None:
-    module = _load_setup_module()
-    monkeypatch.setenv("OMNIGENT_BUILD_COMMIT_SHA", revision)
-
-    with pytest.raises(ValueError, match="lowercase 40-character Git SHA"):
-        module._git_sha()
-
-
-def test_build_commit_sha_falls_back_to_valid_git_revision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _load_setup_module()
-    revision = "b" * 40
-    monkeypatch.delenv("OMNIGENT_BUILD_COMMIT_SHA", raising=False)
-
-    with mock.patch.object(
-        module.subprocess,
-        "run",
-        return_value=mock.Mock(stdout=f"{revision}\n"),
-    ):
-        assert module._git_sha() == revision
-
-
-def test_build_commit_sha_rejects_noncanonical_git_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _load_setup_module()
-    monkeypatch.delenv("OMNIGENT_BUILD_COMMIT_SHA", raising=False)
-
-    with mock.patch.object(
-        module.subprocess,
-        "run",
-        return_value=mock.Mock(stdout="not-a-full-revision\n"),
-    ):
-        assert module._git_sha() == ""
-
-
 def test_skip_web_ui_bypasses_node_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_setup_module()
     monkeypatch.setenv("OMNIGENT_SKIP_WEB_UI", "true")

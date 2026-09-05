@@ -25,7 +25,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
   "tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475"
-  "tests/saas/test_image_supply_chain.py|85255cc80f4828510de07ea1c5e40d7e29251fc88cc42523674590cb138cce15"
+  "tests/saas/test_image_supply_chain.py|f93b928affb68abeab187992a4f7b37267a3f9b3d5b1b6a3780696b1d7f749cf"
   "saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d"
   "saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
   "saas/n1_compat/manifest.json|eb74bc6f938da18792a190ade70f3604f247f50f6c1b25f70bb96ac68d56d99f"
