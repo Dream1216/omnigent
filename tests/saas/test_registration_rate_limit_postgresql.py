@@ -1222,7 +1222,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            "p0s000000011"
+            "p0s000000012"
         )
         assert (
             connection.scalar(

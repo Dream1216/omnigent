@@ -213,6 +213,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "ga1b2c3d4e5f",
         "p0s000000011",
     ): "7d4597b46eebb96fd8e29bb3feeb6a91747ad6bb35520888cc9497ddcc2ae7b7",
+    (
+        16,
+        "ga1b2c3d4e5f",
+        "p0s000000012",
+    ): "287bc061ec82bb53386bb42d3a2d81ed1181327ef99830cf8d8ba548b3f8f416",
+    (
+        18,
+        "ga1b2c3d4e5f",
+        "p0s000000012",
+    ): "a1d8e39b147d2621837b66b5685293b56b1076d0fda44402a9a6050f7f80c7a5",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -225,6 +235,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         "ga1b2c3d4e5f",
         "p0s000000011",
     ): "a26afc73de1347dbb0f105548efb402e5583004049ee3b5553b5a86863d7c392",
+    (
+        16,
+        "ga1b2c3d4e5f",
+        "p0s000000012",
+    ): "15852edb8c24f88cbaea51c578327f7f32ee5a03588ace969a1d605b1fbbaf8f",
+    (
+        18,
+        "ga1b2c3d4e5f",
+        "p0s000000012",
+    ): "db6eb171f2b1c164419604e5498abc9590f739f2c81a65b2f6987a1af4414530",
 }
 _CAPABILITY_ROLES = (
     "saas_app",

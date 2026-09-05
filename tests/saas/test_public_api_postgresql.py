@@ -127,7 +127,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
             connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            == "p0s000000011"
+            == "p0s000000012"
         )
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(

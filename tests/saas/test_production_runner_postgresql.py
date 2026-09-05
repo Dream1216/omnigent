@@ -441,7 +441,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 )
             )
             connection.exec_driver_sql(
-                "UPDATE saas_alembic_version SET version_num = 'p0s000000011'"
+                "UPDATE saas_alembic_version SET version_num = 'p0s000000012'"
             )
         subprocess.run(
             [psql, "-X", "--no-password", "-f", str(wrapper)],
@@ -2916,7 +2916,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                 )
 
         before = current_projection()
-        assert before == ("p0s000000011", 18, 19, 2)
+        assert before == ("p0s000000012", 18, 19, 2)
         with pytest.raises(sa.exc.DBAPIError, match="must be drained before downgrade"):
             with owner_engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
@@ -2981,7 +2981,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
 
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
-            command.upgrade(_saas_migration_config(connection), "p0s000000011")
+            command.upgrade(_saas_migration_config(connection), "head")
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
             )
