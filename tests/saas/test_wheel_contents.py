@@ -18,7 +18,7 @@ def test_missing_wheel_artifact_is_reported() -> None:
 
 
 def test_current_adr_approval_and_ci_evidence_are_required_wheel_artifacts() -> None:
-    assert "saas/acceptance/p0-adr-approval-evidence-ci-33667448251.json" in REQUIRED_WHEEL_PATHS
+    assert "saas/acceptance/p0-adr-approval-evidence-ci-33975479868.json" in REQUIRED_WHEEL_PATHS
     assert (
         "saas/production/adr-approvals/"
         "omnigent-saas-p0s12-platform-smtp-2026-09-05-8457cc9758444570.json"
