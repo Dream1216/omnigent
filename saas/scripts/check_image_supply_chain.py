@@ -530,6 +530,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '--signer-workflow "$SIGNER_WORKFLOW"',
         "--source-ref refs/heads/main",
         '--source-digest "$PRODUCT_REVISION"',
+        "name: Verify published image runtime revision",
+        "--entrypoint /opt/venv/bin/python",
+        "actual=_build_info.COMMIT_SHA",
         "production_deployment_receipt: null",
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
@@ -538,6 +541,27 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("protected release must sign the wheel and both OCI images")
     if workflow.count("push-to-registry: true") != 2 or workflow.count("push: true") != 2:
         violations.append("protected release must publish exactly two signed OCI images")
+    runtime_verification = _named_workflow_step(
+        workflow, "Verify published image runtime revision"
+    )
+    runtime_verification_contract = {
+        "omnigent-saas-server@${{ steps.build-server.outputs.digest }}",
+        "omnigent-saas-host@${{ steps.build-host.outputs.digest }}",
+        'for image in "$SERVER_IMAGE" "$HOST_IMAGE"; do',
+        "--pull always --platform linux/amd64 --network none",
+        "--entrypoint /opt/venv/bin/python",
+        "actual=_build_info.COMMIT_SHA",
+        '"$PRODUCT_REVISION"',
+    }
+    if (
+        runtime_verification is None
+        or any(fragment not in runtime_verification for fragment in runtime_verification_contract)
+        or workflow.index("name: Verify published image runtime revision")
+        > workflow.index("name: Sign server image provenance with GitHub OIDC")
+    ):
+        violations.append(
+            "protected release must verify both published runtime revisions before signing"
+        )
 
     action = _read_repository_contract(
         repo,
@@ -649,6 +673,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="production Dockerfile",
         violations=violations,
     )
+    setup_source = _read_repository_contract(
+        repo,
+        "setup.py",
+        label="Python build revision hook",
+        violations=violations,
+    )
     uv_lock = _read_repository_contract(
         repo,
         "uv.lock",
@@ -673,9 +703,17 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="host CLI filesystem normalizer",
         violations=violations,
     )
-    if None in (dockerfile, uv_lock, pnpm_lock, cli_manifest, host_cli_normalizer):
+    if None in (
+        dockerfile,
+        setup_source,
+        uv_lock,
+        pnpm_lock,
+        cli_manifest,
+        host_cli_normalizer,
+    ):
         return violations
     assert dockerfile is not None
+    assert setup_source is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
     assert cli_manifest is not None
@@ -703,6 +741,23 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if "UV_NO_INSTALLER_METADATA=1" not in dockerfile:
         violations.append(
             "production Python installs must disable nondeterministic uv installer metadata"
+        )
+    revision_build_contract = {
+        "ARG SOURCE_REVISION",
+        'export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"',
+        "from omnigent import _build_info",
+        "actual=_build_info.COMMIT_SHA",
+        "actual == expected",
+    }
+    if (
+        any(fragment not in dockerfile for fragment in revision_build_contract)
+        or dockerfile.count('export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"') != 2
+        or dockerfile.count("actual=_build_info.COMMIT_SHA") != 2
+        or "OMNIGENT_BUILD_COMMIT_SHA" not in setup_source
+        or "lowercase 40-character Git SHA" not in setup_source
+    ):
+        violations.append(
+            "production Python installs and executable stages must bind the exact runtime revision"
         )
     core_bytecode_contract = {
         "> /tmp/venv-seed-pyc.sha256",

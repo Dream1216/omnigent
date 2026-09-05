@@ -17,6 +17,7 @@ wheel alongside the rest of the package.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -26,6 +27,8 @@ from setuptools.command.build_py import build_py
 
 _MINIMUM_NODE_VERSION = (22, 13, 0)
 _MINIMUM_NODE_VERSION_TEXT = ".".join(str(part) for part in _MINIMUM_NODE_VERSION)
+_BUILD_COMMIT_SHA_ENV = "OMNIGENT_BUILD_COMMIT_SHA"
+_FULL_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 class _GenerateBuildInfo(build_py):
@@ -349,18 +352,24 @@ def _subprocess_failure_details(exc: BaseException) -> str:
 
 
 def _git_sha() -> str:
-    """Return the current Git HEAD SHA, or empty string on failure.
+    """Return the explicitly bound build SHA or the current Git HEAD SHA.
 
-    Empty-string fallback is intentional: when this is run inside a
-    Docker build context with no ``git`` binary, or when the build
-    happens from an sdist that has no ``.git/`` directory, the field
-    must still be populated with a stable string so the generated
-    module remains importable. The CLI update-check treats an empty
-    SHA as "no commit info available" and silently falls back to
-    timestamp-only nag logic.
+    Production image builds intentionally exclude ``.git`` from their context,
+    so they bind the immutable source revision through
+    ``OMNIGENT_BUILD_COMMIT_SHA``. A present override is a release input and
+    therefore fails loudly unless it is a canonical full Git SHA. Generic
+    source/sdist builds retain the historical empty-string fallback when no
+    repository metadata is available.
 
-    :returns: 40-character full hex SHA, or ``""`` on any failure.
+    :returns: Canonical 40-character full hex SHA, or ``""`` when neither an
+        explicit binding nor valid Git metadata is available.
     """
+    explicit = os.environ.get(_BUILD_COMMIT_SHA_ENV)
+    if explicit is not None:
+        if _FULL_GIT_SHA.fullmatch(explicit) is None:
+            raise ValueError(f"{_BUILD_COMMIT_SHA_ENV} must be a lowercase 40-character Git SHA")
+        return explicit
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -371,7 +380,8 @@ def _git_sha() -> str:
         )
     except (subprocess.SubprocessError, OSError):
         return ""
-    return result.stdout.strip()
+    revision = result.stdout.strip()
+    return revision if _FULL_GIT_SHA.fullmatch(revision) is not None else ""
 
 
 setup(cmdclass={"build_py": _GenerateBuildInfo})

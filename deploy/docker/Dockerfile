@@ -106,6 +106,7 @@ FROM ${PYTHON_IMAGE} AS builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_DATE_EPOCH
+ARG SOURCE_REVISION
 ARG UV_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -176,7 +177,12 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml
 # to /opt/venv and ``--no-editable`` makes the root package and SDK path deps
 # self-contained, so the host image never needs a second dependency-resolving
 # pip install to escape /build/*.pth references.
-RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
+RUN if [ "${SOURCE_REVISION}" = "unknown" ]; then \
+      unset OMNIGENT_BUILD_COMMIT_SHA; \
+    else \
+      export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"; \
+    fi \
+ && uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-core-pyc.sha256 \
  && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256
@@ -188,6 +194,7 @@ FROM builder AS server-builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG PSYCOPG_VERSION=3.3.4
+ARG SOURCE_REVISION
 
 # Overlay the SPA bundle built in the web-builder stage, so a clean
 # checkout (with no prebuilt bundle on the host) still produces a
@@ -202,6 +209,11 @@ RUN test -f ./omnigent/server/static/web-ui/index.html \
 # with `--build-arg OMNIGENT_EXTRAS=kubernetes` (comma-separate for several).
 ARG OMNIGENT_EXTRAS=
 RUN set -eu; \
+    if [ "${SOURCE_REVISION}" = "unknown" ]; then \
+        unset OMNIGENT_BUILD_COMMIT_SHA; \
+    else \
+        export OMNIGENT_BUILD_COMMIT_SHA="${SOURCE_REVISION}"; \
+    fi; \
     set -- --extra saas; \
     if [ -n "${OMNIGENT_EXTRAS}" ]; then \
         extras="$(printf '%s' "${OMNIGENT_EXTRAS}" | tr ',' ' ')"; \
@@ -503,6 +515,9 @@ RUN set -eu; \
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build /build
 RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
+RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
+      /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \
+    fi
 
 # Sandbox launchers exec commands through `bash -lc`, and Debian's
 # /etc/profile unconditionally resets PATH for login shells — the ENV
@@ -558,6 +573,9 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
 COPY --from=server-builder /opt/venv /opt/venv
 COPY --from=server-builder /build /build
 COPY deploy/docker/entrypoint.py /app/entrypoint.py
+RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
+      /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \
+    fi
 
 WORKDIR /app
 

@@ -384,6 +384,18 @@ jobs:
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
             CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
             ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+      - name: Verify published image runtime revision
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for image in "$SERVER_IMAGE" "$HOST_IMAGE"; do
+            docker run --rm --pull always --platform linux/amd64 --network none \
+              --entrypoint /opt/venv/bin/python "$image" -B -I -c \
+              'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"published runtime revision {actual!r} does not match {expected!r}"' \
+              "$PRODUCT_REVISION"
+          done
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
