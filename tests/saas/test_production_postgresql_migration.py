@@ -292,12 +292,12 @@ def test_source_pinned_catalog_digests_cover_the_current_schema_head() -> None:
             16,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "4799f327f1c38ee8a9f8c273083215093443e1748acdb1be6e2621e22844dad6",
+        ): "1277381bec5b123d070385e4c4c4b742c22dd5394611eff124a94731363ac779",
         (
             18,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "a78ffb4b8595ca654b6ba1900157a0a7b5f7dcf9212be5c90cf29519b9a2a2ef",
+        ): "eb66579e9d2db6dcfbae3c358221efc8fe68f5662405b3d0aefec0e77bde1335",
     }
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
@@ -642,6 +642,8 @@ def test_database_and_runtime_sql_keep_cluster_and_object_authority_separate() -
         "REVOKE ALL PRIVILEGES ON TABLE"
     )
     assert "REVOKE ALL PRIVILEGES ON TABLE\n    account_tokens" in runtime
+    assert "GRANT SELECT ON TABLE alembic_version TO omnigent_runtime_app" in runtime
+    assert "cardinality(expected_tables) * 4 + 1" in runtime
     assert "exact ACL projection failed" in runtime
     assert wrapper.index("\\set ON_ERROR_STOP on") < wrapper.index("BEGIN;")
     assert wrapper.index("BEGIN;") < wrapper.index("\\ir postgresql_roles.sql")
