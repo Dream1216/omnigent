@@ -200,7 +200,22 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context(
             role_flags = runtime_connection.execute(
                 sa.text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
             ).one()
+            alembic_privileges = runtime_connection.execute(
+                sa.text(
+                    "SELECT has_table_privilege(current_user, 'public.alembic_version', "
+                    "'SELECT'), has_table_privilege(current_user, "
+                    "'public.alembic_version', 'INSERT'), "
+                    "has_table_privilege(current_user, 'public.alembic_version', "
+                    "'UPDATE'), has_table_privilege(current_user, "
+                    "'public.alembic_version', 'DELETE')"
+                )
+            ).one()
+            official_revision = runtime_connection.execute(
+                sa.text("SELECT version_num FROM public.alembic_version")
+            ).scalar_one()
         assert role_flags == (False, False)
+        assert alembic_privileges == (True, False, False, False)
+        assert official_revision == "ga1b2c3d4e5f"
 
         protected = connection.execute(
             sa.text(

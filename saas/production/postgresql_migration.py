@@ -239,12 +239,12 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         16,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "4799f327f1c38ee8a9f8c273083215093443e1748acdb1be6e2621e22844dad6",
+    ): "1277381bec5b123d070385e4c4c4b742c22dd5394611eff124a94731363ac779",
     (
         18,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "a78ffb4b8595ca654b6ba1900157a0a7b5f7dcf9212be5c90cf29519b9a2a2ef",
+    ): "eb66579e9d2db6dcfbae3c358221efc8fe68f5662405b3d0aefec0e77bde1335",
 }
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -1915,6 +1915,7 @@ def _verify_runtime_acl(connection: Connection) -> tuple[tuple[str, str, bool], 
         for contract in contracts
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
     }
+    expected.add(("alembic_version", "SELECT", False))
     relation_acls = {
         (str(table), str(privilege), bool(grantable))
         for table, privilege, grantable in connection.execute(
@@ -1976,10 +1977,12 @@ def _verify_runtime_acl(connection: Connection) -> tuple[tuple[str, str, bool], 
             "WHERE namespace.nspname = 'public' "
             "AND relation.relname = ANY(:official_names) "
             "AND acl.grantee <> relation.relowner AND NOT ("
+            "acl.grantee = runtime.oid AND acl.grantor = official_owner.oid "
+            "AND NOT acl.is_grantable AND (("
             "relation.relname = ANY(:runtime_names) "
-            "AND acl.grantee = runtime.oid AND acl.grantor = official_owner.oid "
-            "AND acl.privilege_type IN ('SELECT','INSERT','UPDATE','DELETE') "
-            "AND NOT acl.is_grantable) UNION ALL "
+            "AND acl.privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')) OR ("
+            "relation.relname = :schema_revision_table "
+            "AND acl.privilege_type = 'SELECT'))) UNION ALL "
             "SELECT 1 FROM pg_attribute AS attribute "
             "JOIN pg_class AS relation ON relation.oid = attribute.attrelid "
             "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace "
@@ -2028,6 +2031,7 @@ def _verify_runtime_acl(connection: Connection) -> tuple[tuple[str, str, bool], 
             "anchor": official_names[0],
             "official_names": list(official_names),
             "runtime_names": [contract.table_name for contract in contracts],
+            "schema_revision_table": "alembic_version",
         },
     ).scalar_one()
     if (

@@ -358,6 +358,7 @@ $$;
 REVOKE ALL PRIVILEGES ON TABLE
     account_tokens,
     agents,
+    alembic_version,
     comments,
     conversation_items,
     conversation_labels,
@@ -379,6 +380,7 @@ FROM omnigent_runtime_app;
 REVOKE ALL PRIVILEGES ON TABLE
     account_tokens,
     agents,
+    alembic_version,
     comments,
     conversation_items,
     conversation_labels,
@@ -418,6 +420,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
     users
 TO omnigent_runtime_app;
 
+-- Official stores verify the source-controlled schema revision during startup.
+-- Keep that bootstrap read independent of Runtime workspace RLS while denying
+-- every write authority on Alembic's singleton revision relation.
+GRANT SELECT ON TABLE alembic_version TO omnigent_runtime_app;
+
 DO $$
 DECLARE
     runtime_role oid := (
@@ -450,10 +457,22 @@ BEGIN
     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     CROSS JOIN LATERAL aclexplode(relation.relacl) AS acl
     WHERE namespace.nspname = 'public'
-      AND relation.relname = ANY(expected_tables)
+      AND (
+          relation.relname = ANY(expected_tables)
+          OR relation.relname = 'alembic_version'
+      )
       AND acl.grantee = runtime_role
       AND acl.grantor = relation.relowner
-      AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+      AND (
+          (
+              relation.relname = ANY(expected_tables)
+              AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+          )
+          OR (
+              relation.relname = 'alembic_version'
+              AND acl.privilege_type = 'SELECT'
+          )
+      )
       AND NOT acl.is_grantable;
 
     SELECT count(*)
@@ -476,11 +495,19 @@ BEGIN
           AND relation.relname = ANY(official_tables)
           AND acl.grantee <> relation.relowner
           AND NOT (
-              relation.relname = ANY(expected_tables)
-              AND acl.grantee = runtime_role
+              acl.grantee = runtime_role
               AND acl.grantor = caller_role
-              AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
               AND NOT acl.is_grantable
+              AND (
+                  (
+                      relation.relname = ANY(expected_tables)
+                      AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+                  )
+                  OR (
+                      relation.relname = 'alembic_version'
+                      AND acl.privilege_type = 'SELECT'
+                  )
+              )
           )
         UNION ALL
         SELECT 1
@@ -501,8 +528,16 @@ BEGIN
         WHERE namespace.nspname = 'public'
           AND acl.grantee = runtime_role
           AND (
-              relation.relname <> ALL(expected_tables)
-              OR acl.privilege_type NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+              NOT (
+                  (
+                      relation.relname = ANY(expected_tables)
+                      AND acl.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+                  )
+                  OR (
+                      relation.relname = 'alembic_version'
+                      AND acl.privilege_type = 'SELECT'
+                  )
+              )
               OR acl.is_grantable
           )
         UNION ALL
@@ -537,7 +572,7 @@ BEGIN
         WHERE acl.grantee = runtime_role
     ) AS unexpected_acl;
 
-    IF relation_acl_count <> cardinality(expected_tables) * 4
+    IF relation_acl_count <> cardinality(expected_tables) * 4 + 1
        OR schema_acl_count <> 1
        OR unexpected_acl_count <> 0 THEN
         RAISE EXCEPTION
