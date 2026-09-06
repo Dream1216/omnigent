@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -12,6 +14,7 @@ import yaml
 from sqlalchemy.engine import Engine
 
 import saas.production.onboarding as production_onboarding
+from omnigent.stores.credential_store.vault_cipher import VaultSecretCipher
 from saas.control_plane.db_models import SaasBase
 from saas.control_plane.email_provider import ConfiguredSmtpEmailVerificationSender
 from saas.control_plane.runtime_provider import ProductionRuntimePartitionAdapter
@@ -20,6 +23,7 @@ from saas.production.onboarding import (
     build_production_onboarding_http_services,
     build_production_onboarding_outbox_composition,
     build_production_onboarding_outbox_publisher,
+    build_production_secret_cipher,
     load_production_onboarding_http_config,
     load_production_onboarding_worker_config,
 )
@@ -167,6 +171,71 @@ def test_worker_config_supports_platform_managed_smtp_without_resend_secret(
     assert config.email_delivery_mode == "platform_smtp"
     assert config.email_provider_token is None
     assert config.email_from_address is None
+
+
+def _vault_environment(tmp_path: Path) -> dict[str, str]:
+    return {
+        "OMNIGENT_CREDENTIAL_CIPHER": "vault",
+        "OMNIGENT_CREDENTIAL_VAULT_KEY": "omnigent-platform-smtp",
+        "OMNIGENT_CREDENTIAL_VAULT_MOUNT": "transit",
+        "VAULT_ADDR": "https://openbao-next.jxhh.com:8200",
+        "VAULT_TOKEN_FILE": str(_write(tmp_path / "vault-token", "test-token")),
+        "VAULT_CACERT": str(_write(tmp_path / "vault-ca.pem", "test-ca")),
+    }
+
+
+def test_production_vault_cipher_uses_owner_only_files_without_upstream_intrusion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = object()
+    observed: dict[str, object] = {}
+    hvac = ModuleType("hvac")
+
+    def build_client(**kwargs: object) -> object:
+        observed.update(kwargs)
+        return client
+
+    hvac.Client = build_client
+    monkeypatch.setitem(sys.modules, "hvac", hvac)
+    environment = _vault_environment(tmp_path)
+
+    cipher = build_production_secret_cipher(environment)
+
+    assert isinstance(cipher, VaultSecretCipher)
+    assert cipher._key == "omnigent-platform-smtp"
+    assert cipher._mount == "transit"
+    assert cipher._client is client
+    assert observed == {
+        "url": "https://openbao-next.jxhh.com:8200",
+        "token": "test-token",
+        "verify": environment["VAULT_CACERT"],
+    }
+
+
+@pytest.mark.parametrize("unsafe", ["relative-token", "unsafe-mode", "multiline"])
+def test_production_vault_cipher_rejects_unsafe_token_file(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    source = _vault_environment(tmp_path)
+    if unsafe == "relative-token":
+        source["VAULT_TOKEN_FILE"] = "relative-token"
+    elif unsafe == "unsafe-mode":
+        Path(source["VAULT_TOKEN_FILE"]).chmod(0o600)
+    else:
+        source["VAULT_TOKEN_FILE"] = str(_write(tmp_path / "multiline", "first\nsecond"))
+
+    with pytest.raises(ProductionOnboardingConfigError):
+        build_production_secret_cipher(source)
+
+
+def test_production_vault_cipher_rejects_direct_token_environment(tmp_path: Path) -> None:
+    source = _vault_environment(tmp_path)
+    source["VAULT_TOKEN"] = "forbidden"
+
+    with pytest.raises(ProductionOnboardingConfigError, match="direct Vault token"):
+        build_production_secret_cipher(source)
 
 
 def test_worker_config_rejects_unknown_email_delivery_mode(tmp_path: Path) -> None:

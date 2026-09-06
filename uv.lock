@@ -3256,6 +3256,7 @@ s3 = [
 saas = [
     { name = "boto3" },
     { name = "botocore" },
+    { name = "hvac" },
     { name = "psycopg", extra = ["binary"] },
 ]
 slack = [
@@ -3361,6 +3362,7 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'vertex'", specifier = ">=2.0,<3" },
     { name = "hindsight-client", marker = "extra == 'hindsight'", specifier = ">=0.4.0" },
     { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "hvac", marker = "extra == 'saas'", specifier = ">=2,<3" },
     { name = "hvac", marker = "extra == 'vault'", specifier = ">=2,<3" },
     { name = "islo", marker = "extra == 'islo'", specifier = ">=0.3.5,<0.4" },
     { name = "json5", specifier = ">=0.10,<1" },

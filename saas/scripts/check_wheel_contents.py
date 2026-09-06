@@ -340,6 +340,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/server.py",
     "saas/production/server_config.py",
     "saas/production/service_bindings.py",
+    "saas/production/kubernetes_runtime_provider.py",
     "saas/production/worker.py",
     "saas/production/runner_control.py",
     "saas/production/runner_database_fleet.py",

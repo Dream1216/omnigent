@@ -36,8 +36,14 @@ from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.stores.credential_store.secret_cipher import (
+    CREDENTIAL_CIPHER_ENV_VAR,
     SecretCipher,
     build_secret_cipher,
+)
+from omnigent.stores.credential_store.vault_cipher import (
+    CREDENTIAL_VAULT_KEY_ENV_VAR,
+    CREDENTIAL_VAULT_MOUNT_ENV_VAR,
+    VaultSecretCipher,
 )
 from saas.control_plane.client_network import (
     TrustedClientNetworkConfig,
@@ -76,6 +82,9 @@ from saas.production.service_bindings import (
 
 _MAX_CONFIG_BYTES = 64 * 1024
 _MAX_SECRET_BYTES = 16 * 1024
+_MAX_CA_BUNDLE_BYTES = 1024 * 1024
+_VAULT_TOKEN_FILE_ENV_VAR = "VAULT_TOKEN_FILE"
+_VAULT_CA_FILE_ENV_VAR = "VAULT_CACERT"
 _FACTORY_REFERENCE = re.compile(
     r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*:[A-Za-z][A-Za-z0-9_]*$"
 )
@@ -103,6 +112,7 @@ _DIRECT_SECRET_ENVIRONMENT = frozenset(
         "OMNIGENT_SAAS_ONBOARDING_STATUS_DATABASE_URL",
         "OMNIGENT_SAAS_VERIFICATION_ENVELOPE_KEYS",
         "OMNIGENT_SAAS_REGISTRATION_RATE_LIMIT_KEYS",
+        "VAULT_TOKEN",
     }
 )
 
@@ -283,6 +293,72 @@ def _read_bytes(path: Path, name: str, *, maximum_bytes: int) -> bytes:
     if not 0 < len(raw) <= maximum_bytes:
         raise ProductionOnboardingConfigError(f"{name} has an invalid size")
     return raw
+
+
+def build_production_secret_cipher(
+    environ: Mapping[str, str] | None = None,
+) -> SecretCipher | None:
+    """Build the production cipher without accepting a Vault token in the environment.
+
+    The official Vault backend remains untouched for upstream compatibility.
+    Production Vault composition instead injects an explicit ``hvac.Client``
+    whose token and CA bundle come from owner-only regular files.
+    """
+
+    source = os.environ if environ is None else environ
+    selected = source.get(CREDENTIAL_CIPHER_ENV_VAR, "").strip().lower()
+    if selected != "vault":
+        return build_secret_cipher()
+    if source.get("VAULT_TOKEN"):
+        raise ProductionOnboardingConfigError("direct Vault token environment is forbidden")
+
+    key_name = _required(source, CREDENTIAL_VAULT_KEY_ENV_VAR)
+    mount_point = source.get(CREDENTIAL_VAULT_MOUNT_ENV_VAR, "").strip() or "transit"
+    if not _KEY_ID.fullmatch(key_name) or not _KEY_ID.fullmatch(mount_point):
+        raise ProductionOnboardingConfigError("Vault Transit authority is malformed")
+
+    token_path = _regular_file(
+        source,
+        _VAULT_TOKEN_FILE_ENV_VAR,
+        maximum_bytes=_MAX_SECRET_BYTES,
+    )
+    token_raw = _read_bytes(
+        token_path,
+        _VAULT_TOKEN_FILE_ENV_VAR,
+        maximum_bytes=_MAX_SECRET_BYTES,
+    )
+    try:
+        token = token_raw.decode("ascii")
+    except UnicodeError:
+        raise ProductionOnboardingConfigError("Vault token file is malformed") from None
+    if not token or token != token.strip() or any(ord(character) < 0x21 for character in token):
+        raise ProductionOnboardingConfigError("Vault token file is malformed")
+
+    address = _required(source, "VAULT_ADDR")
+    parsed = urlsplit(address)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ProductionOnboardingConfigError("VAULT_ADDR must be an HTTPS authority")
+    ca_path = _regular_file(
+        source,
+        _VAULT_CA_FILE_ENV_VAR,
+        maximum_bytes=_MAX_CA_BUNDLE_BYTES,
+    )
+
+    try:
+        import hvac
+
+        client = hvac.Client(url=address, token=token, verify=str(ca_path))
+    except Exception:  # noqa: BLE001 - redact dependency and client details.
+        raise ProductionOnboardingConfigError("Vault client construction failed") from None
+    return VaultSecretCipher(key_name, mount_point=mount_point, client=client)
 
 
 def _json_document(
@@ -772,7 +848,7 @@ def build_production_onboarding_outbox_composition(
     *,
     engine_factory: Callable[[str], Engine] = _new_engine,
     runtime_loader: Callable[[str], ProductionRuntimePartitionAdapter] = _load_runtime_adapter,
-    secret_cipher_loader: Callable[[], SecretCipher | None] = build_secret_cipher,
+    secret_cipher_loader: Callable[[], SecretCipher | None] = build_production_secret_cipher,
 ) -> ProductionOnboardingOutboxPublisher:
     """Build the worker publisher without acquiring the dispatcher login."""
 
