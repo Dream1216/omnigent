@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -184,12 +186,31 @@ def _vault_environment(tmp_path: Path) -> dict[str, str]:
 
 def test_production_vault_cipher_uses_owner_only_files_without_upstream_intrusion(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cipher = build_production_secret_cipher(_vault_environment(tmp_path))
+    client = object()
+    observed: dict[str, object] = {}
+    hvac = ModuleType("hvac")
+
+    def build_client(**kwargs: object) -> object:
+        observed.update(kwargs)
+        return client
+
+    hvac.Client = build_client
+    monkeypatch.setitem(sys.modules, "hvac", hvac)
+    environment = _vault_environment(tmp_path)
+
+    cipher = build_production_secret_cipher(environment)
 
     assert isinstance(cipher, VaultSecretCipher)
     assert cipher._key == "omnigent-platform-smtp"
     assert cipher._mount == "transit"
+    assert cipher._client is client
+    assert observed == {
+        "url": "https://openbao-next.jxhh.com:8200",
+        "token": "test-token",
+        "verify": environment["VAULT_CACERT"],
+    }
 
 
 @pytest.mark.parametrize("unsafe", ["relative-token", "unsafe-mode", "multiline"])
