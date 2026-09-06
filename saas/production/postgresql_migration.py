@@ -239,12 +239,12 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         16,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "15852edb8c24f88cbaea51c578327f7f32ee5a03588ace969a1d605b1fbbaf8f",
+    ): "4799f327f1c38ee8a9f8c273083215093443e1748acdb1be6e2621e22844dad6",
     (
         18,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "db6eb171f2b1c164419604e5498abc9590f739f2c81a65b2f6987a1af4414530",
+    ): "a78ffb4b8595ca654b6ba1900157a0a7b5f7dcf9212be5c90cf29519b9a2a2ef",
 }
 _CAPABILITY_ROLES = (
     "saas_app",

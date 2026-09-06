@@ -288,12 +288,20 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
 
 def test_source_pinned_catalog_digests_cover_the_current_schema_head() -> None:
     expected = {
-        (16, "ga1b2c3d4e5f", "p0s000000012"),
-        (18, "ga1b2c3d4e5f", "p0s000000012"),
+        (
+            16,
+            "ga1b2c3d4e5f",
+            "p0s000000012",
+        ): "4799f327f1c38ee8a9f8c273083215093443e1748acdb1be6e2621e22844dad6",
+        (
+            18,
+            "ga1b2c3d4e5f",
+            "p0s000000012",
+        ): "a78ffb4b8595ca654b6ba1900157a0a7b5f7dcf9212be5c90cf29519b9a2a2ef",
     }
 
-    assert expected <= set(migration._PUBLIC_SCHEMA_INVENTORY_SHA256)
-    assert expected <= set(migration._SOURCE_SECURITY_CATALOG_SHA256)
+    assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
+    assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= expected.items()
 
 
 def test_source_security_catalog_normalizes_roles_and_rejects_acl_drift(
