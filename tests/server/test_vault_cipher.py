@@ -12,6 +12,7 @@ is reachable. Requires a Transit key created with ``derived=true``.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,7 +27,9 @@ from omnigent.stores.credential_store.secret_cipher import (
 )
 from omnigent.stores.credential_store.vault_cipher import (
     CREDENTIAL_VAULT_KEY_ENV_VAR,
+    VAULT_TOKEN_FILE_ENV_VAR,
     VaultSecretCipher,
+    _vault_token,
 )
 
 CTX_ALICE = {"workspace_id": "0", "user_id": "alice", "provider": "github", "account_id": ""}
@@ -150,8 +153,65 @@ def _clear_backend_env(mp: pytest.MonkeyPatch) -> None:
         CREDENTIAL_CIPHER_ENV_VAR,
         CREDENTIAL_KMS_KEY_ENV_VAR,
         CREDENTIAL_VAULT_KEY_ENV_VAR,
+        "VAULT_TOKEN",
+        VAULT_TOKEN_FILE_ENV_VAR,
     ):
         mp.delenv(var, raising=False)
+
+
+def test_vault_token_file_is_owner_only_and_unambiguous(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clear_backend_env(monkeypatch)
+    token_file = tmp_path / "vault-token"
+    token_file.write_text("one-use-token\n", encoding="utf-8")
+    token_file.chmod(0o400)
+    monkeypatch.setenv(VAULT_TOKEN_FILE_ENV_VAR, str(token_file))
+    assert _vault_token() == "one-use-token"
+
+    monkeypatch.setenv("VAULT_TOKEN", "ambiguous")
+    with pytest.raises(ValueError, match="cannot both"):
+        _vault_token()
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o440, 0o404])
+def test_vault_token_file_rejects_unsafe_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    _clear_backend_env(monkeypatch)
+    token_file = tmp_path / f"vault-token-{mode:o}"
+    token_file.write_text("token", encoding="utf-8")
+    token_file.chmod(mode)
+    monkeypatch.setenv(VAULT_TOKEN_FILE_ENV_VAR, str(token_file))
+    with pytest.raises(ValueError, match="owner-only"):
+        _vault_token()
+
+
+def test_vault_token_file_rejects_relative_symlink_and_multiline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clear_backend_env(monkeypatch)
+    monkeypatch.setenv(VAULT_TOKEN_FILE_ENV_VAR, "relative-token")
+    with pytest.raises(ValueError, match="absolute"):
+        _vault_token()
+
+    target = tmp_path / "target"
+    target.write_text("token", encoding="utf-8")
+    target.chmod(0o400)
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    monkeypatch.setenv(VAULT_TOKEN_FILE_ENV_VAR, str(link))
+    with pytest.raises(ValueError, match="owner-only"):
+        _vault_token()
+
+    multiline = tmp_path / "multiline"
+    multiline.write_text("first\nsecond\n", encoding="utf-8")
+    multiline.chmod(0o400)
+    monkeypatch.setenv(VAULT_TOKEN_FILE_ENV_VAR, str(multiline))
+    with pytest.raises(ValueError, match="malformed"):
+        _vault_token()
 
 
 def test_explicit_selector_picks_backend(monkeypatch: pytest.MonkeyPatch) -> None:

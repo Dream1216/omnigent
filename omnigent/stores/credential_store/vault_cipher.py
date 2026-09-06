@@ -33,7 +33,10 @@ Wrong context / corrupt ciphertext ⇒ :meth:`decrypt` returns ``None`` (reconne
 mirroring the KMS soft-fail; store-wide / operational failures (repointed key, bad
 token, sealed Vault) raise. Selected with ``OMNIGENT_CREDENTIAL_VAULT_KEY`` (see
 :func:`~omnigent.stores.credential_store.secret_cipher.build_secret_cipher`), plus
-``VAULT_ADDR`` / ``VAULT_TOKEN`` from the standard Vault env.
+``VAULT_ADDR`` and exactly one of ``VAULT_TOKEN`` or ``VAULT_TOKEN_FILE``.  The
+file form is intended for production workloads and must be an absolute, bounded,
+owner-owned regular file with mode ``0400``; it is opened without following the
+final symlink.
 """
 
 from __future__ import annotations
@@ -42,6 +45,8 @@ import base64
 import json
 import logging
 import os
+import stat
+from pathlib import Path
 from typing import Any
 
 from omnigent.stores.credential_store.secret_cipher import SecretContext
@@ -54,6 +59,8 @@ CREDENTIAL_VAULT_KEY_ENV_VAR = "OMNIGENT_CREDENTIAL_VAULT_KEY"
 CREDENTIAL_VAULT_MOUNT_ENV_VAR = "OMNIGENT_CREDENTIAL_VAULT_MOUNT"
 
 _DEFAULT_TRANSIT_MOUNT = "transit"
+VAULT_TOKEN_FILE_ENV_VAR = "VAULT_TOKEN_FILE"
+_MAX_VAULT_TOKEN_BYTES = 16 * 1024
 
 #: Envelope marker for our ciphertext format: ``osvault:<b64url(key_name)>:<transit>``.
 #: The key name rides with the ciphertext so :meth:`VaultSecretCipher.decrypt` can
@@ -69,6 +76,65 @@ _PER_ROW_DECRYPT_MARKERS: tuple[str, ...] = (
     "message authentication failed",
     "invalid ciphertext",
 )
+
+
+def _vault_token() -> str:
+    """Load one Vault token without permitting ambiguous or unsafe sources."""
+
+    direct = os.environ.get("VAULT_TOKEN", "")
+    token_file = os.environ.get(VAULT_TOKEN_FILE_ENV_VAR, "")
+    if direct and token_file:
+        raise ValueError("VAULT_TOKEN and VAULT_TOKEN_FILE cannot both be configured")
+    if not token_file:
+        return direct
+    if token_file != token_file.strip() or "\x00" in token_file:
+        raise ValueError("VAULT_TOKEN_FILE is malformed")
+    path = Path(token_file)
+    if not path.is_absolute():
+        raise ValueError("VAULT_TOKEN_FILE must be an absolute path")
+    try:
+        inspected = path.lstat()
+    except OSError:
+        raise ValueError("VAULT_TOKEN_FILE cannot be inspected") from None
+    if (
+        stat.S_ISLNK(inspected.st_mode)
+        or not stat.S_ISREG(inspected.st_mode)
+        or inspected.st_uid != os.geteuid()
+        or stat.S_IMODE(inspected.st_mode) != 0o400
+        or not 0 < inspected.st_size <= _MAX_VAULT_TOKEN_BYTES
+    ):
+        raise ValueError("VAULT_TOKEN_FILE must be an owner-only regular file with mode 0400")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o400
+            or not 0 < opened.st_size <= _MAX_VAULT_TOKEN_BYTES
+            or (opened.st_dev, opened.st_ino) != (inspected.st_dev, inspected.st_ino)
+        ):
+            raise ValueError("VAULT_TOKEN_FILE changed during inspection")
+        raw = os.read(descriptor, _MAX_VAULT_TOKEN_BYTES + 1)
+    except ValueError:
+        raise
+    except OSError:
+        raise ValueError("VAULT_TOKEN_FILE cannot be read") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    try:
+        token = raw.decode("utf-8")
+    except UnicodeError:
+        raise ValueError("VAULT_TOKEN_FILE is malformed") from None
+    token = token.rstrip("\r\n")
+    if not token or token != token.strip() or "\n" in token or "\r" in token:
+        raise ValueError("VAULT_TOKEN_FILE is malformed")
+    return token
 
 
 def build_vault_secret_cipher() -> VaultSecretCipher | None:
@@ -153,7 +219,7 @@ class VaultSecretCipher:
 
             self._client = hvac.Client(
                 url=os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200"),
-                token=os.environ.get("VAULT_TOKEN", ""),
+                token=_vault_token(),
             )
         return self._client
 
