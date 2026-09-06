@@ -295,18 +295,22 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
     assert version_error.value.code == "public_schema_inventory_drifted"
 
 
-def test_source_pinned_catalog_digests_cover_the_current_schema_head() -> None:
+def test_source_pinned_catalog_digests_cover_fourteen_role_clean_replays() -> None:
+    assert len(EXPECTED_PRODUCTION_SERVICE_ROLES) == 14
+    assert EXPECTED_PRODUCTION_SERVICE_ROLES["runtime_provider_journal"] == (
+        "saas_runtime_provider_journal"
+    )
     expected = {
         (
             16,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "1277381bec5b123d070385e4c4c4b742c22dd5394611eff124a94731363ac779",
+        ): "bbe9f0f850fd85b44c407c0938c3db6e1a87e790ed598d28a2d578e986c802b4",
         (
             18,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "eb66579e9d2db6dcfbae3c358221efc8fe68f5662405b3d0aefec0e77bde1335",
+        ): "bf2685862c57e0aa8fbc88ca9f3ccee448b558cd091fbb502bc130539d640998",
     }
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
