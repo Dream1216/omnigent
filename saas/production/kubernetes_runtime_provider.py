@@ -53,6 +53,10 @@ from saas.control_plane.runtime_provider import (
 from saas.control_plane.runtime_provider_journal import (
     PostgresqlRuntimeProviderOperationJournal,
 )
+from saas.production.service_bindings import (
+    ProductionServiceRoleBindingsError,
+    load_production_service_role_bindings,
+)
 
 _CONFIG_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_CONFIG_FILE"
 _JOURNAL_DSN_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_JOURNAL_DATABASE_URL_FILE"
@@ -77,6 +81,23 @@ _DIRECT_SECRET_ENV = frozenset(
         "OMNIGENT_SAAS_RUNTIME_PROVIDER_OPENBAO_TOKEN",
     }
 )
+
+
+def _verify_runtime_provider_journal_binding(
+    source: Mapping[str, str], *, journal_login: str
+) -> None:
+    """Bind the Provider journal DSN identity to the shared role manifest."""
+
+    try:
+        service_role_bindings = load_production_service_role_bindings(source)
+    except ProductionServiceRoleBindingsError:
+        raise KubernetesRuntimeProviderConfigError(
+            "production service-role bindings are invalid"
+        ) from None
+    if service_role_bindings.login_for("runtime_provider_journal") != journal_login:
+        raise KubernetesRuntimeProviderConfigError(
+            "journal_login does not match the production service-role binding"
+        )
 
 
 class KubernetesRuntimeProviderConfigError(ValueError):
@@ -849,6 +870,7 @@ def build_kubernetes_runtime_provider() -> ProductionRuntimePartitionAdapter:
 
     source = os.environ
     config = load_kubernetes_runtime_provider_config(source)
+    _verify_runtime_provider_journal_binding(source, journal_login=config.journal_login)
     _verify_installed_lineage(config)
     token_path, _token = _secret_text(source, _KUBERNETES_TOKEN_ENV)
     kubernetes_ca, _ = _owner_file(source, _KUBERNETES_CA_ENV, maximum_bytes=_MAX_CA_BYTES)

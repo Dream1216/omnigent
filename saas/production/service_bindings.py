@@ -30,6 +30,7 @@ EXPECTED_PRODUCTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
         "preview_edge": "saas_preview_edge",
         "preview_owner": "saas_preview_owner",
         "registration": "saas_registration",
+        "runtime_provider_journal": "saas_runtime_provider_journal",
     }
 )
 

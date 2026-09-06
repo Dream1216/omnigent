@@ -915,7 +915,9 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
             for fragment in _FORBIDDEN_LOGIN_FRAGMENTS
         )
     ):
-        raise ReleaseRenderError("service_logins must contain ten distinct narrow login roles")
+        raise ReleaseRenderError(
+            "service_logins must contain the exact distinct narrow login roles"
+        )
 
     return KubernetesReleaseSpec(
         mode=mode,

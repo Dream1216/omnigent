@@ -261,6 +261,15 @@ def test_fixed_capability_edges_are_granted_by_the_principal_operator() -> None:
         False,
         10,
     ) in graph
+    assert (
+        "saas_runtime_provider_journal",
+        "runtime_provider_journal_login",
+        "principal_operator",
+        False,
+        True,
+        False,
+        42,
+    ) in graph
 
 
 def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platform(

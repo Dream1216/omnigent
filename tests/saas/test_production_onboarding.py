@@ -514,14 +514,14 @@ def test_server_patch_has_only_http_onboarding_authorities() -> None:
     assert "OMNIGENT_SAAS_EMAIL_PROVIDER_TOKEN_FILE" not in names
 
 
-def test_deployment_example_freezes_exact_thirteen_service_profile() -> None:
+def test_deployment_example_freezes_exact_fourteen_service_profile() -> None:
     root = Path(__file__).parents[2]
     document = json.loads(
         (root / "saas/deployment/onboarding/service-role-bindings.example.json").read_text()
     )
     rows = document["bindings"]
 
-    assert len(rows) == 13
+    assert len(rows) == 14
     assert {row["service"] for row in rows} == {
         "app",
         "authenticator",
@@ -535,6 +535,7 @@ def test_deployment_example_freezes_exact_thirteen_service_profile() -> None:
         "public_api",
         "registration",
         "runtime",
+        "runtime_provider_journal",
         "secret_broker",
     }
     assert all(row["service"] != "preview_gateway" for row in rows)

@@ -31,7 +31,13 @@ from saas.production.kubernetes_runtime_provider import (
     ProjectedServiceAccountCredentialAuthority,
     _KubernetesCredentialMaterial,
     _verify_installed_lineage,
+    _verify_runtime_provider_journal_binding,
     load_kubernetes_runtime_provider_config,
+)
+from saas.production.service_bindings import (
+    EXPECTED_PRODUCTION_SERVICE_ROLES,
+    ProductionServiceRoleBinding,
+    render_production_service_role_bindings,
 )
 
 
@@ -83,6 +89,33 @@ def test_loads_exact_canonical_owner_only_binding(tmp_path: Path) -> None:
     assert config.binding.binding_revision == "next-beta-20260906-v1"
     assert config.runtime_namespace == "omnigent-next-runtime"
     assert config.journal_login == "next_beta_runtime_provider_writer"
+
+
+def test_journal_login_must_match_shared_service_role_binding(tmp_path: Path) -> None:
+    rendered = render_production_service_role_bindings(
+        tuple(
+            ProductionServiceRoleBinding(
+                service=service,
+                login=(
+                    "next_beta_runtime_provider_writer"
+                    if service == "runtime_provider_journal"
+                    else f"next_beta_{service}"
+                ),
+                base_role=base_role,
+            )
+            for service, base_role in EXPECTED_PRODUCTION_SERVICE_ROLES.items()
+        )
+    )
+    path = _write(tmp_path / "service-role-bindings.json", rendered)
+    source = {"OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE": str(path)}
+
+    _verify_runtime_provider_journal_binding(
+        source, journal_login="next_beta_runtime_provider_writer"
+    )
+    with pytest.raises(KubernetesRuntimeProviderConfigError, match="does not match"):
+        _verify_runtime_provider_journal_binding(
+            source, journal_login="different_runtime_provider_writer"
+        )
 
 
 def test_config_rejects_noncanonical_unsafe_and_direct_secrets(tmp_path: Path) -> None:

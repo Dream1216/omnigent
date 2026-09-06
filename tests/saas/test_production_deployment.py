@@ -248,7 +248,7 @@ def test_server_consumes_exact_artifact_admission_authority_and_rollout_bindings
     )
 
 
-def test_migration_and_runtime_share_one_canonical_thirteen_binding_profile() -> None:
+def test_migration_and_runtime_share_one_canonical_fourteen_binding_profile() -> None:
     migration_items = _items("kubernetes.migration.yaml")
     production_items = _items("kubernetes.production.yaml")
     manifests = []
@@ -271,7 +271,7 @@ def test_migration_and_runtime_share_one_canonical_thirteen_binding_profile() ->
         )
         for row in document["bindings"]
     )
-    assert len(bindings) == 13
+    assert len(bindings) == 14
     assert manifests[0] == render_production_service_role_bindings(bindings)
 
 
@@ -579,7 +579,7 @@ def test_runner_agents_have_file_only_double_bound_independent_identities() -> N
 
     readme = (_DEPLOYMENT / "README.md").read_text(encoding="utf-8")
     assert "runner_<runner_uuid_without_hyphens>_g<connection_generation>" in readme
-    assert "outside the canonical exact-thirteen service-role binding manifest" in " ".join(
+    assert "outside the canonical exact-fourteen service-role binding manifest" in " ".join(
         readme.split()
     )
     collapsed_readme = " ".join(readme.split())
