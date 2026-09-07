@@ -143,6 +143,7 @@ def test_production_runtime_is_required_and_has_console_entrypoints() -> None:
     assert "saas/production/postgresql_migration.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/server.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/server_config.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/platform_smtp_bootstrap.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/service_bindings.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/kubernetes_runtime_provider.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/worker.py" in REQUIRED_WHEEL_PATHS

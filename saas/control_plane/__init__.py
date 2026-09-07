@@ -427,6 +427,7 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.platform_notification_http import create_platform_notification_router
 from saas.control_plane.platform_security import (
+    InitialPlatformStaffIdentity,
     IssuedPlatformSession,
     PlatformAuthorizationService,
     PlatformProjectionPage,
@@ -749,6 +750,7 @@ __all__ = [
     "IdentityConnection",
     "IdentityLoginResolution",
     "IdentityManagementService",
+    "InitialPlatformStaffIdentity",
     "InvitationAccepted",
     "InvitationCreated",
     "InvitationReissued",

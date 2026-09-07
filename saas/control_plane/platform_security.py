@@ -32,6 +32,7 @@ from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_contex
 _PHISHING_RESISTANT_METHODS = frozenset({"passkey", "webauthn", "oidc:acr:phishing-resistant"})
 _MAX_SESSION_TTL = timedelta(hours=8)
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
+_INITIAL_STAFF_BOOTSTRAP_LOCK = 0x4F4D4E4953544146
 
 
 class PlatformSecurityError(RuntimeError):
@@ -132,6 +133,17 @@ class PlatformRoleAssignmentView:
     status: str
     version: int
     expires_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class InitialPlatformStaffIdentity:
+    """One identity in the zero-state, two-party Staff bootstrap ceremony."""
+
+    identity_connection_ref: str
+    issuer: str
+    subject: str
+    display_name: str
+    email_normalized: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +477,156 @@ class PlatformAuthorizationService:
                 )
             )
             return principal_id
+
+    def bootstrap_initial_staff_pair(
+        self,
+        *,
+        operator: InitialPlatformStaffIdentity,
+        auditor: InitialPlatformStaffIdentity,
+        approval_ref: str,
+        reason: str,
+        expires_at: datetime,
+        now: datetime | None = None,
+    ) -> ValidatedPlatformPrincipal:
+        """Bootstrap the first short-lived operator and auditor, exactly once.
+
+        This is an offline recovery/installation ceremony, not a browser login
+        and not a substitute for the Staff IdP.  It is admitted only while all
+        Staff principals, assignments, and sessions are absent.  The two role
+        assignments cross-reference distinct principals, retain the external
+        approval reference, and must expire within one hour.  The returned
+        principal exists only in the caller process so no synthetic WebAuthn or
+        persistent Staff session is created.
+        """
+
+        changed_at = now or _utcnow()
+        _require_aware(changed_at, "now")
+        _require_aware(expires_at, "expires_at")
+        approval = approval_ref.strip()
+        justification = reason.strip()
+        identities = (operator, auditor)
+        normalized = [
+            (
+                value.identity_connection_ref.strip(),
+                value.issuer.strip(),
+                value.subject.strip(),
+                value.display_name.strip(),
+                value.email_normalized.strip().lower(),
+            )
+            for value in identities
+        ]
+        if (
+            not approval
+            or len(approval) > 256
+            or not justification
+            or len(justification) > 1024
+            or expires_at <= changed_at
+            or expires_at - changed_at > timedelta(hours=1)
+            or any(not all(fields) for fields in normalized)
+            or normalized[0][0] == normalized[1][0]
+            or normalized[0][1:3] == normalized[1][1:3]
+        ):
+            raise PlatformSecurityError(
+                "platform_bootstrap_invalid", "initial Staff bootstrap is invalid"
+            )
+
+        operator_id = uuid4()
+        auditor_id = uuid4()
+        with self._governance.begin() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(
+                    sa.text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": _INITIAL_STAFF_BOOTSTRAP_LOCK},
+                )
+            occupied = any(
+                db.execute(sa.select(sa.func.count()).select_from(model)).scalar_one() != 0
+                for model in (
+                    PlatformStaffPrincipalRecord,
+                    PlatformRoleAssignmentRecord,
+                    PlatformAuthSessionRecord,
+                )
+            )
+            if occupied:
+                raise PlatformSecurityError(
+                    "platform_bootstrap_conflict",
+                    "initial Staff bootstrap is no longer available",
+                )
+            operator_fields, auditor_fields = normalized
+            db.add_all(
+                (
+                    PlatformStaffPrincipalRecord(
+                        id=operator_id,
+                        identity_connection_ref=operator_fields[0],
+                        issuer=operator_fields[1],
+                        subject=operator_fields[2],
+                        display_name=operator_fields[3],
+                        email_normalized=operator_fields[4],
+                        status="active",
+                        security_version=1,
+                        created_at=changed_at,
+                        updated_at=changed_at,
+                    ),
+                    PlatformStaffPrincipalRecord(
+                        id=auditor_id,
+                        identity_connection_ref=auditor_fields[0],
+                        issuer=auditor_fields[1],
+                        subject=auditor_fields[2],
+                        display_name=auditor_fields[3],
+                        email_normalized=auditor_fields[4],
+                        status="active",
+                        security_version=1,
+                        created_at=changed_at,
+                        updated_at=changed_at,
+                    ),
+                )
+            )
+            db.flush()
+            db.add_all(
+                (
+                    PlatformRoleAssignmentRecord(
+                        id=uuid4(),
+                        principal_id=operator_id,
+                        role="platform_operator",
+                        status="active",
+                        expires_at=expires_at,
+                        version=1,
+                        assigned_by_principal_id=auditor_id,
+                        approval_ref=approval,
+                        reason=justification,
+                        created_at=changed_at,
+                        updated_at=changed_at,
+                    ),
+                    PlatformRoleAssignmentRecord(
+                        id=uuid4(),
+                        principal_id=auditor_id,
+                        role="platform_security_auditor",
+                        status="active",
+                        expires_at=expires_at,
+                        version=1,
+                        assigned_by_principal_id=operator_id,
+                        approval_ref=approval,
+                        reason=justification,
+                        created_at=changed_at,
+                        updated_at=changed_at,
+                    ),
+                )
+            )
+
+        roles = frozenset({"platform_operator"})
+        return ValidatedPlatformPrincipal(
+            session_id=uuid4(),
+            principal_id=operator_id,
+            security_version=1,
+            authn_method="ssh-signed-owner-bootstrap",
+            authenticated_at=changed_at,
+            expires_at=expires_at,
+            roles=roles,
+            permissions=frozenset(
+                permission
+                for role in roles
+                for permission in PLATFORM_ROLE_PERMISSIONS.get(role, frozenset())
+            ),
+        )
 
     @staticmethod
     def require(principal: ValidatedPlatformPrincipal, permission: str) -> None:

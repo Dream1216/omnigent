@@ -238,6 +238,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/worktree_models.py",
     "saas/control_plane/worktrees.py",
     "saas/deployment/__init__.py",
+    "saas/production/platform_smtp_bootstrap.py",
     "saas/deployment/server/__init__.py",
     "saas/deployment/server/README.md",
     "saas/deployment/server/kubernetes.artifact-admission.yaml",
