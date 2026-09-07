@@ -563,6 +563,10 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         auditor.reload()
         expect(auditor.locator("#console-shell")).to_have_attribute("aria-busy", "false")
         expect(auditor.get_by_test_id("view-privacy")).to_be_visible()
+        expect(auditor.get_by_test_id("privacy-message")).to_have_text(
+            "AUTHORITATIVE READ COMPLETE",
+            timeout=_GOVERNED_COMMAND_COMPLETION_TIMEOUT_MS,
+        )
         expect(auditor.get_by_test_id("privacy-surface-grid").locator("article")).to_have_count(15)
 
         auditor.get_by_test_id("privacy-target-id").fill(str(uuid4()))

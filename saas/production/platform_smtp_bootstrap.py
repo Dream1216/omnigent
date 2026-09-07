@@ -147,10 +147,16 @@ def run_platform_smtp_bootstrap(
     if public_origin != "https://next.jxhh.com":
         raise PlatformSmtpBootstrapError("public_origin_not_admitted")
     try:
-        database_url, parsed, _path = load_production_database_url_file(environ, "governance")
+        database_url, parsed, _path = load_production_database_url_file(
+            environ,
+            "platform_governance",
+        )
         bindings = load_production_service_role_bindings(environ)
-        governance = bindings.by_service["governance"]
-        if parsed.username != governance.login or governance.base_role != "saas_governance":
+        governance = bindings.by_service["platform_governance"]
+        if (
+            parsed.username != governance.login
+            or governance.base_role != "saas_platform_governance"
+        ):
             raise PlatformSmtpBootstrapError("database_authority_invalid")
     except (
         KeyError,

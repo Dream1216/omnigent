@@ -295,11 +295,11 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
     assert version_error.value.code == "public_schema_inventory_drifted"
 
 
-def test_source_pinned_catalog_digests_cover_canonical_fourteen_role_replays() -> None:
+def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() -> None:
     # These anchors come from clean PostgreSQL 16.14 and 18.6 replays with the
-    # complete fourteen-login profile.  P0S12 sorts row collections only after
+    # complete fifteen-login profile.  P0S12 sorts row collections only after
     # replacing deployment-specific role names with stable aliases.
-    assert len(EXPECTED_PRODUCTION_SERVICE_ROLES) == 14
+    assert len(EXPECTED_PRODUCTION_SERVICE_ROLES) == 15
     assert EXPECTED_PRODUCTION_SERVICE_ROLES["runtime_provider_journal"] == (
         "saas_runtime_provider_journal"
     )
@@ -308,12 +308,12 @@ def test_source_pinned_catalog_digests_cover_canonical_fourteen_role_replays() -
             16,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "dda56c78a492dd561c00c4df6603fee305e067ef137f5ca8206911722168208d",
+        ): "09ca0010b36f5f0e3b6a41e8aafa3b373c3199f882a34ebc8fdda1f5522f91b2",
         (
             18,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "2b44435d594fd6fc95d1f5c7eead21124c6437b725deec4dfadcd53dd5b84128",
+        ): "5af8ea5fd95dcda61b94ad3d1fafa196bb76d9e971f7c637e49523750362ab85",
     }
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()

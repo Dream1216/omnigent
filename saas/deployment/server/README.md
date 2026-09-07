@@ -67,17 +67,18 @@ replaced in a release copy before server-side apply. The image reference is alwa
    `context=postmaster`, `source=configuration file`, and
    `pending_restart=false`, and `pg_prepared_xacts` is empty. Then provision
    every long-lived service login that this release will deploy. At a minimum
-   this means the exact fourteen-entry service-role manifest. Its fixed
+   this means the exact fifteen-entry service-role manifest. Its fixed
    service-to-base-role profile is `runtime -> omnigent_runtime_app`,
    `authenticator -> saas_authenticator`, `app -> saas_app`,
    `governance -> saas_governance`, `public_api -> saas_public_api`,
    `dispatcher -> saas_dispatcher`, `executor -> saas_executor`,
    `onboarding -> saas_onboarding`,
    `onboarding_status -> saas_onboarding_status`,
+   `platform_governance -> saas_platform_governance`,
    `secret_broker -> saas_secret_broker`, `preview_edge -> saas_preview_edge`,
    `preview_owner -> saas_preview_owner`,
    `registration -> saas_registration`, and
-   `runtime_provider_journal -> saas_runtime_provider_journal`; the fourteen unique login names are
+   `runtime_provider_journal -> saas_runtime_provider_journal`; the fifteen unique login names are
    release inputs. Each login must inherit exactly its one corresponding
    NOLOGIN base role with no creator/admin option edge, direct object grant,
    ownership, `SET ROLE` option, role setting, or bypass flag.
@@ -129,7 +130,7 @@ replaced in a release copy before server-side apply. The image reference is alwa
    receipt. Verify `status=pass`, `state:verified`, the exact
    `product_revision`, and the canonical service-role bindings SHA256, then
    provision it as the immutable `omnigent-saas-migration-receipt` Secret.
-   Adding or changing one of those fourteen service logins or memberships after this
+   Adding or changing one of those fifteen service logins or memberships after this
    point invalidates the manifest and security-catalog digests and requires a
    new verify-only receipt. The release evidence ledger must freeze the candidate
    receipt SHA256 and the managed-superuser evidence SHA256 together; the
@@ -144,7 +145,7 @@ replaced in a release copy before server-side apply. The image reference is alwa
    required by its fixed `pool_size=4,max_overflow=4` engine budget. Unlimited
    `-1`, disabled `0`, or any other connection limit is fail-closed. That machine
    capability is deliberately outside the
-   canonical exact-fourteen service-role binding manifest: adding any Runner
+   canonical exact-fifteen service-role binding manifest: adding any Runner
    machine identity to that manifest is invalid. The manifest references each DSN only through its own
    Kubernetes Secret and never embeds a login or URL. Also provision the
    Server artifact credential, a distinct immutable artifact credential
@@ -409,7 +410,7 @@ the exact durable readonly Worktree/checkpoint grant plus this static-only
 reader, not filesystem mode alone.
 
 These source and database contracts are necessary but are not rollout evidence.
-Production admission still requires the rendered fourteen-login binding receipt,
+Production admission still requires the rendered fifteen-login binding receipt,
 fresh PostgreSQL 18 four-authority migration plus managed-superuser cluster
 admission evidence, live cross-replica registration and disconnect probes,
 authenticated browser exchange/replay E2E, NetworkPolicy packet probes,
