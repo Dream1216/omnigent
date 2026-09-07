@@ -859,10 +859,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         fragment not in stage
         for stage in (builder_stage, host_stage, runtime_stage)
         for fragment in apt_reproducibility_contract
+    ) or any(
+        stage.count(fragment) != 2
+        for stage in (builder_stage, host_stage, runtime_stage)
+        for fragment in ("Acquire::Retries=10", "Acquire::http::Timeout=30")
     ):
         violations.append(
             "builder, host and server apt layers must use a fixed snapshot "
-            "and remove volatile state"
+            "with bounded fetch retries and remove volatile state"
         )
     host_cli_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
