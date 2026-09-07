@@ -638,24 +638,40 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
             "rm -f /var/cache/ldconfig/aux-cache",
             "true # volatile apt state retained",
             (
-                "builder, host and server apt layers must use a fixed snapshot and remove "
-                "volatile state"
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
+            ),
+        ),
+        (
+            "Acquire::Retries=10",
+            "Acquire::Retries=0",
+            (
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
+            ),
+        ),
+        (
+            "Acquire::http::Timeout=30",
+            "Acquire::http::Timeout=0",
+            (
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
             ),
         ),
         (
             "unexpected additional apt sources",
             "extra apt sources ignored",
             (
-                "builder, host and server apt layers must use a fixed snapshot and remove "
-                "volatile state"
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
             ),
         ),
         (
             "expected two Debian snapshot sources",
             "rolling Debian mirrors are allowed",
             (
-                "builder, host and server apt layers must use a fixed snapshot and remove "
-                "volatile state"
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
             ),
         ),
         (
