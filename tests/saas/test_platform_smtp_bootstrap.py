@@ -59,7 +59,9 @@ def test_platform_smtp_bootstrap_reads_stdin_and_emits_only_safe_evidence(
 
     def _load_database_url(_source, role: str):
         loaded_roles.append(role)
-        url = "postgresql+psycopg://next_beta_governance:redacted@example.invalid/omnigent"
+        url = (
+            "postgresql+psycopg://next_beta_platform_governance:redacted@example.invalid/omnigent"
+        )
         return url, sa.make_url(url), tmp_path / f"{role}-dsn"
 
     monkeypatch.setattr(
@@ -72,9 +74,9 @@ def test_platform_smtp_bootstrap_reads_stdin_and_emits_only_safe_evidence(
         "load_production_service_role_bindings",
         lambda _source: SimpleNamespace(
             by_service={
-                "governance": SimpleNamespace(
-                    login="next_beta_governance",
-                    base_role="saas_governance",
+                "platform_governance": SimpleNamespace(
+                    login="next_beta_platform_governance",
+                    base_role="saas_platform_governance",
                 )
             }
         ),
@@ -109,11 +111,11 @@ def test_platform_smtp_bootstrap_reads_stdin_and_emits_only_safe_evidence(
     assert result["status"] == "pass"
     assert result["governance_posture"] == "single_owner_risk_waiver"
     assert result["browser_staff_login_created"] is False
-    assert loaded_roles == ["governance"]
+    assert loaded_roles == ["platform_governance"]
     assert inspected_authorities == [
         {
-            "expected_login": "next_beta_governance",
-            "expected_role": "saas_governance",
+            "expected_login": "next_beta_platform_governance",
+            "expected_role": "saas_platform_governance",
         }
     ]
     assert "smtp password" not in encoded

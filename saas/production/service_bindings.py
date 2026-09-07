@@ -26,6 +26,7 @@ EXPECTED_PRODUCTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
         "executor": "saas_executor",
         "onboarding": "saas_onboarding",
         "onboarding_status": "saas_onboarding_status",
+        "platform_governance": "saas_platform_governance",
         "secret_broker": "saas_secret_broker",
         "preview_edge": "saas_preview_edge",
         "preview_owner": "saas_preview_owner",

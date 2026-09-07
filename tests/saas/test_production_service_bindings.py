@@ -32,7 +32,7 @@ def _write(path: Path, rendered: str, *, mode: int = 0o400) -> dict[str, str]:
     return {"OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE": str(path)}
 
 
-def test_loads_exact_fourteen_binding_canonical_profile(tmp_path: Path) -> None:
+def test_loads_exact_fifteen_binding_canonical_profile(tmp_path: Path) -> None:
     bindings = _bindings()
     rendered = render_production_service_role_bindings(tuple(reversed(bindings)))
     assert rendered == render_production_service_role_bindings(bindings)
@@ -40,7 +40,7 @@ def test_loads_exact_fourteen_binding_canonical_profile(tmp_path: Path) -> None:
         _write(tmp_path / "service-bindings.json", rendered)
     )
 
-    assert len(loaded.bindings) == 14
+    assert len(loaded.bindings) == 15
     assert loaded.login_for("runtime") == "prod_runtime"
     assert loaded.login_for("dispatcher") == "prod_dispatcher"
     assert loaded.login_for("executor") == "prod_executor"
