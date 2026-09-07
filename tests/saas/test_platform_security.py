@@ -10,12 +10,14 @@ from sqlalchemy.pool import StaticPool
 
 from saas.control_plane.db_models import GlobalUser, SaasBase
 from saas.control_plane.platform_models import (
+    PlatformAuthSessionRecord,
     PlatformRoleAssignmentRecord,
     PlatformStaffPrincipalRecord,
     PlatformTenantProjectionRecord,
     PlatformUserProjectionRecord,
 )
 from saas.control_plane.platform_security import (
+    InitialPlatformStaffIdentity,
     PlatformAuthorizationService,
     PlatformProjectionService,
     PlatformSecurityError,
@@ -29,6 +31,16 @@ from saas.control_plane.platform_security import (
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
 NOW = datetime(2026, 8, 7, 13, 0, tzinfo=timezone.utc)
+
+
+def _initial_identity(name: str) -> InitialPlatformStaffIdentity:
+    return InitialPlatformStaffIdentity(
+        identity_connection_ref=f"ssh-signed-owner-bootstrap:{name}",
+        issuer="urn:omnigent:staff-bootstrap:owner-approved",
+        subject=name,
+        display_name=f"Initial {name.title()}",
+        email_normalized=f"{name}@jxhh.com",
+    )
 
 
 @pytest.fixture
@@ -117,6 +129,84 @@ def _validate(sessions: PlatformSessionService, token: str):
         audience=AUDIENCE,
         now=NOW + timedelta(seconds=1),
     )
+
+
+def test_initial_staff_bootstrap_is_short_lived_two_party_and_exactly_once(
+    platform_control_plane,
+) -> None:
+    factory, authorization, _sessions, _projections = platform_control_plane
+    actor = authorization.bootstrap_initial_staff_pair(
+        operator=_initial_identity("operator"),
+        auditor=_initial_identity("auditor"),
+        approval_ref="owner-approved:smtp-bootstrap:2026-09-07",
+        reason="single Owner risk waiver; initial SMTP bootstrap only",
+        expires_at=NOW + timedelta(minutes=30),
+        now=NOW,
+    )
+
+    assert actor.authn_method == "ssh-signed-owner-bootstrap"
+    assert actor.roles == frozenset({"platform_operator"})
+    assert "platform.email_configuration.manage" in actor.permissions
+    with factory.begin() as db:
+        principals = db.scalars(
+            sa.select(PlatformStaffPrincipalRecord).order_by(PlatformStaffPrincipalRecord.subject)
+        ).all()
+        assignments = db.scalars(
+            sa.select(PlatformRoleAssignmentRecord).order_by(PlatformRoleAssignmentRecord.role)
+        ).all()
+        assert [principal.subject for principal in principals] == ["auditor", "operator"]
+        assert {assignment.role for assignment in assignments} == {
+            "platform_operator",
+            "platform_security_auditor",
+        }
+        assert all(
+            assignment.expires_at == (NOW + timedelta(minutes=30)).replace(tzinfo=None)
+            for assignment in assignments
+        )
+        by_role = {assignment.role: assignment for assignment in assignments}
+        assert by_role["platform_operator"].principal_id == actor.principal_id
+        assert (
+            by_role["platform_operator"].assigned_by_principal_id
+            == by_role["platform_security_auditor"].principal_id
+        )
+        assert (
+            by_role["platform_security_auditor"].assigned_by_principal_id
+            == by_role["platform_operator"].principal_id
+        )
+        assert db.scalar(sa.select(sa.func.count()).select_from(PlatformAuthSessionRecord)) == 0
+
+    with pytest.raises(PlatformSecurityError) as repeated:
+        authorization.bootstrap_initial_staff_pair(
+            operator=_initial_identity("operator-2"),
+            auditor=_initial_identity("auditor-2"),
+            approval_ref="owner-approved:smtp-bootstrap:repeated",
+            reason="must fail closed",
+            expires_at=NOW + timedelta(minutes=30),
+            now=NOW,
+        )
+    assert repeated.value.code == "platform_bootstrap_conflict"
+
+
+def test_initial_staff_bootstrap_rejects_one_party_and_long_lived_authority(
+    platform_control_plane,
+) -> None:
+    _factory, authorization, _sessions, _projections = platform_control_plane
+    operator = _initial_identity("operator")
+
+    for auditor, expires_at in (
+        (operator, NOW + timedelta(minutes=30)),
+        (_initial_identity("auditor"), NOW + timedelta(hours=1, seconds=1)),
+    ):
+        with pytest.raises(PlatformSecurityError) as invalid:
+            authorization.bootstrap_initial_staff_pair(
+                operator=operator,
+                auditor=auditor,
+                approval_ref="owner-approved:smtp-bootstrap:invalid",
+                reason="must fail closed",
+                expires_at=expires_at,
+                now=NOW,
+            )
+        assert invalid.value.code == "platform_bootstrap_invalid"
 
 
 def test_staff_realm_requires_dedicated_identity_phishing_resistant_mfa_and_origin(
