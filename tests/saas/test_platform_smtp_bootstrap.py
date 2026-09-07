@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import sqlalchemy as sa
@@ -54,17 +55,36 @@ def test_platform_smtp_bootstrap_reads_stdin_and_emits_only_safe_evidence(
         poolclass=StaticPool,
     )
     SaasBase.metadata.create_all(engine)
+    loaded_roles: list[str] = []
+
+    def _load_database_url(_source, role: str):
+        loaded_roles.append(role)
+        url = "postgresql+psycopg://next_beta_governance:redacted@example.invalid/omnigent"
+        return url, sa.make_url(url), tmp_path / f"{role}-dsn"
+
     monkeypatch.setattr(
         platform_smtp_bootstrap,
         "load_production_database_url_file",
-        lambda _source, _role: ("postgresql+psycopg://redacted", None, tmp_path / "dsn"),
+        _load_database_url,
     )
     monkeypatch.setattr(
         platform_smtp_bootstrap,
-        "parse_production_postgresql_url",
-        lambda *_args, **_kwargs: object(),
+        "load_production_service_role_bindings",
+        lambda _source: SimpleNamespace(
+            by_service={
+                "governance": SimpleNamespace(
+                    login="next_beta_governance",
+                    base_role="saas_governance",
+                )
+            }
+        ),
     )
-    monkeypatch.setattr(platform_smtp_bootstrap, "_inspect_authority", lambda *_a, **_k: None)
+    inspected_authorities: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        platform_smtp_bootstrap,
+        "_inspect_service_login",
+        lambda _engine, **facts: inspected_authorities.append(facts),
+    )
     _Sender.deliveries.clear()
 
     result = platform_smtp_bootstrap.run_platform_smtp_bootstrap(
@@ -89,6 +109,13 @@ def test_platform_smtp_bootstrap_reads_stdin_and_emits_only_safe_evidence(
     assert result["status"] == "pass"
     assert result["governance_posture"] == "single_owner_risk_waiver"
     assert result["browser_staff_login_created"] is False
+    assert loaded_roles == ["governance"]
+    assert inspected_authorities == [
+        {
+            "expected_login": "next_beta_governance",
+            "expected_role": "saas_governance",
+        }
+    ]
     assert "smtp password" not in encoded
     receipts = cast(list[dict[str, object]], result["receipts"])
     assert [row["action"] for row in receipts] == [

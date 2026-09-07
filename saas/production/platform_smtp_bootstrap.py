@@ -1,11 +1,12 @@
 """One-shot, fail-closed bootstrap for the first governed Platform SMTP record.
 
 The SMTP password is accepted only on stdin and exists only in process memory.
-The database authority and OpenBao token are loaded from owner-only files.  The
-ceremony creates two distinct, short-lived Staff identities with cross-assigned
-roles and records the explicit external approval reference.  It is available
-only while Staff, SMTP configuration, SMTP receipts, and Staff sessions are all
-at zero; it never creates a browser session or weakens the Staff IdP contract.
+The exact platform-governance service login and OpenBao token are loaded from
+owner-only files.  The ceremony creates two distinct, short-lived Staff
+identities with cross-assigned roles and records the explicit external approval
+reference.  It is available only while Staff, SMTP configuration, SMTP
+receipts, and Staff sessions are all at zero; it never creates a browser session
+or weakens the Staff IdP contract.
 """
 
 from __future__ import annotations
@@ -40,12 +41,15 @@ from saas.control_plane.platform_security import (
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import (
     PostgreSqlMigrationError,
-    _inspect_authority,
-    parse_production_postgresql_url,
+    _inspect_service_login,
 )
 from saas.production.server_config import (
     ProductionServerConfigError,
     load_production_database_url_file,
+)
+from saas.production.service_bindings import (
+    ProductionServiceRoleBindingsError,
+    load_production_service_role_bindings,
 )
 
 _MAX_PASSWORD_BYTES = 16 * 1024
@@ -143,15 +147,16 @@ def run_platform_smtp_bootstrap(
     if public_origin != "https://next.jxhh.com":
         raise PlatformSmtpBootstrapError("public_origin_not_admitted")
     try:
-        database_url, _parsed, _path = load_production_database_url_file(
-            environ, "principal_operator"
-        )
-        authority = parse_production_postgresql_url(
-            database_url,
-            kind="principal_operator",
-            require_tls=True,
-        )
-    except (ProductionServerConfigError, PostgreSqlMigrationError):
+        database_url, parsed, _path = load_production_database_url_file(environ, "governance")
+        bindings = load_production_service_role_bindings(environ)
+        governance = bindings.by_service["governance"]
+        if parsed.username != governance.login or governance.base_role != "saas_governance":
+            raise PlatformSmtpBootstrapError("database_authority_invalid")
+    except (
+        KeyError,
+        ProductionServerConfigError,
+        ProductionServiceRoleBindingsError,
+    ):
         raise PlatformSmtpBootstrapError("database_authority_invalid") from None
 
     password, mutable_password = _read_password(password_stream)
@@ -159,7 +164,11 @@ def run_platform_smtp_bootstrap(
     try:
         engine = engine_factory(database_url)
         try:
-            _inspect_authority(engine, authority, require_tls=True)
+            _inspect_service_login(
+                engine,
+                expected_login=governance.login,
+                expected_role=governance.base_role,
+            )
         except PostgreSqlMigrationError:
             raise PlatformSmtpBootstrapError("database_authority_invalid") from None
         sessions = _session_factory(engine)
