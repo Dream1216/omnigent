@@ -295,11 +295,10 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
     assert version_error.value.code == "public_schema_inventory_drifted"
 
 
-def test_source_pinned_catalog_digests_do_not_include_service_login_bindings() -> None:
-    # The source security catalog binds schema ownership, ACLs, policies, and
-    # runtime RLS.  Service LOGIN -> capability-role membership is verified by
-    # _verify_capability_principals, outside this digest.  Adding the fourteenth
-    # runtime-provider login therefore must not rebind clean-replay anchors.
+def test_source_pinned_catalog_digests_cover_canonical_fourteen_role_replays() -> None:
+    # These anchors come from clean PostgreSQL 16.14 and 18.6 replays with the
+    # complete fourteen-login profile.  P0S12 sorts row collections only after
+    # replacing deployment-specific role names with stable aliases.
     assert len(EXPECTED_PRODUCTION_SERVICE_ROLES) == 14
     assert EXPECTED_PRODUCTION_SERVICE_ROLES["runtime_provider_journal"] == (
         "saas_runtime_provider_journal"
@@ -309,16 +308,78 @@ def test_source_pinned_catalog_digests_do_not_include_service_login_bindings() -
             16,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "1277381bec5b123d070385e4c4c4b742c22dd5394611eff124a94731363ac779",
+        ): "dda56c78a492dd561c00c4df6603fee305e067ef137f5ca8206911722168208d",
         (
             18,
             "ga1b2c3d4e5f",
             "p0s000000012",
-        ): "eb66579e9d2db6dcfbae3c358221efc8fe68f5662405b3d0aefec0e77bde1335",
+        ): "2b44435d594fd6fc95d1f5c7eead21124c6437b725deec4dfadcd53dd5b84128",
     }
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= expected.items()
+
+
+def test_source_security_catalog_sorts_rows_after_role_aliasing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (18, "ga1b2c3d4e5f", "p0s000000012")
+    deployed = {
+        "relation_acls": [
+            ["saas_runs", "next_beta_owner", "SELECT"],
+            ["saas_runs", "saas_app", "SELECT"],
+        ]
+    }
+    clean_replay = {
+        "relation_acls": [
+            ["saas_runs", "saas_app", "SELECT"],
+            ["saas_runs", "replay_owner", "SELECT"],
+        ]
+    }
+    aliases = {
+        "next_beta_owner": "authority:saas_owner",
+        "replay_owner": "authority:saas_owner",
+    }
+    normalized = migration._normalize_source_catalog(deployed, role_aliases=aliases)
+    canonical = migration._sort_normalized_source_catalog_rows(normalized)
+    digest = migration.hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: digest})
+
+    assert migration._verify_source_security_catalog_digest(
+        deployed, key=key, role_aliases=aliases
+    ) == migration._verify_source_security_catalog_digest(
+        clean_replay, key=key, role_aliases=aliases
+    )
+
+
+def test_p0s11_source_security_catalog_keeps_legacy_row_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (16, "ga1b2c3d4e5f", "p0s000000011")
+    catalog = {"relation_acls": [["b", "SELECT"], ["a", "SELECT"]]}
+    normalized = migration._normalize_source_catalog(catalog, role_aliases={})
+    digest = migration.hashlib.sha256(
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: digest})
+
+    assert (
+        migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+        )
+        == digest
+    )
+    with pytest.raises(migration.PostgreSqlMigrationError) as reordered:
+        migration._verify_source_security_catalog_digest(
+            {"relation_acls": list(reversed(catalog["relation_acls"]))},
+            key=key,
+            role_aliases={},
+        )
+    assert reordered.value.code == "source_security_catalog_drifted"
 
 
 def test_source_security_catalog_normalizes_roles_and_rejects_acl_drift(

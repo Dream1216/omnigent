@@ -239,13 +239,14 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         16,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "1277381bec5b123d070385e4c4c4b742c22dd5394611eff124a94731363ac779",
+    ): "dda56c78a492dd561c00c4df6603fee305e067ef137f5ca8206911722168208d",
     (
         18,
         "ga1b2c3d4e5f",
         "p0s000000012",
-    ): "eb66579e9d2db6dcfbae3c358221efc8fe68f5662405b3d0aefec0e77bde1335",
+    ): "2b44435d594fd6fc95d1f5c7eead21124c6437b725deec4dfadcd53dd5b84128",
 }
+_LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
     "saas_app",
     "saas_authenticator",
@@ -1827,6 +1828,27 @@ def _normalize_source_catalog(value: object, *, role_aliases: Mapping[str, str])
     return value
 
 
+def _sort_normalized_source_catalog_rows(value: object) -> object:
+    """Sort catalog row collections after deployment-specific role aliasing.
+
+    PostgreSQL queries order rows by their concrete role names.  Those names
+    are replaced by stable aliases above, so the original database order can
+    no longer be part of the source digest.  Only lists whose elements are all
+    rows are sorted; column order inside each row remains authoritative.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _sort_normalized_source_catalog_rows(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        items = [_sort_normalized_source_catalog_rows(item) for item in value]
+        if items and all(isinstance(item, list) for item in items):
+            items.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        return items
+    return value
+
+
 def _verify_source_security_catalog_digest(
     catalog: Mapping[str, object],
     *,
@@ -1836,6 +1858,8 @@ def _verify_source_security_catalog_digest(
     """Reject ACL/policy/role drift against a clean-replay source anchor."""
 
     normalized = _normalize_source_catalog(catalog, role_aliases=role_aliases)
+    if key[2] not in _LEGACY_ORDERED_SOURCE_SECURITY_HEADS:
+        normalized = _sort_normalized_source_catalog_rows(normalized)
     digest = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
