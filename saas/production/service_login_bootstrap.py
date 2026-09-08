@@ -1,4 +1,4 @@
-"""Two-authority bootstrap for the Platform-governance service login."""
+"""Fail-closed service-login bootstrap and managed posture convergence."""
 
 from __future__ import annotations
 
@@ -24,6 +24,9 @@ _MAX_PASSWORD_BYTES = 16 * 1024
 _ROLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _SERVICE = "platform_governance"
 _BASE_ROLE = "saas_platform_governance"
+_RUNTIME_PROVIDER_JOURNAL_SERVICE = "runtime_provider_journal"
+_RUNTIME_PROVIDER_JOURNAL_BASE_ROLE = "saas_runtime_provider_journal"
+_RUNTIME_PROVIDER_JOURNAL_ROLE_CONFIG = ["search_path=public"]
 _PRINCIPAL_OPERATOR_LOGIN = "OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN"
 _EXPECTED_LOGIN_FLAGS = (
     True,
@@ -88,11 +91,20 @@ def _read_password(stream: BinaryIO) -> tuple[str, bytearray]:
 
 
 def _binding(environ: Mapping[str, str]) -> ProductionServiceRoleBinding:
+    return _binding_for_service(environ, service=_SERVICE, base_role=_BASE_ROLE)
+
+
+def _binding_for_service(
+    environ: Mapping[str, str],
+    *,
+    service: str,
+    base_role: str,
+) -> ProductionServiceRoleBinding:
     try:
-        binding = load_production_service_role_bindings(environ).by_service[_SERVICE]
+        binding = load_production_service_role_bindings(environ).by_service[service]
     except (KeyError, ProductionServiceRoleBindingsError):
         raise ProductionServiceLoginBootstrapError("authority_invalid") from None
-    if binding.base_role != _BASE_ROLE:
+    if binding.base_role != base_role:
         raise ProductionServiceLoginBootstrapError("authority_invalid")
     return binding
 
@@ -206,6 +218,16 @@ def _set_login_password(connection: Connection, *, login: str, password: str) ->
                 sql.Identifier(login),
                 sql.Literal(password),
             )
+        )
+
+
+def _set_login_search_path(connection: Connection, *, login: str) -> None:
+    driver = connection.connection.driver_connection
+    if driver is None:
+        raise ProductionServiceLoginBootstrapError("bootstrap_failed")
+    with driver.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("ALTER ROLE {} SET search_path = public").format(sql.Identifier(login))
         )
 
 
@@ -446,8 +468,96 @@ def bind_platform_governance_service_login(
     }
 
 
+def converge_runtime_provider_journal_login_posture(
+    *,
+    environ: Mapping[str, str],
+    engine_factory: Callable[[str], Engine] = lambda url: sa.create_engine(
+        url,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+    ),
+) -> dict[str, object]:
+    """Pin the journal LOGIN search path through the managed superuser only."""
+
+    binding = _binding_for_service(
+        environ,
+        service=_RUNTIME_PROVIDER_JOURNAL_SERVICE,
+        base_role=_RUNTIME_PROVIDER_JOURNAL_BASE_ROLE,
+    )
+    superuser_url, superuser_authority = _database_authority(environ, "superuser")
+    principal_operator = environ.get(_PRINCIPAL_OPERATOR_LOGIN, "")
+    if (
+        principal_operator != principal_operator.strip()
+        or _ROLE_NAME.fullmatch(principal_operator) is None
+    ):
+        raise ProductionServiceLoginBootstrapError("authority_invalid")
+
+    expected_memberships = [
+        (
+            _RUNTIME_PROVIDER_JOURNAL_BASE_ROLE,
+            False,
+            True,
+            False,
+            principal_operator,
+        )
+    ]
+    bare_login_flags = _EXPECTED_LOGIN_FLAGS
+    configured_login_flags = (*_EXPECTED_LOGIN_FLAGS[:-1], _RUNTIME_PROVIDER_JOURNAL_ROLE_CONFIG)
+    engine: Engine | None = None
+    changed = False
+    try:
+        engine = _engine(superuser_url, engine_factory)
+        with engine.begin() as connection:
+            authority_login = str(superuser_authority.username)
+            if (
+                _identity(connection)
+                != (superuser_authority.username, superuser_authority.username)
+                or _bootstrap_name(connection) != superuser_authority.username
+                or not _superuser_flags_are_safe(_role_flags(connection, authority_login))
+                or _role_flags(connection, principal_operator) != _EXPECTED_OPERATOR_FLAGS
+                or _role_flags(connection, binding.base_role) != _EXPECTED_BASE_FLAGS
+                or _incoming_membership_count(connection, binding.login)
+                or _memberships(connection, binding.login) != expected_memberships
+            ):
+                raise ProductionServiceLoginBootstrapError("authority_invalid")
+
+            login_flags = _role_flags(connection, binding.login)
+            if login_flags == bare_login_flags:
+                _set_login_search_path(connection, login=binding.login)
+                changed = True
+            elif login_flags != configured_login_flags:
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+
+            if (
+                _role_flags(connection, binding.login) != configured_login_flags
+                or _incoming_membership_count(connection, binding.login)
+                or _memberships(connection, binding.login) != expected_memberships
+            ):
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+    except ProductionServiceLoginBootstrapError:
+        raise
+    except (sa.exc.SQLAlchemyError, AttributeError, TypeError, ValueError):
+        raise ProductionServiceLoginBootstrapError("bootstrap_failed") from None
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+    return {
+        "schema_version": 1,
+        "status": "pass",
+        "production_authority": False,
+        "stage": "runtime_journal_login_posture_converged",
+        "service": _RUNTIME_PROVIDER_JOURNAL_SERVICE,
+        "login": binding.login,
+        "base_role": binding.base_role,
+        "changed": changed,
+        "role_config": list(_RUNTIME_PROVIDER_JOURNAL_ROLE_CONFIG),
+    }
+
+
 __all__ = [
     "ProductionServiceLoginBootstrapError",
     "bind_platform_governance_service_login",
+    "converge_runtime_provider_journal_login_posture",
     "prepare_platform_governance_service_login",
 ]

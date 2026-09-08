@@ -1,4 +1,4 @@
-"""Prepare or bind the dedicated Platform-governance PostgreSQL login."""
+"""Bootstrap a service login or converge the journal login posture."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 from saas.production.service_login_bootstrap import (
     ProductionServiceLoginBootstrapError,
     bind_platform_governance_service_login,
+    converge_runtime_provider_journal_login_posture,
     prepare_platform_governance_service_login,
 )
 
@@ -44,6 +45,10 @@ def main() -> int:
     prepare = commands.add_parser("prepare", help="create or rotate the bare login")
     prepare.add_argument("--password-file", required=True)
     commands.add_parser("bind", help="grant the sole base-role membership")
+    commands.add_parser(
+        "converge-runtime-journal-posture",
+        help="pin the journal login search path through managed superuser authority",
+    )
     args = parser.parse_args()
     try:
         if args.command == "prepare":
@@ -53,8 +58,10 @@ def main() -> int:
                     environ=os.environ,
                     password_stream=stream,
                 )
-        else:
+        elif args.command == "bind":
             receipt = bind_platform_governance_service_login(environ=os.environ)
+        else:
+            receipt = converge_runtime_provider_journal_login_posture(environ=os.environ)
     except (OSError, ProductionServiceLoginBootstrapError) as error:
         code = getattr(error, "code", "password_file_unavailable")
         sys.stderr.write(f"Platform-governance service-login bootstrap rejected: {code}\n")
