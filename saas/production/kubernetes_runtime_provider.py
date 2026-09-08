@@ -705,9 +705,16 @@ class KubernetesRuntimeProviderClient:
             attributes: dict[str, object] = {"runtime_resource_id": resource_id}
         else:
             partition = cast(Mapping[str, object], target)
+            runtime_partition_id = _target_uuid(partition, "runtime_partition_id")
             attributes = {
                 "runtime_version": self._config.runtime_version,
-                "physical_partition_key": resource_id,
+                # The ConfigMap URI is the Provider resource locator recorded
+                # on the signed receipt.  The permanent Omnigent adapter,
+                # however, requires a canonical positive integer workspace
+                # key.  Derive that key deterministically from the immutable
+                # Runtime Partition UUID; the database uniqueness constraint
+                # remains the collision fence.
+                "physical_partition_key": str(int(runtime_partition_id.hex[:12], 16) or 1),
                 "placement_generation": self._config.placement_generation,
                 "source_revision": self._config.source_revision,
                 "adapter_contract_version": self._config.adapter_contract_version,

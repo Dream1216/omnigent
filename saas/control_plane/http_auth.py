@@ -594,11 +594,26 @@ class SaasAuthContextMiddleware:
         elif tenant_raw and space_raw:
             tenant_id = UUID(tenant_raw)
             space_id = UUID(space_raw)
-        else:
+        elif tenant_raw or space_raw:
             raise LifecycleError(
                 "runtime_context_required",
-                "a Context Snapshot or Tenant and Space selectors are required",
+                "Tenant and Space selectors must be supplied together",
             )
+        else:
+            # The upstream OSS web client has no Tenant/Space selector yet and
+            # browser WebSockets cannot attach arbitrary selector headers.  A
+            # server-derived fallback is safe only while the authenticated
+            # actor has exactly one active logical scope.  Zero or multiple
+            # scopes remain fail-closed so this compatibility seam can never
+            # guess which organization a request should enter.
+            available = self._resolver.list_available_scopes(actor_id=session.user_id)
+            if len(available) != 1:
+                raise LifecycleError(
+                    "runtime_context_required",
+                    "a Context Snapshot or unambiguous Tenant and Space selectors are required",
+                )
+            tenant_id = available[0].tenant_id
+            space_id = available[0].space_id
         request_context = self._resolver.resolve_request_context(
             actor_id=session.user_id,
             tenant_id=tenant_id,

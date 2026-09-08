@@ -5,9 +5,10 @@ from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
+from starlette.websockets import WebSocketDisconnect
 
 from saas.compatibility import current_runtime_context
 from saas.control_plane import (
@@ -346,6 +347,13 @@ def _build_fastapi_app(
             "tenant_id": str(runtime.tenant_id),
         }
 
+    @app.websocket("/v1/ws")
+    async def runtime_websocket(websocket: WebSocket) -> None:
+        runtime = current_runtime_context()
+        await websocket.accept()
+        await websocket.send_json({"workspace_id": runtime.physical_workspace_id})
+        await websocket.close()
+
     integration.install_middleware(app)
     return app, {
         "tenant_id": str(tenant_id),
@@ -588,8 +596,11 @@ def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
     assert snapshot_bound.status_code == 200
     assert snapshot_bound.json()["workspace_id"] == 41
 
-    missing_scope = client.get("/v1/protected")
-    assert missing_scope.status_code == 403
+    unique_scope = client.get("/v1/protected")
+    assert unique_scope.status_code == 200
+    assert unique_scope.json()["workspace_id"] == 41
+    with client.websocket_connect("/v1/ws", headers={"Origin": "http://testserver"}) as websocket:
+        assert websocket.receive_json() == {"workspace_id": 41}
     missing_csrf = client.post(
         "/v1/protected",
         headers={
@@ -615,6 +626,63 @@ def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
         "workspace_id": 41,
         "tenant_id": scope["tenant_id"],
     }
+
+
+def test_cookie_auth_without_selectors_fails_closed_for_multiple_active_scopes() -> None:
+    app, scope = _build_fastapi_app()
+    client = TestClient(app)
+    _login(client)
+    factory = app.state.saas_test_sessions
+    second_space_id = uuid4()
+    with factory.begin() as db:
+        db.add(
+            Space(
+                id=second_space_id,
+                tenant_id=UUID(scope["tenant_id"]),
+                slug="operations",
+                name="Operations",
+                status="active",
+            )
+        )
+        db.flush()
+        db.add(
+            SpaceMembership(
+                tenant_id=UUID(scope["tenant_id"]),
+                space_id=second_space_id,
+                user_id=UUID(scope["user_id"]),
+                role="owner",
+                status="active",
+                version=1,
+            )
+        )
+
+    response = client.get("/v1/protected")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "runtime_context_required"
+    with pytest.raises(WebSocketDisconnect) as websocket_error:
+        with client.websocket_connect("/v1/ws", headers={"Origin": "http://testserver"}):
+            pass
+    assert websocket_error.value.code == 1008
+    assert websocket_error.value.reason == "runtime_context_required"
+
+
+def test_cookie_auth_fails_closed_for_partial_runtime_selectors() -> None:
+    client, scope = _build_app()
+    _login(client)
+
+    tenant_only = client.get(
+        "/v1/protected",
+        headers={"X-SaaS-Tenant-Id": scope["tenant_id"]},
+    )
+    assert tenant_only.status_code == 403
+    assert tenant_only.json()["error"]["code"] == "runtime_context_required"
+
+    space_only = client.get(
+        "/v1/protected",
+        headers={"X-SaaS-Space-Id": scope["space_id"]},
+    )
+    assert space_only.status_code == 403
+    assert space_only.json()["error"]["code"] == "runtime_context_required"
 
 
 def test_identity_revoke_and_password_rotation_clear_revoked_cookie() -> None:

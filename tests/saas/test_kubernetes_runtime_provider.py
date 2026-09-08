@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -298,6 +298,12 @@ def test_partition_create_replay_and_conflict_are_deterministic(tmp_path: Path) 
     created = client.execute(operation, credential)
     assert created.receipt.outcome is RuntimeProviderOutcome.APPLIED
     assert created.attributes["source_revision"] == "3" * 40
+    partition_id = UUID(
+        str(cast(Mapping[str, object], json.loads(operation.target_json))["runtime_partition_id"])
+    )
+    assert created.attributes["physical_partition_key"] == str(int(partition_id.hex[:12], 16) or 1)
+    assert created.receipt.provider_resource_id is not None
+    assert created.receipt.provider_resource_id.startswith("k8s://")
     assert signer.verify_signature(
         created.receipt.unsigned_payload(), created.receipt.signature_hex
     )
