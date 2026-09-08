@@ -59,6 +59,8 @@ from saas.production.service_bindings import (
 )
 
 _CONFIG_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_CONFIG_FILE"
+_PRODUCT_REVISION_ENV = "OMNIGENT_SAAS_PRODUCT_REVISION"
+_UPSTREAM_REVISION_ENV = "OMNIGENT_SAAS_UPSTREAM_REVISION"
 _JOURNAL_DSN_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_JOURNAL_DATABASE_URL_FILE"
 _KUBERNETES_TOKEN_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_SERVICE_ACCOUNT_TOKEN_FILE"
 _KUBERNETES_CA_ENV = "OMNIGENT_SAAS_RUNTIME_PROVIDER_KUBERNETES_CA_FILE"
@@ -394,7 +396,9 @@ def load_kubernetes_runtime_provider_config(
     return config
 
 
-def _verify_installed_lineage(config: KubernetesRuntimeProviderConfig) -> None:
+def _verify_installed_lineage(
+    config: KubernetesRuntimeProviderConfig, *, product_revision: str
+) -> None:
     try:
         from omnigent import _build_info
         from omnigent.version import VERSION
@@ -405,13 +409,30 @@ def _verify_installed_lineage(config: KubernetesRuntimeProviderConfig) -> None:
             "Runtime Provider build lineage is unavailable"
         ) from None
     if (
-        not isinstance(installed_revision, str)
-        or not hmac.compare_digest(installed_revision, config.source_revision)
+        _LOWER_HEX_40.fullmatch(product_revision) is None
+        or not isinstance(installed_revision, str)
+        or not hmac.compare_digest(installed_revision, product_revision)
         or not hmac.compare_digest(VERSION, config.runtime_version)
     ):
         raise KubernetesRuntimeProviderConfigError(
             "Runtime Provider configuration does not match the installed build"
         )
+
+
+def _verify_release_lineage(
+    config: KubernetesRuntimeProviderConfig, source: Mapping[str, str]
+) -> None:
+    """Keep downstream image lineage distinct from official runtime source lineage."""
+
+    product_revision = source.get(_PRODUCT_REVISION_ENV, "")
+    upstream_revision = source.get(_UPSTREAM_REVISION_ENV, "")
+    if _LOWER_HEX_40.fullmatch(upstream_revision) is None or not hmac.compare_digest(
+        config.source_revision, upstream_revision
+    ):
+        raise KubernetesRuntimeProviderConfigError(
+            "Runtime Provider source revision does not match the reviewed upstream revision"
+        )
+    _verify_installed_lineage(config, product_revision=product_revision)
 
 
 class ProjectedServiceAccountCredentialAuthority:
@@ -705,9 +726,16 @@ class KubernetesRuntimeProviderClient:
             attributes: dict[str, object] = {"runtime_resource_id": resource_id}
         else:
             partition = cast(Mapping[str, object], target)
+            runtime_partition_id = _target_uuid(partition, "runtime_partition_id")
             attributes = {
                 "runtime_version": self._config.runtime_version,
-                "physical_partition_key": resource_id,
+                # The ConfigMap URI is the Provider resource locator recorded
+                # on the signed receipt.  The permanent Omnigent adapter,
+                # however, requires a canonical positive integer workspace
+                # key.  Derive that key deterministically from the immutable
+                # Runtime Partition UUID; the database uniqueness constraint
+                # remains the collision fence.
+                "physical_partition_key": str(int(runtime_partition_id.hex[:12], 16) or 1),
                 "placement_generation": self._config.placement_generation,
                 "source_revision": self._config.source_revision,
                 "adapter_contract_version": self._config.adapter_contract_version,
@@ -871,7 +899,7 @@ def build_kubernetes_runtime_provider() -> ProductionRuntimePartitionAdapter:
     source = os.environ
     config = load_kubernetes_runtime_provider_config(source)
     _verify_runtime_provider_journal_binding(source, journal_login=config.journal_login)
-    _verify_installed_lineage(config)
+    _verify_release_lineage(config, source)
     token_path, _token = _secret_text(source, _KUBERNETES_TOKEN_ENV)
     kubernetes_ca, _ = _owner_file(source, _KUBERNETES_CA_ENV, maximum_bytes=_MAX_CA_BYTES)
     openbao_token, _secret = _secret_text(source, _OPENBAO_TOKEN_ENV)
