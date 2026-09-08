@@ -1164,6 +1164,7 @@ class SelfServiceOnboardingService:
             self._registration_context(
                 db,
                 registration_id=registration_id,
+                token_hash=token_hash,
                 email_hash=email_hash,
                 idempotency_key=scoped_key,
             )
@@ -1214,6 +1215,8 @@ class SelfServiceOnboardingService:
             record.expires_at = public_expiry
             record.version += 1
             record.updated_at = attempted_at
+            # The challenge INSERT policy reads the persisted generation.
+            db.flush()
             challenge = EmailVerificationChallengeRecord(
                 id=uuid4(),
                 registration_id=record.id,
