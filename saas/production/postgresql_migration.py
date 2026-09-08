@@ -66,6 +66,8 @@ _ALLOWED_QUERY_KEYS = frozenset(
 )
 _LOCK_NAME = "omnigent-saas-production-postgresql-migration-v1"
 _RUNTIME_ROLE = "omnigent_runtime_app"
+_RUNTIME_PROVIDER_JOURNAL_SERVICE = "runtime_provider_journal"
+_RUNTIME_PROVIDER_JOURNAL_SEARCH_PATH = ("search_path=public",)
 _SERVER_SERVICE_ROLES = {
     "runtime": _RUNTIME_ROLE,
     "authenticator": "saas_authenticator",
@@ -790,18 +792,26 @@ def _verify_service_principal_graph(
         ),
         {"logins": service_logins},
     ).all()
-    expected_login_flags = (True, False, False, False, False, False, True, -1, None)
+    journal_login = bindings.by_service[_RUNTIME_PROVIDER_JOURNAL_SERVICE].login
     if len(login_rows) != len(service_logins) or any(
-        tuple(row[1:]) != expected_login_flags for row in login_rows
+        not _service_login_flags_are_safe(
+            tuple(row),
+            journal_login=journal_login,
+            require_complete=require_complete,
+        )
+        for row in login_rows
     ):
         raise PostgreSqlMigrationError("service_login_projection_failed", "principals")
 
     direct_authority = connection.execute(
         sa.text(
-            "WITH service_login AS (SELECT oid FROM pg_roles WHERE rolname = ANY(:logins)), "
+            "WITH service_login AS (SELECT oid, rolname FROM pg_roles "
+            "WHERE rolname = ANY(:logins)), "
             "authority AS ("
             "SELECT 1 FROM pg_db_role_setting object JOIN service_login login "
-            "ON object.setrole = login.oid UNION ALL "
+            "ON object.setrole = login.oid WHERE NOT ("
+            "login.rolname = :journal_login AND object.setdatabase = 0 AND "
+            "object.setconfig = ARRAY['search_path=public']::text[]) UNION ALL "
             "SELECT 1 FROM pg_database object JOIN service_login login "
             "ON object.datdba = login.oid UNION ALL "
             "SELECT 1 FROM pg_namespace object JOIN service_login login "
@@ -837,7 +847,7 @@ def _verify_service_principal_graph(
             "aclexplode(object.defaclacl) acl JOIN service_login login "
             "ON acl.grantee = login.oid) SELECT count(*) FROM authority"
         ),
-        {"logins": service_logins},
+        {"logins": service_logins, "journal_login": journal_login},
     ).scalar_one()
     if direct_authority:
         raise PostgreSqlMigrationError("service_login_direct_authority", "principals")
@@ -960,6 +970,31 @@ def _role_graph_projection_is_safe(
     """Allow a clean/bootstrap subset preflight, but require exact terminal state."""
 
     return observed.issubset(expected) and (not require_complete or observed == expected)
+
+
+def _service_login_flags_are_safe(
+    row: tuple[object, ...],
+    *,
+    journal_login: str,
+    require_complete: bool,
+) -> bool:
+    """Admit only the journal LOGIN's exact, non-overridable search path."""
+
+    if len(row) != 10:
+        return False
+    login = str(row[0])
+    common_flags = tuple(row[1:9])
+    role_config = row[9]
+    if common_flags != (True, False, False, False, False, False, True, -1):
+        return False
+    if login != journal_login:
+        return role_config is None
+    if role_config is None:
+        return not require_complete
+    if not isinstance(role_config, (list, tuple)):
+        return False
+    normalized = tuple(str(value) for value in role_config)
+    return normalized == _RUNTIME_PROVIDER_JOURNAL_SEARCH_PATH
 
 
 def _verify_capability_principals(

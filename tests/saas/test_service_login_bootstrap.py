@@ -46,9 +46,169 @@ def _binding() -> SimpleNamespace:
             "platform_governance": SimpleNamespace(
                 login="platform_governance_login",
                 base_role="saas_platform_governance",
-            )
+            ),
+            "runtime_provider_journal": SimpleNamespace(
+                login="runtime_provider_journal_login",
+                base_role="saas_runtime_provider_journal",
+            ),
         }
     )
+
+
+def test_converge_runtime_journal_login_posture_as_superuser(monkeypatch) -> None:
+    engine = _Engine(("bootstrap", "bootstrap"))
+    configured = False
+    memberships = [
+        (
+            "saas_runtime_provider_journal",
+            False,
+            True,
+            False,
+            "principal_operator",
+        )
+    ]
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent",
+            sa.make_url("postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent"),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_service_role_bindings",
+        lambda _source: _binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+
+    def role_flags(_connection, role: str):
+        if role == "bootstrap":
+            return (True, True, True, True, True, True, True, -1, None)
+        if role == "principal_operator":
+            return (True, False, False, True, False, False, True, -1, None)
+        if role == "saas_runtime_provider_journal":
+            return (False, False, False, False, False, False, True, -1, None)
+        if role == "runtime_provider_journal_login":
+            config = ["search_path=public"] if configured else None
+            return (True, False, False, False, False, False, True, -1, config)
+        raise AssertionError(role)
+
+    def set_search_path(_connection, *, login: str) -> None:
+        nonlocal configured
+        assert login == "runtime_provider_journal_login"
+        configured = True
+
+    monkeypatch.setattr(service_login_bootstrap, "_role_flags", role_flags)
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: (
+            list(memberships) if login == "runtime_provider_journal_login" else []
+        ),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+    monkeypatch.setattr(service_login_bootstrap, "_set_login_search_path", set_search_path)
+
+    result = service_login_bootstrap.converge_runtime_provider_journal_login_posture(
+        environ={"OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN": "principal_operator"},
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result == {
+        "schema_version": 1,
+        "status": "pass",
+        "production_authority": False,
+        "stage": "runtime_journal_login_posture_converged",
+        "service": "runtime_provider_journal",
+        "login": "runtime_provider_journal_login",
+        "base_role": "saas_runtime_provider_journal",
+        "changed": True,
+        "role_config": ["search_path=public"],
+    }
+    assert configured is True
+    assert engine.disposed is True
+
+
+def test_converge_runtime_journal_login_posture_is_idempotent(monkeypatch) -> None:
+    engine = _Engine(("bootstrap", "bootstrap"))
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent",
+            sa.make_url("postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent"),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_service_role_bindings",
+        lambda _source: _binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_role_flags",
+        lambda _connection, role: {
+            "bootstrap": (True, True, True, True, True, True, True, -1, None),
+            "principal_operator": (True, False, False, True, False, False, True, -1, None),
+            "saas_runtime_provider_journal": (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                None,
+            ),
+            "runtime_provider_journal_login": (
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                ["search_path=public"],
+            ),
+        }[role],
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: (
+            [
+                (
+                    "saas_runtime_provider_journal",
+                    False,
+                    True,
+                    False,
+                    "principal_operator",
+                )
+            ]
+            if login == "runtime_provider_journal_login"
+            else []
+        ),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_set_login_search_path",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected mutation")),
+    )
+
+    result = service_login_bootstrap.converge_runtime_provider_journal_login_posture(
+        environ={"OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN": "principal_operator"},
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result["changed"] is False
+    assert result["role_config"] == ["search_path=public"]
 
 
 def test_prepare_creates_bare_login_only_as_superuser(monkeypatch) -> None:

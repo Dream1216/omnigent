@@ -226,6 +226,43 @@ def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> No
     )
 
 
+def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
+    common = (True, False, False, False, False, False, True, -1)
+    journal = "runtime_provider_journal_login"
+
+    assert migration._service_login_flags_are_safe(
+        (journal, *common, None),
+        journal_login=journal,
+        require_complete=False,
+    )
+    assert not migration._service_login_flags_are_safe(
+        (journal, *common, None),
+        journal_login=journal,
+        require_complete=True,
+    )
+    for require_complete in (False, True):
+        assert migration._service_login_flags_are_safe(
+            (journal, *common, ["search_path=public"]),
+            journal_login=journal,
+            require_complete=require_complete,
+        )
+        assert not migration._service_login_flags_are_safe(
+            (journal, *common, ["search_path=pg_catalog, public"]),
+            journal_login=journal,
+            require_complete=require_complete,
+        )
+        assert migration._service_login_flags_are_safe(
+            ("app_login", *common, None),
+            journal_login=journal,
+            require_complete=require_complete,
+        )
+        assert not migration._service_login_flags_are_safe(
+            ("app_login", *common, ["search_path=public"]),
+            journal_login=journal,
+            require_complete=require_complete,
+        )
+
+
 def test_fixed_capability_edges_are_granted_by_the_principal_operator() -> None:
     graph = migration._expected_service_principal_graph(
         bindings=_bindings(),
