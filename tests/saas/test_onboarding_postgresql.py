@@ -666,6 +666,76 @@ def test_registration_cannot_fabricate_outbox_delivery_state(
     _assert_rls_denied(denied.value)
 
 
+def test_real_postgresql_registration_resend_rotates_challenge_under_force_rls(
+    postgresql_engine: Engine,
+) -> None:
+    suffix = uuid4().hex[:12]
+    now = datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc)
+    envelopes = VerificationEnvelopeKeyring(
+        active_key_id="p0-postgresql-resend-v1",
+        keys={"p0-postgresql-resend-v1": b"r" * 32},
+    )
+    registrations = SelfServiceOnboardingService(
+        _role_sessions(postgresql_engine, "saas_registration"),
+        policy=_policy(),
+        envelope_keyring=envelopes,
+        rate_limiter=_AllowAllRateLimiter(),
+    )
+
+    accepted = registrations.request_registration(
+        email=f"resend-{suffix}@example.test",
+        display_name="PostgreSQL Resend Owner",
+        tenant_name=f"PostgreSQL Resend Tenant {suffix}",
+        tenant_slug=f"pg-resend-{suffix}",
+        default_space_name="Default Space",
+        default_space_slug="default",
+        plan_key="starter",
+        home_region="cn-east-1",
+        idempotency_key=f"registration-resend-{suffix}",
+        now=now,
+    )
+    resent = registrations.resend_verification(
+        registration_id=accepted.registration_id,
+        email=f"resend-{suffix}@example.test",
+        idempotency_key=f"resend-{suffix}",
+        now=now + timedelta(minutes=1),
+    )
+
+    assert resent.registration_id == accepted.registration_id
+    assert resent.replayed is False
+    with postgresql_engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        generation = connection.execute(
+            sa.text(
+                "SELECT challenge_generation FROM saas_self_service_registrations "
+                "WHERE id = :registration_id"
+            ),
+            {"registration_id": accepted.registration_id},
+        ).scalar_one()
+        challenges = connection.execute(
+            sa.text(
+                "SELECT generation, status FROM saas_email_verification_challenges "
+                "WHERE registration_id = :registration_id ORDER BY generation"
+            ),
+            {"registration_id": accepted.registration_id},
+        ).all()
+        deliveries = connection.execute(
+            sa.text(
+                "SELECT count(*) FROM saas_control_plane_outbox "
+                "WHERE aggregate_type = 'self_service_registration' "
+                "AND aggregate_key = :registration_id AND event_type = :event_type"
+            ),
+            {
+                "registration_id": str(accepted.registration_id),
+                "event_type": _EMAIL_EVENT,
+            },
+        ).scalar_one()
+
+    assert generation == 2
+    assert challenges == [(1, "revoked"), (2, "pending")]
+    assert deliveries == 2
+
+
 def test_real_postgresql_registration_verify_and_onboarding_e2e(
     postgresql_engine: Engine,
 ) -> None:
