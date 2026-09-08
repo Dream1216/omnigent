@@ -31,6 +31,7 @@ from saas.production.kubernetes_runtime_provider import (
     ProjectedServiceAccountCredentialAuthority,
     _KubernetesCredentialMaterial,
     _verify_installed_lineage,
+    _verify_release_lineage,
     _verify_runtime_provider_journal_binding,
     load_kubernetes_runtime_provider_config,
 )
@@ -165,12 +166,37 @@ def test_installed_build_lineage_must_match_config(
     import omnigent
 
     config = _config(tmp_path)
-    build_info = SimpleNamespace(COMMIT_SHA=config.source_revision)
+    product_revision = "4" * 40
+    build_info = SimpleNamespace(COMMIT_SHA=product_revision)
     monkeypatch.setattr(omnigent, "_build_info", build_info, raising=False)
-    _verify_installed_lineage(config)
+    _verify_installed_lineage(config, product_revision=product_revision)
     build_info.COMMIT_SHA = "f" * 40
     with pytest.raises(KubernetesRuntimeProviderConfigError, match="installed build"):
-        _verify_installed_lineage(config)
+        _verify_installed_lineage(config, product_revision=product_revision)
+
+
+def test_release_lineage_separates_product_and_upstream_revisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import omnigent
+
+    config = _config(tmp_path)
+    product_revision = "4" * 40
+    monkeypatch.setattr(
+        omnigent,
+        "_build_info",
+        SimpleNamespace(COMMIT_SHA=product_revision),
+        raising=False,
+    )
+    source = {
+        "OMNIGENT_SAAS_PRODUCT_REVISION": product_revision,
+        "OMNIGENT_SAAS_UPSTREAM_REVISION": config.source_revision,
+    }
+    _verify_release_lineage(config, source)
+
+    source["OMNIGENT_SAAS_UPSTREAM_REVISION"] = "5" * 40
+    with pytest.raises(KubernetesRuntimeProviderConfigError, match="reviewed upstream"):
+        _verify_release_lineage(config, source)
 
 
 @dataclass(slots=True)
