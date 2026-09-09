@@ -2497,6 +2497,10 @@ def test_server_with_explicit_port_does_not_check_canonical_server(
     monkeypatch.setattr(_local_server_mod, "local_server_url_if_healthy", _must_not_check_existing)
     monkeypatch.setattr(_local_server_mod, "register_local_server", _must_not_touch_pidfile)
     monkeypatch.setattr(_local_server_mod, "clear_local_server_record", _must_not_touch_pidfile)
+    # Port occupancy is covered separately below. Keep this test scoped to the
+    # explicit-port/canonical-server branch instead of racing unrelated CI
+    # processes for a hard-coded TCP port.
+    monkeypatch.setattr("omnigent.cli._assert_server_port_bindable", lambda *_: None)
     monkeypatch.setenv("OMNIGENT_AUTH_ENABLED", "0")
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path / "data"))
 
