@@ -82,9 +82,10 @@ def _load(name: str) -> dict[str, Any]:
 class _PostSink:
     """Capture every event the reader asks to POST (no HTTP)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, item_event: tuple[str, asyncio.Event] | None = None) -> None:
         self.posts: list[tuple[str, dict[str, object]]] = []
         self.urls: list[str] = []
+        self.item_event = item_event
 
     async def __call__(
         self,
@@ -102,6 +103,13 @@ class _PostSink:
         data = payload.get("data")
         self.posts.append((event_type, cast(dict[str, object], data)))
         self.urls.append(url)
+        if (
+            self.item_event is not None
+            and event_type == "external_conversation_item"
+            and isinstance(data, dict)
+            and data.get("item_type") == self.item_event[0]
+        ):
+            self.item_event[1].set()
         return httpx.Response(200, json={"ok": True})
 
     def item_types(self) -> list[str]:
@@ -634,26 +642,39 @@ async def test_streaming_continues_while_interaction_pending(
     """
     waiting = _load("ask_question_waiting")
     planner = _done_planner("Answer arrives later", step_index=99)
-    script = _StepScript([[waiting, planner], [waiting, planner]])
-    sink = _PostSink()
+    # Surface the human gate first, then deliver the planner on the next poll so
+    # the assertion proves mirroring progressed while the callback was blocked.
+    script = _StepScript([[waiting], [waiting, planner]])
+    interaction_started = asyncio.Event()
+    interaction_release = asyncio.Event()
+    message_mirrored = asyncio.Event()
+    sink = _PostSink(item_event=("message", message_mirrored))
 
     async def _block(_cascade_id: str, _port: int, _pending: PendingInteraction) -> None:
-        await asyncio.Event().wait()  # never completes — simulates a human holding
+        interaction_started.set()
+        await interaction_release.wait()
 
-    await asyncio.wait_for(
+    run_task = asyncio.create_task(
         _run(
             bridge_dir=_bridge_dir(tmp_path),
             sink=sink,
             steps=script,
             monkeypatch=monkeypatch,
-            iterations=2,
+            # One stop-predicate check is consumed by the stream attempt before
+            # fallback; three checks therefore execute both scripted polls.
+            iterations=3,
             on_pending=_block,
-        ),
-        timeout=5.0,
+        )
     )
 
-    # The planner message was mirrored despite the interaction still pending.
+    await interaction_started.wait()
+    await message_mirrored.wait()
+    # The second-poll planner message was mirrored while the interaction was
+    # still pending. Release it explicitly so reader teardown is deterministic.
+    assert not interaction_release.is_set()
     assert "message" in sink.item_types()
+    interaction_release.set()
+    await run_task
 
 
 @pytest.mark.asyncio

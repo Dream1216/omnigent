@@ -188,7 +188,15 @@ jobs:
       - name: Install dependencies
         # matrix.extra (e.g. "databricks") adds an extra for lanes that need it;
         # empty for the default lanes.
-        run: uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+        run: |
+          uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+          # The misc shard contains the N-1 isolated-wheel acceptance test. It
+          # deliberately uses --no-build-isolation/--offline, so install the
+          # repository's locked setuptools backend explicitly instead of
+          # relying on a stale virtualenv cache to provide it.
+          if [ "${{ matrix.group }}" = "misc" ]; then
+            uv pip install --no-deps "setuptools==83.0.0"
+          fi
 
       - name: Run pytest
         shell: bash

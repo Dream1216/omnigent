@@ -1,7 +1,9 @@
 name: Backwards-Compat
 
-# Cross-version backwards-compatibility sweep against main's e2e + integration
-# suites, over the FULL pairwise (server, runner) version matrix.
+# The blocking support contract is main against the latest final release in
+# both directions (plus both SPA/server directions). The full historical
+# pairwise sweep remains scheduled telemetry; a manual dispatch is strict.
+# See docs/SERVER_VERSION_COMPAT_CI.md.
 #
 # The version universe is `main` (the checked-out code = client + tests, always)
 # plus every final (non-prerelease) release tag; we cross every server version with every runner
@@ -18,7 +20,7 @@ name: Backwards-Compat
 #
 # Triggers:
 #   workflow_dispatch   manual; optional `versions` CSV overrides the set.
-#   schedule            every 12h; full pairwise over main + all final tags.
+#   schedule            every 12h; advisory full pairwise history telemetry.
 
 on:
   workflow_dispatch:
@@ -193,6 +195,9 @@ jobs:
     name: Backcompat e2e (server ${{ matrix.server }} / runner ${{ matrix.runner }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})
     needs: setup
     runs-on: ubuntu-latest
+    # Scheduled history is diagnostic and must not leave the main workflow red.
+    # workflow_dispatch remains strict for an explicit compatibility audit.
+    continue-on-error: ${{ github.event_name == 'schedule' }}
     # Job-level cap (composite run steps can't set timeout-minutes); mirrors
     # e2e.yml's ~30-min test budget + setup + up to two old-build installs.
     timeout-minutes: 45
@@ -232,6 +237,7 @@ jobs:
     name: Backcompat integration (server ${{ matrix.server }} / runner ${{ matrix.runner }}, ${{ matrix.harness }})
     needs: setup
     runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'schedule' }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -283,6 +289,7 @@ jobs:
     name: "Backcompat e2e-ui (Config ${{ matrix.config }}: ${{ matrix.config == 'A' && matrix.server || matrix.ui }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})"
     needs: setup-ui
     runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'schedule' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false

@@ -8,11 +8,66 @@ See ``docs/SERVER_VERSION_COMPAT_CI.md``.
 from __future__ import annotations
 
 import os
+import re
 import sys
+from pathlib import Path
 
 import pytest
 
 from tests._helpers import compat
+
+_REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def _workflow_job_block(workflow: str, job: str, next_job: str | None) -> str:
+    start = workflow.index(f"  {job}:\n")
+    if next_job is None:
+        return workflow[start:]
+    end = workflow.index(f"  {next_job}:\n", start + 1)
+    return workflow[start:end]
+
+
+def test_server_compat_policy_document_exists_and_names_supported_window() -> None:
+    policy = (_REPOSITORY / "docs" / "SERVER_VERSION_COMPAT_CI.md").read_text()
+    assert "main ↔ latest final release" in policy
+    assert "Scheduled full-history sweep" in policy
+    assert "Manual full-history dispatch" in policy
+
+
+def test_server_compat_workflow_keeps_support_window_blocking() -> None:
+    workflow = (_REPOSITORY / ".github" / "workflows" / "server-compat.yml").read_text()
+    smoke_jobs = (
+        ("compat-smoke-config1", "compat-smoke-config2"),
+        ("compat-smoke-config2", "compat-smoke-ui-config-a"),
+        ("compat-smoke-ui-config-a", "compat-smoke-ui-config-b"),
+        ("compat-smoke-ui-config-b", "setup"),
+    )
+    for job, next_job in smoke_jobs:
+        assert "continue-on-error:" not in _workflow_job_block(workflow, job, next_job)
+
+
+def test_server_compat_scheduled_history_is_advisory_but_dispatch_is_strict() -> None:
+    workflow = (_REPOSITORY / ".github" / "workflows" / "server-compat.yml").read_text()
+    advisory = "continue-on-error: ${{ github.event_name == 'schedule' }}"
+    for job, next_job in (
+        ("backcompat-e2e", "backcompat-integration"),
+        ("backcompat-integration", "setup-ui"),
+        ("backcompat-e2e-ui", None),
+    ):
+        block = _workflow_job_block(workflow, job, next_job)
+        assert block.count(advisory) == 1
+
+
+def test_misc_ci_installs_the_locked_n1_wheel_build_backend() -> None:
+    lock = (_REPOSITORY / "uv.lock").read_text()
+    match = re.search(
+        r'\[\[package\]\]\nname = "setuptools"\nversion = "([^"]+)"',
+        lock,
+    )
+    assert match is not None
+    workflow = (_REPOSITORY / ".github" / "workflows" / "ci.yml").read_text()
+    assert 'if [ "${{ matrix.group }}" = "misc" ]; then' in workflow
+    assert f'uv pip install --no-deps "setuptools=={match.group(1)}"' in workflow
 
 
 @pytest.mark.parametrize(
