@@ -792,7 +792,7 @@ def _migration_receipt(
         raise ProductionServerConfigError(f"{name} cannot be loaded") from error
     if not isinstance(document, dict):
         raise ProductionServerConfigError(f"{name} must contain a JSON object")
-    if document.get("status") != "pass" or document.get("schema_version") != 1:
+    if document.get("status") != "pass" or document.get("schema_version") != 2:
         raise ProductionServerConfigError(f"{name} does not contain a successful migration")
     phases = document.get("phases")
     authorities = document.get("authorities")
