@@ -45,7 +45,7 @@ def _receipt(path: Path, *, service_role_bindings_sha256: str) -> str:
     path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "status": "pass",
                 "verify_only": False,
                 "product_revision": "1" * 40,

@@ -47,7 +47,7 @@ def _bindings(path: Path) -> str:
 
 def _receipt(path: Path, *, service_role_bindings_sha256: str) -> str:
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "pass",
         "product_revision": _SOURCE_SHA,
         "official_head": "official-head",

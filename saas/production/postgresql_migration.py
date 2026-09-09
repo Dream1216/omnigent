@@ -457,6 +457,33 @@ class _RuntimeReceipt:
     database_owner: str
 
 
+_MIGRATION_RECEIPT_SCHEMA_VERSION = 2
+
+
+def _database_identity_payload(
+    facts: _SessionFacts | _ServiceSessionFacts,
+) -> dict[str, object]:
+    """Return stable database identity, excluding connection endpoint facts."""
+
+    return {
+        "database": facts.database,
+        "database_oid": facts.database_oid,
+        "database_owner": facts.database_owner,
+    }
+
+
+def _database_identity_sha256(
+    facts: _SessionFacts | _ServiceSessionFacts,
+) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            _database_identity_payload(facts),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
 def parse_production_postgresql_url(
     raw_url: str,
     *,
@@ -730,17 +757,7 @@ def _preflight(
         )
         for authority in plan.authorities()
     )
-    identities = {
-        (
-            item.database,
-            item.database_oid,
-            item.database_owner,
-            item.server_version_num,
-            item.server_address,
-            item.server_port,
-        )
-        for item in facts
-    }
+    identities = {_database_identity_sha256(item) for item in facts}
     if len(identities) != 1:
         raise PostgreSqlMigrationError("authority_database_identity_drift", "preflight")
     if any(item.server_version_num < 160000 for item in facts):
@@ -2865,7 +2882,7 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
         "saas_head": saas_head,
     }
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != _MIGRATION_RECEIPT_SCHEMA_VERSION
         or document.get("status") != "pass"
         or any(document.get(key) != value for key, value in bindings.items())
         or any(getattr(configured, key, None) != value for key, value in bindings.items())
@@ -3138,33 +3155,21 @@ def verify_production_postgresql_state(
             )
         if len({fact.login for fact in facts}) != len(_SERVER_SERVICE_ROLES):
             raise PostgreSqlMigrationError("service_login_not_distinct", "runtime_verification")
-        database_facts = {
-            (
-                fact.database,
-                fact.database_oid,
-                fact.database_owner,
-                fact.server_version_num,
-                fact.server_address,
-                fact.server_port,
-            )
-            for fact in facts
-        }
+        database_facts = {_database_identity_sha256(fact) for fact in facts}
         if len(database_facts) != 1:
             raise PostgreSqlMigrationError(
                 "service_database_identity_drifted", "runtime_verification"
             )
+        if any(fact.server_version_num < 160000 for fact in facts):
+            raise PostgreSqlMigrationError(
+                "service_postgresql_16_required", "runtime_verification"
+            )
+        if any(not fact.server_address or fact.server_port <= 0 for fact in facts):
+            raise PostgreSqlMigrationError(
+                "service_database_endpoint_missing", "runtime_verification"
+            )
         first = facts[0]
-        identity_payload = {
-            "database": first.database,
-            "database_oid": first.database_oid,
-            "database_owner": first.database_owner,
-            "server_version_num": first.server_version_num,
-            "server_address": first.server_address,
-            "server_port": first.server_port,
-        }
-        identity_digest = hashlib.sha256(
-            json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        identity_digest = _database_identity_sha256(first)
         if identity_digest != receipt.database_identity_sha256:
             raise PostgreSqlMigrationError(
                 "service_database_receipt_mismatch", "runtime_verification"
@@ -3386,19 +3391,9 @@ def run_production_postgresql_migration(
     finally:
         _dispose_engines(engines)
 
-    identity_payload = {
-        "database": session_facts[0].database,
-        "database_oid": session_facts[0].database_oid,
-        "database_owner": session_facts[0].database_owner,
-        "server_version_num": session_facts[0].server_version_num,
-        "server_address": session_facts[0].server_address,
-        "server_port": session_facts[0].server_port,
-    }
-    identity_sha256 = hashlib.sha256(
-        json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    identity_sha256 = _database_identity_sha256(session_facts[0])
     return PostgreSqlMigrationReceipt(
-        schema_version=1,
+        schema_version=_MIGRATION_RECEIPT_SCHEMA_VERSION,
         status="pass",
         verify_only=verify_only,
         product_revision=plan.product_revision,
