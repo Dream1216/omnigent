@@ -44,9 +44,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 10,
-    "max_upstream_net_added_loc": 500,
+    "max_direct_upstream_files": 14,
+    "max_upstream_net_added_loc": 520,
     "min_isolated_custom_code_ratio": 0.85
+  },
+  "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-09",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 10,
+    "previous_max_upstream_net_added_loc": 500,
+    "reason": "authenticated new-session recovery changes two official Web UI modules and their two focused tests",
+    "revision": "authenticated-new-session-v1"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
