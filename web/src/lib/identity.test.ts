@@ -23,6 +23,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
+  window.sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -121,6 +122,51 @@ describe("getCurrentUserId", () => {
 });
 
 describe("authenticatedFetch", () => {
+  it("injects the SaaS CSRF token on same-origin unsafe requests", async () => {
+    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-test-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+
+  it("does not leak the SaaS CSRF token to safe or cross-origin requests", async () => {
+    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-test-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValue(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions");
+    await authenticatedFetch("https://other.example/v1/sessions", { method: "POST" });
+
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = new Headers((init as RequestInit | undefined)?.headers);
+      expect(headers.has("X-CSRF-Token")).toBe(false);
+    }
+  });
+
+  it("preserves an explicit CSRF header", async () => {
+    window.sessionStorage.setItem("omnigent.saas.csrf", "stored-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", {
+      method: "POST",
+      headers: { "X-CSRF-Token": "explicit-token" },
+    });
+
+    const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+    expect(headers.get("X-CSRF-Token")).toBe("explicit-token");
+  });
+
   it("injects X-Forwarded-Email header once the identity is resolved", async () => {
     fetchMock.mockResolvedValueOnce(mockJsonResponse({ user_id: "alice" }));
     const { resolveIdentity, authenticatedFetch } = await import("./identity");

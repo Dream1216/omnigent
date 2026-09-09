@@ -1330,6 +1330,16 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByText("No agents")).toBeTruthy();
   });
 
+  it("keeps the picker openable to create the first custom agent", () => {
+    mockAgents([]);
+    renderLanding();
+
+    const picker = screen.getByTestId("new-chat-landing-agent-select") as HTMLButtonElement;
+    expect(picker.disabled).toBe(false);
+    fireEvent.pointerDown(picker, { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-create-agent")).toBeTruthy();
+  });
+
   it("orders native built-ins together in the agent picker", () => {
     mockAgents([
       {
