@@ -1139,7 +1139,7 @@ export function AgentHarnessPicker({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={!hasAgents}
+          disabled={!hasAgents && !canCreateAgent}
           data-testid="new-chat-landing-agent-select"
           title={triggerTooltip}
           // Drop the Button's focus-visible ring/border that otherwise shows

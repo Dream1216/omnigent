@@ -29,6 +29,14 @@ import {
 // not a real actor, so never used as an author label.
 const RESERVED_USER_LOCAL = "local";
 
+// The SaaS password/OIDC login page stores the double-submit token here before
+// navigating into the main app. The session cookie is HttpOnly, so unsafe
+// browser requests must echo this companion token in a header for the SaaS
+// middleware to accept them.
+const SAAS_CSRF_STORAGE_KEY = "omnigent.saas.csrf";
+const SAAS_CSRF_HEADER = "X-CSRF-Token";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 let currentUserId: string | null = null;
 
 // Replica-routing header, used when the server shards replicas by host. A
@@ -411,6 +419,24 @@ export async function authenticatedFetch(
   if (currentUserId && currentUserId !== RESERVED_USER_LOCAL && !headers.has("X-Forwarded-Email")) {
     headers.set("X-Forwarded-Email", currentUserId);
   }
+  // Standalone SaaS browser sessions use an HttpOnly auth cookie plus a
+  // sessionStorage-backed double-submit token. Add it centrally for every
+  // same-origin unsafe request; all main-app API mutations already pass
+  // through this function. Embedded hosts own their auth transport, and an
+  // explicit caller header always wins.
+  const method = (
+    init?.method ??
+    (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
+  if (
+    !getOmnigentHostConfig().fetcher &&
+    UNSAFE_METHODS.has(method) &&
+    !headers.has(SAAS_CSRF_HEADER) &&
+    isSameOriginRequest(input)
+  ) {
+    const csrfToken = readSaasCsrfToken();
+    if (csrfToken !== null) headers.set(SAAS_CSRF_HEADER, csrfToken);
+  }
   // Pin host- and session-scoped requests to the replica holding that host's
   // runner tunnel (key = host_id). Derived centrally so no call site has to
   // thread it; a caller that set the header explicitly wins, and non-host-scoped
@@ -543,4 +569,24 @@ export async function authenticatedFetch(
     if (loginUrl) redirectToLogin(loginUrl);
   }
   return res;
+}
+
+/** Read the browser-only SaaS CSRF token without breaking restricted storage contexts. */
+function readSaasCsrfToken(): string | null {
+  try {
+    const token = window.sessionStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
+    return token || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keep the session-bound CSRF secret on this origin even if a future caller passes an absolute URL. */
+function isSameOriginRequest(input: RequestInfo | URL): boolean {
+  try {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return new URL(raw, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
 }
