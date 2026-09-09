@@ -865,20 +865,7 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
         server_address="10.0.0.1",
         server_port=5432,
     )
-    identity_digest = migration.hashlib.sha256(
-        json.dumps(
-            {
-                "database": facts.database,
-                "database_oid": facts.database_oid,
-                "database_owner": facts.database_owner,
-                "server_version_num": facts.server_version_num,
-                "server_address": facts.server_address,
-                "server_port": facts.server_port,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
+    identity_digest = migration._database_identity_sha256(facts)
     monkeypatch.setattr(
         migration,
         "_load_runtime_receipt",
@@ -900,14 +887,15 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
 
     def inspect(_engine: object, *, expected_login: str, expected_role: str):
         observed.append((expected_login, expected_role))
+        probe_number = len(observed)
         return migration._ServiceSessionFacts(
             login=expected_login,
             database=facts.database,
             database_oid=facts.database_oid,
             database_owner=facts.database_owner,
-            server_version_num=facts.server_version_num,
-            server_address=facts.server_address,
-            server_port=facts.server_port,
+            server_version_num=facts.server_version_num + probe_number,
+            server_address=f"10.0.0.{probe_number}",
+            server_port=facts.server_port + probe_number,
         )
 
     monkeypatch.setattr(migration, "_inspect_service_login", inspect)
