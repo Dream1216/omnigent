@@ -1417,7 +1417,9 @@ revision-bound record.
 The frozen upstream revision is
 `06c33aeae701d521a3cfacd2daf99441b6d64492`, exactly 249 first-parent commits
 after the previously admitted `e179bc422643c994e864bf34922bc54b5d4ab03b`.
-The sync resolves seven textual conflict blocks across four files, replays the
+Merge revision `e68d77142db8767e2c75297237082a328ca140d7` has the previous
+downstream Head and the frozen upstream revision as its two parents. The sync
+resolves seven textual conflict blocks across four files, replays the
 three downstream patches against four official source paths, and records the
 resolution in `p6-upstream-sync-20260910-conflict-resolution.json`.
 

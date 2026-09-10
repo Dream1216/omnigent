@@ -2,6 +2,7 @@
   "schema_version": "omnigent.saas.upstream-conflict-resolution.v1",
   "downstream_base_revision": "bf476c8bd7f1d827f85917359125ff7f6f59c90e",
   "frozen_upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+  "merge_revision": "e68d77142db8767e2c75297237082a328ca140d7",
   "merge_base_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
   "changed_in_both_file_count": 14,
   "text_conflict_file_count": 4,
@@ -116,6 +117,10 @@
       "pending_gate_count": 11
     },
     "authoritative_final_sha_validation": "required_on_push_and_pull_request"
+  },
+  "pre_commit": {
+    "scope": "all_files",
+    "status": "passed"
   },
   "status": "resolved"
 }
