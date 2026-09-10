@@ -102,6 +102,33 @@ index 35cf65a0806efbee297d3923f88504a9d83ae4c7..90e5e3331160e5118206f03b77d71f02
 +        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
 +    return workspace_id
 
+diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
+index 91e9219bc5fb2bfc4084169963e59542b0235c01..af4dcbac264227f9a4fad31e2fbbac0e4f6b9949 100644
+--- a/omnigent/inner/bwrap_sandbox.py
++++ b/omnigent/inner/bwrap_sandbox.py
+@@ -201,9 +201,12 @@ _ALLOWED_SOCKET_FAMILIES = (
+ # ``--unshare-pid`` still contains signalling. That leak is acceptable on a
+-# single-tenant dev microVM (Lakebox) but not on an arbitrary host, so the
+-# downgrade is only taken for vetted backends. Add entries here as more
+-# backends are verified safe.
+-_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"lakebox"})
++# single-tenant dev microVM (Lakebox) or a Kubernetes container with its own
++# PID namespace, but not on an arbitrary host, so the downgrade is only taken
++# for explicitly vetted backends. Kubernetes deployments MUST NOT declare this
++# backend for ``hostPID`` pods or pods sharing another container's PID
++# namespace.
++_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"kubernetes", "lakebox"})
+
+ # Env var an outer launcher may set to name the host's outer sandbox
+-# backend (e.g. ``lakebox``). Authoritative when present; otherwise the
++# backend (e.g. ``lakebox`` or ``kubernetes``). Authoritative when present;
++# otherwise the
+ # backend is autodetected (see ``_detect_host_sandbox_backend``). Note it
+@@ -253,3 +256,3 @@ def _should_bind_host_proc() -> bool:
+     ``True`` only when the host runs under an outer sandbox backend in
+-    :data:`_PROC_BIND_HOST_BACKENDS` (lakebox today). On every other host
++    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
+     the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
 index e444f664954c4e2721ae8c02dc6f429ab5ad0133..c367ee99e78b2348656a6beeac825459f2f06a15 100644
 --- a/omnigent/server/routes/host_tunnel.py

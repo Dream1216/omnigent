@@ -199,13 +199,16 @@ _ALLOWED_SOCKET_FAMILIES = (
 # / ``mem`` / ``maps`` / ``fd``): the retained user namespace keeps those
 # blocked even for same-uid targets and even as namespaced root, and
 # ``--unshare-pid`` still contains signalling. That leak is acceptable on a
-# single-tenant dev microVM (Lakebox) but not on an arbitrary host, so the
-# downgrade is only taken for vetted backends. Add entries here as more
-# backends are verified safe.
-_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"lakebox"})
+# single-tenant dev microVM (Lakebox) or a Kubernetes container with its own
+# PID namespace, but not on an arbitrary host, so the downgrade is only taken
+# for explicitly vetted backends. Kubernetes deployments MUST NOT declare this
+# backend for ``hostPID`` pods or pods sharing another container's PID
+# namespace.
+_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"kubernetes", "lakebox"})
 
 # Env var an outer launcher may set to name the host's outer sandbox
-# backend (e.g. ``lakebox``). Authoritative when present; otherwise the
+# backend (e.g. ``lakebox`` or ``kubernetes``). Authoritative when present;
+# otherwise the
 # backend is autodetected (see ``_detect_host_sandbox_backend``). Note it
 # must survive ``SandboxPolicy.spawn_env_allowlist`` pruning to be visible
 # on the re-exec launcher path — the marker autodetect below is the
@@ -251,7 +254,7 @@ def _should_bind_host_proc() -> bool:
     mounting a fresh procfs.
 
     ``True`` only when the host runs under an outer sandbox backend in
-    :data:`_PROC_BIND_HOST_BACKENDS` (lakebox today). On every other host
+    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
     the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
     behaviour when a fresh procfs mount is denied — are unchanged.
 

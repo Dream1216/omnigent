@@ -18,6 +18,7 @@ from omnigent.host.identity import (
     load_host_tunnel_token,
     load_host_tunnel_workspace_id,
 )
+from omnigent.inner import bwrap_sandbox
 from omnigent.server.routes import host_tunnel
 from omnigent.stores.host_store import HostStore
 
@@ -67,6 +68,18 @@ def test_host_workspace_selector_requires_canonical_positive_integer(
     monkeypatch.setenv(HOST_WORKSPACE_ID_ENV_VAR, value)
     with pytest.raises(ValueError, match="canonical positive integer"):
         load_host_tunnel_workspace_id()
+
+
+def test_explicit_kubernetes_backend_binds_container_proc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A vetted Kubernetes Host avoids a denied fresh procfs mount."""
+
+    monkeypatch.setattr(bwrap_sandbox, "_LAKEBOX_MARKER", tmp_path / "absent")
+    monkeypatch.setenv(bwrap_sandbox._HOST_SANDBOX_BACKEND_ENV, " Kubernetes ")
+
+    assert bwrap_sandbox._detect_host_sandbox_backend() == "kubernetes"
+    assert bwrap_sandbox._should_bind_host_proc() is True
 
 
 def test_host_reconnect_rereads_file_and_never_mixes_bearer(
