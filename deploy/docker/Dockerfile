@@ -533,7 +533,7 @@ RUN set -eu; \
 ARG GH_VERSION=2.100.0
 ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
 ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
-RUN set -eu; \
+RUN --mount=type=tmpfs,target=/tmp set -eu; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
       amd64) sha="$GH_SHA256_AMD64" ;; \

@@ -604,6 +604,27 @@ def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
     )
 
 
+def test_image_material_lock_rejects_gh_transient_archive_metadata(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    gh_start = source.index("ARG GH_VERSION=")
+    run_start = source.index("RUN --mount=type=tmpfs,target=/tmp set -eu;", gh_start)
+    source = source[:run_start] + source[run_start:].replace(
+        "RUN --mount=type=tmpfs,target=/tmp set -eu;",
+        "RUN set -eu;",
+        1,
+    )
+    dockerfile.write_text(source, encoding="utf-8")
+
+    assert (
+        "GitHub CLI install layer must isolate transient archive metadata"
+        in validate_image_material_lock(repo)
+    )
+
+
 @pytest.mark.parametrize(
     ("target", "replacement", "expected"),
     [

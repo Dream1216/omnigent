@@ -1002,6 +1002,15 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     }
     if any(fragment not in host_stage for fragment in standalone_cli_timestamp_contract):
         violations.append("standalone host CLI install layers must normalize executable mtimes")
+    gh_install_start = host_stage.find("ARG GH_VERSION=")
+    gh_install_end = host_stage.find('echo "gh ${GH_VERSION} pinned', gh_install_start)
+    gh_install_block = (
+        host_stage[gh_install_start:gh_install_end]
+        if gh_install_start >= 0 and gh_install_end >= 0
+        else ""
+    )
+    if "RUN --mount=type=tmpfs,target=/tmp set -eu;" not in gh_install_block:
+        violations.append("GitHub CLI install layer must isolate transient archive metadata")
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",
