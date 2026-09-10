@@ -1013,6 +1013,8 @@ def build_production_saas_services(
     external: ProductionExternalAdapters | None = None,
     onboarding: ProductionOnboardingHttpServices | None = None,
     extra_readiness_checks: Mapping[str, ReadinessCheck] | None = None,
+    runtime_router: APIRouter | None = None,
+    runtime_initializer: Any | None = None,
 ) -> ProductionSaasServices:
     """Build Tenant authentication, onboarding, and stable public Run API services."""
 
@@ -1107,6 +1109,8 @@ def build_production_saas_services(
         onboarding_client_network=(
             None if onboarding is None else onboarding.onboarding_client_network
         ),
+        runtime_router=runtime_router,
+        runtime_initializer=runtime_initializer,
     )
     if "preview" in config.capabilities:
         from saas.production.preview_control import (
@@ -1169,6 +1173,22 @@ def build_production_server(
             "artifact-store readiness authority cannot be overridden"
         )
     readiness_checks["artifact_store"] = official_dependencies.artifact_readiness_check
+    from saas.production.agent_catalog import (
+        TenantAgentCatalogInitializer,
+        create_execution_readiness_router,
+    )
+
+    agent_catalog = TenantAgentCatalogInitializer(
+        runtime_engine=sessions.runtime_engine,
+        agent_store=official_dependencies.agent_store,
+        artifact_store=official_dependencies.artifact_store,
+        agent_cache=official_dependencies.agent_cache,
+    )
+    execution_readiness_router = create_execution_readiness_router(
+        initializer=agent_catalog,
+        agent_store=official_dependencies.agent_store,
+        host_store=official_dependencies.host_store,
+    )
     try:
         services = build_production_saas_services(
             config,
@@ -1176,6 +1196,8 @@ def build_production_server(
             external=external,
             onboarding=onboarding,
             extra_readiness_checks=readiness_checks,
+            runtime_router=execution_readiness_router,
+            runtime_initializer=agent_catalog,
         )
     except Exception:
         official_dependencies.close()

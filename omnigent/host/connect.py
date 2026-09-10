@@ -1095,7 +1095,7 @@ class HostProcess:
                 self._reap_orphans_once()
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — a reaper must never die on a stray error
+            except Exception:  # noqa: BLE001 — reaper sweep is best-effort
                 _logger.debug("orphan reaper sweep failed", exc_info=True)
 
     def _reap_orphans_once(self) -> int:
@@ -1894,7 +1894,7 @@ class HostProcess:
                     runner_id,
                     session_id,
                 )
-            except Exception:  # noqa: BLE001 — must never die unobserved
+            except Exception:  # noqa: BLE001 — superseded runner cleanup is best-effort
                 _logger.warning(
                     "Failed to stop superseded runner %s for session %s; "
                     "the process may linger until it exits on its own",
@@ -2025,7 +2025,7 @@ class HostProcess:
             try:
                 await ws.send(frame)
                 return
-            except Exception:  # noqa: BLE001 — any send failure parks the report
+            except Exception:  # noqa: BLE001 — queue delivery after any transport failure
                 _logger.debug(
                     "Could not send runner_exited for %s; queueing for reconnect",
                     runner_id,
@@ -2659,7 +2659,7 @@ class HostProcess:
 
         try:
             rows = await codex_launch_catalog()
-        except Exception:  # noqa: BLE001 — no catalog, never a crash
+        except Exception:  # noqa: BLE001 — model catalog discovery is best-effort
             _logger.warning("Codex model catalog unavailable", exc_info=True)
             return None
         if rows is None:
@@ -2683,7 +2683,7 @@ class HostProcess:
         try:
             config = await asyncio.to_thread(resolve_native_claude_config, spec=None)
             rows = await claude_launch_catalog(config)
-        except Exception:  # noqa: BLE001 — no catalog, never a crash
+        except Exception:  # noqa: BLE001 — model catalog discovery is best-effort
             _logger.warning("Claude model catalog unavailable", exc_info=True)
             return None
         if rows is None:
@@ -3522,7 +3522,12 @@ class HostProcess:
             managed-host token header or — only when a token could be
             minted — ``{"Authorization": "Bearer <token>"}``.
         """
-        from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER, load_host_tunnel_token
+        from omnigent.host.identity import (
+            MANAGED_HOST_TOKEN_HEADER,
+            MANAGED_HOST_WORKSPACE_HEADER,
+            load_host_tunnel_token,
+            load_host_tunnel_workspace_id,
+        )
         from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 
         # Identify as a first-party client so the server's WebSocket origin
@@ -3547,6 +3552,9 @@ class HostProcess:
         managed_token = load_host_tunnel_token()
         if managed_token:
             headers[MANAGED_HOST_TOKEN_HEADER] = managed_token
+            workspace_id = load_host_tunnel_workspace_id()
+            if workspace_id is not None:
+                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
             return headers
         token = self._current_auth_token()
         if token:
@@ -3582,7 +3590,7 @@ class HostProcess:
                     self._auth_token_factory_resolved = True
             if self._auth_token_factory is not None:
                 return self._auth_token_factory()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — ambient auth providers have varied failures
             _logger.debug("Could not obtain auth token", exc_info=True)
         return None
 

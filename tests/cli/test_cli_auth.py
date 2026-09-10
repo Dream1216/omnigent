@@ -134,9 +134,7 @@ def test_clear_token_preserves_databricks_workspace_routing(token_dir) -> None:
     clear_token(server)
 
     assert load_databricks_workspace_host(server) == "https://workspace.databricks.com"
-    assert databricks_request_headers(server) == {
-        "X-Databricks-Org-Id": "2850744067564480"
-    }
+    assert databricks_request_headers(server) == {"X-Databricks-Org-Id": "2850744067564480"}
 
 
 def test_trailing_slash_normalization(token_dir) -> None:

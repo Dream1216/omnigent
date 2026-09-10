@@ -3286,6 +3286,9 @@ def test_build_connect_headers_rereads_file_backed_machine_credential(
     token_file = tmp_path / "host-token"
     token_file.write_text("generation-one\n")
     os.chmod(token_file, 0o600)
+    metadata_file = token_file.with_name(f"{token_file.name}.omnigent-meta.json")
+    metadata_file.write_text('{"workspace_id":41}')
+    os.chmod(metadata_file, 0o600)
     monkeypatch.delenv("OMNIGENT_HOST_TOKEN", raising=False)
     monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
     monkeypatch.setattr(
@@ -3302,6 +3305,8 @@ def test_build_connect_headers_rereads_file_backed_machine_credential(
 
     assert first["X-Omnigent-Host-Token"] == "generation-one"
     assert second["X-Omnigent-Host-Token"] == "generation-two"
+    assert first["X-Omnigent-Workspace-Id"] == "41"
+    assert second["X-Omnigent-Workspace-Id"] == "41"
     assert "Authorization" not in first
     assert "Authorization" not in second
     assert host._current_auth_token() is None

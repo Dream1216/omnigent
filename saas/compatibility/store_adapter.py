@@ -10,6 +10,7 @@ from typing import Protocol, TypeVar
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from omnigent.db.db_models import workspace_scope
 from omnigent.db.utils import bind_managed_session_initializer
 from saas.compatibility.runtime_partition import RuntimeContext, bind_runtime_context
 
@@ -54,6 +55,28 @@ class OmnigentStoreAdapter:
         with self.bind(runtime):
             return operation()
 
+    @contextmanager
+    def bind_host_credential_workspace(self, workspace_id: int) -> Iterator[int]:
+        """Bind an untrusted Host credential routing hint for token validation.
+
+        The selector is not authorization.  This narrow context manager is
+        used only for ``/v1/hosts/{id}/tunnel`` while the official Host route
+        validates the path-bound machine token inside the selected workspace.
+        No other runtime route may derive authority from this binding.
+        """
+
+        if workspace_id <= 0:
+            raise StoreAdapterContractError(
+                "host_machine_workspace_invalid",
+                "Host machine credential workspace must be positive",
+            )
+
+        def initialize(session: Session) -> None:
+            self._initialize_workspace_session(session, workspace_id)
+
+        with workspace_scope(workspace_id), bind_managed_session_initializer(initialize):
+            yield workspace_id
+
     def require_owned_record(self, runtime: RuntimeContext, record: WorkspaceOwnedRecord) -> None:
         """Reject naked-ID results from another physical Runtime Partition."""
 
@@ -86,7 +109,13 @@ class OmnigentStoreAdapter:
         from saas.compatibility.runtime_partition import current_runtime_context
 
         runtime = current_runtime_context()
+        OmnigentStoreAdapter._initialize_workspace_session(session, runtime.physical_workspace_id)
+
+    @staticmethod
+    def _initialize_workspace_session(session: Session, workspace_id: int) -> None:
+        if session.get_bind().dialect.name != "postgresql":
+            return
         session.execute(
             sa.text("SELECT set_config('app.runtime_workspace_id', :value, true)"),
-            {"value": str(runtime.physical_workspace_id)},
+            {"value": str(workspace_id)},
         )

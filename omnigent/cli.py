@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -640,7 +641,7 @@ _BOOLEAN_CONFIG_KEYS: frozenset[str] = frozenset({_AUTO_OPEN_CONVERSATION_CONFIG
 _CONFIG_TRUE_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 _CONFIG_FALSE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 _ConfigValue: TypeAlias = (
-    str | int | float | bool | None | list["_ConfigValue"] | dict[str, "_ConfigValue"]
+    str | int | float | bool | list["_ConfigValue"] | dict[str, "_ConfigValue"] | None
 )
 
 _GLOBAL_AGENTS_DIR: Path = Path.home() / ".omnigent" / "agents"
@@ -738,7 +739,7 @@ _HOST_DAEMON_PROXY_ENV_ALLOWLIST: frozenset[str] = frozenset(
     }
 )
 _HostJsonValue: TypeAlias = (
-    str | int | float | bool | None | list["_HostJsonValue"] | dict[str, "_HostJsonValue"]
+    str | int | float | bool | list["_HostJsonValue"] | dict[str, "_HostJsonValue"] | None
 )
 _HostJsonObject: TypeAlias = dict[str, _HostJsonValue]
 _HostSessionRow: TypeAlias = dict[str, _HostJsonValue]
@@ -8753,6 +8754,7 @@ class _HostCredentialBinding:
     token_sha256: str
     operation_id: str
     expires_at: int
+    workspace_id: int | None = None
 
 
 def _host_credential_metadata_path(path: Path) -> Path:
@@ -8868,6 +8870,7 @@ def _write_host_credential_binding(
     token_sha256: str,
     operation_id: str,
     expires_at: int,
+    workspace_id: int | None = None,
 ) -> None:
     """Durably bind a raw credential file to its exact server generation."""
     metadata = {
@@ -8879,6 +8882,8 @@ def _write_host_credential_binding(
         "operation_id": operation_id,
         "expires_at": expires_at,
     }
+    if workspace_id is not None:
+        metadata["workspace_id"] = workspace_id
     _write_owner_only_file(
         _host_credential_metadata_path(path),
         json.dumps(metadata, sort_keys=True, separators=(",", ":")),
@@ -8935,6 +8940,7 @@ def _load_host_credential_binding(
     operation_id = raw_metadata.get("operation_id")
     generation = raw_metadata.get("generation")
     expires_at = raw_metadata.get("expires_at")
+    workspace_id = raw_metadata.get("workspace_id")
     if (
         schema_version != _HOST_CREDENTIAL_METADATA_VERSION
         or not isinstance(metadata_server, str)
@@ -8946,6 +8952,14 @@ def _load_host_credential_binding(
         or generation < 1
         or isinstance(expires_at, bool)
         or not isinstance(expires_at, int)
+        or (
+            workspace_id is not None
+            and (
+                isinstance(workspace_id, bool)
+                or not isinstance(workspace_id, int)
+                or workspace_id <= 0
+            )
+        )
     ):
         raise ValueError(f"credential metadata is malformed: {metadata_path}")
     if metadata_server.rstrip("/") != server.rstrip("/"):
@@ -8962,6 +8976,7 @@ def _load_host_credential_binding(
         token_sha256=token_sha256,
         operation_id=operation_id,
         expires_at=expires_at,
+        workspace_id=workspace_id,
     )
 
 
@@ -10158,6 +10173,7 @@ def host_credential_issue(
     generation = result.body.get("generation")
     returned_operation_id = result.body.get("operation_id")
     expires_at = result.body.get("expires_at")
+    workspace_id = result.body.get("workspace_id")
     if (
         isinstance(generation, bool)
         or not isinstance(generation, int)
@@ -10166,6 +10182,14 @@ def host_credential_issue(
         or isinstance(expires_at, bool)
         or not isinstance(expires_at, int)
         or expires_at <= int(time.time())
+        or (
+            workspace_id is not None
+            and (
+                isinstance(workspace_id, bool)
+                or not isinstance(workspace_id, int)
+                or workspace_id <= 0
+            )
+        )
     ):
         raise click.ClickException("Credential issue returned a malformed response.")
 
@@ -10179,6 +10203,7 @@ def host_credential_issue(
             token_sha256=token_sha256,
             operation_id=operation_id,
             expires_at=expires_at,
+            workspace_id=workspace_id,
         )
     except OSError as exc:
         # Revoke only the generation this client installed. If another client
@@ -10225,6 +10250,8 @@ def host_credential_issue(
     click.echo(f"Installed host credential at {_display_path(output.expanduser())}.")
     click.echo(f"Expires at Unix time {expires_at}; rotate before expiry.")
     click.echo(f"Set OMNIGENT_HOST_TOKEN_FILE={output.expanduser()} for the host service.")
+    if workspace_id is not None:
+        click.echo(f"Set OMNIGENT_HOST_WORKSPACE_ID={workspace_id} for the host service.")
 
 
 @host_credential.command("revoke")

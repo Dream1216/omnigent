@@ -866,6 +866,7 @@ async def test_external_host_credential_api_is_owner_scoped_rotatable_and_visibl
         assert initial.headers["cache-control"] == "no-store"
         assert initial.json() == {
             "host_id": host_id,
+            "workspace_id": 0,
             "generation": 0,
             "active": False,
             "expires_at": None,

@@ -24,6 +24,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from omnigent.db.db_models import current_workspace_id
 from omnigent.db.utils import now_epoch
 from omnigent.debug_logging import add_audit_attrs
 from omnigent.entities import Conversation
@@ -109,6 +110,7 @@ def _host_absent_error(host: Host) -> OmnigentError:
     if host_is_live(host):
         return OmnigentError("host is on another replica", code=ErrorCode.WRONG_REPLICA)
     return OmnigentError("host is offline", code=ErrorCode.CONFLICT)
+
 
 # External-host machine credentials are deliberately finite.  One hour is the
 # minimum useful reconnect window; one year is the hard ceiling so a forgotten
@@ -785,6 +787,7 @@ def create_hosts_router(
             "host_id": armed.host_id,
             "token_type": "host_tunnel",
             "token": token,
+            "workspace_id": current_workspace_id(),
             "expires_at": expires_at,
         }
 
@@ -851,6 +854,7 @@ def create_hosts_router(
         response.headers["Pragma"] = "no-cache"
         return {
             "host_id": state.host_id,
+            "workspace_id": current_workspace_id(),
             "generation": state.generation,
             "active": state.active,
             "expires_at": state.expires_at,
@@ -911,6 +915,7 @@ def create_hosts_router(
         return {
             "host_id": armed.host_id,
             "token_type": "host_tunnel",
+            "workspace_id": current_workspace_id(),
             "generation": armed.generation,
             "operation_id": body.operation_id,
             "expires_at": armed.expires_at,

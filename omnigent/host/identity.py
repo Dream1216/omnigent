@@ -7,6 +7,7 @@ if the section does not exist.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import stat
@@ -29,6 +30,7 @@ HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
 HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
 HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
 HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
+HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
 
 # WebSocket upgrade header carrying a managed host's launch token.
 # Mirrors the runner tunnel's X-Omnigent-Runner-Tunnel-Token pattern:
@@ -36,8 +38,11 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 # confused with a user Bearer token by intermediate proxies or the
 # auth provider.
 MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
+MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 
 _MAX_HOST_TOKEN_FILE_BYTES = 4096
+_MAX_HOST_CREDENTIAL_METADATA_BYTES = 8192
+_HOST_CREDENTIAL_METADATA_SUFFIX = ".omnigent-meta.json"
 
 
 def load_host_tunnel_token() -> str | None:
@@ -103,6 +108,77 @@ def load_host_tunnel_token() -> str | None:
     if not token:
         raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must not be blank")
     return token
+
+
+def load_host_tunnel_workspace_id() -> int | None:
+    """Load the non-secret workspace route paired with a machine credential.
+
+    ``X-Omnigent-Workspace-Id`` is only a routing hint.  The server still
+    authenticates the raw capability against the named host inside that
+    workspace before accepting the WebSocket.  Durable credentials written by
+    ``omnigent host credential issue`` carry the value in their owner-only
+    metadata sidecar; operators may instead set
+    :data:`HOST_WORKSPACE_ID_ENV_VAR` explicitly (for example from a
+    Kubernetes ConfigMap).
+
+    Missing metadata remains compatible with single-workspace deployments.
+    An explicitly configured or persisted value must be a positive canonical
+    integer so a malformed selector can never silently fall back to workspace
+    zero.
+    """
+
+    explicit = os.environ.get(HOST_WORKSPACE_ID_ENV_VAR)
+    if explicit is not None:
+        return _parse_positive_workspace_id(explicit, source=f"${HOST_WORKSPACE_ID_ENV_VAR}")
+
+    token_file = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
+    if not token_file:
+        return None
+    token_path = Path(token_file).expanduser()
+    metadata_path = token_path.with_name(f"{token_path.name}{_HOST_CREDENTIAL_METADATA_SUFFIX}")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(metadata_path, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("host credential metadata must be a regular file")
+        if info.st_mode & 0o077:
+            raise ValueError(
+                "host credential metadata must not be readable or writable by group/other"
+            )
+        if info.st_size > _MAX_HOST_CREDENTIAL_METADATA_BYTES:
+            raise ValueError("host credential metadata exceeds the size limit")
+        raw = os.read(fd, _MAX_HOST_CREDENTIAL_METADATA_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > _MAX_HOST_CREDENTIAL_METADATA_BYTES:
+        raise ValueError("host credential metadata exceeds the size limit")
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("host credential metadata is malformed") from exc
+    if not isinstance(document, dict):
+        raise ValueError("host credential metadata is malformed")
+    workspace_id = document.get("workspace_id")
+    if workspace_id is None:
+        return None
+    if isinstance(workspace_id, bool) or not isinstance(workspace_id, int):
+        raise ValueError("host credential workspace id must be a positive integer")
+    return _parse_positive_workspace_id(str(workspace_id), source="host credential metadata")
+
+
+def _parse_positive_workspace_id(value: str, *, source: str) -> int:
+    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
+        raise ValueError(f"{source} must be a canonical positive integer")
+    workspace_id = int(value)
+    if workspace_id <= 0:
+        raise ValueError(f"{source} must be a canonical positive integer")
+    return workspace_id
 
 
 @dataclass

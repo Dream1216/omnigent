@@ -125,6 +125,7 @@ def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
                 "generation": 1,
                 "operation_id": operation_id,
                 "expires_at": 2_000_000_000,
+                "workspace_id": 41,
             },
         )
 
@@ -183,11 +184,13 @@ def test_host_credential_issue_installs_owner_only_file_without_echoing_secret(
         "token_sha256": hashlib.sha256(secret.encode()).hexdigest(),
         "operation_id": operation_id,
         "expires_at": 2_000_000_000,
+        "workspace_id": 41,
     }
     assert secret not in metadata_path.read_text()
     remaining_auth = json.loads(auth_file.read_text())
     assert "https://next.example.com" not in remaining_auth
     assert "https://unrelated.example.com" in remaining_auth
+    assert "OMNIGENT_HOST_WORKSPACE_ID=41" in result.output
     assert calls == [
         {
             "base_url": "https://next.example.com",

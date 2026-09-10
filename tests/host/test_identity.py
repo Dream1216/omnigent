@@ -12,6 +12,7 @@ import yaml
 from omnigent.host.identity import (
     load_host_identity_if_present,
     load_host_tunnel_token,
+    load_host_tunnel_workspace_id,
     load_or_create_host_identity,
 )
 
@@ -325,3 +326,44 @@ def test_file_backed_host_token_refuses_ambiguous_or_unsafe_sources(
     os.chmod(token_file, 0o644)
     with pytest.raises(ValueError, match="group/other"):
         load_host_tunnel_token()
+
+
+def test_host_machine_workspace_route_loads_env_or_owner_only_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The non-secret workspace route follows credential rotation metadata."""
+
+    token_file = tmp_path / "host-token"
+    token_file.write_text("secret\n")
+    os.chmod(token_file, 0o600)
+    metadata = token_file.with_name(f"{token_file.name}.omnigent-meta.json")
+    metadata.write_text('{"workspace_id":41}')
+    os.chmod(metadata, 0o600)
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
+    monkeypatch.delenv("OMNIGENT_HOST_WORKSPACE_ID", raising=False)
+
+    assert load_host_tunnel_workspace_id() == 41
+    monkeypatch.setenv("OMNIGENT_HOST_WORKSPACE_ID", "73")
+    assert load_host_tunnel_workspace_id() == 73
+
+
+def test_host_machine_workspace_route_refuses_malformed_or_unsafe_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid workspace hints fail closed instead of falling into workspace zero."""
+
+    token_file = tmp_path / "host-token"
+    token_file.write_text("secret\n")
+    os.chmod(token_file, 0o600)
+    metadata = token_file.with_name(f"{token_file.name}.omnigent-meta.json")
+    metadata.write_text('{"workspace_id":0}')
+    os.chmod(metadata, 0o600)
+    monkeypatch.setenv("OMNIGENT_HOST_TOKEN_FILE", str(token_file))
+    monkeypatch.delenv("OMNIGENT_HOST_WORKSPACE_ID", raising=False)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        load_host_tunnel_workspace_id()
+    metadata.write_text('{"workspace_id":41}')
+    os.chmod(metadata, 0o644)
+    with pytest.raises(ValueError, match="group/other"):
+        load_host_tunnel_workspace_id()
