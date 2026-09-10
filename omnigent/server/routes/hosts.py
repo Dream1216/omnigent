@@ -112,6 +112,13 @@ def _host_absent_error(host: Host) -> OmnigentError:
     return OmnigentError("host is offline", code=ErrorCode.CONFLICT)
 
 
+def _workspace_route_payload() -> dict[str, int]:
+    """Return a SaaS workspace route without changing workspace-zero APIs."""
+
+    workspace_id = current_workspace_id()
+    return {"workspace_id": workspace_id} if workspace_id > 0 else {}
+
+
 # External-host machine credentials are deliberately finite.  One hour is the
 # minimum useful reconnect window; one year is the hard ceiling so a forgotten
 # credential can never become permanent.  The CLI defaults to 90 days and can
@@ -787,7 +794,7 @@ def create_hosts_router(
             "host_id": armed.host_id,
             "token_type": "host_tunnel",
             "token": token,
-            "workspace_id": current_workspace_id(),
+            **_workspace_route_payload(),
             "expires_at": expires_at,
         }
 
@@ -854,7 +861,7 @@ def create_hosts_router(
         response.headers["Pragma"] = "no-cache"
         return {
             "host_id": state.host_id,
-            "workspace_id": current_workspace_id(),
+            **_workspace_route_payload(),
             "generation": state.generation,
             "active": state.active,
             "expires_at": state.expires_at,
@@ -915,7 +922,7 @@ def create_hosts_router(
         return {
             "host_id": armed.host_id,
             "token_type": "host_tunnel",
-            "workspace_id": current_workspace_id(),
+            **_workspace_route_payload(),
             "generation": armed.generation,
             "operation_id": body.operation_id,
             "expires_at": armed.expires_at,
