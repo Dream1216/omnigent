@@ -582,7 +582,6 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
-        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin',
     ],
 )
 def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
@@ -604,23 +603,21 @@ def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
     )
 
 
-def test_image_material_lock_rejects_gh_transient_archive_metadata(
+def test_image_material_lock_rejects_noncanonical_gh_copy(
     tmp_path: Path,
 ) -> None:
     repo = _material_lock_repo(tmp_path)
     dockerfile = repo / "deploy/docker/Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
-    gh_start = source.index("ARG GH_VERSION=")
-    run_start = source.index("RUN --mount=type=tmpfs,target=/tmp set -eu;", gh_start)
-    source = source[:run_start] + source[run_start:].replace(
-        "RUN --mount=type=tmpfs,target=/tmp set -eu;",
-        "RUN set -eu;",
+    source = source.replace(
+        "COPY --from=gh-builder --chown=0:0 --chmod=0755",
+        "COPY --from=gh-builder",
         1,
     )
     dockerfile.write_text(source, encoding="utf-8")
 
     assert (
-        "GitHub CLI install layer must isolate transient archive metadata"
+        "GitHub CLI must come from a canonical verified export layer"
         in validate_image_material_lock(repo)
     )
 

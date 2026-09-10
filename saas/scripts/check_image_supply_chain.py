@@ -998,19 +998,24 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
-        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin',
     }
     if any(fragment not in host_stage for fragment in standalone_cli_timestamp_contract):
         violations.append("standalone host CLI install layers must normalize executable mtimes")
-    gh_install_start = host_stage.find("ARG GH_VERSION=")
-    gh_install_end = host_stage.find('echo "gh ${GH_VERSION} pinned', gh_install_start)
-    gh_install_block = (
-        host_stage[gh_install_start:gh_install_end]
-        if gh_install_start >= 0 and gh_install_end >= 0
-        else ""
-    )
-    if "RUN --mount=type=tmpfs,target=/tmp set -eu;" not in gh_install_block:
-        violations.append("GitHub CLI install layer must isolate transient archive metadata")
+    gh_export_contract = {
+        "FROM builder AS gh-builder",
+        "ARG TARGETARCH",
+        "urllib.request.urlopen",
+        "hashlib.sha256(data).hexdigest()",
+        'archive.getmember(f"gh_{version}_linux_{arch}/bin/gh")',
+        'out=Path("/opt/gh-export/gh")',
+        "out.write_bytes(binary)",
+        "out.chmod(0o755)",
+        "os.utime(out, (epoch, epoch))",
+        'installed="$(/opt/gh-export/gh --version',
+        "COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin/gh",
+    }
+    if any(fragment not in dockerfile for fragment in gh_export_contract):
+        violations.append("GitHub CLI must come from a canonical verified export layer")
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",

@@ -249,6 +249,19 @@ RUN set -eu; \
 # image; contributes no layers of its own.
 FROM ${NODE_IMAGE} AS node-runtime
 
+# Materialize the pinned GitHub CLI outside the host rootfs. The final host
+# receives only this fixed-content, fixed-mode file through a COPY layer.
+FROM builder AS gh-builder
+ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH
+ARG GH_VERSION=2.100.0
+ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
+ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
+RUN python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}" \
+ && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
+ && [ "$installed" = "$GH_VERSION" ] \
+ && echo "gh ${GH_VERSION} pinned (sha256 verified)"
+
 # ── Host runtime (`--target host`) ──────────────────────
 # Prebaked Omnigent host for remote sandboxes: full omnigent install,
 # git + tmux for harness runtime needs, procps + lsof so the antigravity-native
@@ -523,37 +536,8 @@ RUN set -eu; \
     fi; \
     echo "agy ${AGY_VERSION} pinned (sha256 verified)"
 
-# GitHub CLI (`gh`) — the read-only "GitHub" side panel shells out to `gh` in the
-# runner (omnigent/runner/github_resource.py: `gh pr view` / `gh pr diff` /
-# `gh api .../pulls/<n>/files`) to render the session branch's PR + file diffs, so
-# a managed host image must carry it or the panel degrades to a "gh not installed"
-# state. Pinned + SHA256-verified per arch, like agy above; to bump, update
-# GH_VERSION and both SHA256s from the release's `gh_<ver>_checksums.txt` at
-# https://github.com/cli/cli/releases.
-ARG GH_VERSION=2.100.0
-ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
-ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
-RUN --mount=type=tmpfs,target=/tmp set -eu; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) sha="$GH_SHA256_AMD64" ;; \
-      arm64) sha="$GH_SHA256_ARM64" ;; \
-      *) echo "ERROR: unsupported arch '$arch' for gh" >&2; exit 1 ;; \
-    esac; \
-    asset="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
-    curl -fsSL -o /tmp/gh.tar.gz \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${asset}"; \
-    echo "${sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/gh.tar.gz -C /tmp "gh_${GH_VERSION}_linux_${arch}/bin/gh"; \
-    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin; \
-    rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${arch}"; \
-    test -x /usr/local/bin/gh; \
-    installed="$(/usr/local/bin/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"; \
-    if [ "$installed" != "$GH_VERSION" ]; then \
-      echo "ERROR: gh reports '${installed:-<unparseable>}', expected '$GH_VERSION'." >&2; \
-      exit 1; \
-    fi; \
-    echo "gh ${GH_VERSION} pinned (sha256 verified)"
+# The read-only GitHub side panel shells out to this SHA-verified CLI.
+COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin/gh
 
 # Copy only the canonical self-contained venv export. The non-editable install
 # keeps package and license bytes in site-packages, so retaining /build would
