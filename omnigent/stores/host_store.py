@@ -964,7 +964,7 @@ class HostStore:
                 return None
             if not hmac.compare_digest(row.token_hash, hash_host_launch_token(token)):
                 return None
-            if row.token_expires_at < now_epoch():
+            if row.token_expires_at <= now_epoch():
                 return None
             return _row_to_host(row)
 

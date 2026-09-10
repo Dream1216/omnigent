@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import os
 import socket
+import stat
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -27,8 +28,10 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
 # credential (see MANAGED_HOST_TOKEN_HEADER); HOST_ID / HOST_NAME
 # override the identity file and must be set together.
 HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
+HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
 HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
 HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
+HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
 
 # WebSocket upgrade header carrying a managed host's launch token.
 # Mirrors the runner tunnel's X-Omnigent-Runner-Tunnel-Token pattern:
@@ -36,6 +39,57 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 # confused with a user Bearer token by intermediate proxies or the
 # auth provider.
 MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
+MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
+
+_MAX_HOST_TOKEN_FILE_BYTES = 4096
+
+
+def load_host_tunnel_token() -> str | None:
+    """Load a narrow Host token from one inline or owner-only file source."""
+
+    inline = os.environ.get(HOST_TOKEN_ENV_VAR)
+    file_value = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
+    if inline and file_value:
+        raise ValueError(f"set only one of {HOST_TOKEN_ENV_VAR} or {HOST_TOKEN_FILE_ENV_VAR}")
+    if inline:
+        token = inline.strip()
+        if not token:
+            raise ValueError(f"{HOST_TOKEN_ENV_VAR} must not be blank")
+        return token
+    if not file_value:
+        return None
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(Path(file_value).expanduser(), flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must name a regular file")
+        if os.name != "nt" and info.st_mode & 0o077:
+            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must have owner-only permissions")
+        raw = os.read(fd, _MAX_HOST_TOKEN_FILE_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > _MAX_HOST_TOKEN_FILE_BYTES:
+        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} exceeds the credential size limit")
+    token = raw.decode("utf-8").strip()
+    if not token:
+        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must not be blank")
+    return token
+
+
+def load_host_tunnel_workspace_id() -> int | None:
+    """Load the non-secret workspace selector paired with a Host token."""
+
+    value = os.environ.get(HOST_WORKSPACE_ID_ENV_VAR)
+    if value is None:
+        return None
+    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
+        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
+    workspace_id = int(value)
+    if workspace_id <= 0:
+        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
+    return workspace_id
 
 
 @dataclass

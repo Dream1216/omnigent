@@ -1,0 +1,174 @@
+diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
+index 97563c22c..78174b300 100644
+--- a/omnigent/host/connect.py
++++ b/omnigent/host/connect.py
+@@ -3773,3 +3773,8 @@ class HostProcess:
+         """
+-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
++        from omnigent.host.identity import (
++            MANAGED_HOST_TOKEN_HEADER,
++            MANAGED_HOST_WORKSPACE_HEADER,
++            load_host_tunnel_token,
++            load_host_tunnel_workspace_id,
++        )
+         from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
+@@ -3792,5 +3797,11 @@ class HostProcess:
+
+-        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
++        # Re-read the file on each reconnect so atomic Secret rotation takes
++        # effect without retaining a user bearer or restarting this process.
++        managed_token = load_host_tunnel_token()
+         if managed_token:
++            headers.pop("Authorization", None)
+             headers[MANAGED_HOST_TOKEN_HEADER] = managed_token
++            workspace_id = load_host_tunnel_workspace_id()
++            if workspace_id is not None:
++                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
+             return headers
+@@ -3814,5 +3825,5 @@ class HostProcess:
+         """
+-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
++        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
+
+-        if os.environ.get(HOST_TOKEN_ENV_VAR):
++        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
+             return None
+diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py
+index 2c594d5b1..5903604f4 100644
+--- a/omnigent/host/identity.py
++++ b/omnigent/host/identity.py
+@@ -12,2 +12,3 @@ import os
+ import socket
++import stat
+ import tempfile
+@@ -29,4 +30,6 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
+ HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
++HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
+ HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
+ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
++HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
+
+@@ -38,2 +41,53 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
+ MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
++MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
++
++_MAX_HOST_TOKEN_FILE_BYTES = 4096
++
++
++def load_host_tunnel_token() -> str | None:
++    """Load a narrow Host token from one inline or owner-only file source."""
++
++    inline = os.environ.get(HOST_TOKEN_ENV_VAR)
++    file_value = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
++    if inline and file_value:
++        raise ValueError(f"set only one of {HOST_TOKEN_ENV_VAR} or {HOST_TOKEN_FILE_ENV_VAR}")
++    if inline:
++        token = inline.strip()
++        if not token:
++            raise ValueError(f"{HOST_TOKEN_ENV_VAR} must not be blank")
++        return token
++    if not file_value:
++        return None
++
++    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
++    fd = os.open(Path(file_value).expanduser(), flags)
++    try:
++        info = os.fstat(fd)
++        if not stat.S_ISREG(info.st_mode):
++            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must name a regular file")
++        if os.name != "nt" and info.st_mode & 0o077:
++            raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must have owner-only permissions")
++        raw = os.read(fd, _MAX_HOST_TOKEN_FILE_BYTES + 1)
++    finally:
++        os.close(fd)
++    if len(raw) > _MAX_HOST_TOKEN_FILE_BYTES:
++        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} exceeds the credential size limit")
++    token = raw.decode("utf-8").strip()
++    if not token:
++        raise ValueError(f"{HOST_TOKEN_FILE_ENV_VAR} must not be blank")
++    return token
++
++
++def load_host_tunnel_workspace_id() -> int | None:
++    """Load the non-secret workspace selector paired with a Host token."""
++
++    value = os.environ.get(HOST_WORKSPACE_ID_ENV_VAR)
++    if value is None:
++        return None
++    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
++        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
++    workspace_id = int(value)
++    if workspace_id <= 0:
++        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
++    return workspace_id
+
+diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
+index 4b3701e6b..8a13f32bf 100644
+--- a/omnigent/inner/bwrap_sandbox.py
++++ b/omnigent/inner/bwrap_sandbox.py
+@@ -201,9 +201,12 @@ _ALLOWED_SOCKET_FAMILIES = (
+ # ``--unshare-pid`` still contains signalling. That leak is acceptable on a
+-# single-tenant dev microVM (Lakebox) but not on an arbitrary host, so the
+-# downgrade is only taken for vetted backends. Add entries here as more
+-# backends are verified safe.
+-_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"lakebox"})
++# single-tenant dev microVM (Lakebox) or a Kubernetes container with its own
++# PID namespace, but not on an arbitrary host, so the downgrade is only taken
++# for explicitly vetted backends. Kubernetes deployments MUST NOT declare this
++# backend for ``hostPID`` pods or pods sharing another container's PID
++# namespace.
++_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"kubernetes", "lakebox"})
+
+ # Env var an outer launcher may set to name the host's outer sandbox
+-# backend (e.g. ``lakebox``). Authoritative when present; otherwise the
++# backend (e.g. ``lakebox`` or ``kubernetes``). Authoritative when present;
++# otherwise the
+ # backend is autodetected (see ``_detect_host_sandbox_backend``). Note it
+@@ -253,3 +256,3 @@ def _should_bind_host_proc() -> bool:
+     ``True`` only when the host runs under an outer sandbox backend in
+-    :data:`_PROC_BIND_HOST_BACKENDS` (lakebox today). On every other host
++    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
+     the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
+diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
+index 5c6b8d549..24fbab66b 100644
+--- a/omnigent/server/routes/host_tunnel.py
++++ b/omnigent/server/routes/host_tunnel.py
+@@ -319,3 +319,9 @@ def create_host_tunnel_router(
+             ping_task = asyncio.create_task(
+-                _ping_loop(ws, conn, host_id, host_store),
++                _ping_loop(
++                    ws,
++                    conn,
++                    host_id,
++                    host_store,
++                    presented_host_token=managed_token,
++                ),
+                 name=f"host-ping:{host_id}",
+@@ -809,2 +815,4 @@ async def _ping_loop(
+     host_store: HostStore,
++    *,
++    presented_host_token: str | None = None,
+ ) -> None:
+@@ -827,2 +835,13 @@ async def _ping_loop(
+         await asyncio.sleep(PING_INTERVAL_S)
++        if presented_host_token is not None:
++            still_valid = await asyncio.to_thread(
++                host_store.resolve_launch_token,
++                host_id,
++                presented_host_token,
++            )
++            if still_valid is None:
++                _logger.warning("Host %s credential was revoked or expired", host_id)
++                with contextlib.suppress(RuntimeError):
++                    await ws.close(code=4004, reason="credential revoked or expired")
++                return
+         elapsed = time.time() - conn.last_frame_at
+diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
+index 7b2648eb5..f2e2b4386 100644
+--- a/omnigent/stores/host_store.py
++++ b/omnigent/stores/host_store.py
+@@ -966,3 +966,3 @@ class HostStore:
+                 return None
+-            if row.token_expires_at < now_epoch():
++            if row.token_expires_at <= now_epoch():
+                 return None

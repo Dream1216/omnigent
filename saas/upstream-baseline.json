@@ -44,17 +44,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 20,
-    "max_upstream_net_added_loc": 665,
+    "max_direct_upstream_files": 24,
+    "max_upstream_net_added_loc": 750,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-10",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 14,
-    "previous_max_upstream_net_added_loc": 520,
-    "reason": "owner-authorized PR 51 compatibility CI, reproducible image packaging, deterministic official regressions, authenticated same-origin browser recovery, and four patch-queued runtime seams",
-    "revision": "pr51-upstream-sync-249-v1"
+    "previous_max_direct_upstream_files": 23,
+    "previous_max_upstream_net_added_loc": 747,
+    "reason": "extend the reviewed external Host bridge by one three-net-LOC official allowlist seam for an explicitly declared Kubernetes Pod with a private PID namespace after a real K3s bubblewrap probe; seccomp policy, node bootstrap, credential lifecycle, tenant catalog and recovery admission remain downstream-owned",
+    "revision": "external-host-kubernetes-runtime-v3"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",

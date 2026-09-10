@@ -375,6 +375,7 @@
     state.cursors.users = payload.next_cursor;
     renderUsers();
     renderOverview();
+    if (!append) state.loaded.add("users");
   }
 
   async function mutateUser(item, action) {
@@ -451,6 +452,7 @@
     state.cursors.tenants = payload.next_cursor;
     renderTenants();
     renderOverview();
+    if (!append) state.loaded.add("tenants");
   }
 
   async function mutateTenant(item, action) {
@@ -655,6 +657,7 @@
     state.cursors.support = payload.next_cursor;
     renderSupport();
     renderOverview();
+    if (!append) state.loaded.add("support");
   }
 
   async function requestSupport(event) {

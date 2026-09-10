@@ -406,6 +406,21 @@ def _certificates(
     return values
 
 
+def test_certificate_fixture_uses_issue_time_not_module_collection_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tests.saas.test_production_runner_control.NOW",
+        datetime.now(timezone.utc) - timedelta(days=1),
+    )
+
+    certificates = _certificates(tmp_path, runner_id=RUNNER_ID)
+    leaf = x509.load_pem_x509_certificate(certificates["runner"].certificate.read_bytes())
+
+    assert leaf.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(minutes=29)
+
+
 def _server_context(files: _CertificateFiles) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_3

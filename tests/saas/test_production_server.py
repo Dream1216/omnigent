@@ -465,6 +465,10 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
             runtime_context_middleware.kwargs["runtime_store_adapter"]
             is built.app.state.saas_http_integration.runtime_store_adapter
         )
+        assert runtime_context_middleware.kwargs["runtime_initializer"] is not None
+        assert "/v1/execution-readyz" in {
+            getattr(route, "path", None) for route in built.app.routes
+        }
         with TestClient(built.app, base_url="https://next.example.test") as client:
             ready = client.get("/saas/readyz")
             assert ready.status_code == 200
