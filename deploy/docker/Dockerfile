@@ -163,7 +163,8 @@ COPY examples/ ./examples/
 # Python) — without it, uv falls back to system Python and the
 # copied /opt/venv lands in the runtime stage empty.
 # Keep ensurepip's deterministic seed bytecode, reject volatile installer state,
-# then normalize /build for cached-versus-clean rebuild equality.
+# then normalize the installed venv and /build for cached-versus-clean rebuild
+# equality.
 RUN python -m venv /opt/venv \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-seed-pyc.sha256
@@ -190,7 +191,8 @@ RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cac
     fi \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-core-pyc.sha256 \
- && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256 && find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+ && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256 \
+ && find /opt/venv /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # ── Server builder ──────────────────────────────────────
 # Server-only additions on top of the shared builder: the SPA bundle
