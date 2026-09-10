@@ -774,7 +774,9 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "> /tmp/venv-seed-pyc.sha256",
         "> /tmp/venv-core-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
-        'find /opt/venv /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py",
+        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
     }
     if (
         any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)

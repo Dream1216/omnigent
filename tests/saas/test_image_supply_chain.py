@@ -658,8 +658,8 @@ def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
             "production venv and build tree must reject volatile installer metadata",
         ),
         (
-            'find /opt/venv /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
-            "true # deterministic venv and build tree normalization removed",
+            '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+            '--root /opt/venv-volatile --source-date-epoch "${SOURCE_DATE_EPOCH}"',
             "production venv and build tree must reject volatile installer metadata",
         ),
         (

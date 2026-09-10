@@ -192,7 +192,8 @@ RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cac
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-core-pyc.sha256 \
  && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256 \
- && find /opt/venv /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+ && python -B -I /build/saas/scripts/normalize_host_cli_tree.py --root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+ && find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # ── Server builder ──────────────────────────────────────
 # Server-only additions on top of the shared builder: the SPA bundle
