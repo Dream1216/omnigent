@@ -343,14 +343,14 @@ def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() ->
     expected = {
         (
             16,
-            "ga1b2c3d4e5f",
+            "h8c0d1e2f3a4",
             "p0s000000012",
-        ): "09ca0010b36f5f0e3b6a41e8aafa3b373c3199f882a34ebc8fdda1f5522f91b2",
+        ): "60acedb3c6bbcc59c4e1054cd52abf89eed82c9b8e1fb34808652712db191d43",
         (
             18,
-            "ga1b2c3d4e5f",
+            "h8c0d1e2f3a4",
             "p0s000000012",
-        ): "5af8ea5fd95dcda61b94ad3d1fafa196bb76d9e971f7c637e49523750362ab85",
+        ): "655e2b38afc0b977a59f7ca84b6135e36bf7fcbee9bd71f111a2802eeac57643",
     }
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
@@ -360,7 +360,7 @@ def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() ->
 def test_source_security_catalog_sorts_rows_after_role_aliasing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    key = (18, "ga1b2c3d4e5f", "p0s000000012")
+    key = (18, "h8c0d1e2f3a4", "p0s000000012")
     deployed = {
         "relation_acls": [
             ["saas_runs", "next_beta_owner", "SELECT"],
