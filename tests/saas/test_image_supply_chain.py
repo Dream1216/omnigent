@@ -655,7 +655,12 @@ def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
         (
             "> /tmp/venv-core-pyc.sha256",
             "> /tmp/venv-core-pyc-unchecked.sha256",
-            "production venv must preserve seed bytecode and reject uv installer metadata",
+            "production venv and build tree must reject volatile installer metadata",
+        ),
+        (
+            'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+            "true # deterministic build tree normalization removed",
+            "production venv and build tree must reject volatile installer metadata",
         ),
         (
             "> /tmp/venv-server-pyc.sha256",

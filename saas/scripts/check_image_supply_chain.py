@@ -774,15 +774,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "> /tmp/venv-seed-pyc.sha256",
         "> /tmp/venv-core-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
+        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
     }
     if (
         any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
         or dockerfile.count('root.rglob("uv_cache.json")') != 2
         or dockerfile.count("python -B -I -c") < 3
     ):
-        violations.append(
-            "production venv must preserve seed bytecode and reject uv installer metadata"
-        )
+        violations.append("production venv and build tree must reject volatile installer metadata")
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
