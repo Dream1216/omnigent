@@ -186,6 +186,11 @@ def test_platform_console_shell_and_assets_require_staff_realm_session() -> None
     assert css.headers["content-type"].startswith("text/css")
     assert javascript.status_code == 200
     assert javascript.headers["content-type"].startswith("text/javascript")
+    # Bootstrap preloads these projections.  Marking each successful full load
+    # prevents the first navigation click from issuing a second, stale GET that
+    # can race a lifecycle mutation and repaint the old status.
+    for preloaded_view in ("users", "tenants", "support"):
+        assert f'if (!append) state.loaded.add("{preloaded_view}");' in javascript.text
     assert privacy_css.status_code == 200
     assert privacy_css.headers["content-type"].startswith("text/css")
     assert privacy_javascript.status_code == 200
