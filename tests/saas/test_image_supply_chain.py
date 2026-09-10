@@ -663,6 +663,11 @@ def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
             "production venv and build tree must reject volatile installer metadata",
         ),
         (
+            'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+            'tar --sort=none --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+            "production venv and build tree must reject volatile installer metadata",
+        ),
+        (
             "> /tmp/venv-server-pyc.sha256",
             "> /tmp/venv-server-pyc-unchecked.sha256",
             "server venv must preserve the deterministic seed bytecode manifest",

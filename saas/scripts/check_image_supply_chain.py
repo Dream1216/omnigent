@@ -776,6 +776,10 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
         "python -B -I /build/saas/scripts/normalize_host_cli_tree.py",
         '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv",
+        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar",
+        "COPY --from=builder /opt/venv-export /opt/venv",
         'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
     }
     if (

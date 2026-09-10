@@ -163,8 +163,8 @@ COPY examples/ ./examples/
 # Python) — without it, uv falls back to system Python and the
 # copied /opt/venv lands in the runtime stage empty.
 # Keep ensurepip's deterministic seed bytecode, reject volatile installer state,
-# then normalize the installed venv and /build for cached-versus-clean rebuild
-# equality.
+# then normalize the installed venv, materialize a metadata-free canonical
+# export tree for the host COPY layer, and normalize /build.
 RUN python -m venv /opt/venv \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-seed-pyc.sha256
@@ -192,7 +192,7 @@ RUN uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cac
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-core-pyc.sha256 \
  && cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256 \
- && python -B -I /build/saas/scripts/normalize_host_cli_tree.py --root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+ && python -B -I /build/saas/scripts/normalize_host_cli_tree.py --root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}" && tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv && mkdir /opt/venv-export && tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar && rm -f /tmp/venv.tar \
  && find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # ── Server builder ──────────────────────────────────────
@@ -555,10 +555,10 @@ RUN set -eu; \
     fi; \
     echo "gh ${GH_VERSION} pinned (sha256 verified)"
 
-# Copy only the self-contained venv. The non-editable install keeps package and
-# license bytes in site-packages, so retaining /build would add unused source
-# and cache-dependent metadata to the runtime image.
-COPY --from=builder /opt/venv /opt/venv
+# Copy only the canonical self-contained venv export. The non-editable install
+# keeps package and license bytes in site-packages, so retaining /build would
+# add unused source and cache-dependent metadata to the runtime image.
+COPY --from=builder /opt/venv-export /opt/venv
 RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
 RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
       /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \
