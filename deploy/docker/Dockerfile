@@ -552,12 +552,10 @@ RUN set -eu; \
     fi; \
     echo "gh ${GH_VERSION} pinned (sha256 verified)"
 
-# Copy the venv and source tree. The editable install's .pth files reference
-# /build/omnigent and /build/sdks/* -- both denied by the k8s Landlock LSM
-# policy. Re-install without -e so the package bytes land in the venv's
-# site-packages and imports no longer require /build at runtime.
+# Copy only the self-contained venv. The non-editable install keeps package and
+# license bytes in site-packages, so retaining /build would add unused source
+# and cache-dependent metadata to the runtime image.
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /build /build
 RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
 RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
       /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \

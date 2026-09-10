@@ -830,6 +830,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
         host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
         runtime_stage = dockerfile.split(runtime_marker, 1)[1]
+    if "COPY --from=builder /build /build" in host_stage:
+        violations.append("host image must not retain the non-runtime build tree")
     apt_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
         "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
