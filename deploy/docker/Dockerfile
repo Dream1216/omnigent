@@ -463,7 +463,9 @@ RUN set -eu; \
     install -m 0755 /root/.local/bin/kiro-cli /usr/local/bin/kiro-cli; \
     if [ -f /root/.local/bin/kiro-cli-chat ]; then \
       install -m 0755 /root/.local/bin/kiro-cli-chat /usr/local/bin/kiro-cli-chat; \
+      touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat; \
     fi; \
+    touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin; \
     rm -rf /tmp/kiro /tmp/kiro.zip; \
     installed="$(/usr/local/bin/kiro-cli --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"; \
     [ "$installed" = "$KIRO_CLI_VERSION" ] || { \
@@ -511,6 +513,7 @@ RUN set -eu; \
     echo "${sha}  /tmp/agy.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
     install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+    touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin; \
     rm -f /tmp/agy.tar.gz /tmp/antigravity; \
     test -x /usr/local/bin/agy; \
     installed="$(/usr/local/bin/agy --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"; \
@@ -543,6 +546,7 @@ RUN set -eu; \
     echo "${sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/gh.tar.gz -C /tmp "gh_${GH_VERSION}_linux_${arch}/bin/gh"; \
     install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin; \
     rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${arch}"; \
     test -x /usr/local/bin/gh; \
     installed="$(/usr/local/bin/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"; \

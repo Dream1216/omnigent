@@ -577,6 +577,34 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
 
 
 @pytest.mark.parametrize(
+    "target",
+    [
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin',
+    ],
+)
+def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    assert target in source
+    dockerfile.write_text(
+        source.replace(target, target.replace("SOURCE_DATE_EPOCH", "0"), 1),
+        encoding="utf-8",
+    )
+
+    assert (
+        "standalone host CLI install layers must normalize executable mtimes"
+        in validate_image_material_lock(repo)
+    )
+
+
+@pytest.mark.parametrize(
     ("target", "replacement", "expected"),
     [
         (

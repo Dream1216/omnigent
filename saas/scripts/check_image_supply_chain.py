@@ -987,6 +987,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append(
             "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
         )
+    standalone_cli_timestamp_contract = {
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/gh /usr/local/bin',
+    }
+    if any(fragment not in host_stage for fragment in standalone_cli_timestamp_contract):
+        violations.append("standalone host CLI install layers must normalize executable mtimes")
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",
