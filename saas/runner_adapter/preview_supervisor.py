@@ -648,24 +648,43 @@ async def _require_healthy(
     *,
     timeout_seconds: float,
 ) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
     transport = httpx.AsyncHTTPTransport(uds=str(socket_path), trust_env=False, retries=0)
-    try:
-        async with httpx.AsyncClient(
-            transport=transport,
-            timeout=httpx.Timeout(timeout_seconds),
-            follow_redirects=False,
-            trust_env=False,
-        ) as client:
-            response = await client.get(f"http://preview.invalid{health_path}")
-            await response.aread()
-    except (httpx.HTTPError, OSError) as exc:
-        raise PreviewProcessSupervisorError(
-            "preview_supervisor_health_failed", "Preview process health probe failed"
-        ) from exc
-    if response.status_code != 200:
-        raise PreviewProcessSupervisorError(
-            "preview_supervisor_health_failed", "Preview process health probe failed"
-        )
+    last_error: httpx.ConnectError | httpx.ConnectTimeout | OSError | None = None
+    async with httpx.AsyncClient(
+        transport=transport,
+        timeout=httpx.Timeout(timeout_seconds),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                response = await client.get(
+                    f"http://preview.invalid{health_path}",
+                    timeout=httpx.Timeout(remaining),
+                )
+                await response.aread()
+            except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
+                # A server can bind its UDS before its accept loop is ready.
+                # Retry that unpublished startup race inside the original
+                # health deadline; no route is visible while this is running.
+                last_error = exc
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.02, remaining))
+                continue
+            if response.status_code != 200:
+                raise PreviewProcessSupervisorError(
+                    "preview_supervisor_health_failed", "Preview process health probe failed"
+                )
+            return
+    raise PreviewProcessSupervisorError(
+        "preview_supervisor_health_failed", "Preview process health probe failed"
+    ) from last_error
 
 
 async def _terminate_process(

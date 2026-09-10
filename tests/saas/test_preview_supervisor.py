@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
@@ -29,6 +30,7 @@ from saas.runner_adapter.preview_supervisor import (
     RunnerPreviewProcessSupervisor,
     _linux_process_group_has_live_members,
     _process_group_exists,
+    _require_healthy,
 )
 from tests.saas.test_preview_tunnel import (
     _dispatch_one,
@@ -96,6 +98,42 @@ async def _wait_for_exit(
             return exit_state
         await asyncio.sleep(0.02)
     raise AssertionError("Preview supervisor did not record process exit")
+
+
+@pytest.mark.asyncio
+async def test_health_probe_retries_transient_uds_connection_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    class _Response:
+        status_code = 200
+
+        async def aread(self) -> bytes:
+            return b"healthy"
+
+    class _Client:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def get(self, _url: str, **_kwargs: object) -> _Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectError("listener not ready")
+            return _Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+    await _require_healthy(Path("/tmp/not-yet-accepting.sock"), "/health", timeout_seconds=1)
+
+    assert attempts == 2
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Preview supervision requires POSIX")
