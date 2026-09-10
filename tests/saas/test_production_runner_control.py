@@ -312,6 +312,7 @@ def _certificates(
     runner_id: UUID,
     extra_runner_uri: bool = False,
 ) -> dict[str, _CertificateFiles]:
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Runner Control Test CA")])
     ca = (
@@ -320,8 +321,8 @@ def _certificates(
         .issuer_name(ca_name)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(NOW - timedelta(minutes=1))
-        .not_valid_after(NOW + timedelta(hours=1))
+        .not_valid_before(issued_at - timedelta(minutes=1))
+        .not_valid_after(issued_at + timedelta(hours=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -355,8 +356,8 @@ def _certificates(
             .issuer_name(ca_name)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(NOW - timedelta(minutes=1))
-            .not_valid_after(NOW + timedelta(minutes=30))
+            .not_valid_before(issued_at - timedelta(minutes=1))
+            .not_valid_after(issued_at + timedelta(minutes=30))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(san, critical=False)
             .add_extension(x509.ExtendedKeyUsage([eku]), critical=True)

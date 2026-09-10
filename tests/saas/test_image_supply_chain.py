@@ -605,9 +605,9 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
             "production Dockerfile must pin pnpm 11.15.1",
         ),
         (
-            "ARG CLAUDE_CODE_VERSION=2.1.212",
-            "ARG CLAUDE_CODE_VERSION=2.1.213",
-            "host image must pin @anthropic-ai/claude-code to 2.1.212",
+            "ARG CLAUDE_CODE_VERSION=2.1.236",
+            "ARG CLAUDE_CODE_VERSION=2.1.237",
+            "host image must pin @anthropic-ai/claude-code to 2.1.236",
         ),
         (
             "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",

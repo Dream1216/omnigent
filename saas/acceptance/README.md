@@ -1411,3 +1411,22 @@ before merge, and it proves no signed publication, deployment, Canary, rollback 
 production admission. Only the approval record under `adr-approvals/` is protected
 by the append-only verifier; this acceptance evidence may be superseded by a later
 revision-bound record.
+
+## 2026-09-10 exact 249-commit upstream sync candidate
+
+The frozen upstream revision is
+`06c33aeae701d521a3cfacd2daf99441b6d64492`, exactly 249 first-parent commits
+after the previously admitted `e179bc422643c994e864bf34922bc54b5d4ab03b`.
+The sync resolves seven textual conflict blocks across four files, replays the
+three downstream patches against four official source paths, and records the
+resolution in `p6-upstream-sync-20260910-conflict-resolution.json`.
+
+Local validation covers the resolved failure set, official server compatibility,
+N-1 patching, zygote/query-context behavior, the host-platform sandbox and egress
+contract, frontend identity/new-chat behavior, and wheel contents. These results
+are candidate evidence only; the final committed SHA still requires its Push and
+PR workflows. Because the upstream revision changed, the previous ADR approval is
+historical: the ADR gate is again `pending`, the ledger has eleven pending gates,
+and release remains `NO-GO`. No signed production image, deployment, one-hour
+Canary, 900-second rollback, Multi-AZ/PITR recovery receipt, or independent
+production approval is claimed.

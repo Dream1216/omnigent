@@ -1,5 +1,5 @@
 diff --git a/omnigent/runtime/agent_cache.py b/omnigent/runtime/agent_cache.py
-index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e8279ee34 100644
+index 474ecc138..ec0d3bc48 100644
 --- a/omnigent/runtime/agent_cache.py
 +++ b/omnigent/runtime/agent_cache.py
 @@ -2,12 +2,17 @@
@@ -54,12 +54,12 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 +
 +        return self._agent_locks[hash(agent_id) % len(self._agent_locks)]
 
-     def load(
-         self,
-@@ -80,24 +105,42 @@ class AgentCache:
+     def _cache_path(self, agent_id: str, *, suffix: str = "") -> Path:
+         """Return a direct child of the cache root for an agent id."""
+@@ -100,24 +125,41 @@ class AgentCache:
              on-disk working directory.
          """
-         workdir = self._cache_dir / agent_id
+         workdir = self._cache_path(agent_id)
 +        with self._lock_for(agent_id):
 +            # Tier 1: in-memory spec. The cached spec was parsed with the
 +            # *expand_env* value of whichever caller populated it first.
@@ -68,20 +68,6 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 +            # which never changes for a given ``agent_id``.
 +            if agent_id in self._specs:
 +                return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
-
--        # Tier 1: in-memory spec. The cached spec was parsed with the
--        # *expand_env* value of whichever caller populated it first.
--        # That is consistent across callers because *expand_env* is
--        # derived from the agent's immutable ``session_id`` provenance,
--        # which never changes for a given ``agent_id``.
--        if agent_id in self._specs:
--            return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
--
--        # Tier 2: disk cache (directory already extracted)
--        if workdir.is_dir():
--            spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
--            self._specs[agent_id] = spec
--            return LoadedAgent(spec=spec, workdir=workdir)
 +            # Tier 2: disk cache (directory already atomically published)
 +            if workdir.is_dir():
 +                try:
@@ -101,6 +87,20 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 +                    self._specs[agent_id] = spec
 +                    return LoadedAgent(spec=spec, workdir=workdir)
 
+-        # Tier 1: in-memory spec. The cached spec was parsed with the
+-        # *expand_env* value of whichever caller populated it first.
+-        # That is consistent across callers because *expand_env* is
+-        # derived from the agent's immutable ``session_id`` provenance,
+-        # which never changes for a given ``agent_id``.
+-        if agent_id in self._specs:
+-            return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
+-
+-        # Tier 2: disk cache (directory already extracted)
+-        if workdir.is_dir():
+-            spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
+-            self._specs[agent_id] = spec
+-            return LoadedAgent(spec=spec, workdir=workdir)
+-
 -        # Cache miss — download bundle, write to temp file, extract
 -        bundle_bytes = self._artifact_store.get(bundle_location)
 -        return self._extract_and_cache(agent_id, bundle_bytes, workdir, expand_env=expand_env)
@@ -115,11 +115,11 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 
      def replace(
          self,
-@@ -131,32 +174,65 @@ class AgentCache:
+@@ -151,32 +193,68 @@ class AgentCache:
              directory.
          """
-         workdir = self._cache_dir / agent_id
--        staging_dir = self._cache_dir / f"{agent_id}_staging"
+         workdir = self._cache_path(agent_id)
+-        staging_dir = self._cache_path(agent_id, suffix="_staging")
 -
 -        # Extract new bundle to staging directory
 -        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
@@ -134,6 +134,9 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 -                prune_invalid_sub_agents=True,
 +        with self._lock_for(agent_id):
 +            self._cache_dir.mkdir(parents=True, exist_ok=True)
++            # Preserve upstream's reserved staging-path validation even though
++            # publication uses a collision-resistant private directory.
++            self._cache_path(agent_id, suffix="_staging")
 +            staging_dir = Path(
 +                tempfile.mkdtemp(prefix=f".{agent_id}-staging-", dir=self._cache_dir)
              )
@@ -205,23 +208,23 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
 
      def evict(self, agent_id: str) -> None:
          """
-@@ -166,10 +242,11 @@ class AgentCache:
+@@ -186,10 +264,11 @@ class AgentCache:
          :param agent_id: Unique agent identifier,
              e.g. ``"ag_abc123"``.
          """
+-        workdir = self._cache_path(agent_id)
 -        self._specs.pop(agent_id, None)
--        workdir = self._cache_dir / agent_id
 -        if workdir.is_dir():
 -            shutil.rmtree(workdir)
 +        with self._lock_for(agent_id):
++            workdir = self._cache_path(agent_id)
 +            self._specs.pop(agent_id, None)
-+            workdir = self._cache_dir / agent_id
 +            if workdir.is_dir():
 +                shutil.rmtree(workdir)
 
      def _extract_and_cache(
          self,
-@@ -191,6 +268,8 @@ class AgentCache:
+@@ -211,6 +290,8 @@ class AgentCache:
              :meth:`load` for the rationale.
          :returns: A LoadedAgent with the parsed spec and workdir.
          """
@@ -230,7 +233,7 @@ index 774989fc6b2435850c7c95d256714884bbd3b878..5942eab30ccca076db19bcef1ce5f76e
          tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
          os.close(tmp_fd)
          tmp_path = Path(tmp_name)
-@@ -198,12 +277,26 @@ class AgentCache:
+@@ -218,12 +299,26 @@ class AgentCache:
              tmp_path.write_bytes(bundle_bytes)
              spec = load_spec(
                  tmp_path,

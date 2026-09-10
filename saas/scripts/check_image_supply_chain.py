@@ -35,7 +35,7 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "11.15.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.212"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.236"),
     "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
 }

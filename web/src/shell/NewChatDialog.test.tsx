@@ -30,6 +30,7 @@ import {
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
 import { authenticatedFetch } from "@/lib/identity";
+import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "@/lib/backgroundSessionTitlesPreferences";
 import {
   useHostModelOptions,
   fetchHosts,
@@ -186,8 +187,29 @@ const CLAUDE_MODEL_OPTIONS_RESULT = {
 };
 const CODEX_MODEL_OPTIONS_RESULT = {
   data: [
-    { id: "databricks-gpt-5-5", displayName: "GPT-5.5", isDefault: true },
-    { id: "databricks-gpt-5-6", displayName: "GPT-5.6" },
+    {
+      id: "databricks-gpt-5-5",
+      displayName: "GPT-5.5",
+      isDefault: true,
+      // Codex's catalog advertises a per-model effort ladder; the config
+      // modal's Effort row is built from exactly this metadata.
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low" },
+        { reasoningEffort: "medium" },
+        { reasoningEffort: "high" },
+      ],
+    },
+    {
+      id: "databricks-gpt-5-6",
+      displayName: "GPT-5.6",
+      // A deliberately different ladder so tests can observe the row follow
+      // the drafted model (xhigh only here; low only on 5.5).
+      supportedReasoningEfforts: [
+        { reasoningEffort: "medium" },
+        { reasoningEffort: "high" },
+        { reasoningEffort: "xhigh" },
+      ],
+    },
   ],
   isLoading: false,
   isError: false,
@@ -779,6 +801,7 @@ function renderLanding(infoOverrides: Partial<ServerInfo> = {}, route = "/") {
     databricks_features: false,
     managed_sandboxes_enabled: false,
     sandbox_provider: null,
+    enabled_connections: [],
     sharing_mode: "on",
     public_sharing_enabled: true,
     server_version: null,
@@ -1743,6 +1766,45 @@ describe("NewChatLandingScreen", () => {
     expect(screen.getByText("Bypass permissions")).toBeTruthy();
   });
 
+  it("falls back to Default when the host catalog stops listing the picked model", async () => {
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    openAgentConfig("a1");
+    pickSelectOption("new-chat-landing-config-model", "Haiku 4.5");
+    expect(screen.getByTestId("new-chat-landing-config-model").textContent).toContain("Haiku 4.5");
+
+    // The host's provider changes under the open modal: its next poll of the
+    // catalog no longer lists the pick.
+    const shrunk = {
+      data: CLAUDE_MODEL_OPTIONS_RESULT.data.filter((model) => model.id !== "haiku"),
+      isLoading: false,
+      isError: false,
+    };
+    useHostModelOptionsMock.mockImplementation(
+      (_hostId, harness) =>
+        (harness === "codex-native" ? CODEX_MODEL_OPTIONS_RESULT : shrunk) as unknown as ReturnType<
+          typeof useHostModelOptions
+        >,
+    );
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "run the build" },
+    });
+    const trigger = screen.getByTestId("new-chat-landing-config-model");
+    expect(trigger.textContent).toContain("Default");
+    expect(trigger.textContent).not.toContain("Haiku 4.5");
+
+    // Saving the fallback sends no override, so the launch uses the provider's default.
+    saveConfig();
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    expect(body.model_override).toBeUndefined();
+  });
+
   it("shows the Codex approval-mode knob in the gear modal", () => {
     renderLanding();
     // Open Codex's (a2) config modal — it carries the approval-mode select.
@@ -1752,6 +1814,83 @@ describe("NewChatLandingScreen", () => {
     openSelect("new-chat-landing-config-approval");
     expect(screen.getByText("Full access")).toBeTruthy();
     expect(screen.getByText("Read only")).toBeTruthy();
+  });
+
+  it("offers the Codex effort ladder in the gear modal and sends the pick as reasoning_effort", async () => {
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    openAgentConfig("a2");
+    // With no model pinned, the row lists the catalog default's (GPT-5.5)
+    // ladder — raw Codex ids, never another model's rungs.
+    openSelect("new-chat-landing-config-effort");
+    expect(screen.getByRole("option", { name: "low" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "medium" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "xhigh" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "high" }));
+    expect(screen.getByTestId("new-chat-landing-config-effort").textContent).toContain("high");
+    saveConfig();
+
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "run the build" },
+    });
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    // The pick rides the create exactly like Claude's landing row — the field
+    // the codex-native launch path reads at terminal launch.
+    expect(body.reasoning_effort).toBe("high");
+  });
+
+  it("drops a drafted Codex effort the newly-picked model doesn't offer", async () => {
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    openAgentConfig("a2");
+    // Pin GPT-5.6: the Effort row follows the DRAFTED model, so its ladder
+    // swaps in (xhigh appears, low disappears).
+    pickSelectOption("new-chat-landing-config-model", "GPT-5.6");
+    openSelect("new-chat-landing-config-effort");
+    expect(screen.queryByRole("option", { name: "low" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "xhigh" }));
+    expect(screen.getByTestId("new-chat-landing-config-effort").textContent).toContain("xhigh");
+    // Back to Default (GPT-5.5), whose ladder has no xhigh: the stale rung
+    // resets so Save can't commit a level the model rejects.
+    openSelect("new-chat-landing-config-model");
+    fireEvent.click(screen.getByRole("option", { name: "Default (GPT-5.5)" }));
+    expect(screen.getByTestId("new-chat-landing-config-effort").textContent).toContain("Default");
+    saveConfig();
+
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "run the build" },
+    });
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it("remembers the Codex effort per harness without leaking it onto Claude", () => {
+    renderLanding();
+    openAgentConfig("a2");
+    pickSelectOption("new-chat-landing-config-effort", "high");
+    saveConfig();
+
+    // Claude's row reopens on its own remembered effort (nothing stored →
+    // Default) — the Codex pick must not ride the shared state across.
+    openAgentConfig("a1");
+    expect(screen.getByTestId("new-chat-landing-config-effort").textContent).toContain("Default");
+    saveConfig();
+
+    // Codex reopens on the remembered pick, still valid for its ladder.
+    openAgentConfig("a2");
+    expect(screen.getByTestId("new-chat-landing-config-effort").textContent).toContain("high");
   });
 
   it("sends the selected Codex launch model without changing Claude's remembered model", async () => {
@@ -2508,20 +2647,15 @@ describe("NewChatLandingScreen", () => {
     // The sandbox option is pinned FIRST in the menu, above the host list —
     // DOCUMENT_POSITION_FOLLOWING means the host item comes after it.
     const sandboxOption = screen.getByTestId("new-chat-landing-sandbox-option");
-    const hostItem = screen
-      .getAllByText("This machine")
-      .find((el) => el.closest('[role="menuitem"]') !== null);
-    expect(hostItem).toBeTruthy();
+    const hostItem = screen.getByTestId("new-chat-landing-host-host_1");
     expect(
-      sandboxOption.compareDocumentPosition(hostItem!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      sandboxOption.compareDocumentPosition(hostItem) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     // Picking the host restores the workspace flow (file-browser chip,
     // worktree chip) — the sandbox default doesn't wedge the normal path.
-    fireEvent.click(hostItem!);
+    fireEvent.click(hostItem);
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain(
-        "This machine",
-      ),
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).not.toContain("Sandbox"),
     );
     expect(screen.getByTestId("new-chat-landing-workspace-chip")).toBeTruthy();
     expect(screen.getByTestId("new-chat-landing-branch-chip")).toBeTruthy();
@@ -2535,6 +2669,76 @@ describe("NewChatLandingScreen", () => {
     );
     expect(screen.queryByTestId("new-chat-landing-workspace-chip")).toBeNull();
     expect(screen.queryByTestId("new-chat-landing-branch-chip")).toBeNull();
+  });
+
+  it("offers a GitHub repo picker that fills the sandbox repo URL + branch", async () => {
+    // enabled_connections has github + a connected /repos response → the picker renders
+    // inside the repo chip and drives the same URL/branch state as the
+    // free-text fields.
+    authenticatedFetchMock.mockImplementation(((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/v1/connections/github/repos") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            connected: true,
+            repos: [
+              {
+                full_name: "octo/hello",
+                clone_url: "https://github.com/octo/hello.git",
+                default_branch: "main",
+                private: false,
+                pushed_at: "2026-07-28T00:00:00Z",
+              },
+            ],
+          }),
+        } as unknown as Response);
+      }
+      if (url.startsWith("/v1/connections/github/repos/octo/hello/branches")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ connected: true, branches: ["main", "dev"] }),
+        } as unknown as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as unknown as Response);
+    }) as unknown as typeof authenticatedFetch);
+
+    renderLanding({ managed_sandboxes_enabled: true, enabled_connections: ["github"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("New Sandbox"),
+    );
+
+    fireEvent.click(screen.getByTestId("new-chat-landing-repo-chip"));
+    // Open the searchable repo combobox, filter by typing, then pick the repo.
+    fireEvent.click(await screen.findByTestId("new-chat-landing-repo-select"));
+    fireEvent.change(await screen.findByTestId("new-chat-landing-repo-search"), {
+      target: { value: "hello" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /octo\/hello/ }));
+
+    // Picking the repo composes the clone URL into the shared URL field.
+    expect((screen.getByTestId("new-chat-landing-repo-input") as HTMLInputElement).value).toBe(
+      "https://github.com/octo/hello.git",
+    );
+
+    // Its branches load into the searchable branch combobox; open it, wait for
+    // the async list, then choosing one fills the branch.
+    fireEvent.click(await screen.findByTestId("new-chat-landing-repo-branch-select"));
+    fireEvent.click(await screen.findByRole("option", { name: "dev" }));
+    expect(
+      (screen.getByTestId("new-chat-landing-repo-branch-input") as HTMLInputElement).value,
+    ).toBe("dev");
+  });
+
+  it("hides the GitHub repo picker when the GitHub App is disabled", async () => {
+    renderLanding({ managed_sandboxes_enabled: true, enabled_connections: [] });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("New Sandbox"),
+    );
+    fireEvent.click(screen.getByTestId("new-chat-landing-repo-chip"));
+    // The free-text URL input is present; the connected-account picker is not.
+    await screen.findByTestId("new-chat-landing-repo-input");
+    expect(screen.queryByTestId("new-chat-landing-repo-select")).toBeNull();
   });
 
   it("creates a managed session without host_id/workspace and no provisioning subtext", async () => {
@@ -2587,6 +2791,18 @@ describe("NewChatLandingScreen", () => {
     await screen.findByTestId("new-chat-landing-input");
     expect(screen.getByText("What should we build?")).toBeTruthy();
     expect(screen.queryByTestId("new-chat-landing-project-chip")).toBeNull();
+  });
+
+  it("sends the background-title opt-out header on direct session creation", async () => {
+    localStorage.setItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY, "off");
+    renderLanding();
+    await screen.findByTestId("new-chat-landing-input");
+
+    await submitAndReadBody("explain the nature of time");
+
+    const createCall = authenticatedFetchMock.mock.calls.find(([url]) => url === "/v1/sessions")!;
+    const init = createCall[1] as RequestInit;
+    expect(new Headers(init.headers).get("X-Omnigent-Background-Session-Titles")).toBe("off");
   });
 
   it("files a pre-selected project, and invalidates project sessions", async () => {
@@ -3177,6 +3393,12 @@ describe("NewChatLandingScreen skill pills", () => {
   });
 });
 
+// A dataTransfer for an OS file drag. ``types`` is what the handler reads
+// mid-drag — files are only exposed on drop.
+function fileDrag(files: File[] = []) {
+  return { types: ["Files"], files };
+}
+
 // Attachments on the landing composer — same paperclip affordance as the
 // in-session composer; files ride the pending-prompt handoff (covered in
 // the flow tests), this suite covers the local chip UI.
@@ -3204,24 +3426,54 @@ describe("NewChatLandingScreen attachments", () => {
     renderLanding();
     const composer = screen.getByTestId("new-chat-landing-composer");
     // Dragging over the composer lifts the drop-target overlay.
-    fireEvent.dragOver(composer, { dataTransfer: { files: [] } });
+    fireEvent.dragOver(composer, { dataTransfer: fileDrag() });
     expect(screen.getByText("Drop files here")).toBeTruthy();
     // Dropping a file attaches it (chip proves it reached state) and clears
     // the overlay.
     const file = new File(["hello"], "dropped.txt", { type: "text/plain" });
-    fireEvent.drop(composer, { dataTransfer: { files: [file] } });
+    fireEvent.drop(composer, { dataTransfer: fileDrag([file]) });
     expect(screen.getByText("dropped.txt")).toBeTruthy();
     expect(screen.queryByText("Drop files here")).toBeNull();
   });
 
-  it("clears the drop overlay when the drag leaves the composer", () => {
+  // The whole landing surface is the drop target, not just the composer box.
+  it("attaches files dropped anywhere on the landing surface, not just on the composer", () => {
+    renderLanding();
+    const surface = screen.getByTestId("new-chat-landing");
+    fireEvent.dragEnter(surface, { dataTransfer: fileDrag() });
+    expect(screen.getByText("Drop files here")).toBeTruthy();
+    const file = new File(["hello"], "shot.png", { type: "image/png" });
+    fireEvent.drop(surface, { dataTransfer: fileDrag([file]) });
+    expect(screen.getByText("shot.png")).toBeTruthy();
+    expect(screen.queryByText("Drop files here")).toBeNull();
+  });
+
+  // Outside it — the sidebar and the rest of the shell — nothing is claimed.
+  it("ignores files dropped outside the landing surface", () => {
+    renderLanding();
+    fireEvent.dragEnter(document.body, { dataTransfer: fileDrag() });
+    expect(screen.queryByText("Drop files here")).toBeNull();
+    const file = new File(["hello"], "elsewhere.txt", { type: "text/plain" });
+    fireEvent.drop(document.body, { dataTransfer: fileDrag([file]) });
+    expect(screen.queryByText("elsewhere.txt")).toBeNull();
+  });
+
+  it("clears the drop overlay when the drag leaves the landing surface", () => {
     renderLanding();
     const composer = screen.getByTestId("new-chat-landing-composer");
-    fireEvent.dragEnter(composer, { dataTransfer: { files: [] } });
+    fireEvent.dragEnter(composer, { dataTransfer: fileDrag() });
     expect(screen.getByText("Drop files here")).toBeTruthy();
-    // relatedTarget defaults to null (outside the composer), so the active
-    // state clears rather than sticking when moving between child elements.
-    fireEvent.dragLeave(composer, { dataTransfer: { files: [] } });
+    fireEvent.dragLeave(composer, { dataTransfer: fileDrag() });
+    expect(screen.queryByText("Drop files here")).toBeNull();
+  });
+
+  // Dragging selected text (no "Files" type) must stay native so it can be
+  // dropped into the textarea — the page-wide handler ignores it.
+  it("ignores a drag that carries no files", () => {
+    renderLanding();
+    fireEvent.dragOver(screen.getByTestId("new-chat-landing-composer"), {
+      dataTransfer: { types: ["text/plain"], files: [] },
+    });
     expect(screen.queryByText("Drop files here")).toBeNull();
   });
 
@@ -3246,7 +3498,7 @@ describe("NewChatLandingScreen attachments", () => {
     const composer = screen.getByTestId("new-chat-landing-composer");
     const ok = new File(["hello"], "notes.txt", { type: "text/plain" });
     const zip = new File([new Uint8Array(10)], "photos.zip", { type: "application/zip" });
-    fireEvent.drop(composer, { dataTransfer: { files: [ok, zip] } });
+    fireEvent.drop(composer, { dataTransfer: fileDrag([ok, zip]) });
     expect(screen.getByText("notes.txt")).toBeTruthy();
     expect(screen.queryByText("photos.zip")).toBeNull();
     expect(screen.getByTestId("new-chat-landing-attachment-error").textContent).toContain(
@@ -3544,6 +3796,34 @@ describe("NewChatLandingScreen agent picker + config gear", () => {
     expect(tooltip.textContent).not.toContain("—");
   });
 
+  it("shows the selected host's model provider in the gear tooltip", async () => {
+    useHostModelOptionsMock.mockImplementation(
+      (_hostId, harness) =>
+        (harness === "claude-native"
+          ? {
+              ...CLAUDE_MODEL_OPTIONS_RESULT,
+              data: CLAUDE_MODEL_OPTIONS_RESULT.data.map((model) => ({
+                ...model,
+                source: { kind: "subscription", label: "Subscription", name: "claude" },
+              })),
+            }
+          : CODEX_MODEL_OPTIONS_RESULT) as unknown as ReturnType<typeof useHostModelOptions>,
+    );
+    renderLanding();
+
+    fireEvent.focus(screen.getByTestId("new-chat-landing-config-gear"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("new-chat-landing-config-gear-tooltip").length).toBeGreaterThan(
+        0,
+      ),
+    );
+    const tooltip = screen.getAllByTestId("new-chat-landing-config-gear-tooltip")[0];
+    expect(tooltip).toHaveTextContent("Connection: Claude subscription");
+    expect(tooltip.textContent?.indexOf("Connection:")).toBeGreaterThan(
+      tooltip.textContent?.indexOf("Permissions:") ?? -1,
+    );
+  });
+
   it("reflects an armed Codex bypass as the Approval value in the gear tooltip", async () => {
     renderLanding();
     // Arm bypass on Codex (a2) via the Approval dropdown, Save.
@@ -3648,15 +3928,9 @@ describe("NewChatLandingScreen custom-agent sandbox gating", () => {
       expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("Sandbox"),
     );
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
-    const hostItem = screen
-      .getAllByText("This machine")
-      .find((el) => el.closest('[role="menuitem"]') !== null);
-    expect(hostItem).toBeTruthy();
-    fireEvent.click(hostItem!);
+    fireEvent.click(screen.getByTestId("new-chat-landing-host-host_1"));
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain(
-        "This machine",
-      ),
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).not.toContain("Sandbox"),
     );
     // With no custom agents yet, the create item is a top-level row (no
     // "Custom agents" submenu to hide it behind) and opens the dialog.
@@ -3675,14 +3949,9 @@ describe("NewChatLandingScreen custom-agent sandbox gating", () => {
       expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("Sandbox"),
     );
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
-    const hostItem = screen
-      .getAllByText("This machine")
-      .find((el) => el.closest('[role="menuitem"]') !== null);
-    fireEvent.click(hostItem!);
+    fireEvent.click(screen.getByTestId("new-chat-landing-host-host_1"));
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain(
-        "This machine",
-      ),
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).not.toContain("Sandbox"),
     );
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
     fireEvent.click(screen.getByTestId("new-chat-landing-create-agent"));
@@ -4678,7 +4947,9 @@ describe("NewChatLandingScreen Smart Routing harness row", () => {
     // The placeholder the server rebinds off.
     expect(body.agent_id).toBe("a1");
     // Nothing that describes the placeholder's own CLI may ride along.
-    expect(body.labels).toBeUndefined();
+    expect(body.labels).toEqual({
+      "omnigent.client_create_token": expect.stringMatching(/^[0-9a-f]{32}$/),
+    });
     expect(body.terminal_launch_args).toBeUndefined();
     expect(body.model_override).toBeUndefined();
     expect(body.reasoning_effort).toBeUndefined();
@@ -5200,7 +5471,9 @@ describe("NewChatLandingScreen bundle-agent Smart Routing", () => {
       // A pinned model would silently disable routing for the whole session.
       expect(body.model_override).toBeUndefined();
       expect(body.reasoning_effort).toBeUndefined();
-      expect(body.labels).toBeUndefined();
+      expect(body.labels).toEqual({
+        "omnigent.client_create_token": expect.stringMatching(/^[0-9a-f]{32}$/),
+      });
       expect(body.terminal_launch_args).toBeUndefined();
       // A bundle agent arms at create and routes on the first message event —
       // its harness isn't decided yet, so there is nothing to route here.
