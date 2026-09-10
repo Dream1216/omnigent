@@ -89,6 +89,21 @@ def test_store_adapter_bind_initializes_every_real_managed_session(
         engine.dispose()
 
 
+def test_store_adapter_binds_narrow_host_credential_workspace_without_runtime() -> None:
+    adapter = OmnigentStoreAdapter("0.2.0")
+
+    with adapter.bind_host_credential_workspace(57):
+        assert current_workspace_id() == 57
+        with pytest.raises(RuntimeError, match="runtime context is not bound"):
+            current_runtime_context()
+
+    assert current_workspace_id() == 0
+    with pytest.raises(StoreAdapterContractError) as exc_info:
+        with adapter.bind_host_credential_workspace(0):
+            pass
+    assert exc_info.value.code == "host_machine_workspace_invalid"
+
+
 def test_store_adapter_rejects_unreviewed_contract_before_invocation() -> None:
     called = False
 

@@ -354,6 +354,15 @@ def _build_fastapi_app(
         await websocket.send_json({"workspace_id": runtime.physical_workspace_id})
         await websocket.close()
 
+    @app.websocket("/v1/hosts/{host_id}/tunnel")
+    async def host_machine_tunnel(websocket: WebSocket, host_id: str) -> None:
+        _ = host_id
+        await websocket.accept()
+        await websocket.send_json(
+            {"workspace_id": websocket.scope["state"]["saas_host_machine_workspace_id"]}
+        )
+        await websocket.close()
+
     integration.install_middleware(app)
     return app, {
         "tenant_id": str(tenant_id),
@@ -664,6 +673,50 @@ def test_cookie_auth_without_selectors_fails_closed_for_multiple_active_scopes()
             pass
     assert websocket_error.value.code == 1008
     assert websocket_error.value.reason == "runtime_context_required"
+
+
+def test_host_machine_credential_routes_only_its_positive_workspace() -> None:
+    app, _scope = _build_fastapi_app()
+    client = TestClient(app)
+    host_id = "9a3a42ed8ceb45ab96f3f4eb1e86bc19"
+    with client.websocket_connect(
+        f"/v1/hosts/{host_id}/tunnel",
+        headers={
+            "Origin": "http://testserver",
+            "X-Omnigent-Host-Token": "path-bound-secret",
+            "X-Omnigent-Workspace-Id": "41",
+        },
+    ) as websocket:
+        assert websocket.receive_json() == {"workspace_id": 41}
+
+    with pytest.raises(WebSocketDisconnect) as missing_workspace:
+        with client.websocket_connect(
+            f"/v1/hosts/{host_id}/tunnel",
+            headers={
+                "Origin": "http://testserver",
+                "X-Omnigent-Host-Token": "path-bound-secret",
+            },
+        ):
+            pass
+    assert missing_workspace.value.code == 1008
+    assert missing_workspace.value.reason == "host_machine_workspace_required"
+
+
+def test_host_machine_credential_cannot_route_non_tunnel_websocket() -> None:
+    app, _scope = _build_fastapi_app()
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as forbidden:
+        with client.websocket_connect(
+            "/v1/ws",
+            headers={
+                "Origin": "http://testserver",
+                "X-Omnigent-Host-Token": "path-bound-secret",
+                "X-Omnigent-Workspace-Id": "41",
+            },
+        ):
+            pass
+    assert forbidden.value.code == 1008
+    assert forbidden.value.reason == "host_machine_route_forbidden"
 
 
 def test_cookie_auth_fails_closed_for_partial_runtime_selectors() -> None:

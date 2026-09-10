@@ -44,17 +44,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 14,
-    "max_upstream_net_added_loc": 520,
+    "max_direct_upstream_files": 23,
+    "max_upstream_net_added_loc": 747,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
-    "approved_at": "2026-09-09",
+    "approved_at": "2026-09-10",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 10,
-    "previous_max_upstream_net_added_loc": 500,
-    "reason": "authenticated new-session recovery changes two official Web UI modules and their two focused tests",
-    "revision": "authenticated-new-session-v1"
+    "previous_max_direct_upstream_files": 14,
+    "previous_max_upstream_net_added_loc": 520,
+    "reason": "reconcile the 20-file 663-net-LOC main baseline drift and add one bounded four-file external Host bridge (+84 net LOC, three newly touched paths); lifecycle, tenant catalog and recovery policy remain downstream-owned",
+    "revision": "external-host-runtime-bridge-v2"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",

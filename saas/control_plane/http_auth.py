@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Request, Response
@@ -17,6 +17,8 @@ from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from omnigent.db.db_models import workspace_scope
+from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER, MANAGED_HOST_WORKSPACE_HEADER
 from omnigent.server.auth import AuthProvider
 from saas.compatibility import RuntimeContext, bind_runtime_context
 from saas.control_plane.api_credentials import (
@@ -112,6 +114,22 @@ class SaasMachinePrincipal:
     credential: ValidatedApiCredential
 
 
+class RuntimeInitializerError(RuntimeError):
+    """Redacted failure raised by a RuntimeContext-scoped initializer."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
+class RuntimeInitializer(Protocol):
+    """Request-time initializer that runs only inside a bound RuntimeContext."""
+
+    def should_initialize(self, path: str) -> bool: ...
+
+    async def ensure(self, runtime: RuntimeContext) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class SaasHttpIntegration:
     """Components passed through official `create_app` extension points."""
@@ -126,6 +144,8 @@ class SaasHttpIntegration:
     degraded_read_paths: frozenset[str] = frozenset()
     public_api_router: APIRouter | None = None
     onboarding_ui_router: APIRouter | None = None
+    runtime_router: APIRouter | None = None
+    runtime_initializer: RuntimeInitializer | None = None
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -142,6 +162,8 @@ class SaasHttpIntegration:
             routers.append((self.public_api_router, "/api/v1", ["saas-public-v1"]))
         if self.onboarding_ui_router is not None:
             routers.append((self.onboarding_ui_router, "", ["saas-onboarding-ui"]))
+        if self.runtime_router is not None:
+            routers.append((self.runtime_router, "/v1", ["saas-runtime"]))
         return tuple(routers)
 
     def install_middleware(self, app: FastAPI) -> None:
@@ -156,6 +178,7 @@ class SaasHttpIntegration:
             context_snapshots=self.context_snapshots,
             availability_gate=self.availability_gate,
             degraded_read_paths=self.degraded_read_paths,
+            runtime_initializer=self.runtime_initializer,
         )
 
 
@@ -312,6 +335,7 @@ class SaasAuthContextMiddleware:
         context_snapshots: ContextSnapshotService | None = None,
         availability_gate: ControlPlaneAvailabilityGate | None = None,
         degraded_read_paths: frozenset[str] = frozenset(),
+        runtime_initializer: RuntimeInitializer | None = None,
     ) -> None:
         self._app = app
         self._auth = auth_provider
@@ -324,6 +348,7 @@ class SaasAuthContextMiddleware:
         self._context_snapshots = context_snapshots
         self._availability = availability_gate or ControlPlaneAvailabilityGate()
         self._degraded_read_paths = degraded_read_paths
+        self._runtime_initializer = runtime_initializer
         if degraded_read_paths and context_snapshots is None:
             raise ValueError("degraded read paths require a Context Snapshot service")
 
@@ -333,6 +358,16 @@ class SaasAuthContextMiddleware:
             return
         connection = HTTPConnection(scope)
         token, token_source = self._auth.extract_token(connection)
+        managed_host_token = connection.headers.get(MANAGED_HOST_TOKEN_HEADER)
+        if managed_host_token is not None:
+            await self._bind_host_machine_workspace(
+                connection=connection,
+                token=token,
+                scope=scope,
+                receive=receive,
+                send=send,
+            )
+            return
         if self._is_public_request(connection.url.path, cast(str, scope.get("method", "GET"))):
             try:
                 self._enforce_public_browser_origin(connection, scope)
@@ -412,11 +447,86 @@ class SaasAuthContextMiddleware:
                     raise
                 await self._reject_dependency(scope, receive, send)
             return
+
+        async def serve_bound_runtime() -> None:
+            if (
+                scope["type"] == "http"
+                and self._runtime_initializer is not None
+                and self._runtime_initializer.should_initialize(connection.url.path)
+            ):
+                try:
+                    await self._runtime_initializer.ensure(runtime_context)
+                except RuntimeInitializerError as error:
+                    await self._reject(scope, receive, send, status=503, error=error)
+                    return
+            await self._app(scope, receive, send)
+
         if self._runtime_store_adapter is None:
             with bind_runtime_context(runtime_context):
-                await self._app(scope, receive, send)
+                await serve_bound_runtime()
         else:
             with self._runtime_store_adapter.bind(runtime_context):
+                await serve_bound_runtime()
+
+    async def _bind_host_machine_workspace(
+        self,
+        *,
+        connection: HTTPConnection,
+        token: str | None,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Route one Host capability to its workspace before token validation."""
+
+        path = connection.url.path
+        if (
+            scope["type"] != "websocket"
+            or not re.fullmatch(r"/v1/hosts/[^/]+/tunnel", path)
+            or token is not None
+        ):
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=403,
+                error=LifecycleError(
+                    "host_machine_route_forbidden",
+                    "Host machine credentials are accepted only by the Host tunnel",
+                ),
+            )
+            return
+        raw_workspace_id = connection.headers.get(MANAGED_HOST_WORKSPACE_HEADER)
+        try:
+            if (
+                raw_workspace_id is None
+                or not raw_workspace_id.isascii()
+                or not raw_workspace_id.isdecimal()
+                or raw_workspace_id.startswith("0")
+            ):
+                raise ValueError
+            workspace_id = int(raw_workspace_id)
+            if workspace_id <= 0:
+                raise ValueError
+        except ValueError:
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=403,
+                error=LifecycleError(
+                    "host_machine_workspace_required",
+                    "Host machine credential requires a valid workspace route",
+                ),
+            )
+            return
+        state = scope.setdefault("state", {})
+        state["saas_host_machine_workspace_id"] = workspace_id
+        if self._runtime_store_adapter is None:
+            with workspace_scope(workspace_id):
+                await self._app(scope, receive, send)
+        else:
+            with self._runtime_store_adapter.bind_host_credential_workspace(workspace_id):
                 await self._app(scope, receive, send)
 
     async def _authenticate_machine(
@@ -1227,6 +1337,8 @@ def create_saas_http_integration(
     onboarding_status: OnboardingStatusService | None = None,
     onboarding_client_network: TrustedClientNetworkResolver | None = None,
     runtime_store_adapter: OmnigentStoreAdapter | None = None,
+    runtime_router: APIRouter | None = None,
+    runtime_initializer: RuntimeInitializer | None = None,
 ) -> SaasHttpIntegration:
     """Build the custom provider, official extra-router tuple, and middleware hook."""
 
@@ -1415,6 +1527,8 @@ def create_saas_http_integration(
         degraded_read_paths=degraded_read_paths,
         public_api_router=public_api_router,
         onboarding_ui_router=onboarding_ui_router,
+        runtime_router=runtime_router,
+        runtime_initializer=runtime_initializer,
     )
 
 
