@@ -1017,6 +1017,8 @@ def _mint_managed_owner_token(
     from omnigent.runner.identity import (
         OMNIGENT_INTERNAL_WS_ORIGIN,
         RUNNER_TUNNEL_TOKEN_HEADER,
+        RUNNER_TUNNEL_WORKSPACE_HEADER,
+        load_runner_tunnel_workspace_id,
     )
 
     headers = {
@@ -1024,6 +1026,9 @@ def _mint_managed_owner_token(
         RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
         **databricks_request_headers(server_url, bearer_token=proxy_bearer),
     }
+    workspace_id = load_runner_tunnel_workspace_id()
+    if workspace_id is not None:
+        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
     with httpx.Client(timeout=10.0, trust_env=not is_loopback_url(server_url)) as client:
         response = client.post(mint_url, headers=headers)
         response.raise_for_status()
@@ -1330,7 +1335,9 @@ def create_app(
         OMNIGENT_SESSION_ENV_VAR,
         RUNNER_ID_ENV_VAR,
         RUNNER_TUNNEL_TOKEN_HEADER,
+        RUNNER_TUNNEL_WORKSPACE_HEADER,
         get_stable_runner_id,
+        load_runner_tunnel_workspace_id,
     )
     from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
 
@@ -1370,6 +1377,7 @@ def create_app(
     if auth_token_factory is None:
         auth_token_factory = _make_auth_token_factory()
     binding_token = _runner_tunnel_binding_token_from_env()
+    workspace_id = load_runner_tunnel_workspace_id()
     server_client = open_server_client(
         server_url,
         auth=_RunnerDatabricksAuth(auth_token_factory),
@@ -1384,6 +1392,11 @@ def create_app(
         headers={
             "Origin": OMNIGENT_INTERNAL_WS_ORIGIN,
             **({RUNNER_TUNNEL_TOKEN_HEADER: binding_token} if binding_token is not None else {}),
+            **(
+                {RUNNER_TUNNEL_WORKSPACE_HEADER: str(workspace_id)}
+                if workspace_id is not None
+                else {}
+            ),
         },
         timeout=httpx.Timeout(5.0, read=None),
         # NOTE: ``follow_redirects`` deliberately stays False.

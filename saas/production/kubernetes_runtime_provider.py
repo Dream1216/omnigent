@@ -739,10 +739,11 @@ class KubernetesRuntimeProviderClient:
                 "placement_generation": self._config.placement_generation,
                 "source_revision": self._config.source_revision,
                 "adapter_contract_version": self._config.adapter_contract_version,
-                "runtime_user_key": (
-                    f"tenant:{_target_uuid(partition, 'tenant_id')}:"
-                    f"space:{_target_uuid(partition, 'space_id')}"
-                ),
+                # Official runtime ownership must remain user-specific inside
+                # a shared Tenant/Space partition.  A partition-wide alias
+                # collapses all members into one official user and prevents
+                # delegated Runner auth from resolving the owning Global User.
+                "runtime_user_key": str(_target_uuid(partition, "user_id")),
             }
         return self._response(
             operation,

@@ -1988,6 +1988,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
         workspace="/ws",
         parent_pid=42,
         initial_auth_token="host-bootstrap-bearer",
+        workspace_id=41,
     )
 
     # Process essentials + the locale family pass through.
@@ -2007,6 +2008,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
     # harnesses (laptop: exported keys; managed sandbox: the
     # deployment's injected provider secrets).
     assert env["ANTHROPIC_API_KEY"] == "sk-harness"
+    assert env["OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"] == "41"
     # The sandbox-image environment descriptor forwards: Claude Code
     # needs it to allow --dangerously-skip-permissions under root in
     # sandbox containers. Only the baked host image ever sets it.

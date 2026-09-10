@@ -19,6 +19,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent.db.db_models import workspace_scope
 from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER, MANAGED_HOST_WORKSPACE_HEADER
+from omnigent.runner.identity import (
+    RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    token_bound_runner_id,
+)
 from omnigent.server.auth import AuthProvider
 from saas.compatibility import RuntimeContext, bind_runtime_context
 from saas.control_plane.api_credentials import (
@@ -317,6 +322,22 @@ class SaasAuthProvider(AuthProvider):
         principal = self.get_principal(request)
         return principal.session.user_id if principal else None
 
+    def mint_runner_token(self, user_id: str, ttl_seconds: int) -> str | None:
+        """Issue a revocable short-lived bearer for one delegated Runner owner."""
+
+        try:
+            actor_id = UUID(user_id)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if str(actor_id) != user_id or ttl_seconds <= 0:
+            return None
+        issued = self._lifecycle.issue_auth_session(
+            user_id=actor_id,
+            authn_method="delegated-runner",
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+        )
+        return issued.token
+
 
 class SaasAuthContextMiddleware:
     """Authenticate once, enforce CSRF, and bind server-resolved Runtime Context."""
@@ -359,10 +380,20 @@ class SaasAuthContextMiddleware:
         connection = HTTPConnection(scope)
         token, token_source = self._auth.extract_token(connection)
         managed_host_token = connection.headers.get(MANAGED_HOST_TOKEN_HEADER)
+        managed_runner_token = connection.headers.get(RUNNER_TUNNEL_TOKEN_HEADER)
         if managed_host_token is not None:
             await self._bind_host_machine_workspace(
                 connection=connection,
                 token=token,
+                scope=scope,
+                receive=receive,
+                send=send,
+            )
+            return
+        if managed_runner_token is not None and token is None:
+            await self._bind_runner_machine_workspace(
+                connection=connection,
+                binding_token=managed_runner_token,
                 scope=scope,
                 receive=receive,
                 send=send,
@@ -528,6 +559,83 @@ class SaasAuthContextMiddleware:
         else:
             with self._runtime_store_adapter.bind_host_credential_workspace(workspace_id):
                 await self._app(scope, receive, send)
+
+    async def _bind_runner_machine_workspace(
+        self,
+        *,
+        connection: HTTPConnection,
+        binding_token: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Route exact delegated Runner bootstrap endpoints before owner proof."""
+
+        path = connection.url.path
+        match = re.fullmatch(r"/v1/runners/([^/]+)/(token|tunnel)", path)
+        route_kind = match.group(2) if match is not None else None
+        method = cast(str, scope.get("method", "GET"))
+        route_allowed = match is not None and (
+            (scope["type"] == "http" and route_kind == "token" and method == "POST")
+            or (scope["type"] == "websocket" and route_kind == "tunnel")
+        )
+        try:
+            bound_runner_id = token_bound_runner_id(binding_token)
+        except RuntimeError:
+            bound_runner_id = ""
+        if not route_allowed or match is None or match.group(1) != bound_runner_id:
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=403,
+                error=LifecycleError(
+                    "runner_machine_route_forbidden",
+                    "Runner machine credentials are accepted only by their bound bootstrap route",
+                ),
+            )
+            return
+        try:
+            workspace_id = self._parse_machine_workspace_id(
+                connection.headers.get(RUNNER_TUNNEL_WORKSPACE_HEADER)
+            )
+        except ValueError:
+            await self._reject(
+                scope,
+                receive,
+                send,
+                status=403,
+                error=LifecycleError(
+                    "runner_machine_workspace_required",
+                    "Runner machine credential requires a valid workspace route",
+                ),
+            )
+            return
+        state = scope.setdefault("state", {})
+        state["saas_runner_machine_workspace_id"] = workspace_id
+        if self._runtime_store_adapter is None:
+            with workspace_scope(workspace_id):
+                await self._app(scope, receive, send)
+        else:
+            with self._runtime_store_adapter.bind_machine_credential_workspace(
+                workspace_id,
+                credential_kind="runner",
+            ):
+                await self._app(scope, receive, send)
+
+    @staticmethod
+    def _parse_machine_workspace_id(raw_workspace_id: str | None) -> int:
+        if (
+            raw_workspace_id is None
+            or not raw_workspace_id.isascii()
+            or not raw_workspace_id.isdecimal()
+            or raw_workspace_id.startswith("0")
+        ):
+            raise ValueError("machine workspace id is invalid")
+        workspace_id = int(raw_workspace_id)
+        if workspace_id <= 0:
+            raise ValueError("machine workspace id is invalid")
+        return workspace_id
 
     async def _authenticate_machine(
         self,
@@ -709,6 +817,20 @@ class SaasAuthContextMiddleware:
                 "runtime_context_required",
                 "Tenant and Space selectors must be supplied together",
             )
+        elif connection.headers.get(RUNNER_TUNNEL_TOKEN_HEADER) is not None:
+            raw_workspace_id = connection.headers.get(RUNNER_TUNNEL_WORKSPACE_HEADER)
+            try:
+                workspace_id = self._parse_machine_workspace_id(raw_workspace_id)
+            except ValueError as error:
+                raise LifecycleError(
+                    "runner_machine_workspace_required",
+                    "delegated Runner requests require a valid workspace route",
+                ) from error
+            return self._resolve_runner_runtime_context(
+                connection=connection,
+                session=session,
+                workspace_id=workspace_id,
+            )
         else:
             # The upstream OSS web client has no Tenant/Space selector yet and
             # browser WebSockets cannot attach arbitrary selector headers.  A
@@ -738,6 +860,38 @@ class SaasAuthContextMiddleware:
         if verified is not None:
             self._validate_live_snapshot_runtime(verified.runtime_context, runtime_context)
         return runtime_context
+
+    def _resolve_runner_runtime_context(
+        self,
+        *,
+        connection: HTTPConnection,
+        session: ValidatedAuthSession,
+        workspace_id: int,
+    ) -> RuntimeContext:
+        """Map a routing-only workspace to one scope owned by the bearer actor."""
+
+        matches: list[RuntimeContext] = []
+        trace_id = connection.headers.get("x-request-id") or uuid4().hex
+        for available in self._resolver.list_available_scopes(actor_id=session.user_id):
+            request_context = self._resolver.resolve_request_context(
+                actor_id=session.user_id,
+                tenant_id=available.tenant_id,
+                space_id=available.space_id,
+                trace_id=trace_id,
+            )
+            if request_context.user_security_version != session.security_version:
+                raise LifecycleError(
+                    "authorization_snapshot_stale", "session security version is stale"
+                )
+            runtime_context = self._resolver.resolve_space_allocation(request_context)
+            if runtime_context.physical_workspace_id == workspace_id:
+                matches.append(runtime_context)
+        if len(matches) != 1:
+            raise LifecycleError(
+                "runner_machine_workspace_forbidden",
+                "delegated Runner workspace is not uniquely authorized for this owner",
+            )
+        return matches[0]
 
     def _is_runtime_path(self, path: str) -> bool:
         return path not in self._runtime_exclusions and any(

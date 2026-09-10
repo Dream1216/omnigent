@@ -65,10 +65,27 @@ class OmnigentStoreAdapter:
         No other runtime route may derive authority from this binding.
         """
 
+        with self.bind_machine_credential_workspace(
+            workspace_id,
+            credential_kind="host",
+        ):
+            yield workspace_id
+
+    @contextmanager
+    def bind_machine_credential_workspace(
+        self,
+        workspace_id: int,
+        *,
+        credential_kind: str,
+    ) -> Iterator[int]:
+        """Bind a routing-only workspace for an exact machine credential route."""
+
+        if credential_kind not in {"host", "runner"}:
+            raise ValueError("machine credential kind is not supported")
         if workspace_id <= 0:
             raise StoreAdapterContractError(
-                "host_machine_workspace_invalid",
-                "Host machine credential workspace must be positive",
+                f"{credential_kind}_machine_workspace_invalid",
+                f"{credential_kind.title()} machine credential workspace must be positive",
             )
 
         def initialize(session: Session) -> None:

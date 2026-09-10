@@ -10,6 +10,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
+from omnigent.db.db_models import current_workspace_id
+from omnigent.runner.identity import (
+    RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    token_bound_runner_id,
+)
 from saas.compatibility import current_runtime_context
 from saas.control_plane import (
     MEMBER_ADMIN_ROUTE_PERMISSIONS,
@@ -335,6 +341,7 @@ def _build_fastapi_app(
     app.state.saas_test_engine = engine
     app.state.saas_test_sessions = sessions
     app.state.saas_test_support_access = platform_support_access
+    app.state.saas_test_auth = auth
     router, prefix, tags = integration.extra_router
     app.include_router(router, prefix=prefix, tags=tags)
 
@@ -362,6 +369,14 @@ def _build_fastapi_app(
             {"workspace_id": websocket.scope["state"]["saas_host_machine_workspace_id"]}
         )
         await websocket.close()
+
+    @app.post("/v1/runners/{runner_id}/token")
+    def runner_machine_token_route(request: Request, runner_id: str) -> dict[str, object]:
+        return {
+            "runner_id": runner_id,
+            "workspace_id": current_workspace_id(),
+            "state_workspace_id": request.scope["state"]["saas_runner_machine_workspace_id"],
+        }
 
     integration.install_middleware(app)
     return app, {
@@ -717,6 +732,74 @@ def test_host_machine_credential_cannot_route_non_tunnel_websocket() -> None:
             pass
     assert forbidden.value.code == 1008
     assert forbidden.value.reason == "host_machine_route_forbidden"
+
+
+def test_runner_machine_credential_routes_only_its_bound_bootstrap_endpoint() -> None:
+    app, _scope = _build_fastapi_app()
+    client = TestClient(app)
+    binding_token = "runner-machine-binding"
+    runner_id = token_bound_runner_id(binding_token)
+    headers = {
+        RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
+        RUNNER_TUNNEL_WORKSPACE_HEADER: "41",
+    }
+
+    response = client.post(f"/v1/runners/{runner_id}/token", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {
+        "runner_id": runner_id,
+        "workspace_id": 41,
+        "state_workspace_id": 41,
+    }
+
+    wrong_runner = client.post("/v1/runners/runner_wrong/token", headers=headers)
+    assert wrong_runner.status_code == 403
+    assert wrong_runner.json()["error"]["code"] == "runner_machine_route_forbidden"
+
+    missing_workspace = client.post(
+        f"/v1/runners/{runner_id}/token",
+        headers={RUNNER_TUNNEL_TOKEN_HEADER: binding_token},
+    )
+    assert missing_workspace.status_code == 403
+    assert missing_workspace.json()["error"]["code"] == "runner_machine_workspace_required"
+
+
+def test_saas_auth_provider_mints_revocable_delegated_runner_session() -> None:
+    app, scope = _build_fastapi_app()
+    auth = app.state.saas_test_auth
+
+    token = auth.mint_runner_token(scope["user_id"], 60)
+
+    assert token is not None
+    validated = auth.validate_token(token)
+    assert str(validated.user_id) == scope["user_id"]
+    assert validated.authn_method == "delegated-runner"
+    assert auth.mint_runner_token("not-a-global-user", 60) is None
+
+
+def test_delegated_runner_bearer_maps_workspace_only_through_actor_scopes() -> None:
+    app, scope = _build_fastapi_app()
+    client = TestClient(app)
+    auth = app.state.saas_test_auth
+    token = auth.mint_runner_token(scope["user_id"], 60)
+    assert token is not None
+    headers = {
+        "Authorization": f"Bearer {token}",
+        RUNNER_TUNNEL_TOKEN_HEADER: "runner-machine-binding",
+        RUNNER_TUNNEL_WORKSPACE_HEADER: "41",
+    }
+
+    response = client.get("/v1/protected", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["workspace_id"] == 41
+    assert response.json()["user_id"] == "runtime_http_user"
+
+    forbidden = client.get(
+        "/v1/protected",
+        headers={**headers, RUNNER_TUNNEL_WORKSPACE_HEADER: "42"},
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "runner_machine_workspace_forbidden"
 
 
 def test_cookie_auth_fails_closed_for_partial_runtime_selectors() -> None:

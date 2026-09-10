@@ -32,6 +32,8 @@ from omnigent.runner.identity import (
     OMNIGENT_INTERNAL_WS_ORIGIN,
     RUNNER_SLICE_KEY_ENV_VAR,
     RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    load_runner_tunnel_workspace_id,
 )
 from omnigent.runner.transports.ws_tunnel.frames import (
     HelloFrame,
@@ -812,6 +814,9 @@ async def _serve_tunnel_once(
     )
     if tunnel_token:
         headers[RUNNER_TUNNEL_TOKEN_HEADER] = tunnel_token
+    workspace_id = load_runner_tunnel_workspace_id()
+    if workspace_id is not None:
+        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
     # Verifying SSL context from a real CA bundle for wss:// — a bare default
     # context loads zero roots on uv / python-build-standalone Pythons (no
     # OpenSSL default cert path). Local runners use ws:// and pass ssl=None.

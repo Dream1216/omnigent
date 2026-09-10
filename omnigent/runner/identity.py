@@ -19,6 +19,11 @@ RUNNER_PARENT_PID_ENV_VAR = "OMNIGENT_RUNNER_PARENT_PID"
 RUNNER_ADOPT_SIGNAL: signal.Signals | None = getattr(signal, "SIGUSR1", None)
 RUNNER_WORKSPACE_ENV_VAR = "OMNIGENT_RUNNER_WORKSPACE"
 RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
+# Physical Runtime Partition selector injected by a managed Host.  It is a
+# routing hint, never authorization: the server still proves the path-bound
+# runner token and resolves the owning Global User before accepting a request.
+RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"
+RUNNER_TUNNEL_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 # A host-launched runner uses this bearer for its initial server connection,
 # then falls back to its own refreshable auth when the bearer is rejected.
 RUNNER_INITIAL_AUTH_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_INITIAL_AUTH_TOKEN"
@@ -74,6 +79,24 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
         RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
     }
 )
+
+
+def load_runner_tunnel_workspace_id() -> int | None:
+    """Load the canonical positive managed-runner workspace selector."""
+
+    value = os.environ.get(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR)
+    if value is None:
+        return None
+    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
+        raise ValueError(
+            f"{RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer"
+        )
+    workspace_id = int(value)
+    if workspace_id <= 0:
+        raise ValueError(
+            f"{RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer"
+        )
+    return workspace_id
 
 
 def strip_runner_auth_secrets(env: Mapping[str, str]) -> dict[str, str]:
