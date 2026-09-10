@@ -162,8 +162,8 @@ COPY examples/ ./examples/
 # tells uv to install into this venv (not the slim image's system
 # Python) — without it, uv falls back to system Python and the
 # copied /opt/venv lands in the runtime stage empty.
-# Keep ensurepip's deterministic seed bytecode, then prove neither uv nor any
-# isolated smoke import adds timestamp-based bytecode to the copied venv.
+# Keep ensurepip's deterministic seed bytecode, reject volatile installer state,
+# then normalize /build for cached-versus-clean rebuild equality.
 RUN python -m venv /opt/venv \
  && python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-seed-pyc.sha256
