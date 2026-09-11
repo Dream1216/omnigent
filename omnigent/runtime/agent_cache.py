@@ -73,6 +73,26 @@ class AgentCache:
 
         return self._agent_locks[hash(agent_id) % len(self._agent_locks)]
 
+    def _cache_path(self, agent_id: str, *, suffix: str = "") -> Path:
+        """Return a direct child of the cache root for an agent id."""
+        component = os.path.basename(agent_id)
+        if (
+            not component
+            or component in {".", ".."}
+            or component != agent_id
+            or "\\" in component
+            or "\x00" in component
+        ):
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        cache_root = self._cache_dir.resolve(strict=False)
+        normalized_path = os.path.normpath(cache_root / f"{component}{suffix}")
+        if not normalized_path.startswith(os.path.join(cache_root, "")):
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        path = Path(normalized_path)
+        if path.parent != cache_root or path.resolve(strict=False) != path:
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        return path
+
     def load(
         self,
         agent_id: str,
@@ -104,7 +124,7 @@ class AgentCache:
         :returns: A LoadedAgent with the parsed spec and the
             on-disk working directory.
         """
-        workdir = self._cache_dir / agent_id
+        workdir = self._cache_path(agent_id)
         with self._lock_for(agent_id):
             # Tier 1: in-memory spec. The cached spec was parsed with the
             # *expand_env* value of whichever caller populated it first.
@@ -113,7 +133,6 @@ class AgentCache:
             # which never changes for a given ``agent_id``.
             if agent_id in self._specs:
                 return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
-
             # Tier 2: disk cache (directory already atomically published)
             if workdir.is_dir():
                 try:
@@ -173,9 +192,12 @@ class AgentCache:
         :returns: A LoadedAgent with the new spec and working
             directory.
         """
-        workdir = self._cache_dir / agent_id
+        workdir = self._cache_path(agent_id)
         with self._lock_for(agent_id):
             self._cache_dir.mkdir(parents=True, exist_ok=True)
+            # Preserve upstream's reserved staging-path validation even though
+            # publication uses a collision-resistant private directory.
+            self._cache_path(agent_id, suffix="_staging")
             staging_dir = Path(
                 tempfile.mkdtemp(prefix=f".{agent_id}-staging-", dir=self._cache_dir)
             )
@@ -243,8 +265,8 @@ class AgentCache:
             e.g. ``"ag_abc123"``.
         """
         with self._lock_for(agent_id):
+            workdir = self._cache_path(agent_id)
             self._specs.pop(agent_id, None)
-            workdir = self._cache_dir / agent_id
             if workdir.is_dir():
                 shutil.rmtree(workdir)
 

@@ -65,7 +65,7 @@ def test_acceptance_manifest_rejects_stale_adr_approval_status(
     ) in validate_manifest(repo, manifest)
 
 
-def test_current_adr_gate_is_closed_by_exact_p0s12_successor_ci() -> None:
+def test_current_adr_gate_reopens_for_exact_upstream_sync_candidate() -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads(
         (repo / "saas/acceptance/p0-p6-evidence.json").read_text(encoding="utf-8")
@@ -80,73 +80,27 @@ def test_current_adr_gate_is_closed_by_exact_p0s12_successor_ci() -> None:
         "saas/production/adr-approvals/"
         "omnigent-saas-p0s12-platform-smtp-2026-09-05-8457cc9758444570.json"
     )
-    evidence_path = "saas/acceptance/p0-adr-approval-evidence-ci-33975479868.json"
-
     baseline = json.loads((repo / "saas/production/baseline.json").read_text(encoding="utf-8"))
+    candidate = json.loads(
+        (repo / "saas/production/adr-approval-candidate.json").read_text(encoding="utf-8")
+    )
 
-    assert gate["status"] == "passed"
-    assert baseline["approval"]["state"] == "approved"
+    assert gate["status"] == "pending"
+    assert baseline["approval"]["state"] == "review_required"
     assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000012")
-    assert baseline["approval"]["record"] == approval_path
-    assert approval_path in gate["evidence"]
-    assert evidence_path in gate["evidence"]
+    assert baseline["approval"]["record"] is None
+    assert all(adr["status"] == "proposed" for adr in baseline["adrs"])
+    assert candidate["upstream_revision"] == ("06c33aeae701d521a3cfacd2daf99441b6d64492")
+    assert candidate["implementation_revision"] == ("e68d77142db8767e2c75297237082a328ca140d7")
+    assert candidate["evidence_revision"] == candidate["implementation_revision"]
 
-    evidence = json.loads((repo / evidence_path).read_text(encoding="utf-8"))
-    assert evidence["source_revision"] == ("249c34c1e1dd10cc463e976e0422cebf8ea7afea")
-    assert evidence["source_tree"] == evidence["tested_pull_request_merge_tree"]
-    assert evidence["github_actions"]["workflow_sha256"] == (
-        "e16f3107bb8759a97f8ed7a168cfa864bd08e4dce892b32ca5161cbf305b51d4"
-    )
-    assert evidence["github_actions"]["exact_source_push"]["run_id"] == 33975451216
-    assert evidence["github_actions"]["exact_source_push"]["conclusion"] == "success"
-    assert evidence["github_actions"]["exact_source_push"]["artifact"] == {
-        "id": 9972414339,
-        "name": "upstream-delta-report",
-        "size_in_bytes": 14881,
-        "archive_sha256": ("2e680be3001288af59f42f25786e6cfc59cd1ba3d526917bc6c2ed475a8e8167"),
-    }
-    assert evidence["github_actions"]["run_id"] == 33975479868
-    assert evidence["github_actions"]["job_id"] == 101331305838
-    assert evidence["github_actions"]["conclusion"] == "success"
-    assert evidence["github_actions"]["pull_request_head_sha"] == (evidence["source_revision"])
-    assert (
-        evidence["github_actions"]["temporary_merge_revision"]
-        == (evidence["tested_pull_request_merge_revision"])
-    )
-    assert evidence["github_actions"]["temporary_merge_tree"] == (evidence["source_tree"])
-    assert evidence["github_actions"]["temporary_merge_parents"] == [
-        evidence["base_revision"],
-        evidence["source_revision"],
-    ]
-    assert evidence["github_actions"]["artifact"] == {
-        "id": 9972495008,
-        "name": "upstream-delta-report",
-        "size_in_bytes": 14880,
-        "archive_sha256": ("e4a460c6a58796be276b5b5688b813a80831f4426bb22e2b984e33afe2cd7b11"),
-    }
-    assert evidence["adr_approval"]["approval_record"] == approval_path
-    assert evidence["additional_exact_head_gates"] == {
-        "n1_push": {"run_id": 33975451264, "conclusion": "success"},
-        "n1_pull_request": {"run_id": 33975479899, "conclusion": "success"},
-        "ci_regression": {
-            "run_id": 33975480019,
-            "run_attempt": 2,
-            "conclusion": "success",
-            "note": (
-                "The failed misc timing test from attempt 1 passed without a source "
-                "change in attempt 2."
-            ),
-        },
-    }
-    assert evidence["acceptance_ledger"] == {
-        "closed_gate": "p0-approved-production-adrs-and-owners",
-        "passed_gate_count_before": 40,
-        "passed_gate_count_after": 41,
-        "pending_gate_count_after": 10,
-        "p0_status": "in_progress",
-        "release_decision": "NO-GO",
-    }
+    # The previous approval remains immutable historical evidence, but cannot
+    # authorize a candidate whose upstream and implementation revisions changed.
+    assert approval_path in gate["evidence"]
+    historical_evidence_path = "saas/acceptance/p0-adr-approval-evidence-ci-33975479868.json"
+    assert historical_evidence_path in gate["evidence"]
+    historical_evidence = json.loads((repo / historical_evidence_path).read_text(encoding="utf-8"))
     assert (
         hashlib.sha256((repo / approval_path).read_bytes()).hexdigest()
-        == (evidence["adr_approval"]["approval_record_sha256"])
+        == (historical_evidence["adr_approval"]["approval_record_sha256"])
     )

@@ -35,7 +35,7 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "11.15.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.212"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.236"),
     "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
 }
@@ -774,15 +774,20 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "> /tmp/venv-seed-pyc.sha256",
         "> /tmp/venv-core-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py",
+        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv",
+        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar",
+        "COPY --from=builder /opt/venv-export /opt/venv",
+        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
     }
     if (
         any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
         or dockerfile.count('root.rglob("uv_cache.json")') != 2
         or dockerfile.count("python -B -I -c") < 3
     ):
-        violations.append(
-            "production venv must preserve seed bytecode and reject uv installer metadata"
-        )
+        violations.append("production venv and build tree must reject volatile installer metadata")
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
@@ -831,6 +836,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
         host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
         runtime_stage = dockerfile.split(runtime_marker, 1)[1]
+    if "COPY --from=builder /build /build" in host_stage:
+        violations.append("host image must not retain the non-runtime build tree")
     apt_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
         "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
@@ -987,6 +994,28 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append(
             "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
         )
+    standalone_cli_timestamp_contract = {
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
+    }
+    if any(fragment not in host_stage for fragment in standalone_cli_timestamp_contract):
+        violations.append("standalone host CLI install layers must normalize executable mtimes")
+    gh_export_contract = {
+        "FROM builder AS gh-builder",
+        "ARG TARGETARCH",
+        "urllib.request.urlopen",
+        "hashlib.sha256(data).hexdigest()",
+        'archive.getmember(f"gh_{version}_linux_{arch}/bin/gh")',
+        'out=Path("/opt/gh-export/gh")',
+        "out.write_bytes(binary)",
+        "out.chmod(0o755)",
+        "os.utime(out, (epoch, epoch))",
+        'installed="$(/opt/gh-export/gh --version',
+        "COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin/gh",
+    }
+    if any(fragment not in dockerfile for fragment in gh_export_contract):
+        violations.append("GitHub CLI must come from a canonical verified export layer")
     cli_bin_path = "/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin"
     if f'ENV PATH="{cli_bin_path}:${{PATH}}"' not in dockerfile or re.search(
         rf"ln -s\s+{re.escape(cli_bin_path)}/(?:claude|codex|pi)\s+",

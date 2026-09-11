@@ -577,6 +577,52 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
 
 
 @pytest.mark.parametrize(
+    "target",
+    [
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli-chat',
+        'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin',
+    ],
+)
+def test_image_material_lock_rejects_standalone_host_cli_timestamp_drift(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    assert target in source
+    dockerfile.write_text(
+        source.replace(target, target.replace("SOURCE_DATE_EPOCH", "0"), 1),
+        encoding="utf-8",
+    )
+
+    assert (
+        "standalone host CLI install layers must normalize executable mtimes"
+        in validate_image_material_lock(repo)
+    )
+
+
+def test_image_material_lock_rejects_noncanonical_gh_copy(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    source = source.replace(
+        "COPY --from=gh-builder --chown=0:0 --chmod=0755",
+        "COPY --from=gh-builder",
+        1,
+    )
+    dockerfile.write_text(source, encoding="utf-8")
+
+    assert (
+        "GitHub CLI must come from a canonical verified export layer"
+        in validate_image_material_lock(repo)
+    )
+
+
+@pytest.mark.parametrize(
     ("target", "replacement", "expected"),
     [
         (
@@ -605,9 +651,9 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
             "production Dockerfile must pin pnpm 11.15.1",
         ),
         (
-            "ARG CLAUDE_CODE_VERSION=2.1.212",
-            "ARG CLAUDE_CODE_VERSION=2.1.213",
-            "host image must pin @anthropic-ai/claude-code to 2.1.212",
+            "ARG CLAUDE_CODE_VERSION=2.1.236",
+            "ARG CLAUDE_CODE_VERSION=2.1.237",
+            "host image must pin @anthropic-ai/claude-code to 2.1.236",
         ),
         (
             "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",
@@ -627,7 +673,17 @@ def test_image_material_lock_rejects_host_cli_probe_after_normalization(
         (
             "> /tmp/venv-core-pyc.sha256",
             "> /tmp/venv-core-pyc-unchecked.sha256",
-            "production venv must preserve seed bytecode and reject uv installer metadata",
+            "production venv and build tree must reject volatile installer metadata",
+        ),
+        (
+            '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+            '--root /opt/venv-volatile --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+            "production venv and build tree must reject volatile installer metadata",
+        ),
+        (
+            'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+            'tar --sort=none --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
+            "production venv and build tree must reject volatile installer metadata",
         ),
         (
             "> /tmp/venv-server-pyc.sha256",

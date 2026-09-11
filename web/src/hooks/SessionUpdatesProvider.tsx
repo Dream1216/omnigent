@@ -17,6 +17,7 @@
 
 import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { getCurrentUserId } from "@/lib/identity";
 import { useActiveConversationId } from "@/hooks/useActiveConversationId";
 import { childSessionsQueryKey, type ChildSessionInfo } from "@/hooks/useChildSessions";
 import { isSessionDeleting, markRecentlyCreated } from "@/hooks/useConversations";
@@ -33,6 +34,7 @@ import {
 } from "@/lib/sessionListCache";
 import { isModalHostResolved, resolveModalHost } from "@/lib/sessionHost";
 import { type SessionUpdatesFrame, sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
+import { isTempConvId } from "@/lib/tempConversationId";
 
 // Coalesce bursts of structural changes / watch-set recomputes into one
 // action. 250 ms is short enough to feel live, long enough to batch the
@@ -58,6 +60,7 @@ function applyItemsToCache(
   queryClient: QueryClient,
   items: SessionListWireItem[],
   activeId: string | undefined,
+  viewerId?: string | null,
 ): { missingIds: string[]; needsRefetch: boolean } {
   // Frames are full rows with explicit nulls; convert null → undefined so a
   // cleared field overlays the cache in the same shape GET /v1/sessions
@@ -88,6 +91,7 @@ function applyItemsToCache(
       missingHere,
       filters,
       isSessionDeleting,
+      viewerId,
     );
     for (const row of inserted) {
       if (row.project_id == null && !row.labels?.[PROJECT_LABEL_KEY]) foundAnywhere.add(row.id);
@@ -215,7 +219,7 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-    sessionUpdatesSocket.setWatched(ids);
+    sessionUpdatesSocket.setWatched(ids.filter((id) => !isTempConvId(id)));
   }, [queryClient]);
 
   // Navigating to an off-sidebar child changes the open session without
@@ -339,6 +343,7 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
             queryClient,
             frame.items,
             activeIdRef.current,
+            getCurrentUserId(),
           );
           // A watched id absent from every page is a new session whose sort
           // position we can't place locally. Membership-affecting deltas

@@ -1922,7 +1922,9 @@ async def test_inactivity_monitor_honors_activity_reset() -> None:
 
     task = asyncio.create_task(
         _run_inactivity_monitor(
-            idle_timeout_s=0.06,
+            # Keep enough wall-clock margin for loaded CI event loops: this
+            # assertion verifies the activity reset, not sub-20ms scheduling.
+            idle_timeout_s=0.2,
             get_last_activity=lambda: last_activity,
             has_active_work=lambda: False,
             request_shutdown=lambda: shutdowns.append("shutdown"),
@@ -1937,7 +1939,7 @@ async def test_inactivity_monitor_honors_activity_reset() -> None:
     assert shutdowns == []
     assert not task.done()
 
-    await asyncio.wait_for(task, timeout=0.1)
+    await asyncio.wait_for(task, timeout=0.3)
     assert shutdowns == ["shutdown"]
 
 
@@ -2788,3 +2790,26 @@ def test_auth_token_factory_refreshes_expired_oidc_token(
     assert factory is not None
     assert factory() == "refreshed-jwt"
     assert refresh_calls, "the refresh path must have run"
+
+
+def test_create_app_wires_native_bridge_dir_startup_sweep() -> None:
+    """The runner startup path must invoke the native bridge-dir sweep.
+
+    The prune logic is dead unless ``create_app`` actually calls
+    ``reap_orphaned_native_bridge_dirs`` — the highest-risk path in the
+    bridge-dir-reaping change. A full ``create_app()`` call needs heavy
+    server/token/process-manager scaffolding, so the wiring is guarded by
+    inspecting the factory's source: the sweep must be present and must run
+    after the terminal reap (the placement the design requires).
+
+    :returns: None.
+    """
+    import inspect
+
+    from omnigent.runner._entry import create_app
+
+    src = inspect.getsource(create_app)
+
+    assert "reap_orphaned_native_bridge_dirs()" in src
+    # The native bridge-dir sweep runs after the terminal reap.
+    assert src.index("reap_orphaned_terminals()") < src.index("reap_orphaned_native_bridge_dirs()")

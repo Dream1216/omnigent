@@ -478,7 +478,14 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         operator.get_by_test_id("email-password").fill("browser-smtp-secret")
         operator.get_by_test_id("email-from").fill("verify@example.test")
         operator.get_by_test_id("email-reply-to").fill("support@example.test")
-        operator.get_by_test_id("email-save").click()
+        with operator.expect_response(
+            lambda response: (
+                response.request.method == "PUT"
+                and response.url.endswith("/v2/platform-admin/email-configuration")
+            )
+        ) as response_info:
+            operator.get_by_test_id("email-save").click()
+        assert response_info.value.status == 200
         expect(operator.locator("#email-transport-state")).to_have_text("SMTP ENABLED")
         expect(operator.get_by_test_id("email-password")).to_have_value("")
         expect(operator.locator("#email-password-state")).to_have_text(

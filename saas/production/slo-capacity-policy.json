@@ -3,7 +3,7 @@
   "policy_id": "omnigent-saas-slo-capacity-v1",
   "reviewed_at": "2026-09-05",
   "revision_contract": {
-    "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
+  "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p0s000000012"
   },
