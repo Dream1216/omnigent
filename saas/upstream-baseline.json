@@ -44,17 +44,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 24,
-    "max_upstream_net_added_loc": 750,
+    "max_direct_upstream_files": 30,
+    "max_upstream_net_added_loc": 812,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
-    "approved_at": "2026-09-10",
+    "approved_at": "2026-09-11",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 23,
-    "previous_max_upstream_net_added_loc": 747,
-    "reason": "extend the reviewed external Host bridge by one three-net-LOC official allowlist seam for an explicitly declared Kubernetes Pod with a private PID namespace after a real K3s bubblewrap probe; seccomp policy, node bootstrap, credential lifecycle, tenant catalog and recovery admission remain downstream-owned",
-    "revision": "external-host-kubernetes-runtime-v3"
+    "previous_max_direct_upstream_files": 24,
+    "previous_max_upstream_net_added_loc": 750,
+    "reason": "carry one canonical physical Runtime Partition selector across the reviewed Host-to-Runner bootstrap, delegated-token, tunnel and callback paths; the six newly counted official implementation/test files and 62 net ceiling lines are pinned to patch 0005, while authorization, tenant resolution, migration, deployment and recovery policy remain downstream-owned",
+    "revision": "delegated-runner-runtime-identity-v1"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
