@@ -53,7 +53,7 @@
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 24,
     "previous_max_upstream_net_added_loc": 750,
-    "reason": "carry one canonical physical Runtime Partition selector across the reviewed Host-to-Runner bootstrap, delegated-token, tunnel and callback paths; the six newly counted official implementation/test files and 62 net ceiling lines are pinned to patch 0005, while authorization, tenant resolution, migration, deployment and recovery policy remain downstream-owned",
+    "reason": "carry one canonical physical Runtime Partition selector across the reviewed Host-to-Runner bootstrap, delegated-token, tunnel and callback paths; the implementation seam is pinned to patch 0005, its direct acceptance tests remain explicit, and the exact ceiling rises by six files and 62 net lines while authorization, tenant resolution, migration, deployment and recovery policy remain downstream-owned",
     "revision": "delegated-runner-runtime-identity-v1"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
