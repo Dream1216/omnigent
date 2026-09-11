@@ -1,8 +1,41 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9bb70b192 100644
+index 664f98bec6249d0c94384daec9af32cb09a55ec0..8d165638f2b2c3da455a7aaa4df2005e0410376e 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -3524,3 +3524,8 @@ class HostProcess:
+@@ -91,3 +91,7 @@ from omnigent.host.git_worktree import (
+ )
+-from omnigent.host.identity import HostIdentity, load_or_create_host_identity
++from omnigent.host.identity import (
++    HostIdentity,
++    load_host_tunnel_workspace_id,
++    load_or_create_host_identity,
++)
+ from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
+@@ -130,2 +134,3 @@ from omnigent.runner.identity import (
+     RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
++    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
+     RUNNER_WORKSPACE_ENV_VAR,
+@@ -716,2 +721,3 @@ def _build_runner_env(
+     harness: str | None = None,
++    workspace_id: int | None = None,
+ ) -> dict[str, str]:
+@@ -745,2 +751,4 @@ def _build_runner_env(
+         at boot. ``None`` (unknown / older server) omits the stamp.
++    :param workspace_id: Physical Runtime Partition selected by the managed
++        Host credential. ``None`` preserves local/single-workspace behavior.
+     :returns: The runner subprocess environment.
+@@ -780,2 +788,6 @@ def _build_runner_env(
+     env[RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR] = binding_token
++    if workspace_id is not None:
++        if workspace_id <= 0:
++            raise ValueError("runner workspace id must be positive")
++        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
+     env[RUNNER_DELEGATED_AUTH_ENV_VAR] = "1"
+@@ -1570,2 +1582,3 @@ class HostProcess:
+             harness=frame.harness,
++            workspace_id=load_host_tunnel_workspace_id(),
+         )
+@@ -3524,3 +3537,8 @@ class HostProcess:
          """
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
 +        from omnigent.host.identity import (
@@ -12,7 +45,7 @@ index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9
 +            load_host_tunnel_workspace_id,
 +        )
          from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
-@@ -3543,5 +3548,11 @@ class HostProcess:
+@@ -3543,5 +3561,11 @@ class HostProcess:
 
 -        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
 +        # Re-read the file on each reconnect so atomic Secret rotation takes
@@ -25,7 +58,7 @@ index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9
 +            if workspace_id is not None:
 +                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
              return headers
-@@ -3565,5 +3576,5 @@ class HostProcess:
+@@ -3565,5 +3589,5 @@ class HostProcess:
          """
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
 +        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
@@ -129,6 +162,87 @@ index 91e9219bc5fb2bfc4084169963e59542b0235c01..af4dcbac264227f9a4fad31e2fbbac0e
 -    :data:`_PROC_BIND_HOST_BACKENDS` (lakebox today). On every other host
 +    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
      the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
+diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
+index 182fb82852190120a110e1ae23fdb64896125d61..635b94e3a7d9024b5c9d385717f41b4c28992a87 100644
+--- a/omnigent/runner/_entry.py
++++ b/omnigent/runner/_entry.py
+@@ -1019,2 +1019,4 @@ def _mint_managed_owner_token(
+         RUNNER_TUNNEL_TOKEN_HEADER,
++        RUNNER_TUNNEL_WORKSPACE_HEADER,
++        load_runner_tunnel_workspace_id,
+     )
+@@ -1026,2 +1028,5 @@ def _mint_managed_owner_token(
+     }
++    workspace_id = load_runner_tunnel_workspace_id()
++    if workspace_id is not None:
++        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
+     with httpx.Client(timeout=10.0, trust_env=not is_loopback_url(server_url)) as client:
+@@ -1332,3 +1337,5 @@ def create_app(
+         RUNNER_TUNNEL_TOKEN_HEADER,
++        RUNNER_TUNNEL_WORKSPACE_HEADER,
+         get_stable_runner_id,
++        load_runner_tunnel_workspace_id,
+     )
+@@ -1372,2 +1379,3 @@ def create_app(
+     binding_token = _runner_tunnel_binding_token_from_env()
++    workspace_id = load_runner_tunnel_workspace_id()
+     server_client = open_server_client(
+@@ -1386,2 +1394,7 @@ def create_app(
+             **({RUNNER_TUNNEL_TOKEN_HEADER: binding_token} if binding_token is not None else {}),
++            **(
++                {RUNNER_TUNNEL_WORKSPACE_HEADER: str(workspace_id)}
++                if workspace_id is not None
++                else {}
++            ),
+         },
+diff --git a/omnigent/runner/identity.py b/omnigent/runner/identity.py
+index 5ded41e7ccc97cbc6622900fe9133a97eee28e33..c601aac4f132b6dc1c2ffd9dc873dafef363bc68 100644
+--- a/omnigent/runner/identity.py
++++ b/omnigent/runner/identity.py
+@@ -21,2 +21,7 @@ RUNNER_WORKSPACE_ENV_VAR = "OMNIGENT_RUNNER_WORKSPACE"
+ RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
++# Physical Runtime Partition selector injected by a managed Host.  It is a
++# routing hint, never authorization: the server still proves the path-bound
++# runner token and resolves the owning Global User before accepting a request.
++RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"
++RUNNER_TUNNEL_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
+ # A host-launched runner uses this bearer for its initial server connection,
+@@ -78,2 +83,20 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
+
++def load_runner_tunnel_workspace_id() -> int | None:
++    """Load the canonical positive managed-runner workspace selector."""
++
++    value = os.environ.get(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR)
++    if value is None:
++        return None
++    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
++        raise ValueError(
++            f"{RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer"
++        )
++    workspace_id = int(value)
++    if workspace_id <= 0:
++        raise ValueError(
++            f"{RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer"
++        )
++    return workspace_id
++
++
+ def strip_runner_auth_secrets(env: Mapping[str, str]) -> dict[str, str]:
+diff --git a/omnigent/runner/transports/ws_tunnel/serve.py b/omnigent/runner/transports/ws_tunnel/serve.py
+index 768eb5bc19c2b1bc0473ec07df788cc825ef559a..f01e15c8e81bd0c0f0962d1a24c216cfbbd29ba5 100644
+--- a/omnigent/runner/transports/ws_tunnel/serve.py
++++ b/omnigent/runner/transports/ws_tunnel/serve.py
+@@ -34,2 +34,4 @@ from omnigent.runner.identity import (
+     RUNNER_TUNNEL_TOKEN_HEADER,
++    RUNNER_TUNNEL_WORKSPACE_HEADER,
++    load_runner_tunnel_workspace_id,
+ )
+@@ -814,2 +816,5 @@ async def _serve_tunnel_once(
+         headers[RUNNER_TUNNEL_TOKEN_HEADER] = tunnel_token
++    workspace_id = load_runner_tunnel_workspace_id()
++    if workspace_id is not None:
++        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
+     # Verifying SSL context from a real CA bundle for wss:// — a bare default
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
 index e444f664954c4e2721ae8c02dc6f429ab5ad0133..c367ee99e78b2348656a6beeac825459f2f06a15 100644
 --- a/omnigent/server/routes/host_tunnel.py
