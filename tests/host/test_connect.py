@@ -4333,9 +4333,9 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
 ) -> None:
     """A Databricks-routed Codex request is answered by the harness probe.
 
-    The probe rows are enriched with their subscription provenance while
-    preserving their ids as the routable set, and the second request is
-    served from the fingerprint cache — the harness is booted once.
+    The probe rows pass through verbatim with their ids as the routable
+    set, and the second request is served from the fingerprint cache —
+    the harness is booted once.
     """
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
 
@@ -4358,6 +4358,10 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
         ]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _fake_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _harness: None,
+    )
     host = _make_host_process()
 
     first = await host._handle_model_options(
@@ -4371,25 +4375,8 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
         request_id="req_1",
         status="ok",
         models=[
-            {
-                "id": "gpt-5.6-sol",
-                "displayName": "GPT-5.6-Sol",
-                "source": {
-                    "kind": "subscription",
-                    "label": "Subscription",
-                    "name": "codex",
-                },
-            },
-            {
-                "id": "gpt-5.4",
-                "displayName": "gpt-5.4",
-                "isDefault": True,
-                "source": {
-                    "kind": "subscription",
-                    "label": "Subscription",
-                    "name": "codex",
-                },
-            },
+            {"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"},
+            {"id": "gpt-5.4", "displayName": "gpt-5.4", "isDefault": True},
         ],
         routable_models=["gpt-5.6-sol", "gpt-5.4"],
     )
@@ -4508,6 +4495,10 @@ async def test_model_options_frame_replies_off_the_receive_loop(
         return [{"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"}]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _slow_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _harness: None,
+    )
     host = _make_host_process()
     ws = _RecordingWS()
     raw = encode_host_frame(HostModelOptionsFrame(request_id="req_slow", harness="codex-native"))
@@ -4524,17 +4515,7 @@ async def test_model_options_frame_replies_off_the_receive_loop(
     assert isinstance(reply, HostModelOptionsResultFrame)
     assert reply.request_id == "req_slow"
     assert reply.status == "ok"
-    assert reply.models == [
-        {
-            "id": "gpt-5.6-sol",
-            "displayName": "GPT-5.6-Sol",
-            "source": {
-                "kind": "subscription",
-                "label": "Subscription",
-                "name": "codex",
-            },
-        }
-    ]
+    assert reply.models == [{"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"}]
     _cleanup_host(host)
 
 
