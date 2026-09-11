@@ -90,7 +90,11 @@ from omnigent.host.git_worktree import (
     list_worktrees,
     remove_worktree,
 )
-from omnigent.host.identity import HostIdentity, load_or_create_host_identity
+from omnigent.host.identity import (
+    HostIdentity,
+    load_host_tunnel_workspace_id,
+    load_or_create_host_identity,
+)
 from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
 from omnigent.inner import _proc
 from omnigent.onboarding.harness_auth import (
@@ -129,6 +133,7 @@ from omnigent.runner.identity import (
     RUNNER_PARENT_PID_ENV_VAR,
     RUNNER_SLICE_KEY_ENV_VAR,
     RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
+    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
     RUNNER_WORKSPACE_ENV_VAR,
     token_bound_runner_id,
 )
@@ -752,6 +757,7 @@ def _build_runner_env(
     initial_auth_token: str | None = None,
     host_id: str | None = None,
     harness: str | None = None,
+    workspace_id: int | None = None,
 ) -> dict[str, str]:
     """
     Build the environment for a spawned runner subprocess.
@@ -781,6 +787,8 @@ def _build_runner_env(
     :param harness: Canonical harness of the launching session, e.g.
         ``"claude-native"``; lets the runner start harness-specific prewarms
         at boot. ``None`` (unknown / older server) omits the stamp.
+    :param workspace_id: Physical Runtime Partition selected by the managed
+        Host credential. ``None`` preserves local/single-workspace behavior.
     :returns: The runner subprocess environment.
     """
     extra_names = {
@@ -816,6 +824,10 @@ def _build_runner_env(
     env["RUNNER_SERVER_URL"] = server_url
     env[RUNNER_ID_ENV_VAR] = runner_id
     env[RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR] = binding_token
+    if workspace_id is not None:
+        if workspace_id <= 0:
+            raise ValueError("runner workspace id must be positive")
+        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
     env[RUNNER_DELEGATED_AUTH_ENV_VAR] = "1"
     if initial_auth_token:
         env[RUNNER_INITIAL_AUTH_TOKEN_ENV_VAR] = initial_auth_token
@@ -1701,6 +1713,7 @@ class HostProcess:
             initial_auth_token=initial_auth_token,
             host_id=self._identity.host_id,
             harness=frame.harness,
+            workspace_id=load_host_tunnel_workspace_id(),
         )
         # The runner serves one primary session (plus any co-located subagents);
         # pass it so runner-level log records can be attributed to that session.

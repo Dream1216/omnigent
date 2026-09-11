@@ -328,6 +328,8 @@ def test_partition_create_replay_and_conflict_are_deterministic(tmp_path: Path) 
         str(cast(Mapping[str, object], json.loads(operation.target_json))["runtime_partition_id"])
     )
     assert created.attributes["physical_partition_key"] == str(int(partition_id.hex[:12], 16) or 1)
+    target = cast(Mapping[str, object], json.loads(operation.target_json))
+    assert created.attributes["runtime_user_key"] == target["user_id"]
     assert created.receipt.provider_resource_id is not None
     assert created.receipt.provider_resource_id.startswith("k8s://")
     assert signer.verify_signature(

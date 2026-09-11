@@ -22,6 +22,8 @@ from websockets.http11 import Response
 from omnigent.runner.identity import (
     OMNIGENT_INTERNAL_WS_ORIGIN,
     RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
 )
 from omnigent.runner.transports.ws_tunnel import serve as serve_module
 from omnigent.runner.transports.ws_tunnel.frames import (
@@ -636,6 +638,8 @@ async def test_serve_tunnel_once_sends_bearer_header(
     """
     import websockets
 
+    monkeypatch.setenv(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR, "41")
+
     class _ConnectKwargs(TypedDict, total=False):
         """Expected kwargs passed to ``websockets.connect``.
 
@@ -755,6 +759,7 @@ async def test_serve_tunnel_once_sends_bearer_header(
             "Origin": OMNIGENT_INTERNAL_WS_ORIGIN,
             "Authorization": "Bearer tok-auth",
             RUNNER_TUNNEL_TOKEN_HEADER: "bind-token",
+            RUNNER_TUNNEL_WORKSPACE_HEADER: "41",
         },
         "close_timeout": serve_module._RUNNER_TUNNEL_CLOSE_TIMEOUT_S,
         "max_size": serve_module.RUNNER_TUNNEL_MAX_MESSAGE_BYTES,

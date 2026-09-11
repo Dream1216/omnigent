@@ -45,6 +45,8 @@ from omnigent.runner._entry import (
 from omnigent.runner.identity import (
     RUNNER_INITIAL_AUTH_TOKEN_ENV_VAR,
     RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
 )
 from omnigent.runner.transports.ws_tunnel.serve import RUNNER_TUNNEL_REJECTION_PREFIX
 
@@ -1181,12 +1183,14 @@ def test_mint_managed_owner_token_posts_binding_token_and_parses_response(
     :returns: None.
     """
     captured: dict[str, str] = {}
+    monkeypatch.setenv(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR, "41")
 
     def _handler(request: httpx.Request) -> httpx.Response:
         """Capture the outgoing mint request and return a canned token."""
         captured["url"] = str(request.url)
         captured["method"] = request.method
         captured["binding_token"] = request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER, "")
+        captured["workspace_id"] = request.headers.get(RUNNER_TUNNEL_WORKSPACE_HEADER, "")
         return httpx.Response(200, json={"token": "owner-jwt", "expires_at": 1234567890})
 
     real_client = httpx.Client
@@ -1207,6 +1211,7 @@ def test_mint_managed_owner_token_posts_binding_token_and_parses_response(
     assert expires_at == 1234567890.0
     assert captured["method"] == "POST"
     assert captured["binding_token"] == "the-binding-token"
+    assert captured["workspace_id"] == "41"
     assert captured["url"].endswith("/v1/runners/runner_token_abc/token")
 
 
@@ -1917,7 +1922,9 @@ async def test_inactivity_monitor_honors_activity_reset() -> None:
 
     task = asyncio.create_task(
         _run_inactivity_monitor(
-            idle_timeout_s=0.06,
+            # Keep enough wall-clock margin for loaded CI event loops: this
+            # assertion verifies the activity reset, not sub-20ms scheduling.
+            idle_timeout_s=0.2,
             get_last_activity=lambda: last_activity,
             has_active_work=lambda: False,
             request_shutdown=lambda: shutdowns.append("shutdown"),
@@ -1932,7 +1939,7 @@ async def test_inactivity_monitor_honors_activity_reset() -> None:
     assert shutdowns == []
     assert not task.done()
 
-    await asyncio.wait_for(task, timeout=0.1)
+    await asyncio.wait_for(task, timeout=0.3)
     assert shutdowns == ["shutdown"]
 
 

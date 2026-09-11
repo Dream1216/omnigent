@@ -1986,6 +1986,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
         workspace="/ws",
         parent_pid=42,
         initial_auth_token="host-bootstrap-bearer",
+        workspace_id=41,
     )
 
     # Process essentials + the locale family pass through.
@@ -2005,6 +2006,7 @@ def test_build_runner_env_allowlists_host_env_and_strips_secrets() -> None:
     # harnesses (laptop: exported keys; managed sandbox: the
     # deployment's injected provider secrets).
     assert env["ANTHROPIC_API_KEY"] == "sk-harness"
+    assert env["OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"] == "41"
     # The sandbox-image environment descriptor forwards: Claude Code
     # needs it to allow --dangerously-skip-permissions under root in
     # sandbox containers. Only the baked host image ever sets it.
@@ -4356,6 +4358,10 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
         ]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _fake_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _harness: None,
+    )
     host = _make_host_process()
 
     first = await host._handle_model_options(
@@ -4489,6 +4495,10 @@ async def test_model_options_frame_replies_off_the_receive_loop(
         return [{"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"}]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _slow_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _harness: None,
+    )
     host = _make_host_process()
     ws = _RecordingWS()
     raw = encode_host_frame(HostModelOptionsFrame(request_id="req_slow", harness="codex-native"))
