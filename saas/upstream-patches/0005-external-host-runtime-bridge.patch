@@ -1,8 +1,8 @@
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9bb70b192 100644
+index 97563c22c..78174b300 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -3524,3 +3524,8 @@ class HostProcess:
+@@ -3773,3 +3773,8 @@ class HostProcess:
          """
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
 +        from omnigent.host.identity import (
@@ -12,7 +12,7 @@ index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9
 +            load_host_tunnel_workspace_id,
 +        )
          from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
-@@ -3543,5 +3548,11 @@ class HostProcess:
+@@ -3792,5 +3797,11 @@ class HostProcess:
 
 -        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
 +        # Re-read the file on each reconnect so atomic Secret rotation takes
@@ -25,7 +25,7 @@ index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9
 +            if workspace_id is not None:
 +                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
              return headers
-@@ -3565,5 +3576,5 @@ class HostProcess:
+@@ -3814,5 +3825,5 @@ class HostProcess:
          """
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
 +        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
@@ -34,21 +34,21 @@ index 664f98bec6249d0c94384daec9af32cb09a55ec0..1d90689969706d6ab151c956e4cb96c9
 +        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
              return None
 diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py
-index 35cf65a0806efbee297d3923f88504a9d83ae4c7..90e5e3331160e5118206f03b77d71f023aba75af 100644
+index 2c594d5b1..5903604f4 100644
 --- a/omnigent/host/identity.py
 +++ b/omnigent/host/identity.py
-@@ -11,2 +11,3 @@ import os
+@@ -12,2 +12,3 @@ import os
  import socket
 +import stat
- import uuid
-@@ -27,4 +28,6 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
+ import tempfile
+@@ -29,4 +30,6 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
  HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
 +HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
  HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
  HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 +HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
 
-@@ -36,2 +39,53 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
+@@ -38,2 +41,53 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
  MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
 +MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 +
@@ -103,7 +103,7 @@ index 35cf65a0806efbee297d3923f88504a9d83ae4c7..90e5e3331160e5118206f03b77d71f02
 +    return workspace_id
 
 diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
-index 91e9219bc5fb2bfc4084169963e59542b0235c01..af4dcbac264227f9a4fad31e2fbbac0e4f6b9949 100644
+index 4b3701e6b..8a13f32bf 100644
 --- a/omnigent/inner/bwrap_sandbox.py
 +++ b/omnigent/inner/bwrap_sandbox.py
 @@ -201,9 +201,12 @@ _ALLOWED_SOCKET_FAMILIES = (
@@ -130,10 +130,10 @@ index 91e9219bc5fb2bfc4084169963e59542b0235c01..af4dcbac264227f9a4fad31e2fbbac0e
 +    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
      the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
-index e444f664954c4e2721ae8c02dc6f429ab5ad0133..c367ee99e78b2348656a6beeac825459f2f06a15 100644
+index 5c6b8d549..24fbab66b 100644
 --- a/omnigent/server/routes/host_tunnel.py
 +++ b/omnigent/server/routes/host_tunnel.py
-@@ -318,3 +318,9 @@ def create_host_tunnel_router(
+@@ -319,3 +319,9 @@ def create_host_tunnel_router(
              ping_task = asyncio.create_task(
 -                _ping_loop(ws, conn, host_id, host_store),
 +                _ping_loop(
@@ -144,12 +144,12 @@ index e444f664954c4e2721ae8c02dc6f429ab5ad0133..c367ee99e78b2348656a6beeac825459
 +                    presented_host_token=managed_token,
 +                ),
                  name=f"host-ping:{host_id}",
-@@ -808,2 +814,4 @@ async def _ping_loop(
+@@ -809,2 +815,4 @@ async def _ping_loop(
      host_store: HostStore,
 +    *,
 +    presented_host_token: str | None = None,
  ) -> None:
-@@ -826,2 +834,13 @@ async def _ping_loop(
+@@ -827,2 +835,13 @@ async def _ping_loop(
          await asyncio.sleep(PING_INTERVAL_S)
 +        if presented_host_token is not None:
 +            still_valid = await asyncio.to_thread(
@@ -164,10 +164,10 @@ index e444f664954c4e2721ae8c02dc6f429ab5ad0133..c367ee99e78b2348656a6beeac825459
 +                return
          elapsed = time.time() - conn.last_frame_at
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 2b914fc935d7bc76c950468a148c91357e35418b..ac89598f9555642a8246aeed809aa19602704335 100644
+index 7b2648eb5..f2e2b4386 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
-@@ -779,3 +779,3 @@ class HostStore:
+@@ -966,3 +966,3 @@ class HostStore:
                  return None
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():

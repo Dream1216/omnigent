@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-09-02",
+  "audit_verified_at": "2026-09-10",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/workflows/saas-",
@@ -57,6 +57,6 @@
     "revision": "external-host-kubernetes-runtime-v3"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
+  "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
   "upstream_version": "0.13.0.dev0"
 }

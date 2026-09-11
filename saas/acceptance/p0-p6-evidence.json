@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "plan": "docs/omnigent-multitenant-multiorg-saas-iteration-plan-2026-08-01.md",
-  "reviewed_at": "2026-09-01",
+  "reviewed_at": "2026-09-10",
   "release_decision": "NO-GO",
   "phases": [
     {
@@ -16,6 +16,8 @@
             "saas/scripts/check_upstream_delta.py",
             "saas/scripts/check_patch_queue.py",
             "saas/upstream-patches/README.md",
+            "saas/acceptance/p6-upstream-sync-20260910-freeze.json",
+            "saas/acceptance/p6-upstream-sync-20260910-conflict-resolution.json",
             ".github/workflows/saas-upstream-compat.yml",
             "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
             "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
@@ -25,7 +27,7 @@
         },
         {
           "id": "p0-approved-production-adrs-and-owners",
-          "status": "passed",
+          "status": "pending",
           "evidence": [
             "saas/production/baseline.json",
             "saas/production/adr-approval-policy.json",

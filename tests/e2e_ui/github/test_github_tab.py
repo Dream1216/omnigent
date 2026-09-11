@@ -7,18 +7,22 @@ with ``page.route`` and answered with canned JSON, so the test exercises the
 *frontend* — the PR header, the CI-check pills, and the folder-tree sidebar —
 without a real ``gh``/``git`` (which a CI workspace has no PR for anyway).
 
-Two behaviours are pinned:
+Three behaviours are pinned:
 
 1. Opening the GitHub rail tab renders the associated PR (title + number), its
    CI checks as labeled pills, and the branch-vs-base file tree — with a
    single-child directory chain (``src`` → ``app``) compacted into one row.
 2. The composer status line's ``#<pr>`` link opens that tab.
+3. A host predating the ``/resources/github`` route 404s "Resource 'github'
+   not found", which the panel renders as an actionable "update your host"
+   empty state rather than the generic "unavailable" one.
 
-Neither sends a message, so both stay fast and LLM-free.
+None sends a message, so all stay fast and LLM-free.
 """
 
 from __future__ import annotations
 
+import json
 import re
 
 from playwright.sync_api import Page, expect
@@ -57,6 +61,16 @@ _INFO = {
                 {"name": "e2e", "bucket": "failing", "url": None},
             ],
         },
+        # The Summary tab renders the description (markdown) and comments.
+        "body": "## Summary\n\nAdds the GitHub tab to the workspace rail.",
+        "comments": [
+            {
+                "author": "octocat",
+                "body": "Nice work!",
+                "created_at": "2026-09-05T07:32:02Z",
+                "url": "https://example.com/pr/4242#c1",
+            }
+        ],
     },
 }
 
@@ -125,11 +139,11 @@ def _stub_github(page: Page) -> None:
     )
 
 
-def test_github_tab_shows_pr_checks_and_file_tree(
+def test_github_tab_shows_summary_checks_and_file_tree(
     page: Page,
     seeded_session: tuple[str, str],
 ) -> None:
-    """The GitHub tab renders the PR, its CI pills, and the compacted file tree."""
+    """The GitHub tab lands on Summary; Changes shows the compacted file tree."""
     base_url, session_id = seeded_session
     _stub_github(page)
     page.goto(f"{base_url}/c/{session_id}")
@@ -138,7 +152,7 @@ def test_github_tab_shows_pr_checks_and_file_tree(
     rail = page.get_by_role("complementary", name="Workspace")
     rail.get_by_role("tab", name="GitHub").click()
 
-    # PR header: title + number.
+    # PR header (shared across both inner tabs): title + number.
     expect(rail.get_by_text("Add the GitHub tab")).to_be_visible(timeout=30_000)
     expect(rail.get_by_text(f"#{_PR_NUMBER}")).to_be_visible()
 
@@ -147,9 +161,15 @@ def test_github_tab_shows_pr_checks_and_file_tree(
     expect(rail.get_by_text(re.compile(r"3\s*passed"))).to_be_visible()
     expect(rail.get_by_text(re.compile(r"1\s*failed"))).to_be_visible()
 
-    # Sidebar file tree: the src → app single-child chain compacts into one
-    # "src/app" folder row (exact match — the diff section header carries the
-    # full path and would match a substring).
+    # Summary is the default tab: the PR description + a comment render there.
+    expect(rail.get_by_text(re.compile(r"Adds the GitHub tab"))).to_be_visible()
+    expect(rail.get_by_text("Nice work!")).to_be_visible()
+
+    # Switching to Changes reveals the sidebar file tree. Scope to the inner
+    # "Pull request" tablist — the rail's own tab bar also has a "Changes" tab.
+    # The src → app single-child chain compacts into one "src/app" folder row
+    # (exact — the diff section header carries the full path and would substring).
+    rail.get_by_role("tablist", name="Pull request").get_by_role("tab", name="Changes").click()
     expect(rail.get_by_role("button", name="src/app", exact=True)).to_be_visible()
     expect(rail.get_by_role("button", name=re.compile(r"main\.py")).first).to_be_visible()
 
@@ -172,3 +192,46 @@ def test_composer_pr_link_opens_github_tab(
     pr_link.click()
     rail = page.get_by_role("complementary", name="Workspace")
     expect(rail.get_by_text("Add the GitHub tab")).to_be_visible(timeout=30_000)
+
+
+def _stub_github_outdated_host(page: Page) -> None:
+    """404 the info endpoint with the message an outdated host returns.
+
+    A host predating the ``/resources/github`` route has no such resource, so
+    its generic lookup 404s "Resource 'github' not found". The status MUST be
+    set explicitly (``fulfill`` defaults to 200), and the body carries the exact
+    message the client keys on (``githubNotFoundReason``). Only ``/resources/
+    github`` needs stubbing: an unavailable payload resolves no base ref, so the
+    changes/diff queries stay disabled and never fire.
+    """
+    page.route(
+        re.compile(r"/resources/github(?:\?|$)"),
+        lambda r: r.fulfill(
+            status=404,
+            headers={"content-type": "application/json"},
+            body=json.dumps({"error": {"message": "Resource 'github' not found"}}),
+        ),
+    )
+
+
+def test_github_tab_prompts_to_update_outdated_host(
+    page: Page,
+    seeded_session: tuple[str, str],
+) -> None:
+    """An outdated host's 404 renders the "update your host" empty state.
+
+    Pins the full old-host chain end to end: the 404 body → ``githubNotFoundReason``
+    → the ``host_outdated`` state → the actionable empty state, rather than the
+    generic "GitHub isn't available" one.
+    """
+    base_url, session_id = seeded_session
+    _stub_github_outdated_host(page)
+    page.goto(f"{base_url}/c/{session_id}")
+
+    open_right_rail(page)
+    rail = page.get_by_role("complementary", name="Workspace")
+    rail.get_by_role("tab", name="GitHub").click()
+
+    expect(rail.get_by_text("Update your host to use GitHub")).to_be_visible(timeout=30_000)
+    # The hint names the version floor so the user knows what to update to.
+    expect(rail.get_by_text(re.compile(r"0\.13\.0 or later"))).to_be_visible()
