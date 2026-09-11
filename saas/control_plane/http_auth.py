@@ -381,6 +381,11 @@ class SaasAuthContextMiddleware:
         token, token_source = self._auth.extract_token(connection)
         managed_host_token = connection.headers.get(MANAGED_HOST_TOKEN_HEADER)
         managed_runner_token = connection.headers.get(RUNNER_TUNNEL_TOKEN_HEADER)
+        runner_token_bootstrap = (
+            scope["type"] == "http"
+            and cast(str, scope.get("method", "GET")) == "POST"
+            and re.fullmatch(r"/v1/runners/[^/]+/token", connection.url.path) is not None
+        )
         if managed_host_token is not None:
             await self._bind_host_machine_workspace(
                 connection=connection,
@@ -390,7 +395,9 @@ class SaasAuthContextMiddleware:
                 send=send,
             )
             return
-        if managed_runner_token is not None and token is None:
+        if managed_runner_token is not None and (
+            token is None or (token_source == "bearer" and runner_token_bootstrap)
+        ):
             await self._bind_runner_machine_workspace(
                 connection=connection,
                 binding_token=managed_runner_token,

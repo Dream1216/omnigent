@@ -752,6 +752,17 @@ def test_runner_machine_credential_routes_only_its_bound_bootstrap_endpoint() ->
         "state_workspace_id": 41,
     }
 
+    proxy_response = client.post(
+        f"/v1/runners/{runner_id}/token",
+        headers={**headers, "Authorization": "Bearer proxy-edge-token"},
+    )
+    assert proxy_response.status_code == 200
+    assert proxy_response.json() == {
+        "runner_id": runner_id,
+        "workspace_id": 41,
+        "state_workspace_id": 41,
+    }
+
     wrong_runner = client.post("/v1/runners/runner_wrong/token", headers=headers)
     assert wrong_runner.status_code == 403
     assert wrong_runner.json()["error"]["code"] == "runner_machine_route_forbidden"
