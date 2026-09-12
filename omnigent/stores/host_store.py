@@ -282,7 +282,7 @@ class HostStore:
                             SqlHost.user_id == user_id,
                             SqlHost.token_hash == hash_host_launch_token(managed_token),
                             SqlHost.token_expires_at.is_not(None),
-                            SqlHost.token_expires_at >= now,
+                            SqlHost.token_expires_at > now,
                             # Accept either a live managed generation or the
                             # lifecycle-free tuple used by an armed external Host.
                             or_(

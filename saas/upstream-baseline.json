@@ -45,16 +45,16 @@
   "source_intrusion_budget": {
     "max_active_patches": 8,
     "max_direct_upstream_files": 30,
-    "max_upstream_net_added_loc": 812,
+    "max_upstream_net_added_loc": 825,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
-    "approved_at": "2026-09-11",
+    "approved_at": "2026-09-13",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 24,
-    "previous_max_upstream_net_added_loc": 750,
-    "reason": "carry one canonical physical Runtime Partition selector across the reviewed Host-to-Runner bootstrap, delegated-token, tunnel and callback paths; the implementation seam is pinned to patch 0005, its direct acceptance tests remain explicit, and the exact ceiling rises by six files and 62 net lines while authorization, tenant resolution, migration, deployment and recovery policy remain downstream-owned",
-    "revision": "delegated-runner-runtime-identity-v1"
+    "previous_max_direct_upstream_files": 30,
+    "previous_max_upstream_net_added_loc": 812,
+    "reason": "user-authorized external Host candidate closure: add exactly 13 net lines in the existing host_store.py seam to atomically distinguish an armed lifecycle-free external Host from an active managed generation; preserve credential, owner, workspace, deletion and expiry checks; retain the 30-file and 8-patch ceilings with no forbidden paths or reverse dependencies; this source budget revision grants no production admission or merge waiver",
+    "revision": "external-host-atomic-registration-v1"
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",

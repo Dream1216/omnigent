@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -120,3 +121,29 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     assert report["status"] == "pass"
     assert report["patch_count"] == 4
     assert report["covered_paths"] == report["official_source_paths"]
+
+
+@pytest.mark.parametrize("extra_lines", [0, 1])
+def test_external_host_budget_revision_retains_a_hard_ceiling(extra_lines: int) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
+    budget = manifest["source_intrusion_budget"]
+    assert budget["max_upstream_net_added_loc"] == 825
+    assert budget["max_direct_upstream_files"] == 30
+    assert budget["max_active_patches"] == 8
+    assert budget["min_isolated_custom_code_ratio"] == 0.85
+    report = evaluate_delta(
+        [
+            FileDelta("omnigent/stores/host_store.py", 825 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 10000, 0),
+        ],
+        manifest,
+        active_patch_count=4,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+    )
+    assert report["status"] == ("fail" if extra_lines else "pass")
+    assert report["violations"] == (
+        ["upstream net-added LOC budget exceeded"] if extra_lines else []
+    )
