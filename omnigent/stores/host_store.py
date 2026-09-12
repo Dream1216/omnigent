@@ -260,9 +260,10 @@ class HostStore:
             Written on every connect — including ``None`` from an older
             host that doesn't report it, which correctly resets any
             stale value back to "unknown".
-        :param managed_token: Raw launch token for a managed host. When set,
-            registration atomically revalidates the current credential instead
-            of performing the external-host upsert path.
+        :param managed_token: Raw launch token for a credentialed host. When
+            set, registration atomically revalidates either an active managed
+            sandbox generation or an explicitly armed external Host instead of
+            performing the user-authenticated external-host upsert path.
         :returns: The upserted :class:`Host`.
         """
         now = now_epoch()
@@ -282,7 +283,19 @@ class HostStore:
                             SqlHost.token_hash == hash_host_launch_token(managed_token),
                             SqlHost.token_expires_at.is_not(None),
                             SqlHost.token_expires_at >= now,
-                            SqlHost.sandbox_id.is_not(None),
+                            # Accept either a live managed generation or the
+                            # lifecycle-free tuple used by an armed external Host.
+                            or_(
+                                and_(
+                                    SqlHost.sandbox_provider.is_not(None),
+                                    SqlHost.sandbox_id.is_not(None),
+                                ),
+                                and_(
+                                    SqlHost.sandbox_provider.is_(None),
+                                    SqlHost.sandbox_id.is_(None),
+                                    SqlHost.terminating_sandbox_id.is_(None),
+                                ),
+                            ),
                             SqlHost.deleted_at.is_(None),
                         )
                         .values(
