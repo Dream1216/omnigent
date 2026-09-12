@@ -114,12 +114,12 @@ jobs:
       OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL: >-
         postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
     steps:
-      - name: Checkout immutable candidate
+      - name: Checkout immutable migration replay candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ env.CANDIDATE_REVISION }}
           persist-credentials: false
-      - name: Verify exact candidate revision
+      - name: Verify exact migration replay revision
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
