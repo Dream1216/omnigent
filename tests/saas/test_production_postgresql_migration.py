@@ -357,6 +357,35 @@ def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() ->
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= expected.items()
 
 
+@pytest.mark.parametrize("server_major", [16, 18])
+def test_current_migration_heads_have_source_catalog_baselines(server_major: int) -> None:
+    migration._require_source_catalog_baselines(server_major)
+
+
+@pytest.mark.parametrize(
+    "catalog", ["_PUBLIC_SCHEMA_INVENTORY_SHA256", "_SOURCE_SECURITY_CATALOG_SHA256"]
+)
+def test_missing_release_baseline_is_rejected_before_migration(
+    monkeypatch: pytest.MonkeyPatch, catalog: str
+) -> None:
+    monkeypatch.setattr(migration, catalog, {})
+    with pytest.raises(migration.PostgreSqlMigrationError) as error:
+        migration._require_source_catalog_baselines(18)
+    assert error.value.code == "source_catalog_baseline_missing"
+    assert error.value.phase == "preflight"
+
+
+@pytest.mark.parametrize("server_major", [16, 18])
+def test_existing_extension_accepts_only_source_pinned_migration_ancestors(
+    server_major: int,
+) -> None:
+    assert migration._source_pinned_pg_trgm_predecessor("ga1b2c3d4e5f", server_major)
+    assert migration._source_pinned_pg_trgm_predecessor("ge1b2c3d4e5f", server_major)
+    assert not migration._source_pinned_pg_trgm_predecessor("gb1b2c3d4e5f", server_major)
+    assert not migration._source_pinned_pg_trgm_predecessor("unknown", server_major)
+    assert not migration._source_pinned_pg_trgm_predecessor("ga1b2c3d4e5f", 17)
+
+
 def test_source_security_catalog_sorts_rows_after_role_aliasing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

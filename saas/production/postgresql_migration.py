@@ -225,6 +225,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "ga1b2c3d4e5f",
         "p0s000000012",
     ): "a1d8e39b147d2621837b66b5685293b56b1076d0fda44402a9a6050f7f80c7a5",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000012",
+    ): "a1d8e39b147d2621837b66b5685293b56b1076d0fda44402a9a6050f7f80c7a5",
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000012",
+    ): "287bc061ec82bb53386bb42d3a2d81ed1181327ef99830cf8d8ba548b3f8f416",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -247,6 +257,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         "ga1b2c3d4e5f",
         "p0s000000012",
     ): "5af8ea5fd95dcda61b94ad3d1fafa196bb76d9e971f7c637e49523750362ab85",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000012",
+    ): "486bea3f52073f5884a18df0dfa0b809cc19515847ef0023b6502d1d272cf1fc",
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000012",
+    ): "ea8a5527e7ed08d6bd09baeb2137f94518ce06e758d5be0c68f074be63538ee5",
 }
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
@@ -764,7 +784,17 @@ def _preflight(
         raise PostgreSqlMigrationError("postgresql_16_required", "preflight")
     if any(not item.server_address or item.server_port <= 0 for item in facts):
         raise PostgreSqlMigrationError("authority_server_identity_missing", "preflight")
+    for server_major in {item.server_version_num // 10000 for item in facts}:
+        _require_source_catalog_baselines(server_major)
     return facts
+
+
+def _require_source_catalog_baselines(server_major: int) -> None:
+    """Reject an unanchored release before any authority or schema mutation."""
+
+    key = (server_major, _expected_head("official"), _expected_head("saas"))
+    if key not in _PUBLIC_SCHEMA_INVENTORY_SHA256 or key not in _SOURCE_SECURITY_CATALOG_SHA256:
+        raise PostgreSqlMigrationError("source_catalog_baseline_missing", "preflight")
 
 
 def _read_resource(package: str, name: str) -> str:
@@ -2496,12 +2526,35 @@ def _preflight_pg_trgm_extension(connection: Connection, *, official_owner: str)
     )
     if not exists:
         return
-    at_head = False
+    revisions: list[str] = []
     if connection.execute(sa.text("SELECT to_regclass('public.alembic_version')")).scalar_one():
-        at_head = _version_at_head(connection, kind="official") == _expected_head("official")
-    if not at_head:
+        revisions = list(
+            connection.execute(sa.text("SELECT version_num FROM public.alembic_version")).scalars()
+        )
+    server_major = (
+        int(
+            connection.execute(
+                sa.text("SELECT current_setting('server_version_num')::integer")
+            ).scalar_one()
+        )
+        // 10000
+    )
+    if len(revisions) != 1 or not _source_pinned_pg_trgm_predecessor(revisions[0], server_major):
         raise PostgreSqlMigrationError("pg_trgm_preexisting_before_head", "official_alembic")
     _pg_trgm_security_catalog(connection, official_owner=official_owner)
+
+
+def _source_pinned_pg_trgm_predecessor(revision: str, server_major: int) -> bool:
+    """Only admit a source-anchored ancestor with the verified extension contract."""
+
+    anchored = any(
+        key[0] == server_major and key[1] == revision and key in _SOURCE_SECURITY_CATALOG_SHA256
+        for key in _PUBLIC_SCHEMA_INVENTORY_SHA256
+    )
+    if not anchored:
+        return False
+    scripts = ScriptDirectory.from_config(_migration_config("official"))
+    return any(item.revision == revision for item in scripts.walk_revisions())
 
 
 def _official_security_catalog(
