@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from omnigent.db.db_models import OmnigentBase, SqlHost, workspace_scope
-from omnigent.stores.host_store import encode_host_status, hash_host_launch_token
+from omnigent.stores.host_store import HostStore, encode_host_status, hash_host_launch_token
 from saas.production.external_host_credential import (
     ExternalHostCredentialError,
     arm_external_host_credential,
@@ -87,6 +88,56 @@ def test_arm_is_idempotent_and_rotation_requires_expected_digest(
         now=300,
     )
     assert _stored(credential_engine).token_hash == rotated.token_sha256
+
+
+def test_armed_external_host_can_complete_tunnel_registration(
+    db_uri: str,
+) -> None:
+    """The out-of-band credential must survive the tunnel's atomic upsert.
+
+    External Hosts intentionally have no sandbox provider or sandbox id.  The
+    WebSocket route first resolves the token, then calls ``upsert_on_connect``
+    with the same token; both checks must accept the same row shape.
+    """
+    token = "f" * 48
+    now = int(time.time())
+    engine = sa.create_engine(db_uri)
+    try:
+        with workspace_scope(41), Session(engine) as session, session.begin():
+            session.add(
+                SqlHost(
+                    workspace_id=41,
+                    host_id="ce5bb44730f64f47ac427f216e64bb33",
+                    user_id="tenant-user",
+                    name="runner-01",
+                    status=encode_host_status("offline"),
+                    created_at=1,
+                    updated_at=1,
+                )
+            )
+        arm_external_host_credential(
+            engine,
+            workspace_id=41,
+            host_id="ce5bb44730f64f47ac427f216e64bb33",
+            token=token,
+            ttl_seconds=3600,
+            now=now,
+        )
+        store = HostStore(db_uri)
+        with workspace_scope(41):
+            connected = store.upsert_on_connect(
+                host_id="ce5bb44730f64f47ac427f216e64bb33",
+                name="runner-01",
+                user_id="tenant-user",
+                managed_token=token,
+            )
+    finally:
+        engine.dispose()
+
+    assert connected.status == "online"
+    assert connected.sandbox_provider is None
+    assert connected.sandbox_id is None
+    assert connected.terminating_sandbox_id is None
 
 
 def test_revoke_is_digest_fenced_and_does_not_delete_host(

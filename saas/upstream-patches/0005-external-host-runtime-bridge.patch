@@ -278,10 +278,39 @@ index 5c6b8d549c5241106dc974876788b64a34f7f109..24fbab66b5b0217028a42c72b1d37ccd
 +                return
          elapsed = time.time() - conn.last_frame_at
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 7b2648eb59626dfa33bd883c6793aa7aaa314656..f2e2b4386b98885da08fe98a7fa7de5ff671f44d 100644
+index 7b2648eb59626dfa33bd883c6793aa7aaa314656..5d07badbd0066ce66a84367d560db52112940241 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
-@@ -966,3 +966,3 @@ class HostStore:
+@@ -262,5 +262,6 @@ class HostStore:
+             stale value back to "unknown".
+-        :param managed_token: Raw launch token for a managed host. When set,
+-            registration atomically revalidates the current credential instead
+-            of performing the external-host upsert path.
++        :param managed_token: Raw launch token for a credentialed host. When
++            set, registration atomically revalidates either an active managed
++            sandbox generation or an explicitly armed external Host instead of
++            performing the user-authenticated external-host upsert path.
+         :returns: The upserted :class:`Host`.
+@@ -283,4 +284,16 @@ class HostStore:
+                             SqlHost.token_expires_at.is_not(None),
+-                            SqlHost.token_expires_at >= now,
+-                            SqlHost.sandbox_id.is_not(None),
++                            SqlHost.token_expires_at > now,
++                            # Accept either a live managed generation or the
++                            # lifecycle-free tuple used by an armed external Host.
++                            or_(
++                                and_(
++                                    SqlHost.sandbox_provider.is_not(None),
++                                    SqlHost.sandbox_id.is_not(None),
++                                ),
++                                and_(
++                                    SqlHost.sandbox_provider.is_(None),
++                                    SqlHost.sandbox_id.is_(None),
++                                    SqlHost.terminating_sandbox_id.is_(None),
++                                ),
++                            ),
+                             SqlHost.deleted_at.is_(None),
+@@ -966,3 +979,3 @@ class HostStore:
                  return None
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():
