@@ -10,6 +10,24 @@ Runner-entry changes are additive composition seams that preserve the existing
 Runtime Partition wire protocol, receipt schema, and persisted compatibility
 fields. A future wire or receipt change must bump the contract independently.
 
+The 2026-09-13 external Host registration correction is carried by patch 0005.
+The token resolver and atomic registration both reject `expires_at <= now`.
+Registration accepts either a provider plus live sandbox id (including a
+previous generation still pending cleanup), or an explicitly armed external
+Host with all three lifecycle fields absent. Token, owner, workspace and
+deletion predicates remain in the same atomic UPDATE. The SQLite/PostgreSQL
+matrix in `tests/saas/test_external_host_registration.py` covers all eight
+lifecycle tuples, expiry boundaries, revalidation after mutation, reconnect,
+rotation, and the real ASGI `host.hello` registration path.
+
+Source-budget scope: the user requested candidate and budget closure on
+2026-09-13. `external-host-atomic-registration-v1` adds exactly 13 net lines
+to the existing `host_store.py` seam, taking the measured ceiling from 812
+to 825. The 30-file limit, 8-patch limit, isolation ratio, forbidden paths and
+reverse-dependency checks are unchanged. This is a Single-Owner Beta source
+budget revision, not an independent reviewer signature, merge waiver or
+production admission. A further source increase must be reviewed separately.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
