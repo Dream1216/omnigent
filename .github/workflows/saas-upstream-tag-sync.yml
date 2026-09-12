@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   mirror:
@@ -19,10 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require workflow-capable mirror credential
+        env:
+          UPSTREAM_TAG_MIRROR_TOKEN: ${{ secrets.UPSTREAM_TAG_MIRROR_TOKEN }}
+        run: |
+          : "${UPSTREAM_TAG_MIRROR_TOKEN:?Set the UPSTREAM_TAG_MIRROR_TOKEN repository secret}"
+
       - name: Check out downstream repository and tags
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          # Official release tags can point at commits that changed Actions
+          # workflows. GitHub's built-in token cannot write those refs, so use
+          # a repository-scoped token with Contents and Workflows write access.
+          token: ${{ secrets.UPSTREAM_TAG_MIRROR_TOKEN }}
 
       - name: Fetch official tags into an isolated namespace
         shell: bash

@@ -12,10 +12,20 @@ def test_tag_mirror_is_trusted_scheduled_write_workflow() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
     assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
-    assert workflow["permissions"] == {"contents": "write"}
+    assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["mirror"]
     assert job["if"] == "github.repository == 'Dream1216/omnigent'"
     assert "pull_request" not in workflow["on"]
+
+    steps = job["steps"]
+    credential = next(
+        step for step in steps if step["name"].startswith("Require workflow-capable")
+    )
+    checkout = next(step for step in steps if "uses" in step)
+    secret = "${{ secrets.UPSTREAM_TAG_MIRROR_TOKEN }}"
+    assert credential["env"] == {"UPSTREAM_TAG_MIRROR_TOKEN": secret}
+    assert "Set the UPSTREAM_TAG_MIRROR_TOKEN repository secret" in credential["run"]
+    assert checkout["with"]["token"] == secret
 
 
 def test_tag_mirror_rejects_mutation_and_only_pushes_missing_refs() -> None:
