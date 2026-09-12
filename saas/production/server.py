@@ -1184,11 +1184,7 @@ def build_production_server(
         artifact_store=official_dependencies.artifact_store,
         agent_cache=official_dependencies.agent_cache,
     )
-    execution_readiness_router = create_execution_readiness_router(
-        initializer=agent_catalog,
-        agent_store=official_dependencies.agent_store,
-        host_store=official_dependencies.host_store,
-    )
+    execution_readiness_router = APIRouter()
     try:
         services = build_production_saas_services(
             config,
@@ -1198,6 +1194,14 @@ def build_production_server(
             extra_readiness_checks=readiness_checks,
             runtime_router=execution_readiness_router,
             runtime_initializer=agent_catalog,
+        )
+        execution_readiness_router.include_router(
+            create_execution_readiness_router(
+                auth_provider=services.integration.auth_provider,
+                initializer=agent_catalog,
+                agent_store=official_dependencies.agent_store,
+                host_store=official_dependencies.host_store,
+            )
         )
     except Exception:
         official_dependencies.close()

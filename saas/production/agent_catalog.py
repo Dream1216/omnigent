@@ -9,13 +9,17 @@ from collections.abc import Callable
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy.engine import Engine
 
 from omnigent.server.app import _ensure_default_agents
 from omnigent.stores.host_store import host_is_live
 from saas.compatibility import RuntimeContext, current_runtime_context
-from saas.control_plane.http_auth import RuntimeInitializerError
+from saas.control_plane.http_auth import (
+    RuntimeInitializerError,
+    SaasAuthProvider,
+    _require_principal,
+)
 
 logger = logging.getLogger("omnigent-saas-agent-catalog")
 
@@ -109,6 +113,7 @@ class TenantAgentCatalogInitializer:
 
 def create_execution_readiness_router(
     *,
+    auth_provider: SaasAuthProvider,
     initializer: TenantAgentCatalogInitializer,
     agent_store: Any,
     host_store: Any,
@@ -118,7 +123,16 @@ def create_execution_readiness_router(
     router = APIRouter()
 
     @router.get("/execution-readyz", include_in_schema=False)
-    async def execution_ready(response: Response) -> dict[str, object]:
+    async def execution_ready(request: Request, response: Response) -> dict[str, object]:
+        principal = _require_principal(auth_provider, request)
+        if principal.runtime_context is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "runtime_context_required",
+                    "message": "select an active workspace",
+                },
+            )
         runtime = current_runtime_context()
         await initializer.ensure(runtime)
         agents, hosts = await asyncio.gather(

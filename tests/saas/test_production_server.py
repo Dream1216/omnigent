@@ -470,6 +470,9 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
             getattr(route, "path", None) for route in built.app.routes
         }
         with TestClient(built.app, base_url="https://next.example.test") as client:
+            execution_ready = client.get("/v1/execution-readyz")
+            assert execution_ready.status_code == 401
+
             ready = client.get("/saas/readyz")
             assert ready.status_code == 200
             assert ready.json() == {"status": "ready"}

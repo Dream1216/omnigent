@@ -443,8 +443,19 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if workflow is None:
         return violations
 
-    candidate_checkout = _named_workflow_step(workflow, "Checkout immutable candidate")
-    candidate_verification = _named_workflow_step(workflow, "Verify exact candidate revision")
+    candidate_steps = [
+        (
+            _named_workflow_step(workflow, checkout),
+            _named_workflow_step(workflow, verification),
+        )
+        for checkout, verification in (
+            ("Checkout immutable candidate", "Verify exact candidate revision"),
+            (
+                "Checkout immutable migration replay candidate",
+                "Verify exact migration replay revision",
+            ),
+        )
+    ]
     exact_head_verification = {
         '[[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]',
         '[[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]',
@@ -454,11 +465,14 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             "CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}"
         )
         != 1
-        or candidate_checkout is None
-        or candidate_checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
-        or candidate_checkout.count("persist-credentials: false") != 1
-        or candidate_verification is None
-        or any(fragment not in candidate_verification for fragment in exact_head_verification)
+        or any(
+            checkout is None
+            or checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
+            or checkout.count("persist-credentials: false") != 1
+            or verification is None
+            or any(fragment not in verification for fragment in exact_head_verification)
+            for checkout, verification in candidate_steps
+        )
         or workflow.count('source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")') != 1
         or workflow.count('source_revision="$CANDIDATE_REVISION"') != 1
         or workflow.count("name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}") != 1
