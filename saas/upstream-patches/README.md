@@ -28,8 +28,23 @@ reverse-dependency checks are unchanged. This is a Single-Owner Beta source
 budget revision, not an independent reviewer signature, merge waiver or
 production admission. A further source increase must be reviewed separately.
 
+Candidate 0006 backports upstream commit
+`32f28c0ed69530829eaf9b013a40cf57356e1b31` (#4275) onto product `58bb02f4`.
+The implementation is semantically scoped to that fix, with shorter comments:
+auth commands are refused on both injection paths, and flagged CLI errors keep
+their original remedy with additive guidance. SDK readiness and Agent selection
+are untouched. The exact +2-file/+41-line increase was separately scope-reviewed
+by supervisory task `01a096e3-74e4-7731-8221-63f147a23926` on 2026-09-13 under
+the existing user-authorized Single-Owner Beta mandate. The candidate ceiling is
+32 files / 866 net lines; 8 patches, isolation ratio, forbidden paths and reverse
+dependencies stay constrained. This is not a new human signature, independent
+approval, merge waiver or production admission. Old-policy FAIL evidence is
+retained outside the repository; any further increment requires another review. See
+`saas/deployment/model-provider-p0/README.md` for the independent Provider gate.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
+| `0006-claude-native-auth-guidance.patch` | Runtime Compatibility | `omnigent/harnesses/claude_native/bridge.py`; `omnigent/inner/claude_native_executor.py` | `tests/saas/test_claude_native_auth_guidance.py`; official bridge/executor and Provider/readiness suites; isolated mock UI journey remains a release gate | Upstream merged [#4275](https://github.com/omnigent-ai/omnigent/pull/4275), commit `32f28c0e` | First/last replay: `06c33aeae701d521a3cfacd2daf99441b6d64492` | Remove after the pinned upstream baseline includes #4275 or equivalent behavior and all compatibility regressions pass |
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
 | `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/host/connect.py`; `omnigent/llms/_usage_observer.py` | official Host/daemon/usage-observer tests; managed Provider metering adapter tests | Generic Host factory, reviewed Runner entrypoint, daemon lifecycle-lock, and required usage-sink extension proposal pending | `06c33aea` | Remove when upstream exposes equivalent Host construction, Runner entrypoint, daemon ownership, and fail-closed accounting seams |
 | `0004-agent-cache-atomic-publish.patch` | Runtime Compatibility | `omnigent/runtime/agent_cache.py` | deterministic concurrent cache-miss regression; official AgentCache suite; server-integration session usage regression; upstream path-validation suite | Upstream now rejects unsafe cache paths; atomic publication/rollback remains downstream | `06c33aea` | Remove when upstream also serializes same-agent cache mutation and publishes only fully parsed extraction directories |

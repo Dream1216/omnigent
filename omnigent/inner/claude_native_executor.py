@@ -16,6 +16,7 @@ from omnigent.harnesses.claude_native.bridge import (
     TmuxSessionNotAdvertised,
     inject_slash_command,
     inject_user_message,
+    is_auth_slash_command,
     kill_session,
     read_active_session_id,
     read_claude_status_model,
@@ -99,6 +100,9 @@ class ClaudeNativeExecutor(Executor):
         text = _content_to_text(content, self._bridge_dir)
         if not text:
             return False
+        if is_auth_slash_command(text):
+            # Keep it buffered for run_turn's guidance instead of typing into tmux.
+            return False
         try:
             async with self._inject_lock:
                 await asyncio.to_thread(
@@ -152,6 +156,15 @@ class ClaudeNativeExecutor(Executor):
         text = _latest_user_text(messages, self._bridge_dir)
         if not text:
             yield ExecutorError(message="Claude native turn had no user text to send")
+            return
+        if is_auth_slash_command(text):
+            yield ExecutorError(
+                message=(
+                    "Claude Code's sign-in runs in its own terminal, so /login and "
+                    "/logout do nothing from the web chat. Run omni setup on the host "
+                    "to sign in again — or to sign out — then retry."
+                )
+            )
             return
         from omnigent.runtime import telemetry
 

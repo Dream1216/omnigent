@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "state": "unconfigured_review_only",
+  "contains_secret_values": false,
+  "provider_name": null,
+  "protocol": "anthropic",
+  "https_base_url": null,
+  "exact_model_id": null,
+  "supported_aliases": {},
+  "auth_delivery_mode": null,
+  "existing_secret_reference": {
+    "authority": null,
+    "namespace_or_mount": null,
+    "name_or_path": null,
+    "key": null,
+    "version": null,
+    "dedicated_workload_identity": null
+  },
+  "execution_scope": {
+    "namespace": null,
+    "workload": null,
+    "host_id": null,
+    "tenant_space_reference": null,
+    "uid": 10001,
+    "dedicated_beta_principal_confirmed": false
+  },
+  "billing_owner": null,
+  "approved_call_budget": null,
+  "approved_reload_window": null,
+  "rollback_revision": null,
+  "activation_authorized": false,
+  "real_model_call_authorized": false,
+  "production_ready": false
+}

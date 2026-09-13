@@ -6387,6 +6387,11 @@ def _escape_unsupported_slash_command(content: str) -> str:
     return _escape_slash_command_text(content)
 
 
+def is_auth_slash_command(content: str) -> bool:
+    """Identify leading interactive auth commands that web chat cannot drive."""
+    return _first_slash_command_name(content) in {"login", "logout"}
+
+
 def _passthrough_slash_command_name(content: str) -> str | None:
     """
     Name the leading slash command that passes through as a *guessed* skill.
@@ -6861,6 +6866,7 @@ def _assistant_transcript_items_from_entry(
         else current_response_id or _response_id_from_source(source_key)
     )
     items: list[ClaudeTranscriptItem] = []
+    is_api_error = _is_api_error_entry(entry)
 
     if isinstance(content, str):
         if content:
@@ -6871,6 +6877,7 @@ def _assistant_transcript_items_from_entry(
                     agent_name=agent_name,
                     response_id=response_id,
                     text=content,
+                    is_api_error=is_api_error,
                 )
             )
         if waking:
@@ -6898,6 +6905,7 @@ def _assistant_transcript_items_from_entry(
                         agent_name=agent_name,
                         response_id=response_id,
                         text=text,
+                        is_api_error=is_api_error,
                     )
                 )
             continue
@@ -6967,6 +6975,22 @@ _CONTEXT_OVERFLOW_REPLACEMENT = (
 )
 
 
+# Only CLI-marked errors receive guidance; ordinary model prose stays untouched.
+_LOGIN_COMMAND_RE = re.compile(r"(?<![\w/])/login\b")
+_LOGIN_GUIDANCE = (
+    "`/login` is not available from the Omnigent web chat — run "
+    "`omni setup` on the host to sign in again."
+)
+
+
+def _is_api_error_entry(entry: _JsonObject) -> bool:
+    """Read the CLI's explicit error marker at either supported record location."""
+    if entry.get("isApiErrorMessage") is True:
+        return True
+    message = entry.get("message")
+    return isinstance(message, dict) and message.get("isApiErrorMessage") is True
+
+
 def _assistant_message_item(
     *,
     source_key: str,
@@ -6974,6 +6998,7 @@ def _assistant_message_item(
     agent_name: str,
     response_id: str,
     text: str,
+    is_api_error: bool = False,
 ) -> ClaudeTranscriptItem:
     """
     Build an assistant message item from one Claude text block.
@@ -6983,11 +7008,14 @@ def _assistant_message_item(
     :param agent_name: Agent/model name for the assistant message.
     :param response_id: Response id grouping the Claude turn.
     :param text: Assistant text block.
+    :param is_api_error: Whether the CLI explicitly marked the record as an API error.
     :returns: Parsed transcript item.
     """
     display_text = text
     if _CONTEXT_OVERFLOW_RE.match(text.strip()):
         display_text = _CONTEXT_OVERFLOW_REPLACEMENT
+    elif is_api_error and _LOGIN_COMMAND_RE.search(text.strip()):
+        display_text = f"{text.rstrip()}\n\n{_LOGIN_GUIDANCE}"
     return ClaudeTranscriptItem(
         source_id=_source_id(source_key, item_index, "message"),
         item_type="message",
