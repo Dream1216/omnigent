@@ -68,6 +68,7 @@ import {
   ClockIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { useQueryClient } from "@tanstack/react-query";
 import { PageScroll } from "@/components/PageScroll";
 import { ThemeColorPicker } from "@/components/theme/ThemeColorPicker";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
@@ -98,14 +99,17 @@ import {
 } from "@/components/ui/dialog";
 import { MOD_KEY } from "@/components/KeyboardShortcut";
 import { KeyboardShortcutsList } from "@/components/KeyboardShortcutsDialog";
-import { changePassword, logout } from "@/lib/accountsApi";
+import { changePassword } from "@/lib/accountsApi";
 import {
   beginGithubConnect,
   disconnectGithub,
   fetchGithubStatus,
   type GithubConnectionStatus,
 } from "@/lib/githubIntegration";
-import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
+import { getCurrentIsAdmin, logoutBrowserSession, resolveIdentity } from "@/lib/identity";
+import { clearOptimisticTitles } from "@/lib/optimisticTitles";
+import { clearSessionDrafts } from "@/lib/sessionDrafts";
+import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { useOmnigentAnalytics, useOmnigentPageView } from "@/lib/analytics";
 import {
@@ -2039,6 +2043,7 @@ function UpdatesSection() {
 
 function AccountSection() {
   const info = useServerInfo();
+  const queryClient = useQueryClient();
   const accountsEnabled = info !== "loading" && info.accounts_enabled;
   // Identity for display. Sourced from the mode-agnostic `/v1/me` probe so it
   // works under OIDC too (the accounts-only `/auth/me` doesn't exist there).
@@ -2053,6 +2058,8 @@ function AccountSection() {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwDone, setPwDone] = useState(false);
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -2062,20 +2069,30 @@ function AccountSection() {
   }, []);
 
   const onSignOut = useCallback(async () => {
-    if (accountsEnabled) {
-      // Accounts: clear the cookie via the JSON logout endpoint, then land on
-      // the SPA login form.
-      await logout();
-      // Hard navigation so the chat store / react-query cache reset.
-      window.location.href = "/login";
+    if (info === "loading" || signOutBusy) return;
+    if (!accountsEnabled && info.login_url !== "/saas/login") {
+      // OIDC owns the IdP end-session redirect. Header and local modes have
+      // no login URL and therefore no browser session to revoke here.
+      if (info.login_url !== null) window.location.href = "/auth/logout";
       return;
     }
-    // OIDC: logout is a server-side GET redirect at /auth/logout that clears
-    // the session cookie (and honors the IdP end-session endpoint when
-    // configured). A hard navigation lets the browser follow it and resets
-    // client caches.
-    window.location.href = "/auth/logout";
-  }, [accountsEnabled]);
+
+    setSignOutBusy(true);
+    setSignOutError(null);
+    const saasMode = info.login_url === "/saas/login";
+    const result = await logoutBrowserSession(saasMode ? "/saas/auth/logout" : "/auth/logout");
+    if (!result.ok) {
+      setSignOutError(result.error);
+      setSignOutBusy(false);
+      return;
+    }
+
+    sessionUpdatesSocket.stop();
+    queryClient.clear();
+    clearSessionDrafts();
+    clearOptimisticTitles();
+    window.location.href = saasMode ? "/saas/login" : "/login";
+  }, [accountsEnabled, info, queryClient, signOutBusy]);
 
   const resetPwForm = useCallback(() => {
     setOldPw("");
@@ -2151,10 +2168,20 @@ function AccountSection() {
             variant="ghost"
             className="w-full justify-start gap-2"
             onClick={() => void onSignOut()}
+            loading={signOutBusy}
+            disabled={signOutBusy}
             componentId="settings.account.sign_out"
           >
             <LogOutIcon className="size-4" /> Sign out
           </Button>
+          {signOutError && (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {signOutError}
+            </div>
+          )}
         </div>
       </div>
 

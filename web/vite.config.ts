@@ -117,6 +117,16 @@ function createProxyConfig(target: string, useAuth: boolean): Record<string, Pro
       changeOrigin: true,
       configure,
     },
+    "/saas/auth": {
+      target: origin,
+      changeOrigin: true,
+      configure,
+    },
+    "/saas/login": {
+      target: origin,
+      changeOrigin: true,
+      configure,
+    },
     "/health": {
       target: origin,
       changeOrigin: true,

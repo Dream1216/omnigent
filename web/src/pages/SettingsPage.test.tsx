@@ -4,6 +4,7 @@
 // Archived sessions list (which moved here out of the sidebar).
 
 import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +39,10 @@ const mocks = vi.hoisted(() => ({
   projectNames: [] as string[],
   hasNextPage: false,
   fetchNextPage: vi.fn(),
+  logoutBrowserSession: vi.fn(),
+  sessionUpdatesStop: vi.fn(),
+  clearSessionDrafts: vi.fn(),
+  clearOptimisticTitles: vi.fn(),
 }));
 
 vi.mock("next-themes", () => ({
@@ -52,14 +57,19 @@ vi.mock("@/lib/CapabilitiesContext", () => ({
   }),
 }));
 vi.mock("@/lib/accountsApi", () => ({
-  logout: vi.fn(),
   changePassword: vi.fn(),
 }));
 vi.mock("@/lib/identity", () => ({
   resolveIdentity: () => Promise.resolve(mocks.me?.id ?? null),
   getCurrentIsAdmin: () => mocks.me?.is_admin ?? false,
   getCurrentUserId: () => mocks.me?.id ?? null,
+  logoutBrowserSession: mocks.logoutBrowserSession,
 }));
+vi.mock("@/lib/sessionUpdatesSocket", () => ({
+  sessionUpdatesSocket: { stop: mocks.sessionUpdatesStop },
+}));
+vi.mock("@/lib/sessionDrafts", () => ({ clearSessionDrafts: mocks.clearSessionDrafts }));
+vi.mock("@/lib/optimisticTitles", () => ({ clearOptimisticTitles: mocks.clearOptimisticTitles }));
 vi.mock("@/hooks/useConversations", async () => {
   // A stateful mock that emulates useInfiniteQuery pagination: it tracks how
   // many pages are "loaded" and reveals the next on fetchNextPage, so a click
@@ -192,14 +202,19 @@ function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>;
 }
 
+let queryClient: QueryClient;
+
 function renderPage(path = "/settings") {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <TooltipProvider>
-      <MemoryRouter initialEntries={[path]}>
-        <SettingsPage />
-        <LocationProbe />
-      </MemoryRouter>
-    </TooltipProvider>,
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <SettingsPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -210,6 +225,11 @@ beforeEach(() => {
   mocks.bulkArchiveMutate.mockReset();
   mocks.bulkDeleteMutate.mockReset();
   mocks.fetchNextPage.mockReset();
+  mocks.logoutBrowserSession.mockReset();
+  mocks.logoutBrowserSession.mockResolvedValue({ ok: true });
+  mocks.sessionUpdatesStop.mockReset();
+  mocks.clearSessionDrafts.mockReset();
+  mocks.clearOptimisticTitles.mockReset();
   mocks.theme = "system";
   mocks.accountsEnabled = true;
   mocks.loginUrl = "/login";
@@ -871,7 +891,60 @@ describe("SettingsPage", () => {
     // Change password is accounts-only — hidden under OIDC.
     expect(screen.queryByRole("button", { name: /Change password/ })).toBeNull();
     // Sign out is still available.
-    expect(screen.getByRole("button", { name: /Sign out/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Sign out/ }));
+    expect(mocks.logoutBrowserSession).not.toHaveBeenCalled();
+  });
+
+  it("uses the guarded SaaS logout endpoint and keeps state when logout fails", async () => {
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/saas/login";
+    mocks.logoutBrowserSession.mockResolvedValueOnce({
+      ok: false,
+      error: "CSRF token is invalid",
+      status: 401,
+    });
+    renderPage("/settings/account");
+    const signOut = await screen.findByRole("button", { name: /Sign out/ });
+
+    fireEvent.click(signOut);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("CSRF token is invalid");
+    expect(mocks.logoutBrowserSession).toHaveBeenCalledWith("/saas/auth/logout");
+    expect(mocks.sessionUpdatesStop).not.toHaveBeenCalled();
+    expect(mocks.clearSessionDrafts).not.toHaveBeenCalled();
+    expect(queryClient.getQueryCache().getAll()).toEqual([]);
+  });
+
+  it("clears live and cached browser state after confirmed SaaS logout", async () => {
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/saas/login";
+    renderPage("/settings/account");
+    queryClient.setQueryData(["session", "s1"], { id: "s1" });
+    const signOut = await screen.findByRole("button", { name: /Sign out/ });
+
+    fireEvent.click(signOut);
+
+    await waitFor(() => expect(mocks.sessionUpdatesStop).toHaveBeenCalledOnce());
+    expect(mocks.logoutBrowserSession).toHaveBeenCalledWith("/saas/auth/logout");
+    expect(queryClient.getQueryCache().getAll()).toEqual([]);
+    expect(mocks.clearSessionDrafts).toHaveBeenCalledOnce();
+    expect(mocks.clearOptimisticTitles).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the built-in Accounts logout endpoint distinct from SaaS", async () => {
+    mocks.accountsEnabled = true;
+    mocks.loginUrl = "/login";
+    mocks.logoutBrowserSession.mockResolvedValueOnce({
+      ok: false,
+      error: "Sign out failed. Try again.",
+      status: 500,
+    });
+    renderPage("/settings/account");
+
+    fireEvent.click(await screen.findByRole("button", { name: /Sign out/ }));
+
+    await screen.findByRole("alert");
+    expect(mocks.logoutBrowserSession).toHaveBeenCalledWith("/auth/logout");
   });
 
   it("renders the Members section at /settings/members when accounts is on", async () => {
