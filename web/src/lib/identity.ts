@@ -578,6 +578,49 @@ export async function authenticatedFetch(
   return res;
 }
 
+export type BrowserLogoutResult = { ok: true } | { ok: false; error: string; status: number };
+
+/** Revoke the current cookie session and clear browser-only identity state. */
+export async function logoutBrowserSession(endpoint: string): Promise<BrowserLogoutResult> {
+  if (!isSameOriginRequest(endpoint)) {
+    return { ok: false, error: "The sign-out endpoint is not trusted.", status: 0 };
+  }
+  let response: Response;
+  try {
+    response = await authenticatedFetch(endpoint, { method: "POST" });
+  } catch {
+    return { ok: false, error: "Could not reach the server. Try again.", status: 0 };
+  }
+  if (!response.ok) {
+    let error = "Sign out failed. Try again.";
+    try {
+      const body = (await response.json()) as {
+        error?: string | { message?: string };
+        detail?: { message?: string };
+      };
+      if (typeof body.error === "string") error = body.error;
+      else if (typeof body.error?.message === "string") error = body.error.message;
+      else if (typeof body.detail?.message === "string") error = body.detail.message;
+    } catch {
+      // Keep the generic message for an empty or non-JSON response.
+    }
+    return { ok: false, error, status: response.status };
+  }
+
+  currentUserId = null;
+  currentIsAdmin = false;
+  identityResolved = false;
+  identityPromise = null;
+  serverLoginUrl = null;
+  loginRedirectPending = false;
+  try {
+    window.sessionStorage.removeItem(SAAS_CSRF_STORAGE_KEY);
+  } catch {
+    // Restricted storage contexts still get the server-side revocation.
+  }
+  return { ok: true };
+}
+
 /** Read the browser-only SaaS CSRF token without breaking restricted storage contexts. */
 function readSaasCsrfToken(): string | null {
   try {

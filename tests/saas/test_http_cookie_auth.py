@@ -407,6 +407,50 @@ def _login(client: TestClient) -> str:
     return token
 
 
+def test_saas_logout_requires_browser_guards_and_revokes_the_server_session() -> None:
+    client, _scope = _build_app()
+    csrf = _login(client)
+    session_cookie = client.cookies.get("saas_session")
+    assert session_cookie is not None
+
+    legacy_get = client.get("/auth/logout")
+    assert legacy_get.status_code == 404
+    assert client.get("/saas/auth/status").json()["authenticated"] is True
+
+    missing_csrf = client.post(
+        "/saas/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert missing_csrf.status_code == 401
+    assert missing_csrf.json()["error"]["code"] == "csrf_invalid"
+
+    wrong_origin = client.post(
+        "/saas/auth/logout",
+        headers={"Origin": "https://attacker.example", "X-CSRF-Token": csrf},
+    )
+    assert wrong_origin.status_code == 403
+    assert wrong_origin.json()["error"]["code"] == "origin_forbidden"
+
+    logged_out = client.post(
+        "/saas/auth/logout",
+        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+    )
+    assert logged_out.status_code == 204
+    assert "Max-Age=0" in logged_out.headers["set-cookie"]
+    assert client.get("/saas/auth/status").json() == {
+        "authenticated": False,
+        "user_id": None,
+    }
+
+    replay = TestClient(client.app)
+    revoked = replay.get(
+        "/saas/auth/me",
+        headers={"Cookie": f"saas_session={session_cookie}"},
+    )
+    assert revoked.status_code == 401
+    assert replay.post("/saas/auth/logout").status_code == 204
+
+
 def test_tenant_cookie_support_access_can_approve_and_immediately_revoke() -> None:
     app, scope = _build_fastapi_app(with_platform_support_access=True)
     client = TestClient(app)

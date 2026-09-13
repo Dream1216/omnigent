@@ -28,6 +28,17 @@ reverse-dependency checks are unchanged. This is a Single-Owner Beta source
 budget revision, not an independent reviewer signature, merge waiver or
 production admission. A further source increase must be reviewed separately.
 
+The separately authorized `secure-saas-browser-logout-v1` revision raises the
+measured ceiling from 30 files / 825 net lines to 33 files / 1,047 net lines.
+The three additional direct files are the Settings page, its test and the Vite
+proxy config; the 222 net-line increase spans the identity, settings and
+development-proxy seams. It makes Accounts, SaaS and OIDC logout explicit,
+preserves same-origin and CSRF checks, clears local state only after server
+revocation succeeds, and exposes only the SaaS auth and login surfaces to the
+development proxy. The 8-patch ceiling, isolation floor, forbidden paths and
+reverse-dependency checks remain unchanged. This remains a Single-Owner Beta
+budget record, not production admission or a merge waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |

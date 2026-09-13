@@ -114,6 +114,75 @@ describe("resolveIdentity", () => {
   });
 });
 
+describe("logoutBrowserSession", () => {
+  it("posts with the SaaS CSRF token and clears cached identity only after 204", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ user_id: "alice", is_admin: true }))
+      .mockResolvedValueOnce(mockJsonResponse(null, { status: 204 }));
+    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-123");
+    const { getCurrentUserId, logoutBrowserSession, resolveIdentity } = await import("./identity");
+    await resolveIdentity();
+
+    const result = await logoutBrowserSession("/saas/auth/logout");
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock.mock.calls[1][0]).toBe("/saas/auth/logout");
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    expect(new Headers(request.headers).get("X-CSRF-Token")).toBe("csrf-123");
+    expect(getCurrentUserId()).toBeNull();
+    expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBeNull();
+  });
+
+  it("preserves browser state and surfaces a structured logout rejection", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ user_id: "alice" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse(
+          { error: { code: "csrf_invalid", message: "CSRF token is invalid" } },
+          { ok: false, status: 401 },
+        ),
+      );
+    window.sessionStorage.setItem("omnigent.saas.csrf", "stale-csrf");
+    const { getCurrentUserId, logoutBrowserSession, resolveIdentity } = await import("./identity");
+    await resolveIdentity();
+
+    const result = await logoutBrowserSession("/saas/auth/logout");
+
+    expect(result).toEqual({ ok: false, error: "CSRF token is invalid", status: 401 });
+    expect(getCurrentUserId()).toBe("alice");
+    expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBe("stale-csrf");
+  });
+
+  it("preserves browser state when the logout request cannot reach the server", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("network unavailable"));
+    window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-for-retry");
+    const { logoutBrowserSession } = await import("./identity");
+
+    const result = await logoutBrowserSession("/saas/auth/logout");
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Could not reach the server. Try again.",
+      status: 0,
+    });
+    expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBe("csrf-for-retry");
+  });
+
+  it("rejects a cross-origin logout endpoint without sending a request", async () => {
+    const { logoutBrowserSession } = await import("./identity");
+
+    const result = await logoutBrowserSession("https://attacker.example/logout");
+
+    expect(result).toEqual({
+      ok: false,
+      error: "The sign-out endpoint is not trusted.",
+      status: 0,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("getCurrentUserId", () => {
   it("returns null before resolveIdentity has been called", async () => {
     const { getCurrentUserId } = await import("./identity");
