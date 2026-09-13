@@ -9,8 +9,8 @@ import stat
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -35,6 +35,7 @@ _ENVELOPE_FIELDS = frozenset(
         "expected_host",
         "expires_at",
         "metering_base_url",
+        "model_budget_reservation_id",
         "official_runner_id",
         "run_id",
         "runner_id",
@@ -48,6 +49,7 @@ _SPOOL_FIELDS = frozenset(
         "attributes",
         "event_id",
         "meters",
+        "model_budget_reservation_id",
         "occurred_at",
         "provider",
         "provider_request_id",
@@ -86,6 +88,7 @@ class ManagedMeteringGrant:
     client_certificate_path: Path
     client_key_path: Path = field(repr=False)
     spool_directory: Path
+    model_budget_reservation_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -120,22 +123,87 @@ class ManagedRunnerLaunchAuthority(Protocol):
         self, *, session_id: str, official_runner_id: str
     ) -> ManagedMeteringGrant: ...
 
+    def complete_metering_grant(self, grant: ManagedMeteringGrant) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformModelBudgetRequest:
+    """Trusted scheduler input for one pre-launch Platform model reservation."""
+
+    tenant_id: UUID
+    operation_key: str
+    requested_microusd: int
+    requested_tokens: int
+    ttl: timedelta
+
+
+class _BudgetAuthority(Protocol):
+    def reserve(self, **kwargs: object) -> object: ...
+
+    def release(self, **kwargs: object) -> object: ...
+
 
 class StagedManagedRunnerLaunchAuthority:
     """Thread-safe one-time handoff populated by the durable scheduler dispatcher."""
 
-    def __init__(self) -> None:
+    def __init__(self, budget_authority: _BudgetAuthority | None = None) -> None:
         self._lock = threading.Lock()
         self._grants: dict[UUID, ManagedMeteringGrant] = {}
+        self._budget_authority = budget_authority
 
-    def stage(self, grant: ManagedMeteringGrant) -> None:
+    def stage(
+        self,
+        grant: ManagedMeteringGrant,
+        *,
+        platform_model_budget: PlatformModelBudgetRequest | None = None,
+    ) -> ManagedMeteringGrant:
         with self._lock:
             if grant.session_id in self._grants:
                 raise ManagedMeteringError(
                     "managed_metering_grant_conflict",
                     "a metering grant is already staged for this session",
                 )
-            self._grants[grant.session_id] = grant
+            staged = grant
+            if platform_model_budget is not None:
+                if self._budget_authority is None or grant.model_budget_reservation_id is not None:
+                    raise ManagedMeteringError(
+                        "managed_metering_budget_authority_invalid",
+                        "Platform model budget authority is unavailable",
+                    )
+                if datetime.now(
+                    timezone.utc
+                ) + platform_model_budget.ttl > grant.expires_at.astimezone(timezone.utc):
+                    raise ManagedMeteringError(
+                        "managed_metering_budget_lifetime_invalid",
+                        "Platform model budget exceeds the metering grant lifetime",
+                    )
+                reservation = self._budget_authority.reserve(
+                    tenant_id=platform_model_budget.tenant_id,
+                    run_id=grant.run_id,
+                    operation_key=platform_model_budget.operation_key,
+                    requested_microusd=platform_model_budget.requested_microusd,
+                    requested_tokens=platform_model_budget.requested_tokens,
+                    ttl=platform_model_budget.ttl,
+                )
+                status = getattr(reservation, "status", None)
+                reservation_id = getattr(reservation, "id", None)
+                if status != "reserved" or not isinstance(reservation_id, UUID):
+                    code = str(
+                        getattr(reservation, "rejection_code", None)
+                        or "platform_model_budget_denied"
+                    )
+                    raise ManagedMeteringError(
+                        code,
+                        "Platform model budget denied the managed launch",
+                    )
+                staged = replace(grant, model_budget_reservation_id=reservation_id)
+            elif grant.model_budget_reservation_id is not None:
+                raise ManagedMeteringError(
+                    "managed_metering_budget_authority_invalid",
+                    "pre-bound model budget reservations are not accepted",
+                )
+            self._grants[staged.session_id] = staged
+            return staged
 
     def claim_metering_grant(
         self, *, session_id: str, official_runner_id: str
@@ -153,6 +221,7 @@ class StagedManagedRunnerLaunchAuthority:
                 "managed_metering_grant_missing", "managed launch has no staged metering grant"
             )
         if grant.expires_at <= datetime.now(timezone.utc):
+            self.complete_metering_grant(grant)
             raise ManagedMeteringError(
                 "managed_metering_grant_expired", "managed launch metering grant has expired"
             )
@@ -161,6 +230,23 @@ class StagedManagedRunnerLaunchAuthority:
                 "managed_metering_runner_invalid", "official Runner identity is invalid"
             )
         return grant
+
+    def complete_metering_grant(self, grant: ManagedMeteringGrant) -> None:
+        reservation_id = grant.model_budget_reservation_id
+        if reservation_id is None:
+            return
+        if self._budget_authority is None:
+            raise ManagedMeteringError(
+                "managed_metering_budget_authority_invalid",
+                "Platform model budget authority is unavailable",
+            )
+        try:
+            self._budget_authority.release(reservation_id=reservation_id)
+        except Exception as exc:
+            raise ManagedMeteringError(
+                "managed_metering_budget_finalization_failed",
+                "Platform model budget could not be finalized",
+            ) from exc
 
 
 class _MeteringClient(Protocol):
@@ -178,6 +264,7 @@ class _MeteringClient(Protocol):
         idempotency_key: str,
         occurred_at: datetime,
         attributes: dict[str, object] | None = None,
+        model_budget_reservation_id: UUID | None = None,
     ) -> object: ...
 
     def close(self) -> None: ...
@@ -194,6 +281,7 @@ class _ParsedSpool(TypedDict):
     attributes: dict[str, object]
     event_id: UUID
     meters: list[_SpoolMeter]
+    model_budget_reservation_id: UUID | None
     occurred_at: datetime
     provider: str
     provider_request_id: str
@@ -223,6 +311,11 @@ def write_metering_envelope(
         "expected_host": grant.expected_host,
         "expires_at": grant.expires_at.isoformat(),
         "metering_base_url": grant.metering_base_url,
+        "model_budget_reservation_id": (
+            str(grant.model_budget_reservation_id)
+            if grant.model_budget_reservation_id is not None
+            else None
+        ),
         "official_runner_id": official_runner_id,
         "run_id": str(grant.run_id),
         "runner_id": str(grant.runner_id),
@@ -330,6 +423,7 @@ def consume_metering_envelope(
             client_certificate_path=_absolute_path(document["client_certificate_path"]),
             client_key_path=_absolute_path(document["client_key_path"]),
             spool_directory=_absolute_path(document["spool_directory"]),
+            model_budget_reservation_id=_optional_uuid(document["model_budget_reservation_id"]),
         )
     except (KeyError, TypeError, UnicodeDecodeError, ValueError) as exc:
         raise ManagedMeteringError(
@@ -431,6 +525,11 @@ class ProviderUsageMeter:
             "attributes": attributes,
             "event_id": str(event_id),
             "meters": meters,
+            "model_budget_reservation_id": (
+                str(self._grant.model_budget_reservation_id)
+                if self._grant.model_budget_reservation_id is not None
+                else None
+            ),
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "provider": provider,
             "provider_request_id": f"omnigent-observer-{event_id}",
@@ -493,6 +592,7 @@ class ProviderUsageMeter:
                             idempotency_key=meter["idempotency_key"],
                             occurred_at=document["occurred_at"],
                             attributes=document["attributes"],
+                            model_budget_reservation_id=document["model_budget_reservation_id"],
                         )
                 except ManagedMeteringError:
                     rejected = path.with_suffix(".rejected.json")
@@ -559,6 +659,11 @@ def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
         if _SAFE_PROVIDER.fullmatch(provider) is None:
             raise ValueError("provider invalid")
         provider_request_id = _text(document["provider_request_id"], 256)
+        model_budget_reservation_id = _optional_uuid(document["model_budget_reservation_id"])
+        if model_budget_reservation_id != grant.model_budget_reservation_id:
+            raise ValueError("model budget reservation mismatch")
+        if model_budget_reservation_id is not None and provider != "deepseek":
+            raise ValueError("model budget provider mismatch")
         occurred_at = _aware_datetime(document["occurred_at"])
         attributes = document["attributes"]
         meters = document["meters"]
@@ -604,6 +709,7 @@ def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
             "attributes": attributes,
             "event_id": event_id,
             "meters": parsed_meters,
+            "model_budget_reservation_id": model_budget_reservation_id,
             "occurred_at": occurred_at,
             "provider": provider,
             "provider_request_id": provider_request_id,
@@ -627,6 +733,7 @@ def _provider_from_model(model: str | None) -> str:
         return "openai"
     for token, provider in (
         ("claude", "anthropic"),
+        ("deepseek", "deepseek"),
         ("gpt", "openai"),
         ("gemini", "google"),
         ("mistral", "mistral"),
@@ -676,6 +783,12 @@ def _canonical_uuid(value: object) -> UUID:
     if str(parsed) != value:
         raise ValueError("UUID non-canonical")
     return parsed
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return _canonical_uuid(value)
 
 
 def _aware_datetime(value: object) -> datetime:
@@ -742,6 +855,7 @@ __all__ = [
     "ManagedMeteringError",
     "ManagedMeteringGrant",
     "ManagedRunnerLaunchAuthority",
+    "PlatformModelBudgetRequest",
     "ProviderUsageMeter",
     "StagedManagedRunnerLaunchAuthority",
     "build_metering_client",

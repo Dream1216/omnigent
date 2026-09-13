@@ -100,6 +100,44 @@ retains Outbox at-least-once semantics and a stable per-event `Message-ID` rathe
 than claiming exactly-once delivery. A missing/disabled/corrupt configuration
 fails closed and does not fall back to Resend.
 
+### Platform-managed model Provider
+
+The P0S13 candidate adds a Staff-only DeepSeek configuration surface. A freshly
+authenticated `platform_operator` can pin the exact HTTPS endpoint and API
+contract, set the allowed/default model catalog, write or rotate a Provider key,
+stage monthly spend and per-Tenant daily token policies, and run a bounded live
+stream verification. A `platform_security_auditor` can read only non-secret
+metadata. The key is encrypted by the existing non-exporting KMS/Vault
+`SecretCipher`, is never returned to the browser or written to a Receipt, and a
+configuration change resets verification until the new version is tested.
+
+`create_platform_admin_app(..., model_provider=service)` exposes
+`GET|PUT /v2/platform-admin/model-provider` and
+`POST /v2/platform-admin/model-provider/test`. The downstream Runtime projection
+contains only the exact Provider endpoint, catalog and the name of the synthetic
+Credential Proxy environment value. The real key is materialized only for the
+trusted Runner parent and is replaced on the exact `api.deepseek.com` egress
+boundary; it is never copied into an Agent bundle, Worktree or Pi models file.
+
+The scheduler now reserves `monthly_budget_microusd` and
+`per_tenant_daily_token_limit` before a platform-managed Run can launch. Every
+DeepSeek input/output usage event carries the exact reservation identity through
+the one-time Host envelope and mTLS Metering transport. PostgreSQL applies the
+usage delta in the same transaction as the usage Receipt and Outbox event, after
+checking the transaction-local Tenant, Run and reservation context. Idempotent
+replay therefore cannot debit the reservation twice. Runner completion releases
+only the unused balance; an expired Host reservation is recovered by the same
+ledger transition. The USD amount is the effective customer pricing-snapshot
+value of the metered token event, expressed as micro-USD; delayed Provider invoice
+cost remains a separate reconciliation ledger and is not substituted into this
+online admission counter.
+
+`VERIFIED` is still configuration evidence rather than customer availability.
+Production activation additionally requires the exact execution-profile egress
+rule, Credential Proxy binding, signed image digest, GitOps revision, PG16/PG18 CI,
+and a real conversation acceptance covering stream, refresh,
+disconnect/reconnect and Tenant/Run/model cost attribution.
+
 The production Runtime seam is `ProductionRuntimePartitionAdapter`. It freezes
 the non-secret Provider type/revision/hash before any external effect, keeps old
 bindings available for in-flight replay and compensation, and requires a

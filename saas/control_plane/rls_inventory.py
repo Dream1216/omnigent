@@ -88,6 +88,11 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_platform_user_projections",
         "saas_email_provider_configurations",
         "saas_email_provider_configuration_receipts",
+        "saas_model_provider_configurations",
+        "saas_model_provider_configuration_receipts",
+        "saas_model_provider_monthly_budgets",
+        "saas_model_provider_tenant_daily_usage",
+        "saas_model_provider_budget_reservations",
         "saas_platform_lifecycle_operations",
         "saas_platform_admin_operations",
         "saas_platform_support_grants",
@@ -120,5 +125,5 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 113:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 113 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 118:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 118 tables")

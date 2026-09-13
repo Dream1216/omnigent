@@ -29,6 +29,9 @@ from saas.control_plane import (
     ExecutionProfileRecord,
     ExecutionRevisionSet,
     GlobalUser,
+    ModelProviderBudgetAdmissionService,
+    ModelProviderConfigurationRecord,
+    PlatformStaffPrincipalRecord,
     ProjectMembershipRecord,
     ProjectRecord,
     RunnerCertificateAuthority,
@@ -395,6 +398,38 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
             effective_until=now + timedelta(days=30),
             idempotency_key=f"metering-pricing-{label}-{suffix}",
         )
+    platform_model_principal = uuid4()
+    with platform_factory.begin() as db:
+        db.add(
+            PlatformStaffPrincipalRecord(
+                id=platform_model_principal,
+                identity_connection_ref=f"metering-model:{suffix}",
+                issuer="https://staff-idp.example.test",
+                subject=f"metering-model-{suffix}",
+                status="active",
+                security_version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ModelProviderConfigurationRecord(
+                provider_id="deepseek",
+                enabled=True,
+                base_url="https://api.deepseek.com",
+                api_type="openai_chat_completions",
+                api_key_ciphertext="encrypted-platform-model-key",
+                allowed_models=["deepseek-v4-flash"],
+                default_model="deepseek-v4-flash",
+                monthly_budget_microusd=1_000_000,
+                per_tenant_daily_token_limit=10_000,
+                verification_status="verified",
+                last_verified_model="deepseek-v4-flash",
+                last_verified_at=now,
+                version=1,
+                updated_by_principal_id=platform_model_principal,
+                updated_at=now,
+            )
+        )
 
     metering_server = MutualTlsBillingMeteringServer(
         authority,
@@ -473,6 +508,34 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
     assert created.customer_charge_minor == 38
     assert replayed.receipt_id == created.receipt_id
     assert replayed.replayed is True
+
+    model_budget = ModelProviderBudgetAdmissionService(billing_factory)
+    reservation = model_budget.reserve(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        operation_key=f"metering-platform-model-{suffix}",
+        requested_microusd=500_000,
+        requested_tokens=2_000,
+        ttl=timedelta(minutes=5),
+        now=now + timedelta(seconds=2),
+    )
+    model_usage = authority.record_usage(
+        **{
+            **request,
+            "provider": "deepseek",
+            "provider_request_id": f"deepseek-provider-{suffix}",
+            "idempotency_key": f"deepseek-metering-{suffix}",
+            "quantity": "1000",
+            "model_budget_reservation_id": reservation.id,
+        }
+    )
+    assert model_usage.model_budget_reservation_id == reservation.id
+    finalized = model_budget.release(
+        reservation_id=reservation.id,
+        now=now + timedelta(seconds=3),
+    )
+    assert (finalized.settled_microusd, finalized.settled_tokens) == (250_000, 1_000)
+    assert (finalized.released_microusd, finalized.released_tokens) == (250_000, 1_000)
 
     capability_hash = sha256(lease.capability_token.encode()).hexdigest()
     with engine.begin() as connection:

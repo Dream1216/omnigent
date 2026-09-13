@@ -68,6 +68,11 @@ from saas.runner_adapter import (
     RunnerWorktreeAdapter,
     StaticRepositoryMirrorResolver,
 )
+from saas.runner_adapter.platform_models import (
+    PLATFORM_MODEL_CREDENTIAL_ENV,
+    PlatformManagedModelRuntimeProjection,
+    load_platform_managed_model_projection,
+)
 from saas.runner_adapter.preview_supervisor import RunnerPreviewProcessSupervisor
 from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
 
@@ -79,6 +84,10 @@ _RUNNER_AGENT_DATABASE_POOL_SIZE = 4
 _RUNNER_AGENT_DATABASE_MAX_OVERFLOW = (
     _RUNNER_AGENT_DATABASE_CONNECTION_LIMIT - _RUNNER_AGENT_DATABASE_POOL_SIZE
 )
+_PLATFORM_MODEL_PROJECTION_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PROJECTION_FILE"
+_PLATFORM_MODEL_PROJECTION_SHA256_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PROJECTION_SHA256"
+_PLATFORM_MODEL_PROJECTION_SHA256_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PROJECTION_SHA256_FILE"
+_PLATFORM_MODEL_CONFIG_HOME_ENV = "OMNIGENT_CONFIG_HOME"
 _RUNNER_FORBIDDEN_LIBPQ_ENV = frozenset(
     {
         "PGAPPNAME",
@@ -481,6 +490,97 @@ def _required(source: Mapping[str, str], name: str) -> str:
     if value is None or not value.strip() or value != value.strip() or "\x00" in value:
         raise RunnerControlError("runner_executor_config_invalid", f"{name} is invalid")
     return value
+
+
+def _optional_platform_model_projection(
+    source: Mapping[str, str],
+) -> tuple[PlatformManagedModelRuntimeProjection, Path] | None:
+    path_value = source.get(_PLATFORM_MODEL_PROJECTION_FILE_ENV)
+    digest_value = source.get(_PLATFORM_MODEL_PROJECTION_SHA256_ENV)
+    digest_file_value = source.get(_PLATFORM_MODEL_PROJECTION_SHA256_FILE_ENV)
+    config_home_value = source.get(_PLATFORM_MODEL_CONFIG_HOME_ENV)
+    if path_value is None and digest_value is None and digest_file_value is None:
+        return None
+    if (
+        path_value is None
+        or (digest_value is None) == (digest_file_value is None)
+        or config_home_value is None
+        or not path_value.strip()
+        or path_value != path_value.strip()
+        or not config_home_value.strip()
+        or config_home_value != config_home_value.strip()
+        or source.get(PLATFORM_MODEL_CREDENTIAL_ENV)
+    ):
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    if digest_file_value is not None:
+        digest = _read_platform_model_projection_digest(Path(digest_file_value))
+    else:
+        digest = digest_value or ""
+    if digest != digest.strip().lower():
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    config_home = Path(config_home_value)
+    if not config_home.is_absolute():
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    try:
+        projection = load_platform_managed_model_projection(
+            Path(path_value), expected_sha256=digest
+        )
+    except ValueError:
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        ) from None
+    return projection, config_home
+
+
+def _read_platform_model_projection_digest(path: Path) -> str:
+    if not path.is_absolute():
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    try:
+        metadata = path.lstat()
+        raw = path.read_bytes()
+    except OSError:
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        ) from None
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size != len(raw)
+        or not 1 <= len(raw) <= 65
+    ):
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    try:
+        digest = raw.decode("ascii").strip()
+    except UnicodeError:
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        ) from None
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise RunnerControlError(
+            "runner_executor_config_invalid",
+            "Platform model projection authority is invalid",
+        )
+    return digest
 
 
 def _runner_agent_database_login(runner_id: UUID, connection_generation: int) -> str:
@@ -2990,6 +3090,7 @@ def build_production_host_isolation_executor(
             ),
             runner_id=config.runner_id,
         )
+        platform_model_runtime = _optional_platform_model_projection(source)
         isolation_adapter = RunnerIsolationAdapter(
             staging_root=work_root / "secrets",
             authority=isolation,
@@ -2999,6 +3100,12 @@ def build_production_host_isolation_executor(
             containment=LinuxCgroupV2ContainmentVerifier(
                 runner_id=config.runner_id,
                 expected_cgroup_path=_expected_cgroup_path(source),
+            ),
+            platform_model_projection=(
+                platform_model_runtime[0] if platform_model_runtime is not None else None
+            ),
+            platform_model_config_home=(
+                platform_model_runtime[1] if platform_model_runtime is not None else None
             ),
         )
         return ProductionHostIsolationExecutor(

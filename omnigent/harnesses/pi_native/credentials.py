@@ -1160,11 +1160,19 @@ def _inline_family_pi_provider(
         # Strip bracket suffixes (e.g. "[1m]") — accepted by the direct
         # Anthropic API but rejected by the Databricks AI Gateway.
         resolved_model = re.sub(r"\[.*?\]$", "", resolved_model)
-        model_entry = _gateway_pi_model_entry(
-            resolved_model,
-            configured_context_window=family.context_window,
-            configured_max_output_tokens=family.max_output_tokens,
-        )
+        configured_models = tuple(dict.fromkeys((resolved_model, *family.models.values())))
+        model_entries = [
+            _gateway_pi_model_entry(
+                configured_model,
+                configured_context_window=(
+                    family.context_window if configured_model == resolved_model else None
+                ),
+                configured_max_output_tokens=(
+                    family.max_output_tokens if configured_model == resolved_model else None
+                ),
+            )
+            for configured_model in configured_models
+        ]
         return PiProviderConfig(
             provider_id=_PI_PROVIDER_ID,
             base_url=family.base_url,
@@ -1172,7 +1180,7 @@ def _inline_family_pi_provider(
             model=resolved_model,
             api_key=api_key,
             auth_header=auth_header,
-            extra_models=[model_entry],
+            extra_models=model_entries,
         )
     return None
 

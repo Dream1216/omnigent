@@ -79,6 +79,7 @@ class MeteredUsage:
     unit: str
     currency: str
     customer_charge_minor: int
+    model_budget_reservation_id: UUID | None
     occurred_at: datetime
     recorded_at: datetime
     replayed: bool = False
@@ -190,6 +191,7 @@ class BillingMeteringAuthority:
         idempotency_key: str,
         occurred_at: datetime,
         attributes: dict[str, object] | None = None,
+        model_budget_reservation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> MeteredUsage:
         checked_at = _time(now or datetime.now(timezone.utc), "now")
@@ -207,6 +209,17 @@ class BillingMeteringAuthority:
         provider_request = _text(provider_request_id, "provider_request_id", 256)
         key = _text(idempotency_key, "idempotency_key", 128)
         clean_attributes = _attributes(attributes or {})
+        if model_budget_reservation_id is not None and not isinstance(
+            model_budget_reservation_id, UUID
+        ):
+            raise BillingMeteringError(
+                "metering_model_budget_invalid", "model budget reservation is invalid"
+            )
+        if model_budget_reservation_id is not None and clean_provider != "deepseek":
+            raise BillingMeteringError(
+                "metering_model_budget_provider_invalid",
+                "model budget reservation does not match the Provider",
+            )
         if happened > checked_at + timedelta(minutes=5):
             raise BillingMeteringError(
                 "metering_time_invalid", "occurred_at is beyond the allowed clock skew"
@@ -221,6 +234,7 @@ class BillingMeteringAuthority:
                 provider=clean_provider,
                 provider_request_id=provider_request,
                 meter=clean_meter,
+                model_budget_reservation_id=model_budget_reservation_id,
             )
             runner = db.scalar(
                 sa.select(RunnerRegistrationRecord)
@@ -259,7 +273,12 @@ class BillingMeteringAuthority:
                 RlsContext(tenant_id=capability.tenant_id, space_id=capability.space_id),
             )
             run = self._run_authority(db, run_id)
-            self._set_authoritative_usage_context(db, run)
+            self._set_authoritative_usage_context(
+                db,
+                run,
+                run_id=run_id,
+                model_budget_reservation_id=model_budget_reservation_id,
+            )
             dispatch = db.scalar(
                 sa.select(RunDispatchRecord)
                 .where(RunDispatchRecord.run_id == run_id)
@@ -311,6 +330,11 @@ class BillingMeteringAuthority:
                 "runner_id": str(runner_id),
                 "pricing_snapshot_id": str(pricing.id),
                 "meter": clean_meter,
+                "model_budget_reservation_id": (
+                    str(model_budget_reservation_id)
+                    if model_budget_reservation_id is not None
+                    else None
+                ),
                 "quantity": str(units),
                 "unit": clean_unit,
                 "provider": clean_provider,
@@ -374,6 +398,16 @@ class BillingMeteringAuthority:
             )
             db.add(usage)
             db.flush()
+            if model_budget_reservation_id is not None:
+                self._apply_model_budget_usage(
+                    db,
+                    reservation_id=model_budget_reservation_id,
+                    tenant_id=capability.tenant_id,
+                    run_id=run_id,
+                    currency=pricing.currency,
+                    customer_charge_minor=charge,
+                    tokens=units,
+                )
             receipt = BillingMeteringReceiptRecord(
                 id=uuid4(),
                 tenant_id=capability.tenant_id,
@@ -390,6 +424,7 @@ class BillingMeteringAuthority:
                 fence_token=capability.fence_token,
                 idempotency_key=key,
                 request_hash=digest,
+                model_budget_reservation_id=model_budget_reservation_id,
             )
             db.add(receipt)
             db.flush()
@@ -430,6 +465,7 @@ class BillingMeteringAuthority:
         provider: str,
         provider_request_id: str,
         meter: str,
+        model_budget_reservation_id: UUID | None,
     ) -> None:
         if db.get_bind().dialect.name != "postgresql":
             return
@@ -442,7 +478,8 @@ class BillingMeteringAuthority:
                 "set_config('app.metering_idempotency_key', :idempotency, true), "
                 "set_config('app.metering_provider', :provider, true), "
                 "set_config('app.metering_provider_request_id', :provider_request, true), "
-                "set_config('app.metering_meter', :meter, true)"
+                "set_config('app.metering_meter', :meter, true), "
+                "set_config('app.model_budget_reservation_id', :reservation, true)"
             ),
             {
                 "fingerprint": fingerprint,
@@ -451,6 +488,11 @@ class BillingMeteringAuthority:
                 "provider": provider,
                 "provider_request": provider_request_id,
                 "meter": meter,
+                "reservation": (
+                    str(model_budget_reservation_id)
+                    if model_budget_reservation_id is not None
+                    else ""
+                ),
             },
         )
 
@@ -504,14 +546,23 @@ class BillingMeteringAuthority:
         BillingMeteringAuthority._require_meter_scope(capability.resource_scope, meter)
 
     @staticmethod
-    def _set_authoritative_usage_context(db: Session, run: _RunAuthority) -> None:
+    def _set_authoritative_usage_context(
+        db: Session,
+        run: _RunAuthority,
+        *,
+        run_id: UUID,
+        model_budget_reservation_id: UUID | None,
+    ) -> None:
         if db.get_bind().dialect.name != "postgresql":
             return
         db.execute(
             sa.text(
                 "SELECT set_config('app.metering_session_id', :session_id, true), "
                 "set_config('app.metering_user_id', :user_id, true), "
-                "set_config('app.metering_service_account_id', :service_account_id, true)"
+                "set_config('app.metering_service_account_id', :service_account_id, true), "
+                "set_config('app.metering_tenant_id', :tenant_id, true), "
+                "set_config('app.metering_run_id', :run_id, true), "
+                "set_config('app.model_budget_reservation_id', :reservation, true)"
             ),
             {
                 "session_id": str(run.session_id) if run.session_id else "",
@@ -521,8 +572,56 @@ class BillingMeteringAuthority:
                     if run.created_by_service_account_id is not None
                     else ""
                 ),
+                "tenant_id": str(run.tenant_id),
+                "run_id": str(run_id),
+                "reservation": (
+                    str(model_budget_reservation_id)
+                    if model_budget_reservation_id is not None
+                    else ""
+                ),
             },
         )
+
+    @staticmethod
+    def _apply_model_budget_usage(
+        db: Session,
+        *,
+        reservation_id: UUID,
+        tenant_id: UUID,
+        run_id: UUID,
+        currency: str,
+        customer_charge_minor: int,
+        tokens: Decimal,
+    ) -> None:
+        if (
+            db.get_bind().dialect.name != "postgresql"
+            or currency != "USD"
+            or tokens != tokens.to_integral_value()
+            or tokens <= 0
+        ):
+            raise BillingMeteringError(
+                "metering_model_budget_unavailable",
+                "model budget settlement authority is unavailable",
+            )
+        try:
+            db.execute(
+                sa.text(
+                    "SELECT saas_apply_model_provider_budget_usage("
+                    ":reservation, :tenant, :run, :microusd, :tokens)"
+                ),
+                {
+                    "reservation": reservation_id,
+                    "tenant": tenant_id,
+                    "run": run_id,
+                    "microusd": customer_charge_minor * 10_000,
+                    "tokens": int(tokens),
+                },
+            )
+        except sa.exc.DBAPIError as exc:
+            raise BillingMeteringError(
+                "metering_model_budget_denied",
+                "model usage exceeds its admitted budget",
+            ) from exc
 
     @staticmethod
     def _require_meter_scope(resource_scope: dict[str, str], meter: str) -> None:
@@ -716,6 +815,7 @@ class BillingMeteringAuthority:
             unit=usage.unit,
             currency=usage.currency,
             customer_charge_minor=usage.customer_charge_minor,
+            model_budget_reservation_id=receipt.model_budget_reservation_id,
             occurred_at=_as_utc(usage.occurred_at),
             recorded_at=_as_utc(receipt.recorded_at),
             replayed=replayed,

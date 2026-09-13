@@ -39,9 +39,21 @@ development proxy. The 8-patch ceiling, isolation floor, forbidden paths and
 reverse-dependency checks remain unchanged. This remains a Single-Owner Beta
 budget record, not production admission or a merge waiver.
 
+The `platform-managed-model-catalog-v1` revision adds one generic Pi gateway
+catalog seam. A gateway family now publishes every configured model value to
+Pi instead of only its default/selected model. The platform adapter therefore
+keeps the Provider secret outside official configuration, supplies only the
+Credential Proxy environment-variable name, and exposes the administrator's
+exact allowlist in the ordinary model picker. This raises the measured ceiling
+from 33 files / 1,047 net lines to 34 files / 1,055 net lines and the active
+patch count from four to five. The change imports no SaaS package and remains
+independently removable when upstream supports multi-model inline gateways.
+It is a Single-Owner Beta source-budget record, not production admission.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
 | `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/host/connect.py`; `omnigent/llms/_usage_observer.py` | official Host/daemon/usage-observer tests; managed Provider metering adapter tests | Generic Host factory, reviewed Runner entrypoint, daemon lifecycle-lock, and required usage-sink extension proposal pending | `06c33aea` | Remove when upstream exposes equivalent Host construction, Runner entrypoint, daemon ownership, and fail-closed accounting seams |
 | `0004-agent-cache-atomic-publish.patch` | Runtime Compatibility | `omnigent/runtime/agent_cache.py` | deterministic concurrent cache-miss regression; official AgentCache suite; server-integration session usage regression; upstream path-validation suite | Upstream now rejects unsafe cache paths; atomic publication/rollback remains downstream | `06c33aea` | Remove when upstream also serializes same-agent cache mutation and publishes only fully parsed extraction directories |
 | `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/runner/transports/ws_tunnel/serve.py`; `omnigent/server/routes/host_tunnel.py`; `omnigent/stores/host_store.py` | owner-only rotatable token-file contract; physical workspace propagation across Host spawn, Runner bootstrap, callback, and tunnel paths; tenant tunnel-route isolation; revocation heartbeat; exact expiry boundary; explicit Kubernetes container-proc sandbox contract | Generic external Host credential/file-source, Runtime Partition selector propagation, and Kubernetes nested-sandbox proposal pending | `06c33aea` | Remove when upstream supports file-backed external Host credentials, path-bound workspace propagation for managed Runners, an explicit tenant route, reconnect rotation, live revocation fencing, and a vetted Kubernetes proc-bind backend |
+| `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/credentials.py` | multi-model Platform gateway projection; secret-free Pi config; allowed-catalog picker regression | Generic upstream gateway-catalog proposal pending | `06c33aea` | Remove when upstream publishes all configured inline gateway models to Pi |

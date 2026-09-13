@@ -185,6 +185,7 @@ class _Authority:
         idempotency_key: str,
         occurred_at: datetime,
         attributes: dict[str, object] | None = None,
+        model_budget_reservation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> MeteredUsage:
         assert now is None
@@ -195,6 +196,7 @@ class _Authority:
                 "certificate_fingerprint_sha256": certificate_fingerprint_sha256,
                 "idempotency_key": idempotency_key,
                 "meter": meter,
+                "model_budget_reservation_id": model_budget_reservation_id,
                 "provider": provider,
                 "provider_request_id": provider_request_id,
                 "quantity": str(quantity),
@@ -222,6 +224,7 @@ class _Authority:
             unit=unit,
             currency="USD",
             customer_charge_minor=38,
+            model_budget_reservation_id=model_budget_reservation_id,
             occurred_at=occurred_at,
             recorded_at=occurred_at + timedelta(milliseconds=1),
         )
