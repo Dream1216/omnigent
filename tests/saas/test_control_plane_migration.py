@@ -4266,7 +4266,7 @@ def test_real_postgresql_p0s11_policy_role_scope_round_trip(
             command.upgrade(config, "head")
             assert _p0s11_policy_projection(connection) == successor
             assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-                "p0s000000012"
+                "p0s000000013"
             )
     finally:
         engine.dispose()
