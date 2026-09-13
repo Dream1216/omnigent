@@ -291,9 +291,7 @@ def _create_tables() -> None:
         ("tenant_id", "run_id", "id"),
     )
     with op.batch_alter_table("saas_billing_metering_receipts") as batch_op:
-        batch_op.add_column(
-            sa.Column("model_budget_reservation_id", sa.Uuid(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("model_budget_reservation_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
             "fk_billing_metering_receipt_model_budget",
             _BUDGET_RESERVATIONS,

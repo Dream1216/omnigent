@@ -108,7 +108,7 @@ def project_platform_managed_model(
         }
     }
     binding = PlatformManagedModelSecretBinding(
-        name=f"platform-deepseek-v{configuration.configuration_version}",
+        name=f"platform-model-provider-v{configuration.configuration_version}",
         vault_provider=PLATFORM_MODEL_VAULT_PROVIDER,
         vault_ref=PLATFORM_MODEL_VAULT_REF,
         version_ref=f"v{configuration.configuration_version}",
@@ -270,7 +270,7 @@ def _projection_payload(
     if configuration_version <= 0:
         raise ValueError("managed model projection version is invalid")
     expected_binding = PlatformManagedModelSecretBinding(
-        name=f"platform-deepseek-v{configuration_version}",
+        name=f"platform-model-provider-v{configuration_version}",
         vault_provider=PLATFORM_MODEL_VAULT_PROVIDER,
         vault_ref=PLATFORM_MODEL_VAULT_REF,
         version_ref=f"v{configuration_version}",

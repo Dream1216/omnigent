@@ -27,7 +27,7 @@ index d17011b26..aec2f965b 100644
          return PiProviderConfig(
              provider_id=_PI_PROVIDER_ID,
              base_url=family.base_url,
-@@ -1172,7 +1180,7 @@ def _inline_family_pi_provider(
+@@ -1172,6 +1180,6 @@ def _inline_family_pi_provider(
              model=resolved_model,
              api_key=api_key,
              auth_header=auth_header,
@@ -35,4 +35,3 @@ index d17011b26..aec2f965b 100644
 +            extra_models=model_entries,
          )
      return None
- 
