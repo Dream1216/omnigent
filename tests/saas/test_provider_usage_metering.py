@@ -8,6 +8,7 @@ import threading
 from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from saas.runner_adapter.metering import (
     MANAGED_METERING_ENVELOPE_ENV_VAR,
     ManagedMeteringError,
     ManagedMeteringGrant,
+    PlatformModelBudgetRequest,
     ProviderUsageMeter,
     StagedManagedRunnerLaunchAuthority,
     consume_metering_envelope,
@@ -55,6 +57,28 @@ class _FakeClient:
         self.closed = True
 
 
+class _FakeBudgetAuthority:
+    def __init__(self, *, status: str = "reserved") -> None:
+        self.status = status
+        self.reservation_id = uuid4()
+        self.reserve_calls: list[dict[str, object]] = []
+        self.release_calls: list[dict[str, object]] = []
+
+    def reserve(self, **kwargs: object) -> object:
+        self.reserve_calls.append(kwargs)
+        return SimpleNamespace(
+            id=self.reservation_id,
+            status=self.status,
+            rejection_code=(
+                None if self.status == "reserved" else "platform_model_monthly_budget_exhausted"
+            ),
+        )
+
+    def release(self, **kwargs: object) -> object:
+        self.release_calls.append(kwargs)
+        return object()
+
+
 def _grant(
     tmp_path: Path, *, capability: str = "capability-must-not-be-spooled"
 ) -> ManagedMeteringGrant:
@@ -80,6 +104,11 @@ async def _official_response(model: str = "anthropic/claude-test") -> None:
 @pytest.mark.parametrize("model", ["o1-preview", "o3-mini", "o4-mini"])
 def test_provider_detection_covers_openai_reasoning_model_family(model: str) -> None:
     assert metering_module._provider_from_model(model) == "openai"
+
+
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro"])
+def test_provider_detection_attributes_platform_models_to_deepseek(model: str) -> None:
+    assert metering_module._provider_from_model(model) == "deepseek"
 
 
 def _run_async(coroutine: Coroutine[Any, Any, Any]) -> Any:
@@ -353,6 +382,68 @@ def test_staged_authority_is_one_time_and_managed_host_injects_only_envelope_pat
     envelope_path = Path(captured[MANAGED_METERING_ENVELOPE_ENV_VAR])
     loaded = consume_metering_envelope(envelope_path, official_runner_id=official_runner)
     assert loaded == grant
+
+
+def test_platform_model_budget_is_reserved_before_launch_and_bound_to_usage(
+    tmp_path: Path,
+) -> None:
+    grant = _grant(tmp_path)
+    budget = _FakeBudgetAuthority()
+    authority = StagedManagedRunnerLaunchAuthority(budget)
+    staged = authority.stage(
+        grant,
+        platform_model_budget=PlatformModelBudgetRequest(
+            tenant_id=uuid4(),
+            operation_key=f"managed-run:{grant.run_id}",
+            requested_microusd=1_000_000,
+            requested_tokens=100_000,
+            ttl=timedelta(minutes=10),
+        ),
+    )
+    assert staged.model_budget_reservation_id == budget.reservation_id
+    assert len(budget.reserve_calls) == 1
+    claimed = authority.claim_metering_grant(
+        session_id=str(grant.session_id), official_runner_id="runner_budgeted"
+    )
+    client = _FakeClient()
+    meter = ProviderUsageMeter(grant=claimed, client=client, retry_interval_seconds=60)
+    try:
+        meter._observe(
+            model="deepseek-v4-flash",
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
+        )
+        assert meter.flush()
+    finally:
+        assert meter.close()
+    assert {call["model_budget_reservation_id"] for call in client.calls} == {
+        budget.reservation_id
+    }
+    authority.complete_metering_grant(claimed)
+    assert budget.release_calls == [{"reservation_id": budget.reservation_id}]
+
+
+def test_platform_model_budget_rejection_prevents_staging(tmp_path: Path) -> None:
+    grant = _grant(tmp_path)
+    budget = _FakeBudgetAuthority(status="rejected")
+    authority = StagedManagedRunnerLaunchAuthority(budget)
+    with pytest.raises(ManagedMeteringError) as denied:
+        authority.stage(
+            grant,
+            platform_model_budget=PlatformModelBudgetRequest(
+                tenant_id=uuid4(),
+                operation_key=f"managed-run:{grant.run_id}",
+                requested_microusd=1,
+                requested_tokens=1,
+                ttl=timedelta(minutes=1),
+            ),
+        )
+    assert denied.value.code == "platform_model_monthly_budget_exhausted"
+    with pytest.raises(ManagedMeteringError):
+        authority.claim_metering_grant(
+            session_id=str(grant.session_id), official_runner_id="runner_denied"
+        )
 
 
 def test_managed_host_claims_staged_grant_on_official_launch_frame(

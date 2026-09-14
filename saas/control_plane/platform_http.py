@@ -50,6 +50,10 @@ if TYPE_CHECKING:
         EmailProviderConfigurationService,
         EmailProviderConfigurationView,
     )
+    from saas.control_plane.model_provider import (
+        ModelProviderConfigurationService,
+        ModelProviderConfigurationView,
+    )
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
@@ -58,6 +62,7 @@ if TYPE_CHECKING:
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _MAX_PRIVACY_COMMAND_BYTES = 16 * 1024
 _MAX_EMAIL_CONFIGURATION_BYTES = 16 * 1024
+_MAX_MODEL_PROVIDER_CONFIGURATION_BYTES = 16 * 1024
 _PrivacyCommandT = TypeVar("_PrivacyCommandT", bound=BaseModel)
 
 
@@ -201,6 +206,27 @@ class _EmailConfigurationTestCommand(BaseModel):
     recipient: str = Field(min_length=3, max_length=320)
 
 
+class _ModelProviderConfigurationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0)
+    enabled: bool
+    base_url: str = Field(min_length=1, max_length=512)
+    api_type: Literal["openai_chat_completions"]
+    api_key: SecretStr | None = Field(default=None, min_length=16, max_length=4096)
+    allowed_models: tuple[str, ...] = Field(min_length=1, max_length=16)
+    default_model: str = Field(min_length=1, max_length=128)
+    monthly_budget_microusd: int = Field(ge=1, le=10**15)
+    per_tenant_daily_token_limit: int = Field(ge=1, le=10**12)
+
+
+class _ModelProviderTestCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=1)
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -234,6 +260,28 @@ def _parse_email_command(
     except ValidationError:
         raise PlatformSecurityError(
             "platform_email_configuration_invalid", "SMTP configuration is invalid"
+        ) from None
+
+
+def _parse_model_provider_command(
+    body: bytes,
+    content_type: str,
+    model: type[_PrivacyCommandT],
+) -> _PrivacyCommandT:
+    media_type = content_type.partition(";")[0].strip().lower()
+    if (
+        media_type != "application/json"
+        or not body
+        or len(body) > _MAX_MODEL_PROVIDER_CONFIGURATION_BYTES
+    ):
+        raise PlatformSecurityError(
+            "platform_model_provider_invalid", "Model Provider configuration is invalid"
+        )
+    try:
+        return model.model_validate_json(body)
+    except ValidationError:
+        raise PlatformSecurityError(
+            "platform_model_provider_invalid", "Model Provider configuration is invalid"
         ) from None
 
 
@@ -299,6 +347,7 @@ def create_platform_admin_app(
     approval_operations: ApprovalOperationsProtocol | None = None,
     notification_operations: NotificationOperationsProtocol | None = None,
     email_configuration: EmailProviderConfigurationService | None = None,
+    model_provider: ModelProviderConfigurationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -417,6 +466,14 @@ def create_platform_admin_app(
             )
         return email_configuration
 
+    def model_provider_service() -> ModelProviderConfigurationService:
+        if model_provider is None:
+            raise PlatformSecurityError(
+                "platform_model_provider_unavailable",
+                "Platform Model Provider authority is unavailable",
+            )
+        return model_provider
+
     async def privacy_operation_command_context(
         request: Request,
         model: type[_PrivacyCommandT],
@@ -530,6 +587,7 @@ def create_platform_admin_app(
                     approval_operations is not None and notification_operations is not None
                 ),
                 "email_configuration_enabled": email_configuration is not None,
+                "model_provider_enabled": model_provider is not None,
             },
         }
 
@@ -594,6 +652,67 @@ def create_platform_admin_app(
             "policy_version": POLICY_VERSION,
             "status": "accepted",
             "configuration_version": command.expected_version,
+        }
+
+    @app.get("/v2/platform-admin/model-provider")
+    def get_model_provider(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = model_provider_service().get(principal)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_model_provider_payload(value),
+        }
+
+    @app.put("/v2/platform-admin/model-provider")
+    async def put_model_provider(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_provider import ModelProviderConfigurationUpdate
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _ModelProviderConfigurationCommand,
+        )
+        value = model_provider_service().update(
+            principal,
+            expected_version=command.expected_version,
+            configuration=ModelProviderConfigurationUpdate(
+                enabled=command.enabled,
+                base_url=command.base_url,
+                api_type=command.api_type,
+                api_key=(
+                    command.api_key.get_secret_value() if command.api_key is not None else None
+                ),
+                allowed_models=command.allowed_models,
+                default_model=command.default_model,
+                monthly_budget_microusd=command.monthly_budget_microusd,
+                per_tenant_daily_token_limit=command.per_tenant_daily_token_limit,
+            ),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_model_provider_payload(value),
+        }
+
+    @app.post("/v2/platform-admin/model-provider/test")
+    async def test_model_provider(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _ModelProviderTestCommand,
+        )
+        value = model_provider_service().verify(
+            principal,
+            expected_version=command.expected_version,
+            model=command.model,
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **_model_provider_payload(value),
         }
 
     @app.get("/v2/platform-admin/permissions")
@@ -1924,6 +2043,36 @@ def _email_configuration_payload(
         "reply_to_address": value.reply_to_address,
         "timeout_seconds": value.timeout_seconds,
         "password_configured": value.password_configured,
+        "version": value.version,
+        "updated_by_principal_id": (
+            str(value.updated_by_principal_id)
+            if value.updated_by_principal_id is not None
+            else None
+        ),
+        "updated_at": value.updated_at.isoformat() if value.updated_at is not None else None,
+    }
+
+
+def _model_provider_payload(
+    value: ModelProviderConfigurationView,
+) -> dict[str, object]:
+    return {
+        "provider_id": value.provider_id,
+        "configured": value.configured,
+        "enabled": value.enabled,
+        "state": value.state,
+        "base_url": value.base_url,
+        "api_type": value.api_type,
+        "allowed_models": list(value.allowed_models),
+        "default_model": value.default_model,
+        "monthly_budget_microusd": value.monthly_budget_microusd,
+        "per_tenant_daily_token_limit": value.per_tenant_daily_token_limit,
+        "api_key_configured": value.api_key_configured,
+        "verification_status": value.verification_status,
+        "last_verified_model": value.last_verified_model,
+        "last_verified_at": (
+            value.last_verified_at.isoformat() if value.last_verified_at is not None else None
+        ),
         "version": value.version,
         "updated_by_principal_id": (
             str(value.updated_by_principal_id)

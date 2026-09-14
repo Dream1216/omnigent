@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -36,6 +36,22 @@ EMAIL_PROVIDER_RECEIPT_ACTIONS = (
     "disabled",
     "test_succeeded",
     "test_failed",
+)
+MODEL_PROVIDER_IDS = ("deepseek",)
+MODEL_PROVIDER_API_TYPES = ("openai_chat_completions",)
+MODEL_PROVIDER_VERIFICATION_STATUSES = ("never", "verified", "failed")
+MODEL_PROVIDER_RECEIPT_ACTIONS = (
+    "configured",
+    "disabled",
+    "verification_succeeded",
+    "verification_failed",
+)
+MODEL_PROVIDER_BUDGET_RESERVATION_STATUSES = (
+    "reserved",
+    "settled",
+    "released",
+    "rejected",
+    "expired",
 )
 
 
@@ -325,6 +341,279 @@ class EmailProviderConfigurationReceiptRecord(SaasBase):
             "ix_email_provider_receipt_purpose_time",
             "purpose",
             "occurred_at",
+            "id",
+        ),
+    )
+
+
+class ModelProviderConfigurationRecord(SaasBase):
+    """Platform-owned model gateway policy plus non-exporting API-key ciphertext."""
+
+    __tablename__ = "saas_model_provider_configurations"
+
+    provider_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    base_url: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    api_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    api_key_ciphertext: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    allowed_models: Mapped[list[str]] = mapped_column(sa.JSON, nullable=False)
+    default_model: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    monthly_budget_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    per_tenant_daily_token_limit: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    verification_status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="never"
+    )
+    last_verified_model: Mapped[str | None] = mapped_column(sa.String(128))
+    last_verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_by_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
+            name="ck_model_provider_configuration_provider",
+        ),
+        sa.CheckConstraint(
+            f"api_type IN ({_values(MODEL_PROVIDER_API_TYPES)})",
+            name="ck_model_provider_configuration_api_type",
+        ),
+        sa.CheckConstraint(
+            f"verification_status IN ({_values(MODEL_PROVIDER_VERIFICATION_STATUSES)})",
+            name="ck_model_provider_configuration_verification",
+        ),
+        sa.CheckConstraint(
+            "length(base_url) > 0 AND length(api_key_ciphertext) > 0 "
+            "AND length(default_model) > 0",
+            name="ck_model_provider_configuration_required_values",
+        ),
+        sa.CheckConstraint(
+            "monthly_budget_microusd > 0",
+            name="ck_model_provider_configuration_monthly_budget",
+        ),
+        sa.CheckConstraint(
+            "per_tenant_daily_token_limit > 0",
+            name="ck_model_provider_configuration_tenant_tokens",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_model_provider_configuration_version"),
+    )
+
+
+class ModelProviderConfigurationReceiptRecord(SaasBase):
+    """Append-only, secret-free evidence for managed model configuration actions."""
+
+    __tablename__ = "saas_model_provider_configuration_receipts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    configuration_version: Mapped[int] = mapped_column(nullable=False)
+    actor_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    configuration_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    api_key_rotated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    model_id: Mapped[str | None] = mapped_column(sa.String(128))
+    provider_request_id_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    latency_millis: Mapped[int | None] = mapped_column()
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
+            name="ck_model_provider_receipt_provider",
+        ),
+        sa.CheckConstraint(
+            f"action IN ({_values(MODEL_PROVIDER_RECEIPT_ACTIONS)})",
+            name="ck_model_provider_receipt_action",
+        ),
+        sa.CheckConstraint("configuration_version > 0", name="ck_model_provider_receipt_version"),
+        sa.CheckConstraint(
+            "length(configuration_hash) = 64", name="ck_model_provider_receipt_hash"
+        ),
+        sa.CheckConstraint(
+            "provider_request_id_hash IS NULL OR length(provider_request_id_hash) = 64",
+            name="ck_model_provider_receipt_request_hash",
+        ),
+        sa.CheckConstraint(
+            "latency_millis IS NULL OR latency_millis >= 0",
+            name="ck_model_provider_receipt_latency",
+        ),
+        sa.Index(
+            "ix_model_provider_receipt_provider_time",
+            "provider_id",
+            "occurred_at",
+            "id",
+        ),
+    )
+
+
+class ModelProviderMonthlyBudgetRecord(SaasBase):
+    """Serialized Platform-wide monthly spend counter for one Provider."""
+
+    __tablename__ = "saas_model_provider_monthly_budgets"
+
+    provider_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    period_start: Mapped[date] = mapped_column(sa.Date, primary_key=True)
+    reserved_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    settled_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
+            name="ck_model_provider_monthly_budget_provider",
+        ),
+        sa.CheckConstraint(
+            "reserved_microusd >= 0 AND settled_microusd >= 0",
+            name="ck_model_provider_monthly_budget_nonnegative",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_model_provider_monthly_budget_version"),
+    )
+
+
+class ModelProviderTenantDailyUsageRecord(SaasBase):
+    """Serialized per-Tenant daily token counter for Platform inference."""
+
+    __tablename__ = "saas_model_provider_tenant_daily_usage"
+
+    tenant_id: Mapped[UUID] = mapped_column(primary_key=True)
+    provider_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    usage_date: Mapped[date] = mapped_column(sa.Date, primary_key=True)
+    reserved_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    settled_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
+            name="ck_model_provider_tenant_usage_provider",
+        ),
+        sa.CheckConstraint(
+            "reserved_tokens >= 0 AND settled_tokens >= 0",
+            name="ck_model_provider_tenant_usage_nonnegative",
+        ),
+        sa.CheckConstraint("version > 0", name="ck_model_provider_tenant_usage_version"),
+        sa.Index(
+            "ix_model_provider_tenant_usage_date",
+            "provider_id",
+            "usage_date",
+            "tenant_id",
+        ),
+    )
+
+
+class ModelProviderBudgetReservationRecord(SaasBase):
+    """Idempotent reservation/settlement receipt for one managed-model Run."""
+
+    __tablename__ = "saas_model_provider_budget_reservations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    operation_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    configuration_version: Mapped[int] = mapped_column(nullable=False)
+    period_start: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    usage_date: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    requested_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    requested_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    admitted_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    admitted_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    settled_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    settled_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    released_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    released_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    rejection_code: Mapped[str | None] = mapped_column(sa.String(64))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
+            name="ck_model_provider_budget_reservation_provider",
+        ),
+        sa.CheckConstraint(
+            f"status IN ({_values(MODEL_PROVIDER_BUDGET_RESERVATION_STATUSES)})",
+            name="ck_model_provider_budget_reservation_status",
+        ),
+        sa.CheckConstraint(
+            "requested_microusd > 0 AND requested_tokens > 0",
+            name="ck_model_provider_budget_reservation_request",
+        ),
+        sa.CheckConstraint(
+            "admitted_microusd >= 0 AND admitted_microusd <= requested_microusd "
+            "AND admitted_tokens >= 0 AND admitted_tokens <= requested_tokens",
+            name="ck_model_provider_budget_reservation_admitted",
+        ),
+        sa.CheckConstraint(
+            "settled_microusd >= 0 AND released_microusd >= 0 "
+            "AND settled_tokens >= 0 AND released_tokens >= 0 "
+            "AND ((status = 'reserved' AND released_microusd = 0 "
+            "AND released_tokens = 0 AND settled_microusd <= admitted_microusd "
+            "AND settled_tokens <= admitted_tokens) "
+            "OR (status <> 'reserved' "
+            "AND settled_microusd + released_microusd = admitted_microusd "
+            "AND settled_tokens + released_tokens = admitted_tokens))",
+            name="ck_model_provider_budget_reservation_conservation",
+        ),
+        sa.CheckConstraint(
+            "(status = 'reserved' AND admitted_microusd = requested_microusd "
+            "AND admitted_tokens = requested_tokens "
+            "AND released_microusd = 0 AND released_tokens = 0 "
+            "AND rejection_code IS NULL) OR "
+            "(status = 'settled' AND settled_microusd > 0 AND settled_tokens > 0 "
+            "AND rejection_code IS NULL) OR "
+            "(status IN ('released', 'expired') AND admitted_microusd > 0 "
+            "AND admitted_tokens > 0 "
+            "AND rejection_code IS NULL) OR "
+            "(status = 'rejected' AND admitted_microusd = 0 AND admitted_tokens = 0 "
+            "AND rejection_code IS NOT NULL)",
+            name="ck_model_provider_budget_reservation_state",
+        ),
+        sa.CheckConstraint(
+            "length(operation_key) > 0 AND length(request_hash) = 64",
+            name="ck_model_provider_budget_reservation_identity",
+        ),
+        sa.CheckConstraint(
+            "configuration_version > 0 AND version > 0",
+            name="ck_model_provider_budget_reservation_version",
+        ),
+        sa.CheckConstraint(
+            "created_at <= updated_at AND created_at < expires_at",
+            name="ck_model_provider_budget_reservation_time",
+        ),
+        sa.UniqueConstraint(
+            "provider_id",
+            "operation_key",
+            name="uq_model_provider_budget_reservation_operation",
+        ),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_model_provider_budget_reservation_scope",
+        ),
+        sa.Index(
+            "ix_model_provider_budget_reservation_expiry",
+            "provider_id",
+            "status",
+            "expires_at",
+            "id",
+        ),
+        sa.Index(
+            "ix_model_provider_budget_reservation_run",
+            "tenant_id",
+            "run_id",
             "id",
         ),
     )

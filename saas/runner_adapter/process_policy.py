@@ -166,6 +166,7 @@ class ManagedHostProcess(HostProcess):
         self._launch_authority = launch_authority
         self._envelope_directory = envelope_directory
         self._pending_metering: dict[str, ManagedMeteringGrant] = {}
+        self._active_metering: dict[str, ManagedMeteringGrant] = {}
         self._metering_envelopes: dict[str, Path] = {}
 
     def _runner_entry_module(self) -> str:
@@ -201,7 +202,9 @@ class ManagedHostProcess(HostProcess):
                 self._cleanup_metering_envelope(runner_id)
             return result
         finally:
-            self._pending_metering.pop(runner_id, None)
+            unclaimed = self._pending_metering.pop(runner_id, None)
+            if unclaimed is not None:
+                self._complete_metering_grant(unclaimed)
 
     def _spawn_runner_proc(
         self,
@@ -224,9 +227,12 @@ class ManagedHostProcess(HostProcess):
         env[MANAGED_METERING_ENVELOPE_ENV_VAR] = str(envelope)
         self._metering_envelopes[runner_id] = envelope
         try:
-            return super()._spawn_runner_proc(env, session_slug, workspace)
+            process = super()._spawn_runner_proc(env, session_slug, workspace)
+            self._active_metering[runner_id] = grant
+            return process
         except BaseException:
             self._cleanup_metering_envelope(runner_id)
+            self._complete_metering_grant(grant)
             raise
 
     async def _watch_runner(self, runner_id: str) -> None:
@@ -234,6 +240,12 @@ class ManagedHostProcess(HostProcess):
             await super()._watch_runner(runner_id)
         finally:
             self._cleanup_metering_envelope(runner_id)
+            grant = self._active_metering.pop(runner_id, None)
+            if grant is not None:
+                self._complete_metering_grant(grant)
+
+    def _complete_metering_grant(self, grant: ManagedMeteringGrant) -> None:
+        self._launch_authority.complete_metering_grant(grant)
 
     def _cleanup_metering_envelope(self, runner_id: str) -> None:
         path = self._metering_envelopes.pop(runner_id, None)

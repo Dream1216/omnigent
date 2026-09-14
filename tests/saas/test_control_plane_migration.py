@@ -239,7 +239,14 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000012"
+        assert revision == "p0s000000013"
+        assert {
+            "saas_model_provider_configurations",
+            "saas_model_provider_configuration_receipts",
+            "saas_model_provider_monthly_budgets",
+            "saas_model_provider_tenant_daily_usage",
+            "saas_model_provider_budget_reservations",
+        }.issubset(application_tables)
         dispatch_profile = next(
             foreign_key
             for foreign_key in inspector.get_foreign_keys("saas_run_dispatches")
@@ -379,6 +386,109 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())
         assert remaining_tables <= {"saas_alembic_version"}
+    engine.dispose()
+
+
+def test_platform_model_provider_migration_is_exact_and_reversible() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000012")
+        inspector = sa.inspect(connection)
+        assert "saas_model_provider_configurations" not in inspector.get_table_names()
+
+        command.upgrade(config, "p0s000000013")
+        inspector = sa.inspect(connection)
+        configuration_columns = {
+            column["name"]
+            for column in inspector.get_columns("saas_model_provider_configurations")
+        }
+        assert configuration_columns == {
+            "provider_id",
+            "enabled",
+            "base_url",
+            "api_type",
+            "api_key_ciphertext",
+            "allowed_models",
+            "default_model",
+            "monthly_budget_microusd",
+            "per_tenant_daily_token_limit",
+            "verification_status",
+            "last_verified_model",
+            "last_verified_at",
+            "version",
+            "updated_by_principal_id",
+            "updated_at",
+        }
+        receipt_columns = {
+            column["name"]
+            for column in inspector.get_columns("saas_model_provider_configuration_receipts")
+        }
+        assert receipt_columns == {
+            "id",
+            "provider_id",
+            "configuration_version",
+            "actor_principal_id",
+            "action",
+            "configuration_hash",
+            "api_key_rotated",
+            "model_id",
+            "provider_request_id_hash",
+            "latency_millis",
+            "occurred_at",
+        }
+        budget_tables = {
+            "saas_model_provider_monthly_budgets",
+            "saas_model_provider_tenant_daily_usage",
+            "saas_model_provider_budget_reservations",
+        }
+        assert budget_tables.issubset(set(inspector.get_table_names()))
+        assert {
+            "id",
+            "provider_id",
+            "tenant_id",
+            "run_id",
+            "operation_key",
+            "request_hash",
+            "configuration_version",
+            "period_start",
+            "usage_date",
+            "requested_microusd",
+            "requested_tokens",
+            "admitted_microusd",
+            "admitted_tokens",
+            "settled_microusd",
+            "settled_tokens",
+            "released_microusd",
+            "released_tokens",
+            "status",
+            "rejection_code",
+            "expires_at",
+            "created_at",
+            "updated_at",
+            "version",
+        } == {
+            column["name"]
+            for column in inspector.get_columns("saas_model_provider_budget_reservations")
+        }
+        metering_foreign_keys = {
+            foreign_key["name"]: foreign_key
+            for foreign_key in inspector.get_foreign_keys("saas_billing_metering_receipts")
+        }
+        budget_foreign_key = metering_foreign_keys["fk_billing_metering_receipt_model_budget"]
+        assert budget_foreign_key["constrained_columns"] == [
+            "tenant_id",
+            "model_budget_reservation_id",
+        ]
+        assert budget_foreign_key["referred_table"] == ("saas_model_provider_budget_reservations")
+        assert budget_foreign_key["referred_columns"] == ["tenant_id", "id"]
+        assert budget_foreign_key["options"] == {"ondelete": "RESTRICT"}
+
+        command.downgrade(config, "p0s000000012")
+        tables = set(sa.inspect(connection).get_table_names())
+        assert "saas_model_provider_configurations" not in tables
+        assert "saas_model_provider_configuration_receipts" not in tables
+        assert budget_tables.isdisjoint(tables)
     engine.dispose()
 
 
@@ -1686,7 +1796,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000012"
+                == "p0s000000013"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -4156,7 +4266,7 @@ def test_real_postgresql_p0s11_policy_role_scope_round_trip(
             command.upgrade(config, "head")
             assert _p0s11_policy_projection(connection) == successor
             assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-                "p0s000000012"
+                "p0s000000013"
             )
     finally:
         engine.dispose()

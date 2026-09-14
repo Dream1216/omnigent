@@ -28,6 +28,8 @@ from saas.control_plane import (
     EmailProviderConfigurationService,
     GlobalUser,
     IdentityConflict,
+    ManagedModelProbeResult,
+    ModelProviderConfigurationService,
     PlatformAuthorizationService,
     PlatformGovernedAccessService,
     PlatformHttpConfig,
@@ -104,6 +106,19 @@ class _BrowserSmtpTestSender:
 
     def close(self) -> None:
         return None
+
+
+class _BrowserModelProbe:
+    calls: list[tuple[str, str, str]] = []
+
+    def __call__(self, *, base_url: str, api_key: str, model: str) -> ManagedModelProbeResult:
+        self.calls.append((base_url, api_key, model))
+        return ManagedModelProbeResult(
+            provider_request_id="browser-model-request-1",
+            response_model=model,
+            latency_millis=19,
+            output_observed=True,
+        )
 
 
 def _write_certificate(directory: Path) -> tuple[Path, Path]:
@@ -338,6 +353,13 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         public_origin="https://next.jxhh.com",
         smtp_sender_factory=_BrowserSmtpTestSender,
     )
+    _BrowserModelProbe.calls.clear()
+    model_provider = ModelProviderConfigurationService(
+        factory,
+        authorization=authorization,
+        secret_cipher=_BrowserSecretCipher(),
+        probe=_BrowserModelProbe(),
+    )
     privacy_actor = sessions.validate_session(
         issued["auditor"].token,
         origin=origin,
@@ -372,6 +394,7 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         privacy=privacy,
         privacy_operations=privacy_operations,
         email_configuration=email_configuration,
+        model_provider=model_provider,
     )
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
@@ -495,6 +518,53 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         operator.get_by_test_id("email-test-send").click()
         expect(operator.get_by_test_id("toast-stack")).to_contain_text("SMTP test accepted")
 
+        operator.get_by_test_id("nav-model-provider").click()
+        expect(operator.get_by_test_id("view-model-provider")).to_be_visible()
+        assert (
+            operator.get_by_test_id("model-provider-security-boundary")
+            .locator("strong")
+            .first.evaluate("node => getComputedStyle(node).color")
+            == "rgb(17, 24, 32)"
+        )
+        assert (
+            operator.locator(".model-provider-activation-note p").evaluate(
+                "node => getComputedStyle(node).color"
+            )
+            == "rgb(48, 55, 59)"
+        )
+        expect(operator.locator("#model-provider-state")).to_have_text("NOT CONFIGURED")
+        operator.get_by_test_id("model-provider-enabled").check()
+        operator.get_by_test_id("model-provider-api-key").fill("browser-model-secret-never-shown")
+        operator.get_by_test_id("model-provider-models").fill("deepseek-v4-flash\ndeepseek-v4-pro")
+        operator.get_by_test_id("model-provider-models").press("Tab")
+        operator.get_by_test_id("model-provider-default-model").select_option("deepseek-v4-flash")
+        with operator.expect_response(
+            lambda response: (
+                response.request.method == "PUT"
+                and response.url.endswith("/v2/platform-admin/model-provider")
+            )
+        ) as model_response:
+            operator.get_by_test_id("model-provider-save").click()
+        assert model_response.value.status == 200
+        expect(operator.locator("#model-provider-state")).to_have_text("CONFIGURED")
+        expect(operator.get_by_test_id("model-provider-api-key")).to_have_value("")
+        expect(operator.locator("#model-provider-key-state")).to_have_text(
+            "KEY ENCRYPTED / PRESERVED"
+        )
+        operator.get_by_test_id("model-provider-test").click()
+        expect(operator.get_by_test_id("toast-stack")).to_contain_text(
+            "DeepSeek streaming verification passed"
+        )
+        expect(operator.locator("#model-provider-state")).to_have_text("VERIFIED")
+        expect(operator.locator("body")).not_to_contain_text("browser-model-secret-never-shown")
+        assert _BrowserModelProbe.calls == [
+            (
+                "https://api.deepseek.com",
+                "browser-model-secret-never-shown",
+                "deepseek-v4-flash",
+            )
+        ]
+
         operator.get_by_test_id("nav-users").click()
         expect(operator.get_by_test_id("view-users")).to_be_visible()
         operator.get_by_test_id(f"user-suspend-{fixture.user_id}").click()
@@ -587,6 +657,12 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         expect(auditor.get_by_test_id("view-email")).to_be_visible()
         expect(auditor.get_by_test_id("email-save")).to_be_disabled()
         expect(auditor.get_by_test_id("email-test-send")).to_be_disabled()
+        auditor.get_by_test_id("nav-model-provider").click()
+        expect(auditor.get_by_test_id("view-model-provider")).to_be_visible()
+        expect(auditor.locator("#model-provider-state")).to_have_text("VERIFIED")
+        expect(auditor.get_by_test_id("model-provider-save")).to_be_disabled()
+        expect(auditor.get_by_test_id("model-provider-test")).to_be_disabled()
+        expect(auditor.get_by_test_id("model-provider-api-key")).to_have_value("")
     finally:
         auditor_context.close()
 

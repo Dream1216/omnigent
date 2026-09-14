@@ -55,7 +55,7 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000012"
+_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000013"
 _TEMPLATE_SERVICE_LOGINS: Final = {
     service: "replace_runtime_login" if service == "runtime" else f"replace_{service}_login"
     for service in EXPECTED_PRODUCTION_SERVICE_ROLES
@@ -839,7 +839,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
     control_plane_schema_revision = _string(document, "control_plane_schema_revision")
     if control_plane_schema_revision != _CONTROL_PLANE_SCHEMA_REVISION:
         raise ReleaseRenderError(
-            "control_plane_schema_revision must equal the packaged p0s10 Alembic head"
+            "control_plane_schema_revision must equal the packaged p0s13 Alembic head"
         )
     runner_fleet = _parse_runner_fleet(
         document.get("runner_fleet"),
@@ -1267,7 +1267,7 @@ def _render_release_documents(
         ),
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
             spec.control_plane_schema_revision,
-            "p0s000000012",
+            "p0s000000013",
         ),
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (
             spec.adapter_contract_version,

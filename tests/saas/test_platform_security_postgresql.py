@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session, sessionmaker
+
+from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 
 
 def _postgres_url() -> str:
@@ -264,6 +269,34 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
                 "configuration_hash": "d" * 64,
             },
         )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_model_provider_configurations "
+                "(provider_id, enabled, base_url, api_type, api_key_ciphertext, "
+                "allowed_models, default_model, monthly_budget_microusd, "
+                "per_tenant_daily_token_limit, verification_status, version, "
+                "updated_by_principal_id, updated_at) VALUES "
+                "('deepseek', true, 'https://api.deepseek.com', "
+                "'openai_chat_completions', 'kms-model-ciphertext', "
+                "CAST('[\"deepseek-v4-flash\"]' AS jsonb), 'deepseek-v4-flash', "
+                "100000000, 1000000, 'never', 1, :principal, now())"
+            ),
+            {"principal": operator_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_model_provider_configuration_receipts "
+                "(id, provider_id, configuration_version, actor_principal_id, action, "
+                "configuration_hash, api_key_rotated, occurred_at) VALUES "
+                "(:id, 'deepseek', 1, :principal, 'configured', "
+                ":configuration_hash, true, now())"
+            ),
+            {
+                "id": uuid4(),
+                "principal": operator_id,
+                "configuration_hash": "e" * 64,
+            },
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_app_login")
@@ -280,6 +313,12 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
         assert (
             connection.execute(
                 sa.text("SELECT count(*) FROM saas_email_provider_configurations")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                sa.text("SELECT count(*) FROM saas_model_provider_configurations")
             ).scalar_one()
             == 0
         )
@@ -305,6 +344,33 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
                     "WHERE purpose = 'onboarding_verification'"
                 )
             )
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_secret_broker")
+        assert (
+            connection.execute(
+                sa.text(
+                    "SELECT api_key_ciphertext FROM saas_model_provider_configurations "
+                    "WHERE provider_id = 'deepseek'"
+                )
+            ).scalar_one()
+            == "kms-model-ciphertext"
+        )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_secret_broker")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_model_provider_configurations SET enabled = false "
+                    "WHERE provider_id = 'deepseek'"
+                )
+            )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_secret_broker")
+            connection.execute(sa.text("SELECT * FROM saas_model_provider_configuration_receipts"))
 
     with pytest.raises(DBAPIError):
         with engine.begin() as connection:
@@ -379,7 +445,149 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(sa.text("DELETE FROM saas_model_provider_configuration_receipts"))
+        connection.execute(sa.text("DELETE FROM saas_model_provider_configurations"))
         connection.execute(sa.text("DELETE FROM saas_email_provider_configuration_receipts"))
         connection.execute(sa.text("DELETE FROM saas_email_provider_configurations"))
 
+    engine.dispose()
+
+
+def test_real_postgresql_platform_model_budget_concurrency_and_metering_binding(
+    isolated_postgres_url: str,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=2)
+    principal_id = uuid4()
+    tenant_a, tenant_b = uuid4(), uuid4()
+    run_a, run_b = uuid4(), uuid4()
+    with engine.begin() as connection:
+        _migrate(connection, root)
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_platform_staff_principals "
+                "(id, identity_connection_ref, issuer, subject, status, security_version) "
+                "VALUES (:id, :ref, 'https://staff-idp.example.test', :subject, 'active', 1)"
+            ),
+            {"id": principal_id, "ref": f"budget:{principal_id}", "subject": str(principal_id)},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_model_provider_configurations "
+                "(provider_id, enabled, base_url, api_type, api_key_ciphertext, "
+                "allowed_models, default_model, monthly_budget_microusd, "
+                "per_tenant_daily_token_limit, verification_status, last_verified_model, "
+                "last_verified_at, version, updated_by_principal_id, updated_at) VALUES "
+                "('deepseek', true, 'https://api.deepseek.com', "
+                "'openai_chat_completions', 'kms-model-ciphertext', "
+                "CAST('[\"deepseek-v4-flash\"]' AS jsonb), 'deepseek-v4-flash', "
+                "1000, 1000, 'verified', 'deepseek-v4-flash', now(), 1, :principal, now())"
+            ),
+            {"principal": principal_id},
+        )
+
+    factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
+
+    @sa.event.listens_for(factory, "after_begin")
+    def _set_billing_role(
+        _session: Session, _transaction: object, connection: sa.Connection
+    ) -> None:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_billing")
+
+    service = ModelProviderBudgetAdmissionService(factory)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def reserve(tenant_id: UUID, run_id: UUID, operation: str) -> object:
+        return service.reserve(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            operation_key=operation,
+            requested_microusd=600,
+            requested_tokens=600,
+            ttl=timedelta(minutes=5),
+            now=now,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(reserve, tenant_a, run_a, "concurrent:a")
+        second = pool.submit(reserve, tenant_b, run_b, "concurrent:b")
+        results = (first.result(timeout=10), second.result(timeout=10))
+    admitted = [result for result in results if result.status == "reserved"]
+    rejected = [result for result in results if result.status == "rejected"]
+    assert len(admitted) == 1
+    assert len(rejected) == 1
+    assert rejected[0].rejection_code == "platform_model_monthly_budget_exhausted"
+    reservation = admitted[0]
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_metering")
+        connection.execute(
+            sa.text(
+                "SELECT set_config('app.model_budget_reservation_id', :reservation, true), "
+                "set_config('app.metering_tenant_id', :tenant, true), "
+                "set_config('app.metering_run_id', :run, true)"
+            ),
+            {
+                "reservation": str(reservation.id),
+                "tenant": str(reservation.tenant_id),
+                "run": str(reservation.run_id),
+            },
+        )
+        connection.execute(
+            sa.text(
+                "SELECT saas_apply_model_provider_budget_usage("
+                ":reservation, :tenant, :run, 100, 120)"
+            ),
+            {
+                "reservation": reservation.id,
+                "tenant": reservation.tenant_id,
+                "run": reservation.run_id,
+            },
+        )
+
+    with pytest.raises(DBAPIError):
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_metering")
+            connection.execute(
+                sa.text(
+                    "SELECT set_config('app.model_budget_reservation_id', :reservation, true), "
+                    "set_config('app.metering_tenant_id', :tenant, true), "
+                    "set_config('app.metering_run_id', :run, true)"
+                ),
+                {
+                    "reservation": str(reservation.id),
+                    "tenant": str(uuid4()),
+                    "run": str(reservation.run_id),
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "SELECT saas_apply_model_provider_budget_usage("
+                    ":reservation, :tenant, :run, 1, 1)"
+                ),
+                {
+                    "reservation": reservation.id,
+                    "tenant": reservation.tenant_id,
+                    "run": reservation.run_id,
+                },
+            )
+
+    finalized = service.release(reservation_id=reservation.id, now=now)
+    assert (finalized.settled_microusd, finalized.settled_tokens) == (100, 120)
+    assert (finalized.released_microusd, finalized.released_tokens) == (500, 480)
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(sa.text("DELETE FROM saas_model_provider_budget_reservations"))
+        connection.execute(sa.text("DELETE FROM saas_model_provider_tenant_daily_usage"))
+        connection.execute(sa.text("DELETE FROM saas_model_provider_monthly_budgets"))
+        connection.execute(sa.text("DELETE FROM saas_model_provider_configurations"))
+        connection.execute(
+            sa.text("DELETE FROM saas_platform_staff_principals WHERE id = :id"),
+            {"id": principal_id},
+        )
     engine.dispose()

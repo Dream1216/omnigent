@@ -208,7 +208,8 @@ BEGIN
         'p0s000000009',
         'p0s000000010',
         'p0s000000011',
-        'p0s000000012'
+        'p0s000000012',
+        'p0s000000013'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -641,6 +642,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000012' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000013' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -726,7 +729,7 @@ BEGIN
        OR (
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
-              'p0s000000010', 'p0s000000011', 'p0s000000012'
+              'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1099,12 +1102,12 @@ BEGIN
     FROM public.saas_alembic_version;
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
-        IF schema_revision = 'p0s000000012' THEN
+        IF schema_revision IN ('p0s000000012', 'p0s000000013') THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
-    IF schema_revision <> 'p0s000000012'
+    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013')
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -1204,7 +1207,8 @@ BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
     IF schema_revision NOT IN (
-        'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012'
+        'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
+        'p0s000000013'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -4025,7 +4029,9 @@ BEGIN
         'text,text,uuid,uuid,uuid,bigint,bigint,uuid,text,uuid,bigint,'
         'boolean,boolean,text)'
     );
-    IF schema_revision NOT IN ('p0s000000010', 'p0s000000011', 'p0s000000012') THEN
+    IF schema_revision NOT IN (
+        'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013'
+    ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
            OR worktree_authority_function IS NOT NULL
@@ -4546,7 +4552,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision = 'p0s000000012' THEN
+    IF schema_revision IN ('p0s000000012', 'p0s000000013') THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -4563,6 +4569,64 @@ BEGIN
     ELSIF to_regclass('public.saas_email_provider_configurations') IS NOT NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NOT NULL THEN
         RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
+    END IF;
+END
+$$;
+
+-- P0S13 adds the Platform-managed model Provider. Rebuild its exact grants
+-- after the global least-privilege projection has revoked every application
+-- ACL. The Secret Broker can read only the encrypted configuration row; only
+-- Staff Platform authority can write configuration or append receipts.
+DO $$
+DECLARE
+    schema_revision text;
+BEGIN
+    SELECT version_num INTO STRICT schema_revision
+    FROM public.saas_alembic_version;
+    IF schema_revision = 'p0s000000013' THEN
+        IF to_regclass('public.saas_model_provider_configurations') IS NULL
+           OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
+           OR to_regclass('public.saas_model_provider_monthly_budgets') IS NULL
+           OR to_regclass('public.saas_model_provider_tenant_daily_usage') IS NULL
+           OR to_regclass('public.saas_model_provider_budget_reservations') IS NULL
+           OR to_regprocedure(
+               'public.saas_apply_model_provider_budget_usage(uuid,uuid,uuid,bigint,bigint)'
+           ) IS NULL THEN
+            RAISE EXCEPTION 'P0S13 model Provider authority object contract rejected';
+        END IF;
+        GRANT SELECT, INSERT, UPDATE ON saas_model_provider_configurations
+        TO saas_platform_app;
+        GRANT SELECT, INSERT ON saas_model_provider_configuration_receipts
+        TO saas_platform_app;
+        GRANT SELECT ON saas_model_provider_configurations TO saas_secret_broker;
+        GRANT SELECT (
+            provider_id, enabled, monthly_budget_microusd,
+            per_tenant_daily_token_limit, verification_status, version
+        ) ON saas_model_provider_configurations TO saas_billing;
+        GRANT SELECT, INSERT, UPDATE ON
+            saas_model_provider_monthly_budgets,
+            saas_model_provider_tenant_daily_usage,
+            saas_model_provider_budget_reservations
+        TO saas_billing;
+        GRANT EXECUTE ON FUNCTION
+            public.saas_apply_model_provider_budget_usage(uuid, uuid, uuid, bigint, bigint)
+        TO saas_metering;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON
+            saas_model_provider_configurations,
+            saas_model_provider_configuration_receipts,
+            saas_model_provider_monthly_budgets,
+            saas_model_provider_tenant_daily_usage,
+            saas_model_provider_budget_reservations
+        TO saas_platform_governance, saas_platform;
+    ELSIF to_regclass('public.saas_model_provider_configurations') IS NOT NULL
+       OR to_regclass('public.saas_model_provider_configuration_receipts') IS NOT NULL
+       OR to_regclass('public.saas_model_provider_monthly_budgets') IS NOT NULL
+       OR to_regclass('public.saas_model_provider_tenant_daily_usage') IS NOT NULL
+       OR to_regclass('public.saas_model_provider_budget_reservations') IS NOT NULL
+       OR to_regprocedure(
+           'public.saas_apply_model_provider_budget_usage(uuid,uuid,uuid,bigint,bigint)'
+       ) IS NOT NULL THEN
+        RAISE EXCEPTION 'P0S13 model Provider authority object contract rejected';
     END IF;
 END
 $$;

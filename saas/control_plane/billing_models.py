@@ -401,6 +401,7 @@ class BillingMeteringReceiptRecord(SaasBase):
     fence_token: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    model_budget_reservation_id: Mapped[UUID | None] = mapped_column()
     recorded_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -435,6 +436,15 @@ class BillingMeteringReceiptRecord(SaasBase):
             ("saas_capability_tokens.id",),
             ondelete="RESTRICT",
             name="fk_billing_metering_receipt_capability",
+        ),
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "model_budget_reservation_id"),
+            (
+                "saas_model_provider_budget_reservations.tenant_id",
+                "saas_model_provider_budget_reservations.id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_billing_metering_receipt_model_budget",
         ),
         sa.CheckConstraint(
             "runner_connection_generation > 0",

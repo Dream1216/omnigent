@@ -14,6 +14,7 @@
     audit: [],
     operations: [],
     emailConfiguration: null,
+    modelProvider: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
     view: "overview",
@@ -155,6 +156,9 @@
     $("#email-configuration-link").hidden = !Boolean(
       state.context?.capabilities?.email_configuration_enabled
     );
+    $("#model-provider-link").hidden = !Boolean(
+      state.context?.capabilities?.model_provider_enabled
+    );
     document.querySelectorAll("[data-permission]").forEach((button) => {
       const permitted = can(button.dataset.permission);
       button.disabled = !permitted;
@@ -191,6 +195,7 @@
       privacy: () => window.OmnigentPrivacy?.load(),
       audit: () => loadAudit(false),
       email: loadEmailConfiguration,
+      models: loadModelProvider,
     };
     if (loaders[view]) await loaders[view]();
     state.loaded.add(view);
@@ -329,6 +334,122 @@
       },
     });
     toast(`SMTP test accepted for configuration V${payload.configuration_version}`, "success");
+  }
+
+  function renderModelProvider() {
+    const item = state.modelProvider || {
+      configured: false,
+      enabled: false,
+      state: "not_configured",
+      base_url: "https://api.deepseek.com",
+      api_type: "openai_chat_completions",
+      allowed_models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+      default_model: "deepseek-v4-flash",
+      monthly_budget_microusd: 100_000_000,
+      per_tenant_daily_token_limit: 1_000_000,
+      version: 0,
+    };
+    const models = item.allowed_models?.length
+      ? item.allowed_models
+      : ["deepseek-v4-flash", "deepseek-v4-pro"];
+    $("#model-provider-enabled").checked = Boolean(item.enabled);
+    $("#model-provider-base-url").value = item.base_url || "https://api.deepseek.com";
+    $("#model-provider-api-type").value = item.api_type || "openai_chat_completions";
+    $("#model-provider-api-key").value = "";
+    $("#model-provider-models").value = models.join("\n");
+    $("#model-provider-default-model").replaceChildren(
+      ...models.map((model) => {
+        const option = node("option", "", model);
+        option.value = model;
+        option.selected = model === item.default_model;
+        return option;
+      })
+    );
+    $("#model-provider-test-model").replaceChildren(
+      ...models.map((model) => {
+        const option = node("option", "", model);
+        option.value = model;
+        option.selected = model === item.default_model;
+        return option;
+      })
+    );
+    $("#model-provider-monthly-budget").value = String(
+      (item.monthly_budget_microusd || 100_000_000) / 1_000_000
+    );
+    $("#model-provider-daily-tokens").value = String(
+      item.per_tenant_daily_token_limit || 1_000_000
+    );
+    $("#model-provider-version").textContent = `VERSION ${item.version || 0}`;
+    $("#model-provider-key-state").textContent = item.api_key_configured
+      ? "KEY ENCRYPTED / PRESERVED"
+      : "KEY REQUIRED";
+    $("#model-provider-state").textContent = String(item.state || "not_configured")
+      .replaceAll("_", " ")
+      .toUpperCase();
+    $("#model-provider-verified-at").textContent = item.last_verified_at
+      ? `VERIFIED ${formatDate(item.last_verified_at)}`
+      : "LIVE VERIFICATION PENDING";
+    $(".model-provider-state-card").dataset.state = item.state || "not_configured";
+    $("#model-provider-save").disabled = !mutationReady("platform.model_provider.manage");
+    $("#model-provider-test").disabled =
+      !mutationReady("platform.model_provider.test") || !item.configured || !item.enabled;
+  }
+
+  async function loadModelProvider() {
+    state.modelProvider = await api("/v2/platform-admin/model-provider");
+    renderModelProvider();
+  }
+
+  function modelValues() {
+    return $("#model-provider-models").value
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter((value, index, values) => value && values.indexOf(value) === index);
+  }
+
+  async function saveModelProvider(event) {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    const apiKey = $("#model-provider-api-key").value;
+    const models = modelValues();
+    if (!models.includes($("#model-provider-default-model").value)) {
+      toast("Default model must be included in the allowed catalog", "error");
+      return;
+    }
+    const payload = await api("/v2/platform-admin/model-provider", {
+      method: "PUT",
+      body: {
+        expected_version: state.modelProvider?.version || 0,
+        enabled: $("#model-provider-enabled").checked,
+        base_url: $("#model-provider-base-url").value.trim(),
+        api_type: $("#model-provider-api-type").value,
+        api_key: apiKey === "" ? null : apiKey,
+        allowed_models: models,
+        default_model: $("#model-provider-default-model").value,
+        monthly_budget_microusd: Math.round(
+          Number($("#model-provider-monthly-budget").value) * 1_000_000
+        ),
+        per_tenant_daily_token_limit: Number($("#model-provider-daily-tokens").value),
+      },
+    });
+    state.modelProvider = payload;
+    renderModelProvider();
+    toast(`Managed model Provider V${payload.version} saved; run live verification`, "success");
+  }
+
+  async function testModelProvider(event) {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    const payload = await api("/v2/platform-admin/model-provider/test", {
+      method: "POST",
+      body: {
+        expected_version: state.modelProvider?.version || 0,
+        model: $("#model-provider-test-model").value,
+      },
+    });
+    state.modelProvider = payload;
+    renderModelProvider();
+    toast(`DeepSeek streaming verification passed for ${payload.last_verified_model}`, "success");
   }
 
   function renderUsers() {
@@ -956,6 +1077,18 @@
   $("#audit-export-open").addEventListener("click", () => void run(requestAuditExport));
   $("#email-configuration-form").addEventListener("submit", (event) => void run(() => saveEmailConfiguration(event)));
   $("#email-test-form").addEventListener("submit", (event) => void run(() => sendEmailConfigurationTest(event)));
+  $("#model-provider-models").addEventListener("change", () => {
+    const models = modelValues();
+    const current = $("#model-provider-default-model").value;
+    $("#model-provider-default-model").replaceChildren(...models.map((model) => {
+      const option = node("option", "", model);
+      option.value = model;
+      option.selected = model === current;
+      return option;
+    }));
+  });
+  $("#model-provider-form").addEventListener("submit", (event) => void run(() => saveModelProvider(event)));
+  $("#model-provider-test-form").addEventListener("submit", (event) => void run(() => testModelProvider(event)));
   $("#operations-toggle").addEventListener("click", openOperations);
   $("#operations-close").addEventListener("click", closeOperations);
   $("#operations-drawer").addEventListener("keydown", trapOperationsFocus);

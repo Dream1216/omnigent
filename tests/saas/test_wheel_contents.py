@@ -99,6 +99,11 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
         "p0s000000012_platform_smtp_configuration.py" in REQUIRED_WHEEL_PATHS
     )
     assert "saas/control_plane/email_provider.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/control_plane/model_provider.py" in REQUIRED_WHEEL_PATHS
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000013_platform_model_provider.py" in REQUIRED_WHEEL_PATHS
+    )
     assert "saas/control_plane/preview_models.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/preview_execution.py" in REQUIRED_WHEEL_PATHS
     assert "saas/control_plane/preview_sessions.py" in REQUIRED_WHEEL_PATHS
@@ -144,6 +149,8 @@ def test_production_runtime_is_required_and_has_console_entrypoints() -> None:
     assert "saas/production/server.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/server_config.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/platform_smtp_bootstrap.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/production/platform_model_runtime.py" in REQUIRED_WHEEL_PATHS
+    assert "saas/runner_adapter/platform_models.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/service_bindings.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/kubernetes_runtime_provider.py" in REQUIRED_WHEEL_PATHS
     assert "saas/production/worker.py" in REQUIRED_WHEEL_PATHS

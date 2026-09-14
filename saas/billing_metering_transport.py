@@ -41,6 +41,7 @@ _REQUEST_FIELDS = frozenset(
         "capability_token",
         "idempotency_key",
         "meter",
+        "model_budget_reservation_id",
         "occurred_at",
         "provider",
         "provider_request_id",
@@ -54,6 +55,7 @@ _RESPONSE_FIELDS = frozenset(
         "currency",
         "customer_charge_minor",
         "meter",
+        "model_budget_reservation_id",
         "occurred_at",
         "pricing_snapshot_id",
         "project_id",
@@ -89,6 +91,7 @@ class BillingMeteringRecorder(Protocol):
         idempotency_key: str,
         occurred_at: datetime,
         attributes: dict[str, object] | None = None,
+        model_budget_reservation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> MeteredUsage: ...
 
@@ -118,6 +121,7 @@ class _MeteringRequest(TypedDict):
     capability_token: str
     idempotency_key: str
     meter: str
+    model_budget_reservation_id: UUID | None
     occurred_at: datetime
     provider: str
     provider_request_id: str
@@ -237,6 +241,12 @@ def _canonical_uuid(value: object) -> UUID:
     return parsed
 
 
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return _canonical_uuid(value)
+
+
 def _aware_datetime(value: object) -> datetime:
     if not isinstance(value, str):
         raise ValueError("datetime is invalid")
@@ -270,6 +280,7 @@ def _request_document(body: bytes) -> _MeteringRequest:
             "capability_token": _bounded_text(document["capability_token"], 512),
             "idempotency_key": _bounded_text(document["idempotency_key"], 128),
             "meter": _bounded_text(document["meter"], 128),
+            "model_budget_reservation_id": _optional_uuid(document["model_budget_reservation_id"]),
             "occurred_at": _aware_datetime(document["occurred_at"]),
             "provider": _bounded_text(document["provider"], 64),
             "provider_request_id": _bounded_text(document["provider_request_id"], 256),
@@ -289,6 +300,11 @@ def _usage_document(usage: MeteredUsage) -> bytes:
             "currency": usage.currency,
             "customer_charge_minor": usage.customer_charge_minor,
             "meter": usage.meter,
+            "model_budget_reservation_id": (
+                str(usage.model_budget_reservation_id)
+                if usage.model_budget_reservation_id is not None
+                else None
+            ),
             "occurred_at": usage.occurred_at.isoformat(),
             "pricing_snapshot_id": str(usage.pricing_snapshot_id),
             "project_id": str(usage.project_id),
@@ -552,6 +568,7 @@ class MutualTlsBillingMeteringClient:
         idempotency_key: str,
         occurred_at: datetime,
         attributes: dict[str, object] | None = None,
+        model_budget_reservation_id: UUID | None = None,
     ) -> MeteredUsage:
         if runner_id != self._runner_id:
             raise BillingMeteringTransportError(
@@ -563,6 +580,11 @@ class MutualTlsBillingMeteringClient:
             "capability_token": capability_token,
             "idempotency_key": idempotency_key,
             "meter": meter,
+            "model_budget_reservation_id": (
+                str(model_budget_reservation_id)
+                if model_budget_reservation_id is not None
+                else None
+            ),
             "occurred_at": occurred_at.isoformat(),
             "provider": provider,
             "provider_request_id": provider_request_id,
@@ -659,6 +681,7 @@ def _parse_usage_document(document: dict[str, object]) -> MeteredUsage:
             runner_id=_canonical_uuid(document["runner_id"]),
             pricing_snapshot_id=_canonical_uuid(document["pricing_snapshot_id"]),
             meter=_bounded_text(document["meter"], 128),
+            model_budget_reservation_id=_optional_uuid(document["model_budget_reservation_id"]),
             quantity=quantity,
             unit=_bounded_text(document["unit"], 64),
             currency=_bounded_text(document["currency"], 3),

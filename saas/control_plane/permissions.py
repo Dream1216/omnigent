@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-09-05.p2-smtp-admin"
+POLICY_VERSION: Final = "2026-09-14.p3-model-provider"
 
 
 class PermissionScope(StrEnum):
@@ -373,6 +373,32 @@ _DEFINITIONS = (
         audit_event="platform.email_configuration.tested",
     ),
     _permission(
+        "platform.model_provider.read",
+        PermissionScope.PLATFORM,
+        PermissionRisk.MEDIUM,
+        api_surfaces=("GET /v2/platform-admin/model-provider",),
+        ui_surface="model-provider",
+        audit_event="platform.model_provider.read",
+    ),
+    _permission(
+        "platform.model_provider.manage",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        api_surfaces=("PUT /v2/platform-admin/model-provider",),
+        ui_surface="model-provider",
+        audit_event="platform.model_provider.changed",
+    ),
+    _permission(
+        "platform.model_provider.test",
+        PermissionScope.PLATFORM,
+        PermissionRisk.HIGH,
+        fresh_auth_required=True,
+        api_surfaces=("POST /v2/platform-admin/model-provider/test",),
+        ui_surface="model-provider",
+        audit_event="platform.model_provider.tested",
+    ),
+    _permission(
         "platform.runner.manage",
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
@@ -664,6 +690,9 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.email_configuration.read",
                 "platform.email_configuration.manage",
                 "platform.email_configuration.test",
+                "platform.model_provider.read",
+                "platform.model_provider.manage",
+                "platform.model_provider.test",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",
@@ -687,6 +716,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.onboarding.read",
                 "platform.notification.read",
                 "platform.email_configuration.read",
+                "platform.model_provider.read",
                 "platform.security.read",
                 "platform.audit.read",
                 "platform.audit.export",

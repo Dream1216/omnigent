@@ -334,7 +334,7 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
 
 def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() -> None:
     # These anchors come from clean PostgreSQL 16.14 and 18.6 replays with the
-    # complete fifteen-login profile.  P0S12 sorts row collections only after
+    # complete fifteen-login profile.  P0S12+ sort row collections only after
     # replacing deployment-specific role names with stable aliases.
     assert len(EXPECTED_PRODUCTION_SERVICE_ROLES) == 15
     assert EXPECTED_PRODUCTION_SERVICE_ROLES["runtime_provider_journal"] == (
@@ -355,6 +355,33 @@ def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() ->
 
     assert expected.keys() <= migration._PUBLIC_SCHEMA_INVENTORY_SHA256.keys()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= expected.items()
+
+    current_inventory = {
+        (
+            16,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "8094ae2186ca82f153be054043461e1997c8991a62b227cf7547845e4cf79d3b",
+        (
+            18,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "6d49f0e2072cc4e82734e868c78e43dca828ae22d95c4b46a6767db6fd292022",
+    }
+    current_security = {
+        (
+            16,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "f030f29ad8505f226ddcf4befdd085b7a6f0cefa3deedf2b948318f952e1483e",
+        (
+            18,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "2f3d25460eab0c9bb6e903399e146f5ff17ac526ebec5cf27b4d727ca8ee8d55",
+    }
+    assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
+    assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
 
 
 @pytest.mark.parametrize("server_major", [16, 18])

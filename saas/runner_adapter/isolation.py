@@ -24,6 +24,7 @@ from omnigent.inner.datamodel import (
     OSEnvSandboxSpec,
     OSEnvSpec,
 )
+from omnigent.inner.egress.rules import parse_rules
 from omnigent.inner.os_env import OSEnvironment, create_os_environment
 from saas.control_plane.isolation import (
     IsolationControlPlaneError,
@@ -31,6 +32,10 @@ from saas.control_plane.isolation import (
     SecretMaterial,
     SecretValueProvider,
     TrustedRunnerLaunchGrant,
+)
+from saas.runner_adapter.platform_models import (
+    PlatformManagedModelRuntimeProjection,
+    validate_platform_managed_model_config_home,
 )
 from saas.runner_adapter.worktrees import PhysicalWorktree
 from saas.secret_broker_transport import SecretBrokerTransportError
@@ -458,6 +463,8 @@ class RunnerIsolationAdapter:
         secret_authority: SecretRedemptionAuthority | None = None,
         secret_provider: SecretValueProvider,
         containment: ContainmentVerifier,
+        platform_model_projection: PlatformManagedModelRuntimeProjection | None = None,
+        platform_model_config_home: Path | None = None,
     ) -> None:
         self._staging_root = _private_root(staging_root)
         reap_orphaned_secret_directories(self._staging_root)
@@ -469,6 +476,10 @@ class RunnerIsolationAdapter:
         self._secret_authority = secret_authority
         self._secret_provider = secret_provider
         self._containment = containment
+        if (platform_model_projection is None) != (platform_model_config_home is None):
+            raise ValueError("Platform model projection and config home must be paired")
+        self._platform_model_projection = platform_model_projection
+        self._platform_model_config_home = platform_model_config_home
 
     def prepare(
         self,
@@ -529,6 +540,19 @@ class RunnerIsolationAdapter:
         )
         entries: list[CredentialProxyEntry] = []
         try:
+            model_config_home: Path | None = None
+            if self._platform_model_projection is not None:
+                assert self._platform_model_config_home is not None
+                try:
+                    model_config_home = validate_platform_managed_model_config_home(
+                        self._platform_model_projection,
+                        self._platform_model_config_home,
+                    )
+                except ValueError:
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_config_unavailable",
+                        "Platform model config authority is unavailable",
+                    ) from None
             for reference in grant.secret_leases:
                 try:
                     material = self._secret_authority.redeem_secret(
@@ -567,9 +591,77 @@ class RunnerIsolationAdapter:
                         inject_env=list(material.inject_env),
                     )
                 )
+            if self._platform_model_projection is not None:
+                binding = self._platform_model_projection.secret_binding
+                try:
+                    rules = parse_rules(contract.egress_rules)
+                except ValueError:
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_egress_binding_denied",
+                        "Platform model egress policy is invalid",
+                    ) from None
+                if not any(
+                    rule.host_pattern == binding.host
+                    and rule.matches("POST", binding.host, "/chat/completions")
+                    for rule in rules
+                ):
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_egress_binding_denied",
+                        "Platform model requires an exact Provider egress rule",
+                    )
+                if any(
+                    entry.host == binding.host
+                    or set(entry.inject_env or ()) & set(binding.inject_env)
+                    for entry in entries
+                ):
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_secret_binding_conflict",
+                        "Platform model credential conflicts with a Project binding",
+                    )
+                try:
+                    value = self._secret_provider.resolve(
+                        provider=binding.vault_provider,
+                        vault_ref=binding.vault_ref,
+                        version_ref=binding.version_ref,
+                    )
+                except Exception:  # noqa: BLE001 - redact Provider backend details.
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_secret_unavailable",
+                        "Platform model credential is unavailable",
+                    ) from None
+                if (
+                    not 16 <= len(value.encode()) <= 65_536
+                    or "\x00" in value
+                    or value != value.strip()
+                ):
+                    value = ""
+                    raise RunnerIsolationAdapterError(
+                        "platform_model_secret_unavailable",
+                        "Platform model credential is unavailable",
+                    )
+                path = secret_directory / f"material-{secrets.token_hex(24)}"
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    _write_all(descriptor, value.encode())
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                    value = ""
+                entries.append(
+                    CredentialProxyEntry(
+                        host=binding.host,
+                        scheme="bearer",
+                        source=CredentialSourceSpec(kind="file", path=str(path)),
+                        username=None,
+                        inject_env=list(binding.inject_env),
+                    )
+                )
             sandbox = OSEnvSandboxSpec(
                 type=contract.backend,
-                read_paths=[str(path) for path in _official_runtime_read_paths()],
+                read_paths=[
+                    *[str(path) for path in _official_runtime_read_paths()],
+                    *([str(model_config_home)] if model_config_home is not None else []),
+                ],
                 write_paths=(
                     [str(worktree_path)] if grant.worktree_access_mode == "writer" else None
                 ),
@@ -580,7 +672,9 @@ class RunnerIsolationAdapter:
                 cwd_hidden_scan_overflow="error",
                 cwd_hidden_scan_recursive=True,
                 mask_paths=[str(worktree_path / ".git")],
-                env_passthrough=[],
+                env_passthrough=(
+                    ["OMNIGENT_CONFIG_HOME"] if model_config_home is not None else []
+                ),
                 egress_rules=list(contract.egress_rules) or None,
                 egress_allow_private_destinations=False,
                 credential_proxy=(CredentialProxySpec(entries=entries) if entries else None),
