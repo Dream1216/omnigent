@@ -17,18 +17,18 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import (
     POLICY_VERSION,
     PlatformAuthorizationService,
     PlatformHttpConfig,
+    PlatformPasswordAuthenticationService,
     PlatformProjectionService,
     PlatformRoleAssignmentRecord,
     PlatformSessionService,
     SaasBase,
-    StaffIdentityAssertion,
     TenantProjectionInput,
     UserProjectionInput,
     create_platform_admin_app,
@@ -44,6 +44,8 @@ class PlatformBrowserFixture:
     origin: str
     operator_token: str
     roleless_token: str
+    username: str
+    password: str
 
 
 def _write_loopback_certificate(directory: Path) -> tuple[Path, Path]:
@@ -97,16 +99,15 @@ def platform_browser_server(tmp_path: Path) -> Iterator[PlatformBrowserFixture]:
     authorization = PlatformAuthorizationService(factory)
     sessions = PlatformSessionService(factory, origin=origin, audience=_AUDIENCE)
     projections = PlatformProjectionService(factory)
-    operator_id = authorization.provision_staff_principal(
-        identity_connection_ref="browser-staff-idp:operator",
-        issuer="https://staff-idp.browser.test",
-        subject="operator",
+    password_authentication = PlatformPasswordAuthenticationService(factory, sessions)
+    operator_id = password_authentication.provision_account(
+        username="operator",
+        password="operator-browser-password",
         now=now,
     )
-    roleless_id = authorization.provision_staff_principal(
-        identity_connection_ref="browser-staff-idp:roleless",
-        issuer="https://staff-idp.browser.test",
-        subject="roleless",
+    roleless_id = password_authentication.provision_account(
+        username="roleless",
+        password="roleless-browser-password",
         now=now,
     )
     with factory.begin() as db:
@@ -123,26 +124,14 @@ def platform_browser_server(tmp_path: Path) -> Iterator[PlatformBrowserFixture]:
                 updated_at=now,
             )
         )
-    operator = sessions.issue_session(
-        StaffIdentityAssertion(
-            issuer="https://staff-idp.browser.test",
-            subject="operator",
-            authn_method="webauthn",
-            mfa_strength="phishing_resistant",
-            authenticated_at=now,
-        ),
-        expires_at=now + timedelta(hours=1),
+    operator = password_authentication.authenticate(
+        "operator",
+        "operator-browser-password",
         now=now,
     )
-    roleless = sessions.issue_session(
-        StaffIdentityAssertion(
-            issuer="https://staff-idp.browser.test",
-            subject="roleless",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
-            authenticated_at=now,
-        ),
-        expires_at=now + timedelta(hours=1),
+    roleless = password_authentication.authenticate(
+        "roleless",
+        "roleless-browser-password",
         now=now,
     )
     projections.upsert_tenant(
@@ -177,6 +166,7 @@ def platform_browser_server(tmp_path: Path) -> Iterator[PlatformBrowserFixture]:
         sessions=sessions,
         authorization=authorization,
         projections=projections,
+        password_authentication=password_authentication,
     )
     cert_path, key_path = _write_loopback_certificate(tmp_path)
     server = uvicorn.Server(
@@ -201,7 +191,13 @@ def platform_browser_server(tmp_path: Path) -> Iterator[PlatformBrowserFixture]:
         engine.dispose()
         raise RuntimeError("Platform Admin HTTPS browser fixture did not start")
     try:
-        yield PlatformBrowserFixture(origin, operator.token, roleless.token)
+        yield PlatformBrowserFixture(
+            origin,
+            operator.token,
+            roleless.token,
+            "operator",
+            "operator-browser-password",
+        )
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -333,6 +329,31 @@ def _wrong_origin_and_bearer_matrix(
         context.close()
 
 
+def _local_password_login_flow(
+    browser: Browser,
+    fixture: PlatformBrowserFixture,
+) -> None:
+    context = browser.new_context(ignore_https_errors=True)
+    page = context.new_page()
+    try:
+        page.goto(f"{fixture.origin}/platform-admin")
+        expect(page).to_have_url(f"{fixture.origin}/platform-admin/login")
+        expect(page.get_by_test_id("staff-login-form")).to_be_visible()
+        page.get_by_test_id("staff-username").fill(fixture.username)
+        page.get_by_test_id("staff-password").fill(fixture.password)
+        page.get_by_test_id("staff-login-submit").click()
+        expect(page).to_have_url(f"{fixture.origin}/platform-admin")
+        expect(page.get_by_test_id("realm-lock")).to_contain_text("STAFF REALM")
+        assert page.evaluate("sessionStorage.getItem('omnigent.platform.csrf') !== null")
+        cookies = context.cookies(fixture.origin)
+        staff_cookie = next(item for item in cookies if item["name"] == _COOKIE_NAME)
+        assert staff_cookie["httpOnly"] is True
+        assert staff_cookie["secure"] is True
+        assert staff_cookie["sameSite"] == "Strict"
+    finally:
+        context.close()
+
+
 def test_real_chromium_platform_realm_and_role_negative_matrix(
     platform_browser_server: PlatformBrowserFixture,
 ) -> None:
@@ -348,4 +369,13 @@ def test_real_chromium_platform_rejects_wrong_origin_and_bearer(
     _run_in_fresh_browser_thread(
         platform_browser_server,
         _wrong_origin_and_bearer_matrix,
+    )
+
+
+def test_real_chromium_local_staff_password_login(
+    platform_browser_server: PlatformBrowserFixture,
+) -> None:
+    _run_in_fresh_browser_thread(
+        platform_browser_server,
+        _local_password_login_flow,
     )

@@ -112,7 +112,7 @@ class _StaffSessions:
             session_id=uuid4(),
             principal_id=STAFF_ACTOR,
             security_version=11,
-            authn_method="webauthn",
+            authn_method="password",
             authenticated_at=NOW - timedelta(minutes=1),
             expires_at=NOW + timedelta(hours=1),
             roles=frozenset({"platform_operator"}),

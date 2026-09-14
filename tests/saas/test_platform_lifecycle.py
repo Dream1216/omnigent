@@ -55,13 +55,13 @@ def pc2() -> tuple[
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:operator",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="operator",
         now=NOW,
     )
     approver_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:approver",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="approver",
         now=NOW,
     )
@@ -85,10 +85,10 @@ def pc2() -> tuple[
 def _actor(sessions: PlatformSessionService):
     issued = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="operator",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=NOW,
         ),
         expires_at=NOW + timedelta(hours=1),

@@ -176,7 +176,7 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
     principals = {
         name: authorization.provision_staff_principal(
             identity_connection_ref=f"pc4-browser:{name}",
-            issuer="https://staff-idp.browser.test",
+            issuer="urn:omnigent:staff-password",
             subject=name,
             now=now,
         )
@@ -303,10 +303,10 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
     for name in principals:
         session = sessions.issue_session(
             StaffIdentityAssertion(
-                issuer="https://staff-idp.browser.test",
+                issuer="urn:omnigent:staff-password",
                 subject=name,
-                authn_method="passkey",
-                mfa_strength="phishing_resistant",
+                authn_method="password",
+                mfa_strength="not_required",
                 authenticated_at=now,
             ),
             expires_at=now + timedelta(hours=1),

@@ -44,6 +44,7 @@ _SELECTED_HASH_TABLES = (
     "saas_password_credentials",
     "saas_auth_sessions",
     "saas_platform_staff_principals",
+    "saas_platform_password_credentials",
     "saas_platform_role_assignments",
     "saas_platform_auth_sessions",
     "saas_platform_tenant_projections",
@@ -619,12 +620,21 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "INSERT INTO saas_platform_staff_principals "
                     "(id, identity_connection_ref, issuer, subject, display_name, "
                     "email_normalized, status, security_version) VALUES "
-                    "(:platform_operator, 'recovery-staff-operator', "
-                    "'https://staff-idp.recovery.test', 'operator', 'Recovery Operator', "
+                    "(:platform_operator, 'local-password:operator', "
+                    "'urn:omnigent:staff-password', 'operator', 'Recovery Operator', "
                     "'operator@staff.recovery.test', 'active', 1), "
-                    "(:platform_approver, 'recovery-staff-approver', "
-                    "'https://staff-idp.recovery.test', 'approver', 'Recovery Approver', "
+                    "(:platform_approver, 'local-password:approver', "
+                    "'urn:omnigent:staff-password', 'approver', 'Recovery Approver', "
                     "'approver@staff.recovery.test', 'active', 1)"
+                ),
+                identifiers,
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_platform_password_credentials "
+                    "(principal_id, username_normalized, password_hash, password_version, "
+                    "failed_attempts, updated_at) VALUES "
+                    "(:platform_operator, 'operator', '$argon2id$recovery-fixture', 1, 0, now())"
                 ),
                 identifiers,
             )
@@ -736,8 +746,8 @@ def _seed_source(endpoint: PostgreSqlEndpoint, database: str) -> dict[str, str |
                     "origin, authn_method, mfa_strength, authenticated_at, expires_at) VALUES "
                     "(:platform_session, :platform_operator, :platform_token_hash, "
                     ":platform_csrf_hash, 1, 'omnigent-platform-admin', "
-                    "'https://platform-admin.recovery.test', 'passkey', "
-                    "'phishing_resistant', now(), now() + interval '1 hour')"
+                    "'https://platform-admin.recovery.test', 'password', "
+                    "'not_required', now(), now() + interval '1 hour')"
                 ),
                 {
                     **identifiers,
@@ -2265,13 +2275,14 @@ def _verify_restored_database(
                 sa.text(
                     "SELECT "
                     "(SELECT count(*) FROM saas_platform_staff_principals), "
+                    "(SELECT count(*) FROM saas_platform_password_credentials), "
                     "(SELECT count(*) FROM saas_platform_role_assignments), "
                     "(SELECT count(*) FROM saas_platform_auth_sessions), "
                     "(SELECT count(*) FROM saas_platform_tenant_projections), "
                     "(SELECT count(*) FROM saas_platform_user_projections)"
                 )
             ).one()
-            if tuple(platform_counts) != (2, 1, 1, 2, 1):
+            if tuple(platform_counts) != (2, 1, 1, 1, 2, 1):
                 raise PostgreSqlRestoreContractError(
                     "restored Staff Realm or content-blind platform projections drifted"
                 )

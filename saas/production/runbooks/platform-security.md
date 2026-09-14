@@ -10,17 +10,17 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 
 1. Deploy the Platform HTTP application on a dedicated HTTPS Origin. Configure a
    dedicated Audience, the `__Host-omnigent_platform_session` cookie, a separate CSRF
-   secret and a Staff-only enterprise IdP. Never mount this application under the
+   boundary and the local Staff password authenticator. Never mount this application under the
    Tenant Origin or copy Tenant cookies into its ingress.
-2. Require Passkey/WebAuthn or an equivalent phishing-resistant IdP assertion. Password
-   authentication, bearer tokens, a Tenant session, mixed Staff/Tenant cookies, an
-   incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `pc5a00000003`, then apply
-   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 85 control-plane
+2. Require a valid local Staff username/password. Do not configure TOTP, Passkey,
+   WebAuthn or an enterprise IdP for Staff. Bearer tokens, a Tenant session, mixed
+   Staff/Tenant cookies, an incorrect Origin, and an incorrect Audience fail closed.
+3. Migrate through `p0s000000014`, then apply
+   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 119 control-plane
    tables and 18 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
 
-   - Staff assertion and session service: `saas_platform_authenticator`;
+   - Staff password verification and session service: `saas_platform_authenticator`;
    - Platform browser API: `saas_platform_app`;
    - approved Staff and Assignment administration: `saas_platform_governance`;
    - content-blind projection writer: `saas_platform_projector`;
@@ -29,8 +29,8 @@ role. Destructive User/Tenant deletion and production release remain separate ga
    None may inherit `saas_platform`, `saas_app`, `saas_governance`, or another platform
    process role. The emergency `saas_platform` credential is not application
    configuration and must remain in the separate recovery Realm.
-5. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, IdP,
-   database-role and negative-matrix checks below pass for the exact release revision.
+5. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, password
+   lockout, database-role and negative-matrix checks below pass for the exact release revision.
 
 ## PC4 Platform Console
 
@@ -56,13 +56,22 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 
 ## Staff bootstrap and role governance
 
-- Synchronize the verified Staff Issuer and Subject into
-  `saas_platform_staff_principals`. Provisioning creates an active but role-less
-  principal and is idempotent only for the same identity connection reference.
-- Bootstrap the first assignments through an externally approved, audited database
-  procedure using `saas_platform_governance`. Preserve the approval reference, reason,
-  assigning principal and expiry. Never turn a Tenant Owner or database login into a
-  product Platform role.
+- Staff browser authentication is local username/password only. Do not configure an
+  enterprise IdP, TOTP, Passkey or WebAuthn challenge for this Realm. Store only an
+  Argon2id hash in `saas_platform_password_credentials`; never log, echo or persist the
+  plaintext password outside the login request.
+- Bootstrap the first `platform_operator` exactly once through
+  `PlatformPasswordAuthenticationService.bootstrap_initial_operator` using
+  `saas_platform_governance`. The bootstrap exception self-records the initial role;
+  later role changes still use the normal RBAC separation-of-duties path. Never turn a
+  Tenant Owner or database login into a product Platform role.
+- Login failures use one generic response for unknown users and wrong passwords. Five
+  consecutive failures lock the account for 15 minutes. Password verification issues
+  an Origin/Audience-bound Staff Cookie with an eight-hour maximum lifetime; logout,
+  suspension and security-version changes revoke its authority.
+- Perform password recovery only through the governance-side `reset_password` operation
+  with the expected credential version. A successful reset clears the lock, increments
+  both credential and Staff security versions, and revokes every existing Staff session.
 - Thereafter use `PlatformAuthorizationService`: fresh authentication, an external
   approval reference, two-person separation, active-target validation and optimistic
   assignment versions are mandatory. Self-grant and self-revoke are denied.
@@ -113,7 +122,7 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 ## PC2 lifecycle commands
 
 - High-risk User suspend/restore and Tenant suspend/restore require a current
-  `platform_operator` assignment, fresh phishing-resistant Staff authentication,
+  `platform_operator` assignment, fresh local-password Staff authentication,
   approval reference, reason, expected version and idempotency key. The governance
   transaction rechecks current authority rather than trusting browser session claims.
 - User suspension increments `security_version`, revokes all human Sessions, fails
@@ -251,4 +260,4 @@ PC2 lifecycle, PC3 governed-access slice and PC4 Console candidate: independent 
 Assignments, content-blind projections, least-privilege target-bound database roles,
 User/Tenant suspend/restore, Session revocation and Owner Recovery. It does not
 establish User/Tenant deletion, PC4 production deployment, production KMS signing,
-deployed Staff IdP/Origins, multi-AZ/PITR evidence, or release GO.
+deployed local Staff credential/Origin, multi-AZ/PITR evidence, or release GO.
