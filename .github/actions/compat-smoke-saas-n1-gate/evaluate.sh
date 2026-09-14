@@ -35,7 +35,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/saas/test_n1_merge_gate_candidate.py|45a29ba955b638c0a8850d5f39e62e0d4dd537cf8d8be3b65e5c40a958a1f2cc"
   "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
   "tests/saas/test_n1_outbox_admission.py|38a4e9c7b36eabcdab6c2bdcb72a9bfcc3390dc94a40766e1ec9680456c0ecd9"
-  "tests/saas/test_control_plane_migration.py|9b60daede28441ce9aa43d751384f36c8eb61711b3d6e25dc46c9cd8384b4604"
+  "tests/saas/test_control_plane_migration.py|ddbe931a5523952527d8b2159997d4adab902395a87fd8b5c83e948213e88ba1"
   "tests/saas/test_production_runner_postgresql.py|14cedc3269363e4ad2554b45e07346247a629e44ab3a577251679c715b4a7080"
 )
 
