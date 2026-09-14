@@ -63,9 +63,10 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000013` extends the forced-RLS control plane
-  through exact dispatch/profile binding, Preview execution sessions, and
-  per-Runner-incarnation database authority. The preceding approved p0s7 record
+- candidate schema revision `p0s000000014` extends the forced-RLS control plane
+  through exact dispatch/profile binding, Preview execution sessions,
+  per-Runner-incarnation database authority, and local Staff password credentials.
+  The preceding approved p0s7 record
   remains immutable history; this successor requires a new decision and
   evidence flow before it can be accepted. The direct Runner DML projection is
   isolated-Beta-only: cross-profile secret/isolation forgery, capability-action

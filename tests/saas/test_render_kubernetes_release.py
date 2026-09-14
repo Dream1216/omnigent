@@ -103,7 +103,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
         "receipt_signature_sha256": (
             None if mode == "stage" else _FLEET_RECEIPT_SIGNATURE_DIGEST.removeprefix("sha256:")
         ),
-        "schema_revision": "p0s000000013",
+        "schema_revision": "p0s000000014",
         "schema_version": 1,
         "stage": "admission" if mode == "stage" else "runtime",
     }
@@ -147,7 +147,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "region": "cn-east-1",
             "store_uri": store_uri,
         },
-        "control_plane_schema_revision": "p0s000000013",
+        "control_plane_schema_revision": "p0s000000014",
         "image_digest": "sha256:" + ("3" * 64),
         "ingress": {"namespace": "kube-system", "workload": "traefik"},
         "mode": mode,
@@ -658,7 +658,7 @@ def test_renderer_rejects_spec_symlink_and_unknown_key(tmp_path: Path) -> None:
         (
             "stage",
             lambda spec: spec.__setitem__("control_plane_schema_revision", "p0s000000009"),
-            "must equal the packaged p0s13 Alembic head",
+            "must equal the packaged p0s14 Alembic head",
         ),
         (
             "stage",
