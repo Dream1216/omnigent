@@ -2,11 +2,11 @@
 
 The SMTP password is accepted only on stdin and exists only in process memory.
 The exact platform-governance service login and OpenBao token are loaded from
-owner-only files.  The ceremony creates two distinct, short-lived Staff
+owner-only files. The ceremony creates two distinct, short-lived offline Staff
 identities with cross-assigned roles and records the explicit external approval
-reference.  It is available only while Staff, SMTP configuration, SMTP
-receipts, and Staff sessions are all at zero; it never creates a browser session
-or weakens the Staff IdP contract.
+reference. It is available only while Staff, SMTP configuration, SMTP receipts,
+and Staff sessions are all at zero; it never creates a browser login or a local
+password credential.
 """
 
 from __future__ import annotations

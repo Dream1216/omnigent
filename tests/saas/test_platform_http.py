@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
@@ -11,11 +12,11 @@ from sqlalchemy.pool import StaticPool
 from saas.control_plane import (
     PlatformAuthorizationService,
     PlatformHttpConfig,
+    PlatformPasswordAuthenticationService,
     PlatformProjectionService,
     PlatformRoleAssignmentRecord,
     PlatformSessionService,
     SaasBase,
-    StaffIdentityAssertion,
     TenantProjectionInput,
     UserProjectionInput,
     create_platform_admin_app,
@@ -24,6 +25,25 @@ from saas.control_plane import (
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
 NOW = datetime(2026, 8, 7, 13, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("supplied", [None, "wave1-retry-001", "invalid value", "x" * 129])
+def test_platform_request_id_matches_body_for_success_and_failure(supplied):
+    config, _sessions, client, issued, _roleless = _app()
+    headers = {"X-Request-ID": supplied} if supplied is not None else {}
+    denied = client.get("/v2/platform-admin/context", headers=headers)
+    assert denied.status_code == 401
+    assert denied.json()["request_id"] == denied.headers["X-Request-ID"]
+    if supplied == "wave1-retry-001":
+        assert denied.headers["X-Request-ID"] == supplied
+    else:
+        assert len(denied.headers["X-Request-ID"]) == 32
+    client.cookies.set(config.cookie_name, issued.token)
+    success = client.get("/v2/platform-admin/context", headers=headers)
+    assert success.status_code == 200
+    assert success.json()["request_id"] == success.headers["X-Request-ID"]
+    if supplied is None:
+        assert denied.headers["X-Request-ID"] != success.headers["X-Request-ID"]
 
 
 def _app(*, enabled: bool = True):
@@ -38,16 +58,15 @@ def _app(*, enabled: bool = True):
     authorization = PlatformAuthorizationService(factory)
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     projections = PlatformProjectionService(factory)
-    operator_id = authorization.provision_staff_principal(
-        identity_connection_ref="staff-idp:operator",
-        issuer="https://staff-idp.example.test",
-        subject="operator",
+    password_authentication = PlatformPasswordAuthenticationService(factory, sessions)
+    operator_id = password_authentication.provision_account(
+        username="operator",
+        password="operator-password-2026",
         now=NOW,
     )
-    roleless_id = authorization.provision_staff_principal(
-        identity_connection_ref="staff-idp:roleless",
-        issuer="https://staff-idp.example.test",
-        subject="roleless",
+    roleless_id = password_authentication.provision_account(
+        username="roleless",
+        password="roleless-password-2026",
         now=NOW,
     )
     with factory.begin() as db:
@@ -64,26 +83,14 @@ def _app(*, enabled: bool = True):
                 updated_at=NOW,
             )
         )
-    issued = sessions.issue_session(
-        StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
-            subject="operator",
-            authn_method="webauthn",
-            mfa_strength="phishing_resistant",
-            authenticated_at=session_now,
-        ),
-        expires_at=session_now + timedelta(hours=1),
+    issued = password_authentication.authenticate(
+        "operator",
+        "operator-password-2026",
         now=session_now,
     )
-    roleless = sessions.issue_session(
-        StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
-            subject="roleless",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
-            authenticated_at=session_now,
-        ),
-        expires_at=session_now + timedelta(hours=1),
+    roleless = password_authentication.authenticate(
+        "roleless",
+        "roleless-password-2026",
         now=session_now,
     )
     projections.upsert_tenant(
@@ -119,6 +126,7 @@ def _app(*, enabled: bool = True):
         sessions=sessions,
         authorization=authorization,
         projections=projections,
+        password_authentication=password_authentication,
     )
     return config, sessions, TestClient(app, base_url=ORIGIN), issued, roleless
 
@@ -161,9 +169,15 @@ def test_platform_http_is_independent_origin_cookie_audience_and_content_blind()
 def test_platform_console_shell_and_assets_require_staff_realm_session() -> None:
     config, _sessions, client, issued, roleless = _app()
 
-    unauthenticated = client.get("/platform-admin")
-    assert unauthenticated.status_code == 401
-    assert unauthenticated.json()["error"]["code"] == "platform_authentication_required"
+    unauthenticated = client.get("/platform-admin", follow_redirects=False)
+    assert unauthenticated.status_code == 303
+    assert unauthenticated.headers["location"] == "/platform-admin/login"
+    login = client.get("/platform-admin/login")
+    assert login.status_code == 200
+    assert 'data-testid="staff-login-form"' in login.text
+    assert "USERNAME + PASSWORD" in login.text
+    assert "Passkey" not in login.text
+    assert "TOTP" not in login.text
 
     client.cookies.set(config.cookie_name, issued.token)
     page = client.get("/platform-admin")
@@ -276,6 +290,55 @@ def test_platform_logout_requires_exact_origin_and_csrf_then_revokes() -> None:
     )
     assert logged_out.status_code == 204
     assert client.get("/v2/platform-admin/context").status_code == 401
+
+
+def test_platform_local_password_login_sets_staff_cookie_and_csrf() -> None:
+    config, _sessions, client, _issued, _roleless = _app()
+    client.cookies.clear()
+
+    wrong = client.post(
+        "/v2/platform-admin/session/login",
+        headers={"Origin": ORIGIN},
+        json={"username": "operator", "password": "wrong-password-value"},
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["error"]["code"] == "platform_invalid_credentials"
+
+    logged_in = client.post(
+        "/v2/platform-admin/session/login",
+        headers={"Origin": ORIGIN},
+        json={"username": "operator", "password": "operator-password-2026"},
+    )
+    assert logged_in.status_code == 201
+    assert logged_in.json()["realm"] == "staff"
+    assert logged_in.json()["authentication_method"] == "password"
+    assert logged_in.json()["csrf_token"]
+    assert config.cookie_name in client.cookies
+    assert client.get("/v2/platform-admin/context").status_code == 200
+
+
+def test_platform_login_rejects_missing_origin_tenant_cookie_and_bearer() -> None:
+    _config, _sessions, client, _issued, _roleless = _app()
+    client.cookies.clear()
+    command = {"username": "operator", "password": "operator-password-2026"}
+
+    assert client.post("/v2/platform-admin/session/login", json=command).status_code == 401
+    client.cookies.set("__Host-omnigent_saas_session", "tenant-session")
+    mixed = client.post(
+        "/v2/platform-admin/session/login",
+        headers={"Origin": ORIGIN},
+        json=command,
+    )
+    assert mixed.status_code == 401
+    assert mixed.json()["error"]["code"] == "platform_realm_mismatch"
+    client.cookies.clear()
+    bearer = client.post(
+        "/v2/platform-admin/session/login",
+        headers={"Origin": ORIGIN, "Authorization": "Bearer customer-token"},
+        json=command,
+    )
+    assert bearer.status_code == 401
+    assert bearer.json()["error"]["code"] == "platform_realm_mismatch"
 
 
 def test_platform_feature_flag_fails_closed() -> None:

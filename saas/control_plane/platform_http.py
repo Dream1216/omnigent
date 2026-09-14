@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Query, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from saas.control_plane.permissions import POLICY_VERSION, permission_catalog_payload
@@ -57,6 +58,9 @@ if TYPE_CHECKING:
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
+    )
+    from saas.control_plane.platform_password_auth import (
+        PlatformPasswordAuthenticationService,
     )
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -206,6 +210,13 @@ class _EmailConfigurationTestCommand(BaseModel):
     recipient: str = Field(min_length=3, max_length=320)
 
 
+class _StaffPasswordLoginCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    username: str = Field(min_length=1, max_length=128)
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
 class _ModelProviderConfigurationCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -305,8 +316,13 @@ class PlatformHttpConfig:
 
 
 def _request_id(request: Request) -> str:
+    existing = getattr(request.state, "platform_request_id", None)
+    if existing is not None:
+        return existing
     supplied = request.headers.get("x-request-id", "").strip()
-    return supplied[:128] if supplied else uuid4().hex
+    request_id = supplied if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", supplied) else uuid4().hex
+    request.state.platform_request_id = request_id
+    return request_id
 
 
 def _status_for(error: PlatformSecurityError) -> int:
@@ -314,6 +330,7 @@ def _status_for(error: PlatformSecurityError) -> int:
         return 404
     if error.code in {
         "platform_authentication_required",
+        "platform_invalid_credentials",
         "platform_realm_mismatch",
         "platform_session_invalid",
         "platform_principal_inactive",
@@ -348,6 +365,7 @@ def create_platform_admin_app(
     notification_operations: NotificationOperationsProtocol | None = None,
     email_configuration: EmailProviderConfigurationService | None = None,
     model_provider: ModelProviderConfigurationService | None = None,
+    password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
 
@@ -362,6 +380,7 @@ def create_platform_admin_app(
 
     @app.middleware("http")
     async def platform_security_headers(request: Request, call_next):
+        request_id = _request_id(request)
         response = await call_next(request)
         response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault(
@@ -369,7 +388,7 @@ def create_platform_admin_app(
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Request-ID"] = _request_id(request)
+        response.headers["X-Request-ID"] = request_id
         response.headers["X-Platform-Policy-Version"] = POLICY_VERSION
         return response
 
@@ -427,6 +446,30 @@ def create_platform_admin_app(
         if request.method in _UNSAFE_METHODS:
             sessions.validate_csrf(token, request.headers.get("x-csrf-token", ""))
         return principal, token
+
+    def validate_public_realm(request: Request, *, unsafe: bool = False) -> None:
+        if not config.enabled:
+            raise PlatformSecurityError(
+                "platform_feature_disabled", "Platform Admin is not enabled"
+            )
+        request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+        origin_header = request.headers.get("origin")
+        if request_origin != config.origin.rstrip("/"):
+            raise PlatformSecurityError(
+                "platform_realm_mismatch", "request reached the wrong Platform Origin"
+            )
+        if unsafe and (
+            origin_header is None or origin_header.rstrip("/") != config.origin.rstrip("/")
+        ):
+            raise PlatformSecurityError(
+                "platform_realm_mismatch", "Staff login requires an exact Origin"
+            )
+        if request.headers.get("authorization") or any(
+            request.cookies.get(name) for name in config.tenant_cookie_names
+        ):
+            raise PlatformSecurityError(
+                "platform_realm_mismatch", "Tenant and Staff Realm credentials cannot be mixed"
+            )
 
     def lifecycle_service() -> PlatformLifecycleService:
         if lifecycle is None:
@@ -536,8 +579,16 @@ def create_platform_admin_app(
 
     @app.get("/platform-admin", include_in_schema=False)
     @app.get("/platform-admin/", include_in_schema=False)
-    def platform_admin_ui(request: Request) -> HTMLResponse:
-        authenticate(request)
+    def platform_admin_ui(request: Request) -> Response:
+        try:
+            authenticate(request)
+        except PlatformSecurityError as error:
+            if error.code not in {
+                "platform_authentication_required",
+                "platform_session_invalid",
+            }:
+                raise
+            return RedirectResponse("/platform-admin/login", status_code=303)
         return HTMLResponse(
             files("saas.admin_ui").joinpath("platform_admin.html").read_text(encoding="utf-8"),
             headers={
@@ -548,6 +599,78 @@ def create_platform_admin_app(
                 )
             },
         )
+
+    @app.get("/platform-admin/login", include_in_schema=False)
+    def platform_admin_login_ui(request: Request) -> Response:
+        validate_public_realm(request)
+        token = request.cookies.get(config.cookie_name, "")
+        if token:
+            try:
+                sessions.validate_session(
+                    token,
+                    origin=config.origin,
+                    audience=config.audience,
+                )
+            except PlatformSecurityError:
+                pass
+            else:
+                return RedirectResponse("/platform-admin", status_code=303)
+        return HTMLResponse(
+            files("saas.admin_ui").joinpath("platform_login.html").read_text(encoding="utf-8"),
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'self'; style-src 'self'; "
+                    "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+                    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+                )
+            },
+        )
+
+    @app.get("/platform-admin/assets/platform-login.css", include_in_schema=False)
+    def platform_admin_login_css(request: Request) -> Response:
+        validate_public_realm(request)
+        return _platform_admin_asset("platform_login.css", "text/css")
+
+    @app.get("/platform-admin/assets/platform-login.js", include_in_schema=False)
+    def platform_admin_login_javascript(request: Request) -> Response:
+        validate_public_realm(request)
+        return _platform_admin_asset("platform_login.js", "text/javascript")
+
+    @app.post("/v2/platform-admin/session/login")
+    def platform_admin_login(
+        command: _StaffPasswordLoginCommand,
+        request: Request,
+    ) -> Response:
+        validate_public_realm(request, unsafe=True)
+        if password_authentication is None:
+            raise PlatformSecurityError(
+                "platform_password_authentication_unavailable",
+                "local Staff password authentication is unavailable",
+            )
+        issued = password_authentication.authenticate(
+            command.username,
+            command.password.get_secret_value(),
+        )
+        response = JSONResponse(
+            status_code=201,
+            content={
+                "realm": "staff",
+                "session_id": str(issued.session_id),
+                "principal_id": str(issued.principal_id),
+                "csrf_token": issued.csrf_token,
+                "expires_at": issued.expires_at.isoformat(),
+                "authentication_method": "password",
+            },
+        )
+        response.set_cookie(
+            key=config.cookie_name,
+            value=issued.token,
+            secure=True,
+            httponly=True,
+            samesite="strict",
+            path="/",
+        )
+        return response
 
     @app.get("/platform-admin/assets/platform-admin.css", include_in_schema=False)
     def platform_admin_css(request: Request) -> Response:

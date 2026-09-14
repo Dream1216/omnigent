@@ -321,7 +321,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 connection.execute(
                     sa.text("SELECT version_num FROM saas_alembic_version")
                 ).scalar_one()
-                == "p0s000000013"
+                == "p0s000000014"
             )
             connection.exec_driver_sql(
                 f'GRANT CONNECT ON DATABASE "{database_name}" TO '
@@ -885,7 +885,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
             session_id=uuid4(),
             principal_id=principal_id,
             security_version=1,
-            authn_method="passkey",
+            authn_method="password",
             authenticated_at=race_at,
             expires_at=race_at + timedelta(hours=1),
             roles=frozenset({"compliance_operator"}),

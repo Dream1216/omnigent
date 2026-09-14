@@ -140,7 +140,7 @@ def test_n1_roles_bootstrap_keeps_production_enable_fail_closed() -> None:
     assert privacy_guard < privacy_projection
 
 
-def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() -> None:
+def test_n1_roles_replay_p0s8_through_p0s14_reuse_exact_p0s7_rate_contracts() -> None:
     source = _roles_source()
     revision_guard = source[
         source.index("IF revision_rows <> 1") : source.index(
@@ -173,6 +173,7 @@ def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000011",
         "p0s000000012",
         "p0s000000013",
+        "p0s000000014",
     )
     normalized_constraint_contract = " ".join(constraint_contract.split())
 
@@ -188,6 +189,7 @@ def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000011",
         "p0s000000012",
         "p0s000000013",
+        "p0s000000014",
     )
     assert tuple(consume_hashes) == (
         "p0s000000005",
@@ -199,6 +201,7 @@ def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000011",
         "p0s000000012",
         "p0s000000013",
+        "p0s000000014",
     )
     assert {revision: consume_hashes[revision] for revision in forward_revisions} == dict.fromkeys(
         forward_revisions, p0s7_consume_hash
@@ -209,7 +212,7 @@ def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() ->
     assert (
         "schema_revision IN ( 'p0s000000006', 'p0s000000007', "
         "'p0s000000008', 'p0s000000009', 'p0s000000010', 'p0s000000011', "
-        "'p0s000000012', 'p0s000000013' )" in normalized_constraint_contract
+        "'p0s000000012', 'p0s000000013', 'p0s000000014' )" in normalized_constraint_contract
     )
     assert set(re.findall(r"'((?:p0s)[0-9]{9})'", normalized_constraint_contract)) == {
         "p0s000000005",
@@ -221,6 +224,7 @@ def test_n1_roles_replay_p0s8_through_p0s13_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000011",
         "p0s000000012",
         "p0s000000013",
+        "p0s000000014",
     }
 
 

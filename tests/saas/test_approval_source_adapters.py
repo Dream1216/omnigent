@@ -138,7 +138,7 @@ def _principal(principal_id: UUID, roles: tuple[str, ...]) -> ValidatedPlatformP
         session_id=uuid4(),
         principal_id=principal_id,
         security_version=1,
-        authn_method="passkey",
+        authn_method="password",
         authenticated_at=NOW,
         expires_at=NOW + timedelta(hours=1),
         roles=frozenset(roles),

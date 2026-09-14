@@ -76,13 +76,13 @@ def privacy() -> tuple[
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy",
         now=NOW,
     )
     assigner_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:assigner",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="assigner",
         now=NOW,
     )
@@ -111,10 +111,10 @@ def privacy() -> tuple[
 def _actor(sessions: PlatformSessionService):
     issued = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=NOW,
         ),
         expires_at=NOW + timedelta(hours=1),

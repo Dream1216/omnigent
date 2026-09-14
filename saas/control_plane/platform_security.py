@@ -29,7 +29,7 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 
-_PHISHING_RESISTANT_METHODS = frozenset({"passkey", "webauthn", "oidc:acr:phishing-resistant"})
+_LOCAL_PASSWORD_ISSUER = "urn:omnigent:staff-password"
 _MAX_SESSION_TTL = timedelta(hours=8)
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
 _INITIAL_STAFF_BOOTSTRAP_LOCK = 0x4F4D4E4953544146
@@ -95,7 +95,7 @@ def _current_permissions(
 
 @dataclass(frozen=True, slots=True)
 class StaffIdentityAssertion:
-    """Verified assertion supplied only by the dedicated Staff IdP adapter."""
+    """Verified local-password assertion supplied by the Staff authenticator."""
 
     issuer: str
     subject: str
@@ -137,7 +137,7 @@ class PlatformRoleAssignmentView:
 
 @dataclass(frozen=True, slots=True)
 class InitialPlatformStaffIdentity:
-    """One identity in the zero-state, two-party Staff bootstrap ceremony."""
+    """One offline identity in the legacy two-party bootstrap ceremony."""
 
     identity_connection_ref: str
     issuer: str
@@ -203,7 +203,7 @@ class PlatformSessionService:
         expires_at: datetime,
         now: datetime | None = None,
     ) -> IssuedPlatformSession:
-        """Issue only after a current phishing-resistant Staff IdP assertion."""
+        """Issue only after a current local Staff password verification."""
 
         issued_at = now or _utcnow()
         for value, field in (
@@ -212,11 +212,11 @@ class PlatformSessionService:
             (assertion.authenticated_at, "authenticated_at"),
         ):
             _require_aware(value, field)
-        if assertion.mfa_strength != "phishing_resistant":
+        if assertion.mfa_strength != "not_required":
             raise PlatformSecurityError(
-                "platform_mfa_required", "phishing-resistant Staff MFA is required"
+                "platform_authn_strength_invalid", "Staff authentication strength is invalid"
             )
-        if assertion.authn_method not in _PHISHING_RESISTANT_METHODS:
+        if assertion.authn_method != "password" or assertion.issuer != _LOCAL_PASSWORD_ISSUER:
             raise PlatformSecurityError(
                 "platform_authn_method_invalid", "Staff authentication method is not accepted"
             )
@@ -318,7 +318,8 @@ class PlatformSessionService:
                     PlatformAuthSessionRecord.expires_at > checked_at,
                     PlatformAuthSessionRecord.origin == self.origin,
                     PlatformAuthSessionRecord.audience == self.audience,
-                    PlatformAuthSessionRecord.mfa_strength == "phishing_resistant",
+                    PlatformAuthSessionRecord.authn_method == "password",
+                    PlatformAuthSessionRecord.mfa_strength == "not_required",
                 )
             ).scalar_one_or_none()
             if auth_session is None:
@@ -434,7 +435,11 @@ class PlatformAuthorizationService:
         email_normalized: str | None = None,
         now: datetime | None = None,
     ) -> UUID:
-        """Provision a role-less Staff identity from the dedicated IdP sync."""
+        """Provision a role-less Staff identity through governance authority.
+
+        Browser login uses the local password service. This compatibility seam
+        remains for offline operational identities and does not enable IdP login.
+        """
 
         provisioned_at = now or _utcnow()
         _require_aware(provisioned_at, "now")
@@ -491,11 +496,11 @@ class PlatformAuthorizationService:
         """Bootstrap the first short-lived operator and auditor, exactly once.
 
         This is an offline recovery/installation ceremony, not a browser login
-        and not a substitute for the Staff IdP.  It is admitted only while all
+        and not a substitute for local Staff password login. It is admitted only while all
         Staff principals, assignments, and sessions are absent.  The two role
         assignments cross-reference distinct principals, retain the external
         approval reference, and must expire within one hour.  The returned
-        principal exists only in the caller process so no synthetic WebAuthn or
+        principal exists only in the caller process so no synthetic browser or
         persistent Staff session is created.
         """
 

@@ -11,7 +11,7 @@
   "evidence_directory": "saas/production/enterprise-evidence",
   "max_evidence_age_days": 30,
   "required_integrations": {
-    "staff_idp": ["privileged_mfa", "session_revocation", "recovery_fail_closed"],
+    "staff_password_auth": ["argon2id", "persistent_lockout", "session_revocation"],
     "customer_oidc": ["code_pkce", "domain_claim", "jit_policy"],
     "customer_saml": ["signed_response", "audience_recipient", "replay_rejection"],
     "scim": ["token_rotation", "out_of_order_convergence", "deprovision_no_resurrection"],
@@ -43,7 +43,7 @@
     "scim_microsoft_entra_e2e_verified",
     "scim_okta_e2e_verified",
     "scim_google_workspace_e2e_verified",
-    "privileged_mfa_and_recovery_enforced",
+    "staff_password_lockout_and_recovery_enforced",
     "group_and_custom_role_lifecycle_enforced",
     "support_and_break_glass_governed",
     "signed_audit_export_verified",
@@ -61,8 +61,8 @@
     "scim_okta_attribute_and_group_push_drift",
     "scim_google_workspace_suspend_restore_drift",
     "scim_owner_deprovision",
-    "mfa_enrollment_and_challenge",
-    "account_recovery",
+    "staff_password_lockout_and_reset",
+    "staff_session_revocation",
     "group_role_scope_drift",
     "support_grant_revocation",
     "break_glass_expiry",
@@ -83,7 +83,7 @@
     "scim_microsoft_entra_operation_count",
     "scim_okta_operation_count",
     "scim_google_workspace_operation_count",
-    "privileged_mfa_challenge_count"
+    "staff_password_login_count"
   ],
   "minimum_customer_acceptances": 1,
   "required_attestation_roles": [
