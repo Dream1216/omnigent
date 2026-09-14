@@ -114,6 +114,7 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
         runner_adapter_factory=None,
         preview_adapter_factory=None,
         service_role_bindings=service_role_bindings,
+        platform_model_service_role_bindings=None,
         migration_receipt=ProductionMigrationReceipt(
             path=tmp_path / "migration-receipt.json",
             product_revision="1" * 40,
@@ -122,6 +123,7 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
             database_identity_sha256="4" * 64,
             catalog_sha256="5" * 64,
             service_role_bindings_sha256=service_role_bindings.sha256,
+            service_role_graph_sha256=service_role_bindings.sha256,
             runtime_rls_table_count=15,
         ),
         artifact_admission_receipt=ProductionArtifactAdmissionReceipt(
@@ -490,6 +492,7 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
                 "control_plane_schema_revision": "p0s000000007",
                 "adapter_contract_version": "0.2.0",
                 "service_role_bindings_sha256": "6" * 64,
+                "service_role_graph_sha256": _config(tmp_path).service_role_graph.sha256,
                 "artifact_credential_revision": "sha256:" + "f" * 64,
                 "artifact_admission_receipt_sha256": "7" * 64,
                 "capabilities": ["run", "tenant"],

@@ -10,7 +10,9 @@ from saas.production.service_bindings import (
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
+    ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
+    compose_production_service_role_graph,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
     render_production_service_role_bindings,
@@ -90,6 +92,65 @@ def test_loads_isolated_platform_model_binding_profile(tmp_path: Path) -> None:
         load_platform_model_service_role_bindings(
             {"OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE": str(production_path)}
         )
+
+
+def test_composes_exact_platform_model_extension_without_weakening_core() -> None:
+    production = ProductionServiceRoleBindings(
+        path=Path("/production.json"),
+        sha256="a" * 64,
+        bindings=_bindings(),
+    )
+    production_by_service = production.by_service
+    platform = ProductionServiceRoleBindings(
+        path=Path("/platform.json"),
+        sha256="b" * 64,
+        bindings=tuple(
+            production_by_service[service]
+            if service in production_by_service
+            else ProductionServiceRoleBinding(
+                service=service,
+                login=f"next_beta_{service}",
+                base_role=base_role,
+            )
+            for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+        ),
+    )
+
+    graph = compose_production_service_role_graph(production, platform)
+
+    assert len(graph.bindings) == 17
+    assert graph.login_for("app") == "prod_app"
+    assert graph.login_for("billing") == "next_beta_billing"
+    assert graph.login_for("platform_app") == "next_beta_platform_app"
+    assert (
+        graph.sha256
+        == hashlib.sha256(
+            render_production_service_role_bindings(graph.bindings).encode("ascii")
+        ).hexdigest()
+    )
+
+
+def test_composition_rejects_changed_overlap_and_reused_login() -> None:
+    production = ProductionServiceRoleBindings(
+        path=Path("/production.json"),
+        sha256="a" * 64,
+        bindings=_bindings(),
+    )
+    changed_overlap = ProductionServiceRoleBindings(
+        path=Path("/platform.json"),
+        sha256="b" * 64,
+        bindings=(ProductionServiceRoleBinding("app", "another_app", "saas_app"),),
+    )
+    with pytest.raises(ProductionServiceRoleBindingsError, match="different bindings"):
+        compose_production_service_role_graph(production, changed_overlap)
+
+    reused_login = ProductionServiceRoleBindings(
+        path=Path("/platform.json"),
+        sha256="b" * 64,
+        bindings=(ProductionServiceRoleBinding("billing", "prod_runtime", "saas_billing"),),
+    )
+    with pytest.raises(ProductionServiceRoleBindingsError, match="reuse a login"):
+        compose_production_service_role_graph(production, reused_login)
 
 
 def test_rejects_noncanonical_or_mutable_binding_file(tmp_path: Path) -> None:

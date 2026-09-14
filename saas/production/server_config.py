@@ -28,6 +28,9 @@ from sqlalchemy.engine import URL, make_url
 from saas.production.service_bindings import (
     ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
+    ProductionServiceRoleGraph,
+    compose_production_service_role_graph,
+    load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
 )
 
@@ -85,6 +88,7 @@ class ProductionMigrationReceipt:
     database_identity_sha256: str
     catalog_sha256: str
     service_role_bindings_sha256: str
+    service_role_graph_sha256: str
     runtime_rls_table_count: int
 
 
@@ -203,6 +207,7 @@ class ProductionServerConfig:
     runner_adapter_factory: str | None
     preview_adapter_factory: str | None
     service_role_bindings: ProductionServiceRoleBindings = field(repr=False)
+    platform_model_service_role_bindings: ProductionServiceRoleBindings | None = field(repr=False)
     migration_receipt: ProductionMigrationReceipt
     artifact_admission_receipt: ProductionArtifactAdmissionReceipt
     secrets: ProductionServerSecrets = field(repr=False)
@@ -210,6 +215,15 @@ class ProductionServerConfig:
     preview_lease_seconds: int = 300
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
+
+    @property
+    def service_role_graph(self) -> ProductionServiceRoleGraph:
+        """Return the release-bound core plus optional Platform-model role graph."""
+
+        return compose_production_service_role_graph(
+            self.service_role_bindings,
+            self.platform_model_service_role_bindings,
+        )
 
     @property
     def version_document(self) -> Mapping[str, object]:
@@ -226,6 +240,7 @@ class ProductionServerConfig:
                 "control_plane_schema_revision": self.control_plane_schema_revision,
                 "adapter_contract_version": self.adapter_contract_version,
                 "service_role_bindings_sha256": self.service_role_bindings.sha256,
+                "service_role_graph_sha256": self.service_role_graph.sha256,
                 "artifact_credential_revision": self.artifact_credential_revision,
                 "artifact_admission_receipt_sha256": (
                     self.artifact_admission_receipt.source_sha256
@@ -780,6 +795,7 @@ def _migration_receipt(
     official_head: str,
     saas_head: str,
     service_role_bindings_sha256: str,
+    service_role_graph_sha256: str | None,
 ) -> ProductionMigrationReceipt:
     name = "OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"
     path = _absolute_regular_file(_required(source, name), name=name, owner_only=True)
@@ -829,6 +845,7 @@ def _migration_receipt(
     database_identity = document.get("database_identity_sha256")
     catalog = document.get("catalog_sha256")
     receipt_bindings = document.get("service_role_bindings_sha256")
+    receipt_graph = document.get("service_role_graph_sha256", receipt_bindings)
     table_count = document.get("runtime_rls_table_count")
     if (
         not isinstance(database_identity, str)
@@ -836,6 +853,9 @@ def _migration_receipt(
         or not isinstance(catalog, str)
         or _SHA256.fullmatch(catalog) is None
         or receipt_bindings != service_role_bindings_sha256
+        or not isinstance(receipt_graph, str)
+        or _SHA256.fullmatch(receipt_graph) is None
+        or (service_role_graph_sha256 is not None and receipt_graph != service_role_graph_sha256)
         or isinstance(table_count, bool)
         or not isinstance(table_count, int)
         or table_count <= 0
@@ -849,6 +869,7 @@ def _migration_receipt(
         database_identity_sha256=database_identity,
         catalog_sha256=catalog,
         service_role_bindings_sha256=service_role_bindings_sha256,
+        service_role_graph_sha256=receipt_graph,
         runtime_rls_table_count=table_count,
     )
 
@@ -860,6 +881,7 @@ def load_production_migration_receipt(
     official_head: str,
     saas_head: str,
     service_role_bindings_sha256: str,
+    service_role_graph_sha256: str | None = None,
 ) -> ProductionMigrationReceipt:
     """Load the immutable migration handoff shared by server and workers."""
 
@@ -869,6 +891,7 @@ def load_production_migration_receipt(
         official_head=official_head,
         saas_head=saas_head,
         service_role_bindings_sha256=service_role_bindings_sha256,
+        service_role_graph_sha256=service_role_graph_sha256,
     )
 
 
@@ -935,6 +958,15 @@ def load_production_server_config(
 
     try:
         service_role_bindings = load_production_service_role_bindings(source)
+        platform_model_service_role_bindings = (
+            load_platform_model_service_role_bindings(source)
+            if "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE" in source
+            else None
+        )
+        service_role_graph = compose_production_service_role_graph(
+            service_role_bindings,
+            platform_model_service_role_bindings,
+        )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
     database_urls = _load_database_urls(source)
@@ -999,6 +1031,7 @@ def load_production_server_config(
         official_head=official_schema_revision,
         saas_head=control_plane_schema_revision,
         service_role_bindings_sha256=service_role_bindings.sha256,
+        service_role_graph_sha256=service_role_graph.sha256,
     )
     artifact_readiness_sha256 = _required(source, "OMNIGENT_SAAS_ARTIFACT_READINESS_SHA256")
     if _SHA256.fullmatch(artifact_readiness_sha256) is None:
@@ -1051,6 +1084,7 @@ def load_production_server_config(
         runner_adapter_factory=runner_adapter_factory,
         preview_adapter_factory=preview_adapter_factory,
         service_role_bindings=service_role_bindings,
+        platform_model_service_role_bindings=platform_model_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,

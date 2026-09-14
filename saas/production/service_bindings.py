@@ -79,6 +79,26 @@ class ProductionServiceRoleBindings:
         return MappingProxyType({binding.service: binding for binding in self.bindings})
 
 
+@dataclass(frozen=True, slots=True)
+class ProductionServiceRoleGraph:
+    """Exact union of the core and optional release-scoped service profiles."""
+
+    sha256: str
+    bindings: tuple[ProductionServiceRoleBinding, ...]
+
+    def login_for(self, service: str) -> str:
+        """Return the only admitted login for one exact service."""
+
+        for binding in self.bindings:
+            if binding.service == service:
+                return binding.login
+        raise KeyError(service)
+
+    @property
+    def by_service(self) -> Mapping[str, ProductionServiceRoleBinding]:
+        return MappingProxyType({binding.service: binding for binding in self.bindings})
+
+
 def _canonical_document(
     bindings: tuple[ProductionServiceRoleBinding, ...],
 ) -> dict[str, object]:
@@ -109,6 +129,40 @@ def render_production_service_role_bindings(
             ensure_ascii=True,
         )
         + "\n"
+    )
+
+
+def compose_production_service_role_graph(
+    production: ProductionServiceRoleBindings,
+    platform_model: ProductionServiceRoleBindings | None = None,
+) -> ProductionServiceRoleGraph:
+    """Compose profiles without permitting an overlap or login to change meaning."""
+
+    by_service = {binding.service: binding for binding in production.bindings}
+    if platform_model is not None:
+        for binding in platform_model.bindings:
+            existing = by_service.get(binding.service)
+            if existing is not None and existing != binding:
+                raise ProductionServiceRoleBindingsError(
+                    "service-role profiles assign different bindings to the same service"
+                )
+            by_service[binding.service] = binding
+    bindings = tuple(sorted(by_service.values(), key=lambda binding: binding.service))
+    logins = {binding.login for binding in bindings}
+    if len(logins) != len(bindings):
+        duplicate_services = {
+            binding.service
+            for binding in bindings
+            if sum(item.login == binding.login for item in bindings) > 1
+        }
+        raise ProductionServiceRoleBindingsError(
+            "service-role profiles reuse a login across services: "
+            + ",".join(sorted(duplicate_services))
+        )
+    canonical = render_production_service_role_bindings(bindings)
+    return ProductionServiceRoleGraph(
+        sha256=hashlib.sha256(canonical.encode("ascii")).hexdigest(),
+        bindings=bindings,
     )
 
 
@@ -221,6 +275,8 @@ __all__ = [
     "ProductionServiceRoleBinding",
     "ProductionServiceRoleBindings",
     "ProductionServiceRoleBindingsError",
+    "ProductionServiceRoleGraph",
+    "compose_production_service_role_graph",
     "load_platform_model_service_role_bindings",
     "load_production_service_role_bindings",
     "render_production_service_role_bindings",

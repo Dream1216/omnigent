@@ -34,8 +34,12 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBindings,
+    ProductionServiceRoleBindingsError,
+    ProductionServiceRoleGraph,
+    compose_production_service_role_graph,
 )
 
 AuthorityKind = Literal[
@@ -44,6 +48,7 @@ AuthorityKind = Literal[
     "official_owner",
     "saas_owner",
 ]
+_ServiceRoleProfile = ProductionServiceRoleBindings | ProductionServiceRoleGraph
 
 _AUTHORITY_KINDS: tuple[AuthorityKind, ...] = (
     "principal_operator",
@@ -362,6 +367,7 @@ class ProductionPostgreSqlPlan:
     official_owner: PostgreSqlAuthority
     saas_owner: PostgreSqlAuthority
     service_role_bindings: ProductionServiceRoleBindings
+    platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
 
@@ -375,6 +381,7 @@ class ProductionPostgreSqlPlan:
         official_owner_url: str,
         saas_owner_url: str,
         service_role_bindings: ProductionServiceRoleBindings,
+        platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
     ) -> ProductionPostgreSqlPlan:
@@ -401,6 +408,7 @@ class ProductionPostgreSqlPlan:
                 require_tls=require_tls,
             ),
             service_role_bindings=service_role_bindings,
+            platform_model_service_role_bindings=platform_model_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
         )
@@ -412,6 +420,20 @@ class ProductionPostgreSqlPlan:
             self.official_owner,
             self.saas_owner,
         )
+
+    @property
+    def service_role_graph(self) -> ProductionServiceRoleGraph:
+        """Return the exact core plus optional Platform-model role graph."""
+
+        try:
+            return compose_production_service_role_graph(
+                self.service_role_bindings,
+                self.platform_model_service_role_bindings,
+            )
+        except ProductionServiceRoleBindingsError as error:
+            raise PostgreSqlMigrationError(
+                "service_role_bindings_invalid", "configuration"
+            ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,6 +452,7 @@ class PostgreSqlMigrationReceipt:
     phases: tuple[str, ...]
     catalog_sha256: str
     service_role_bindings_sha256: str
+    service_role_graph_sha256: str
     completed_at: str
 
     def to_dict(self) -> dict[str, object]:
@@ -446,6 +469,7 @@ class PostgreSqlMigrationReceipt:
             "phases": list(self.phases),
             "catalog_sha256": self.catalog_sha256,
             "service_role_bindings_sha256": self.service_role_bindings_sha256,
+            "service_role_graph_sha256": self.service_role_graph_sha256,
             "completed_at": self.completed_at,
         }
 
@@ -490,6 +514,7 @@ class _RuntimeReceipt:
     database_identity_sha256: str
     catalog_sha256: str
     service_role_bindings_sha256: str
+    service_role_graph_sha256: str
     runtime_rls_table_count: int
     official_owner: str
     saas_owner: str
@@ -590,6 +615,21 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
         or set(logins) & {binding.login for binding in bindings}
         or _SHA256.fullmatch(plan.service_role_bindings.sha256) is None
     ):
+        raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    platform_bindings = plan.platform_model_service_role_bindings
+    if platform_bindings is not None:
+        if (
+            {binding.service: binding.base_role for binding in platform_bindings.bindings}
+            != dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+            or len({binding.login for binding in platform_bindings.bindings})
+            != len(platform_bindings.bindings)
+            or any(binding.login in _CAPABILITY_ROLES for binding in platform_bindings.bindings)
+            or set(logins) & {binding.login for binding in platform_bindings.bindings}
+            or _SHA256.fullmatch(platform_bindings.sha256) is None
+        ):
+            raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    graph = plan.service_role_graph
+    if set(logins) & {binding.login for binding in graph.bindings}:
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     targets = {
         (
@@ -844,7 +884,7 @@ def _verify_capability_principal_flags(
 def _verify_service_principal_graph(
     connection: Connection,
     *,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     principal_operator: str,
     require_complete: bool,
 ) -> None:
@@ -974,7 +1014,7 @@ def _verify_service_principal_graph(
 
 def _expected_service_principal_graph(
     *,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     principal_operator: str,
     principal_operator_oid: int,
     bootstrap_name: str,
@@ -1067,7 +1107,7 @@ def _service_login_flags_are_safe(
 def _verify_capability_principals(
     connection: Connection,
     *,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     principal_operator: str,
 ) -> None:
     _verify_capability_principal_flags(connection, require_complete=True)
@@ -1082,7 +1122,7 @@ def _verify_capability_principals(
 def _apply_principals(
     engine: Engine,
     *,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     principal_operator: str,
 ) -> None:
     with engine.begin() as connection:
@@ -1221,7 +1261,7 @@ def _apply_database_authority(
     principal_operator: str,
     official_owner: str,
     saas_owner: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
 ) -> None:
     with engine.begin() as connection:
         _preflight_database_acl_grantors(connection)
@@ -1246,7 +1286,7 @@ def _converge_database_acl_projection(
     principal_operator: str,
     official_owner: str,
     saas_owner: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     schema_usage_roles: set[str],
 ) -> None:
     quote = connection.dialect.identifier_preparer.quote
@@ -1321,7 +1361,7 @@ def _verify_database_acl_projection(
     principal_operator: str,
     official_owner: str,
     saas_owner: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
     schema_usage_roles: set[str],
 ) -> None:
     database_nonowner = {
@@ -1622,7 +1662,7 @@ def _finalize_database_authority(
     principal_operator: str,
     official_owner: str,
     saas_owner: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
 ) -> None:
     with engine.begin() as connection:
         _preflight_database_acl_grantors(connection)
@@ -1647,7 +1687,7 @@ def _verify_database_boundary(
     principal_operator: str,
     official_owner: str,
     saas_owner: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
 ) -> None:
     database_owner = connection.execute(
         sa.text(
@@ -1896,7 +1936,7 @@ def _source_catalog_role_aliases(
     official_owner: str,
     saas_owner: str,
     bootstrap_name: str,
-    bindings: ProductionServiceRoleBindings,
+    bindings: _ServiceRoleProfile,
 ) -> dict[str, str]:
     """Map deployment-chosen login names to stable source-catalog classes."""
 
@@ -2852,7 +2892,7 @@ def _verify_state(
     with engines["principal_operator"].connect() as principal_connection:
         _verify_capability_principals(
             principal_connection,
-            bindings=plan.service_role_bindings,
+            bindings=plan.service_role_graph,
             principal_operator=plan.principal_operator.login,
         )
     with engines["database_owner"].connect() as database_connection:
@@ -2861,7 +2901,7 @@ def _verify_state(
             principal_operator=plan.principal_operator.login,
             official_owner=plan.official_owner.login,
             saas_owner=plan.saas_owner.login,
-            bindings=plan.service_role_bindings,
+            bindings=plan.service_role_graph,
         )
     with engines["official_owner"].connect() as official_connection:
         server_version_num, bootstrap_name = official_connection.execute(
@@ -2907,7 +2947,7 @@ def _verify_state(
             official_owner=plan.official_owner.login,
             saas_owner=plan.saas_owner.login,
             bootstrap_name=str(bootstrap_name),
-            bindings=plan.service_role_bindings,
+            bindings=plan.service_role_graph,
         ),
     )
     digest = hashlib.sha256(
@@ -2969,6 +3009,7 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
     database_identity = document.get("database_identity_sha256")
     catalog = document.get("catalog_sha256")
     service_bindings = document.get("service_role_bindings_sha256")
+    service_graph = document.get("service_role_graph_sha256", service_bindings)
     table_count = document.get("runtime_rls_table_count")
     if (
         not isinstance(database_identity, str)
@@ -2977,8 +3018,12 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
         or _SHA256.fullmatch(catalog) is None
         or not isinstance(service_bindings, str)
         or _SHA256.fullmatch(service_bindings) is None
+        or not isinstance(service_graph, str)
+        or _SHA256.fullmatch(service_graph) is None
         or service_bindings != config.service_role_bindings.sha256
+        or service_graph != config.service_role_graph.sha256
         or getattr(configured, "service_role_bindings_sha256", None) != service_bindings
+        or getattr(configured, "service_role_graph_sha256", None) != service_graph
         or isinstance(table_count, bool)
         or table_count != len(load_runtime_rls_contract())
         or getattr(configured, "database_identity_sha256", None) != database_identity
@@ -3017,6 +3062,7 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
         database_identity_sha256=database_identity,
         catalog_sha256=catalog,
         service_role_bindings_sha256=service_bindings,
+        service_role_graph_sha256=service_graph,
         runtime_rls_table_count=cast(int, table_count),
         official_owner=authorities["official_owner"],
         saas_owner=authorities["saas_owner"],
@@ -3256,7 +3302,7 @@ def verify_production_postgresql_state(
             ).one()
             _verify_capability_principals(
                 connection,
-                bindings=config.service_role_bindings,
+                bindings=config.service_role_graph,
                 principal_operator=receipt.principal_operator,
             )
             _verify_database_boundary(
@@ -3264,7 +3310,7 @@ def verify_production_postgresql_state(
                 principal_operator=receipt.principal_operator,
                 official_owner=receipt.official_owner,
                 saas_owner=receipt.saas_owner,
-                bindings=config.service_role_bindings,
+                bindings=config.service_role_graph,
             )
             verify_runtime_rls(connection)
             runtime_acls = _verify_runtime_acl(connection)
@@ -3306,7 +3352,7 @@ def verify_production_postgresql_state(
                 official_owner=receipt.official_owner,
                 saas_owner=receipt.saas_owner,
                 bootstrap_name=str(bootstrap_name),
-                bindings=config.service_role_bindings,
+                bindings=config.service_role_graph,
             ),
         )
         catalog_digest = hashlib.sha256(
@@ -3414,7 +3460,7 @@ def run_production_postgresql_migration(
                     "principals",
                     lambda: _apply_principals(
                         engines["principal_operator"],
-                        bindings=plan.service_role_bindings,
+                        bindings=plan.service_role_graph,
                         principal_operator=plan.principal_operator.login,
                     ),
                 )
@@ -3426,7 +3472,7 @@ def run_production_postgresql_migration(
                         principal_operator=plan.principal_operator.login,
                         official_owner=plan.official_owner.login,
                         saas_owner=plan.saas_owner.login,
-                        bindings=plan.service_role_bindings,
+                        bindings=plan.service_role_graph,
                     ),
                 )
                 phases.append("database:applied")
@@ -3451,7 +3497,7 @@ def run_production_postgresql_migration(
                         principal_operator=plan.principal_operator.login,
                         official_owner=plan.official_owner.login,
                         saas_owner=plan.saas_owner.login,
-                        bindings=plan.service_role_bindings,
+                        bindings=plan.service_role_graph,
                     ),
                 )
                 phases.append("database_acl_finalize:applied")
@@ -3478,6 +3524,7 @@ def run_production_postgresql_migration(
         phases=tuple(phases),
         catalog_sha256=verified.catalog_sha256,
         service_role_bindings_sha256=plan.service_role_bindings.sha256,
+        service_role_graph_sha256=plan.service_role_graph.sha256,
         completed_at=datetime.now(UTC).isoformat(),
     )
 

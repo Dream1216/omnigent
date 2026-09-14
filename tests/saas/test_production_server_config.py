@@ -11,8 +11,11 @@ from saas.production.server_config import (
     load_production_server_config,
 )
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
+    compose_production_service_role_graph,
+    load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
     render_production_service_role_bindings,
 )
@@ -40,7 +43,31 @@ def _bindings(path: Path) -> str:
     return str(path)
 
 
-def _receipt(path: Path, *, service_role_bindings_sha256: str) -> str:
+def _platform_bindings(path: Path) -> str:
+    bindings = tuple(
+        ProductionServiceRoleBinding(
+            service=service,
+            login=(
+                f"{service}_login"
+                if service in {"app", "authenticator", "secret_broker"}
+                else f"platform_model_{service}_login"
+            ),
+            base_role=base_role,
+        )
+        for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_production_service_role_bindings(bindings), encoding="ascii")
+    path.chmod(0o400)
+    return str(path)
+
+
+def _receipt(
+    path: Path,
+    *,
+    service_role_bindings_sha256: str,
+    service_role_graph_sha256: str | None = None,
+) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -62,6 +89,11 @@ def _receipt(path: Path, *, service_role_bindings_sha256: str) -> str:
                 "phases": ["state:verified"],
                 "catalog_sha256": "5" * 64,
                 "service_role_bindings_sha256": service_role_bindings_sha256,
+                **(
+                    {"service_role_graph_sha256": service_role_graph_sha256}
+                    if service_role_graph_sha256 is not None
+                    else {}
+                ),
                 "completed_at": "2026-09-01T00:00:00+00:00",
             }
         ),
@@ -218,6 +250,39 @@ def test_loads_exact_release_and_owner_only_secret_files(tmp_path: Path) -> None
     )
     assert config.official_builtin_agent_seed_enabled is False
     assert config.official_cross_workspace_scheduler_enabled is False
+
+
+def test_loads_platform_model_graph_and_binds_it_to_migration_receipt(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE"] = _platform_bindings(
+        tmp_path / "platform-model-service-bindings.json"
+    )
+    production = load_production_service_role_bindings(environment)
+    platform = load_platform_model_service_role_bindings(environment)
+    graph = compose_production_service_role_graph(production, platform)
+    receipt_path = Path(environment["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])
+    receipt_path.chmod(0o600)
+    _receipt(
+        receipt_path,
+        service_role_bindings_sha256=production.sha256,
+        service_role_graph_sha256=graph.sha256,
+    )
+
+    config = load_production_server_config(environment)
+
+    assert config.platform_model_service_role_bindings == platform
+    assert len(config.service_role_graph.bindings) == 17
+    assert config.migration_receipt.service_role_graph_sha256 == graph.sha256
+    assert config.version_document["service_role_graph_sha256"] == graph.sha256
+
+    receipt_path.chmod(0o600)
+    _receipt(
+        receipt_path,
+        service_role_bindings_sha256=production.sha256,
+        service_role_graph_sha256=production.sha256,
+    )
+    with pytest.raises(ProductionServerConfigError, match="verification facts"):
+        load_production_server_config(environment)
 
 
 @pytest.mark.parametrize(

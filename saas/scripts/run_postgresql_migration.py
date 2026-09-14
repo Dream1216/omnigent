@@ -19,6 +19,7 @@ from saas.production.postgresql_migration import (
 )
 from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
+    load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
 )
 
@@ -142,6 +143,11 @@ def main() -> int:
     }
     try:
         service_role_bindings = load_production_service_role_bindings(os.environ)
+        platform_model_service_role_bindings = (
+            load_platform_model_service_role_bindings(os.environ)
+            if "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE" in os.environ
+            else None
+        )
     except ProductionServiceRoleBindingsError as error:
         parser.error(str(error))
     try:
@@ -153,6 +159,7 @@ def main() -> int:
             official_owner_url=urls["official_owner_url"],
             saas_owner_url=urls["saas_owner_url"],
             service_role_bindings=service_role_bindings,
+            platform_model_service_role_bindings=platform_model_service_role_bindings,
         )
         receipt = run_production_postgresql_migration(plan, verify_only=args.verify_only)
         rendered = json.dumps(receipt.to_dict(), indent=2, sort_keys=True) + "\n"

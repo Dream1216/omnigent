@@ -11,6 +11,7 @@ import pytest
 
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
@@ -31,6 +32,24 @@ def _bindings() -> ProductionServiceRoleBindings:
                 base_role=base_role,
             )
             for service, base_role in sorted(EXPECTED_PRODUCTION_SERVICE_ROLES.items())
+        ),
+    )
+
+
+def _platform_bindings() -> ProductionServiceRoleBindings:
+    production = _bindings().by_service
+    return ProductionServiceRoleBindings(
+        path=Path("/platform-bindings.json"),
+        sha256="c" * 64,
+        bindings=tuple(
+            production[service]
+            if service in production
+            else ProductionServiceRoleBinding(
+                service=service,
+                login=f"platform_model_{service}_login",
+                base_role=base_role,
+            )
+            for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
         ),
     )
 
@@ -137,6 +156,41 @@ def test_plan_requires_distinct_logins_and_one_target(monkeypatch: pytest.Monkey
     with pytest.raises(migration.PostgreSqlMigrationError) as target_error:
         migration._validate_plan(other_target)
     assert target_error.value.code == "authority_targets_differ"
+
+
+def test_plan_composes_exact_platform_model_role_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(migration, "_installed_product_revision", lambda: _REVISION)
+    base = _plan()
+    plan = migration.ProductionPostgreSqlPlan(
+        product_revision=base.product_revision,
+        principal_operator=base.principal_operator,
+        database_owner=base.database_owner,
+        official_owner=base.official_owner,
+        saas_owner=base.saas_owner,
+        service_role_bindings=base.service_role_bindings,
+        platform_model_service_role_bindings=_platform_bindings(),
+    )
+
+    migration._validate_plan(plan)
+
+    assert len(plan.service_role_graph.bindings) == 17
+    assert plan.service_role_graph.login_for("app") == "app_login"
+    assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
+    expected = migration._expected_service_principal_graph(
+        bindings=plan.service_role_graph,
+        principal_operator="principal_operator",
+        principal_operator_oid=42,
+        bootstrap_name="postgres",
+    )
+    assert (
+        "saas_billing",
+        "platform_model_billing_login",
+        "principal_operator",
+        False,
+        True,
+        False,
+        42,
+    ) in expected
 
 
 def test_product_revision_is_bound_before_engine_creation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -932,6 +986,7 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
             database_identity_sha256=identity_digest,
             catalog_sha256=catalog_digest,
             service_role_bindings_sha256=_bindings().sha256,
+            service_role_graph_sha256=_bindings().sha256,
             runtime_rls_table_count=len(contracts),
             official_owner="official_owner",
             saas_owner="saas_owner",
@@ -996,6 +1051,7 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
     config = SimpleNamespace(
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         service_role_bindings=_bindings(),
+        service_role_graph=_bindings(),
     )
     engines = {service: FakeEngine() for service in migration._SERVER_SERVICE_ROLES}
 
