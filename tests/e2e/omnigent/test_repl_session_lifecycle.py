@@ -37,7 +37,6 @@ from tests.e2e.omnigent.conftest import configure_mock_llm
 
 _MODEL = "mock-session-lifecycle"
 _HARNESS = "openai-agents"
-_REASONING_EFFORT_MATCH = "session-reasoning-effort-query"
 _LOCAL_REMOTE_AUTH_TOKEN = "local-e2e-runner-token"
 _READY_TIMEOUT = 90.0
 _TURN_TIMEOUT = 240.0
@@ -883,12 +882,10 @@ async def test_repl_reasoning_effort_threads_through(
         "repl_session_reasoning_effort",
         "SESSION_REASONING_OK",
     )
-    # The preceding recovery test can leave a late request on the shared model
-    # key; route this response by the unique user prompt so it cannot be stolen.
     configure_mock_llm(
         mock_llm_server_url,
         [{"text": "SESSION_REASONING_OK"}],
-        match=_REASONING_EFFORT_MATCH,
+        key=_MODEL,
     )
     with _running_server(omnigent_python, omnigent_repo_root, env, tmp_path) as server:
         from omnigent.cli import _bundle
@@ -916,9 +913,7 @@ async def test_repl_reasoning_effort_threads_through(
                     files_getter=session_files.get,
                     session=bound,
                 )
-                result = await chat.query(
-                    f"{_REASONING_EFFORT_MATCH}: respond with the configured marker"
-                )
+                result = await chat.query("respond with the configured marker")
                 assert "SESSION_REASONING_OK" in result.text
                 refreshed = await client.sessions.get(created.id)
                 assert refreshed.reasoning_effort == "high"
