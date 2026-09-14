@@ -50,13 +50,13 @@ def test_platform_governed_support_http_runs_staff_request_approval_session_and_
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     support_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:http-support",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="http-support",
         now=now,
     )
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:http-support-operator",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="http-support-operator",
         now=now,
     )
@@ -128,10 +128,10 @@ def test_platform_governed_support_http_runs_staff_request_approval_session_and_
         )
     support_session = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="http-support",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -139,10 +139,10 @@ def test_platform_governed_support_http_runs_staff_request_approval_session_and_
     )
     operator_session = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="http-support-operator",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -253,13 +253,13 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:http-operator",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="http-operator",
         now=now,
     )
     roleless_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:http-roleless",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="http-roleless",
         now=now,
     )
@@ -289,10 +289,10 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
         )
     operator = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="http-operator",
-            authn_method="webauthn",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -300,10 +300,10 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
     )
     roleless = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="http-roleless",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -426,13 +426,13 @@ def test_platform_identity_conflict_http_is_content_blind_and_two_stage() -> Non
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:conflict-operator",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="conflict-operator",
         now=now,
     )
     approver_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:conflict-approver",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="conflict-approver",
         now=now,
     )
@@ -475,10 +475,10 @@ def test_platform_identity_conflict_http_is_content_blind_and_two_stage() -> Non
         )
     issued = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="conflict-operator",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),

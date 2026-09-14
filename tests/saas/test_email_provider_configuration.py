@@ -127,7 +127,7 @@ def _fixture(role: str = "platform_operator"):
         session_id=uuid4(),
         principal_id=actor_id,
         security_version=1,
-        authn_method="webauthn",
+        authn_method="password",
         authenticated_at=_NOW,
         expires_at=_NOW + timedelta(hours=1),
         roles=frozenset({role}),

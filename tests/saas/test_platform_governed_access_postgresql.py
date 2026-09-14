@@ -63,7 +63,7 @@ def _actor(principal_id: UUID, role: str, now: datetime) -> ValidatedPlatformPri
         session_id=uuid4(),
         principal_id=principal_id,
         security_version=1,
-        authn_method="passkey",
+        authn_method="password",
         authenticated_at=now,
         expires_at=now + timedelta(hours=1),
         roles=frozenset({role}),
