@@ -245,6 +245,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000013",
     ): "6d49f0e2072cc4e82734e868c78e43dca828ae22d95c4b46a6767db6fd292022",
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "775cdf24568506b246dd9bbc6c194541f34a93c41dc09a4412a1e9baae4e8a4a",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "f62f0d5cef73fae51870adeae0ce1553878eab3b59e3155eabb4ba063ed2c536",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -287,6 +297,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000013",
     ): "2f3d25460eab0c9bb6e903399e146f5ff17ac526ebec5cf27b4d727ca8ee8d55",
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "35ed8656006aed4820d702cb50737fa6848bb10752679130ddccedd4c60ae341",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "7d0c59e271b9bd2c602dfadf99430598d9c952ac60f8f085d4ebb33e02872dfc",
 }
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
