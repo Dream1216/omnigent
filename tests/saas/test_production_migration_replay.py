@@ -143,7 +143,11 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                 == "ga1b2c3d4e5f"
             )
         with monkeypatch.context() as context:
-            context.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {})
+            context.setattr(
+                migration,
+                "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                {},
+            )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
                 migration.run_production_postgresql_migration(plan)
             assert absent.value.code == "source_catalog_baseline_missing"

@@ -386,7 +386,7 @@ def test_public_schema_inventory_digest_rejects_extra_object_and_unknown_platfor
     assert version_error.value.code == "public_schema_inventory_drifted"
 
 
-def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() -> None:
+def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -> None:
     # These anchors come from clean PostgreSQL 16.14 and 18.6 replays with the
     # complete fifteen-login profile.  P0S12+ sort row collections only after
     # replacing deployment-specific role names with stable aliases.
@@ -436,11 +436,64 @@ def test_source_pinned_catalog_digests_cover_canonical_fifteen_role_replays() ->
     }
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
+    platform_model_security = {
+        (
+            16,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "6c6463ae0fa483320413356afb526c4756e5d6fbbf392fab0074e8dd096e3e01",
+        (
+            18,
+            "ge1b2c3d4e5f",
+            "p0s000000013",
+        ): "c5fe0b9dd94ffd3b378e6935ed7f611dc1f528e6cd2f1c4d2f199e72b6a6d416",
+    }
+    assert (
+        migration._PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256.items()
+        >= platform_model_security.items()
+    )
 
 
 @pytest.mark.parametrize("server_major", [16, 18])
 def test_current_migration_heads_have_source_catalog_baselines(server_major: int) -> None:
     migration._require_source_catalog_baselines(server_major)
+    migration._require_source_catalog_baselines(
+        server_major,
+        bindings=migration.compose_production_service_role_graph(
+            _bindings(),
+            _platform_bindings(),
+        ),
+    )
+
+
+def test_platform_model_profile_requires_its_own_source_catalog_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = migration.compose_production_service_role_graph(
+        _bindings(),
+        _platform_bindings(),
+    )
+    monkeypatch.setattr(migration, "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256", {})
+
+    with pytest.raises(migration.PostgreSqlMigrationError) as error:
+        migration._require_source_catalog_baselines(18, bindings=graph)
+
+    assert error.value.code == "source_catalog_baseline_missing"
+    assert error.value.phase == "preflight"
+
+
+def test_unknown_service_role_profile_cannot_select_a_catalog_baseline() -> None:
+    unknown = ProductionServiceRoleBindings(
+        path=Path("/unknown-bindings.json"),
+        sha256="d" * 64,
+        bindings=(ProductionServiceRoleBinding("unknown", "unknown_login", "saas_app"),),
+    )
+
+    with pytest.raises(migration.PostgreSqlMigrationError) as error:
+        migration._source_security_catalog_baselines(unknown)
+
+    assert error.value.code == "service_role_bindings_invalid"
+    assert error.value.phase == "configuration"
 
 
 @pytest.mark.parametrize(

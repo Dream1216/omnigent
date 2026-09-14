@@ -293,6 +293,18 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         "p0s000000013",
     ): "2f3d25460eab0c9bb6e903399e146f5ff17ac526ebec5cf27b4d727ca8ee8d55",
 }
+_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000013",
+    ): "6c6463ae0fa483320413356afb526c4756e5d6fbbf392fab0074e8dd096e3e01",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000013",
+    ): "c5fe0b9dd94ffd3b378e6935ed7f611dc1f528e6cd2f1c4d2f199e72b6a6d416",
+}
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -845,15 +857,40 @@ def _preflight(
     if any(not item.server_address or item.server_port <= 0 for item in facts):
         raise PostgreSqlMigrationError("authority_server_identity_missing", "preflight")
     for server_major in {item.server_version_num // 10000 for item in facts}:
-        _require_source_catalog_baselines(server_major)
+        _require_source_catalog_baselines(
+            server_major,
+            bindings=plan.service_role_graph,
+        )
     return facts
 
 
-def _require_source_catalog_baselines(server_major: int) -> None:
+def _source_security_catalog_baselines(
+    bindings: _ServiceRoleProfile | None,
+) -> Mapping[tuple[int, str, str], str]:
+    """Select the only source-pinned catalog profile for an exact role graph."""
+
+    if bindings is None:
+        return _SOURCE_SECURITY_CATALOG_SHA256
+    observed = {binding.service: binding.base_role for binding in bindings.bindings}
+    core = dict(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    if observed == core:
+        return _SOURCE_SECURITY_CATALOG_SHA256
+    platform_model = {**core, **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)}
+    if observed == platform_model:
+        return _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+    raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+
+
+def _require_source_catalog_baselines(
+    server_major: int,
+    *,
+    bindings: _ServiceRoleProfile | None = None,
+) -> None:
     """Reject an unanchored release before any authority or schema mutation."""
 
     key = (server_major, _expected_head("official"), _expected_head("saas"))
-    if key not in _PUBLIC_SCHEMA_INVENTORY_SHA256 or key not in _SOURCE_SECURITY_CATALOG_SHA256:
+    source_security_baselines = _source_security_catalog_baselines(bindings)
+    if key not in _PUBLIC_SCHEMA_INVENTORY_SHA256 or key not in source_security_baselines:
         raise PostgreSqlMigrationError("source_catalog_baseline_missing", "preflight")
 
 
@@ -1996,6 +2033,7 @@ def _verify_source_security_catalog_digest(
     *,
     key: tuple[int, str, str],
     role_aliases: Mapping[str, str],
+    bindings: _ServiceRoleProfile | None = None,
 ) -> str:
     """Reject ACL/policy/role drift against a clean-replay source anchor."""
 
@@ -2005,7 +2043,7 @@ def _verify_source_security_catalog_digest(
     digest = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if _SOURCE_SECURITY_CATALOG_SHA256.get(key) != digest:
+    if _source_security_catalog_baselines(bindings).get(key) != digest:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
 
@@ -2949,6 +2987,7 @@ def _verify_state(
             bootstrap_name=str(bootstrap_name),
             bindings=plan.service_role_graph,
         ),
+        bindings=plan.service_role_graph,
     )
     digest = hashlib.sha256(
         json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
@@ -3354,6 +3393,7 @@ def verify_production_postgresql_state(
                 bootstrap_name=str(bootstrap_name),
                 bindings=config.service_role_graph,
             ),
+            bindings=config.service_role_graph,
         )
         catalog_digest = hashlib.sha256(
             json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
