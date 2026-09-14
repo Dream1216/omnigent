@@ -441,7 +441,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 )
             )
             connection.exec_driver_sql(
-                "UPDATE saas_alembic_version SET version_num = 'p0s000000013'"
+                "UPDATE saas_alembic_version SET version_num = 'p0s000000014'"
             )
         subprocess.run(
             [psql, "-X", "--no-password", "-f", str(wrapper)],
