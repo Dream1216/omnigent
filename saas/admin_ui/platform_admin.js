@@ -343,15 +343,15 @@
       state: "not_configured",
       base_url: "https://api.deepseek.com",
       api_type: "openai_chat_completions",
-      allowed_models: ["deepseek-v4-flash", "deepseek-v4-pro"],
-      default_model: "deepseek-v4-flash",
+      allowed_models: ["deepseek-flash", "deepseek-v4-pro"],
+      default_model: "deepseek-flash",
       monthly_budget_microusd: 100_000_000,
       per_tenant_daily_token_limit: 1_000_000,
       version: 0,
     };
     const models = item.allowed_models?.length
       ? item.allowed_models
-      : ["deepseek-v4-flash", "deepseek-v4-pro"];
+      : ["deepseek-flash", "deepseek-v4-pro"];
     $("#model-provider-enabled").checked = Boolean(item.enabled);
     $("#model-provider-base-url").value = item.base_url || "https://api.deepseek.com";
     $("#model-provider-api-type").value = item.api_type || "openai_chat_completions";

@@ -381,8 +381,8 @@
                 <label><span>API TYPE</span><select data-testid="model-provider-api-type" id="model-provider-api-type"><option value="openai_chat_completions">OPENAI CHAT COMPLETIONS</option></select></label>
                 <label class="model-provider-wide"><span>BASE URL / PINNED</span><input data-testid="model-provider-base-url" id="model-provider-base-url" value="https://api.deepseek.com" readonly required></label>
                 <label class="model-provider-wide"><span>API KEY / LEAVE EMPTY TO PRESERVE</span><input autocomplete="new-password" data-testid="model-provider-api-key" id="model-provider-api-key" maxlength="4096" type="password"></label>
-                <label class="model-provider-wide"><span>ALLOWED MODEL CATALOG / ONE PER LINE</span><textarea data-testid="model-provider-models" id="model-provider-models" rows="4" required>deepseek-v4-flash&#10;deepseek-v4-pro</textarea></label>
-                <label><span>DEFAULT MODEL</span><select data-testid="model-provider-default-model" id="model-provider-default-model" required><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
+                <label class="model-provider-wide"><span>ALLOWED MODEL CATALOG / ONE PER LINE</span><textarea data-testid="model-provider-models" id="model-provider-models" rows="4" required>deepseek-flash&#10;deepseek-v4-pro</textarea></label>
+                <label><span>DEFAULT MODEL</span><select data-testid="model-provider-default-model" id="model-provider-default-model" required><option value="deepseek-flash">deepseek-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
                 <label><span>MONTHLY SPEND POLICY / USD</span><input data-testid="model-provider-monthly-budget" id="model-provider-monthly-budget" min="0.01" max="1000000" step="0.01" type="number" value="100" required></label>
                 <label><span>TENANT DAILY TOKEN POLICY</span><input data-testid="model-provider-daily-tokens" id="model-provider-daily-tokens" min="1" max="1000000000000" step="1" type="number" value="1000000" required></label>
               </div>
@@ -392,7 +392,7 @@
             <form class="work-panel model-provider-test-panel" data-testid="model-provider-test-form" id="model-provider-test-form">
               <div class="panel-heading"><span>LIVE STREAM VERIFICATION</span><small>NO MOCK ACCEPTED</small></div>
               <div class="model-provider-test-signal"><span>DS</span><div><strong>验证真实 Provider 路径</strong><p>发起一次有界流式请求，只记录状态、模型、延迟和 Provider Request ID 摘要；回复内容与 Key 均不写入 Receipt。</p></div></div>
-              <label><span>MODEL TO VERIFY</span><select data-testid="model-provider-test-model" id="model-provider-test-model" required><option value="deepseek-v4-flash">deepseek-v4-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
+              <label><span>MODEL TO VERIFY</span><select data-testid="model-provider-test-model" id="model-provider-test-model" required><option value="deepseek-flash">deepseek-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
               <button class="primary-action" data-testid="model-provider-test" id="model-provider-test" type="submit">RUN REAL STREAM TEST ↗</button>
               <div class="model-provider-verification"><span>VERIFICATION RECEIPT</span><strong id="model-provider-verified-at">LIVE VERIFICATION PENDING</strong><p>配置变更或 Key 轮换后状态会回退为 CONFIGURED，必须重新验证才可进入 Host 激活流程。</p></div>
             </form>

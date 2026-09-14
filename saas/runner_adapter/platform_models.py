@@ -16,9 +16,11 @@ from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfigu
 
 PLATFORM_MODEL_PROVIDER_NAME = "platform-deepseek"
 PLATFORM_MODEL_CREDENTIAL_ENV = "OMNIGENT_PLATFORM_DEEPSEEK_KEY"
+PLATFORM_MODEL_CREDENTIAL_REFERENCE = f"${PLATFORM_MODEL_CREDENTIAL_ENV}"
 PLATFORM_MODEL_VAULT_PROVIDER = "filesystem"
 PLATFORM_MODEL_VAULT_REF = "platform-deepseek"
 _MAX_PROJECTION_BYTES = 64 * 1024
+PLATFORM_MODEL_GATEWAY_BASE_URL = "http://omnigent-platform-model-gateway:8090/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +102,7 @@ def project_platform_managed_model(
                 "default": "pi",
                 "openai": {
                     "base_url": "https://api.deepseek.com",
-                    "api_key": PLATFORM_MODEL_CREDENTIAL_ENV,
+                    "api_key": PLATFORM_MODEL_CREDENTIAL_REFERENCE,
                     "wire_api": "chat",
                     "models": models,
                 },
@@ -168,6 +170,48 @@ def render_platform_managed_model_config(
             separators=(",", ":"),
             ensure_ascii=True,
         )
+        + "\n"
+    )
+
+
+def render_platform_model_gateway_config(
+    *,
+    allowed_models: tuple[str, ...],
+    default_model: str,
+) -> str:
+    """Render the fixed in-cluster gateway config consumed by the official Host.
+
+    This deployment projection contains only the environment-variable name for
+    a per-session synthetic bearer. The real Provider credential is never
+    materialized in the Host or Runner pod.
+    """
+
+    models = tuple(dict.fromkeys(allowed_models))
+    if (
+        not models
+        or default_model not in models
+        or any(not model or len(model) > 128 for model in models)
+    ):
+        raise ValueError("Platform model gateway catalog is invalid")
+    provider_config = {
+        "providers": {
+            PLATFORM_MODEL_PROVIDER_NAME: {
+                "kind": "gateway",
+                "default": "pi",
+                "openai": {
+                    "base_url": PLATFORM_MODEL_GATEWAY_BASE_URL,
+                    "api_key": PLATFORM_MODEL_CREDENTIAL_REFERENCE,
+                    "wire_api": "chat",
+                    "models": {
+                        "default": default_model,
+                        **{f"allowed-{index + 1}": model for index, model in enumerate(models)},
+                    },
+                },
+            }
+        }
+    }
+    return (
+        json.dumps(provider_config, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         + "\n"
     )
 
@@ -295,7 +339,7 @@ def _projection_payload(
         or not isinstance(openai, dict)
         or set(openai) != {"base_url", "api_key", "wire_api", "models"}
         or openai.get("base_url") != "https://api.deepseek.com"
-        or openai.get("api_key") != PLATFORM_MODEL_CREDENTIAL_ENV
+        or openai.get("api_key") != PLATFORM_MODEL_CREDENTIAL_REFERENCE
         or openai.get("wire_api") != "chat"
         or not isinstance(models, dict)
         or not models
@@ -550,6 +594,8 @@ def _fsync_directory(path: Path) -> None:
 
 __all__ = [
     "PLATFORM_MODEL_CREDENTIAL_ENV",
+    "PLATFORM_MODEL_CREDENTIAL_REFERENCE",
+    "PLATFORM_MODEL_GATEWAY_BASE_URL",
     "PLATFORM_MODEL_PROVIDER_NAME",
     "PLATFORM_MODEL_VAULT_PROVIDER",
     "PLATFORM_MODEL_VAULT_REF",
@@ -562,5 +608,6 @@ __all__ = [
     "project_platform_managed_model",
     "render_platform_managed_model_config",
     "render_platform_managed_model_projection",
+    "render_platform_model_gateway_config",
     "validate_platform_managed_model_config_home",
 ]

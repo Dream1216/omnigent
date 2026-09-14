@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindingsError,
+    load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
     render_production_service_role_bindings,
 )
@@ -23,6 +25,17 @@ def _bindings() -> tuple[ProductionServiceRoleBinding, ...]:
             base_role=base_role,
         )
         for service, base_role in sorted(EXPECTED_PRODUCTION_SERVICE_ROLES.items())
+    )
+
+
+def _platform_model_bindings() -> tuple[ProductionServiceRoleBinding, ...]:
+    return tuple(
+        ProductionServiceRoleBinding(
+            service=service,
+            login=f"next_beta_{service}",
+            base_role=base_role,
+        )
+        for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
     )
 
 
@@ -50,6 +63,33 @@ def test_loads_exact_fifteen_binding_canonical_profile(tmp_path: Path) -> None:
     assert loaded.login_for("runtime_provider_journal") == ("prod_runtime_provider_journal")
     assert loaded.sha256 == hashlib.sha256(rendered.encode("ascii")).hexdigest()
     assert set(loaded.by_service) == set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+
+
+def test_loads_isolated_platform_model_binding_profile(tmp_path: Path) -> None:
+    rendered = render_production_service_role_bindings(_platform_model_bindings())
+    path = tmp_path / "platform-model-service-bindings.json"
+    path.write_text(rendered, encoding="ascii")
+    path.chmod(0o400)
+
+    loaded = load_platform_model_service_role_bindings(
+        {"OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE": str(path)}
+    )
+
+    assert len(loaded.bindings) == 5
+    assert loaded.login_for("billing") == "next_beta_billing"
+    assert loaded.login_for("platform_app") == "next_beta_platform_app"
+    assert set(loaded.by_service) == set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+
+    production_path = tmp_path / "production-service-bindings.json"
+    production_path.write_text(
+        render_production_service_role_bindings(_bindings()),
+        encoding="ascii",
+    )
+    production_path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError, match="exact production"):
+        load_platform_model_service_role_bindings(
+            {"OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE": str(production_path)}
+        )
 
 
 def test_rejects_noncanonical_or_mutable_binding_file(tmp_path: Path) -> None:

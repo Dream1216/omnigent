@@ -12,8 +12,10 @@ from pathlib import Path
 from saas.production.service_login_bootstrap import (
     ProductionServiceLoginBootstrapError,
     bind_platform_governance_service_login,
+    bind_platform_model_service_login,
     converge_runtime_provider_journal_login_posture,
     prepare_platform_governance_service_login,
+    prepare_platform_model_service_login,
 )
 
 _MAX_PASSWORD_BYTES = 16 * 1024
@@ -45,21 +47,44 @@ def main() -> int:
     prepare = commands.add_parser("prepare", help="create or rotate the bare login")
     prepare.add_argument("--password-file", required=True)
     commands.add_parser("bind", help="grant the sole base-role membership")
+    prepare_model = commands.add_parser(
+        "prepare-platform-model",
+        help="create or rotate one fixed Platform-model service login",
+    )
+    prepare_model.add_argument("--service", required=True, choices=("billing", "platform_app"))
+    prepare_model.add_argument("--password-file", required=True)
+    bind_model = commands.add_parser(
+        "bind-platform-model",
+        help="grant one fixed Platform-model service-role membership",
+    )
+    bind_model.add_argument("--service", required=True, choices=("billing", "platform_app"))
     commands.add_parser(
         "converge-runtime-journal-posture",
         help="pin the journal login search path through managed superuser authority",
     )
     args = parser.parse_args()
     try:
-        if args.command == "prepare":
+        if args.command in ("prepare", "prepare-platform-model"):
             path = _password_path(parser, args.password_file)
             with path.open("rb") as stream:
-                receipt = prepare_platform_governance_service_login(
-                    environ=os.environ,
-                    password_stream=stream,
-                )
+                if args.command == "prepare":
+                    receipt = prepare_platform_governance_service_login(
+                        environ=os.environ,
+                        password_stream=stream,
+                    )
+                else:
+                    receipt = prepare_platform_model_service_login(
+                        environ=os.environ,
+                        service=args.service,
+                        password_stream=stream,
+                    )
         elif args.command == "bind":
             receipt = bind_platform_governance_service_login(environ=os.environ)
+        elif args.command == "bind-platform-model":
+            receipt = bind_platform_model_service_login(
+                environ=os.environ,
+                service=args.service,
+            )
         else:
             receipt = converge_runtime_provider_journal_login_posture(environ=os.environ)
     except (OSError, ProductionServiceLoginBootstrapError) as error:

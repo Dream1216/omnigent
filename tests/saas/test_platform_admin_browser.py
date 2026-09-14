@@ -535,9 +535,9 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         expect(operator.locator("#model-provider-state")).to_have_text("NOT CONFIGURED")
         operator.get_by_test_id("model-provider-enabled").check()
         operator.get_by_test_id("model-provider-api-key").fill("browser-model-secret-never-shown")
-        operator.get_by_test_id("model-provider-models").fill("deepseek-v4-flash\ndeepseek-v4-pro")
+        operator.get_by_test_id("model-provider-models").fill("deepseek-flash\ndeepseek-v4-pro")
         operator.get_by_test_id("model-provider-models").press("Tab")
-        operator.get_by_test_id("model-provider-default-model").select_option("deepseek-v4-flash")
+        operator.get_by_test_id("model-provider-default-model").select_option("deepseek-flash")
         with operator.expect_response(
             lambda response: (
                 response.request.method == "PUT"
@@ -561,7 +561,7 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
             (
                 "https://api.deepseek.com",
                 "browser-model-secret-never-shown",
-                "deepseek-v4-flash",
+                "deepseek-flash",
             )
         ]
 

@@ -46,8 +46,8 @@ def _configuration() -> PlatformManagedModelRuntimeConfiguration:
         provider_id="deepseek",
         base_url="https://api.deepseek.com",
         api_type="openai_chat_completions",
-        allowed_models=("deepseek-v4-flash", "deepseek-v4-pro"),
-        default_model="deepseek-v4-flash",
+        allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+        default_model="deepseek-flash",
         monthly_budget_microusd=100_000_000,
         per_tenant_daily_token_limit=1_000_000,
         configuration_version=7,
@@ -55,7 +55,11 @@ def _configuration() -> PlatformManagedModelRuntimeConfiguration:
     )
 
 
-def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment() -> None:
+def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic_token = "session-bound-gateway-token"
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, synthetic_token)
     projection = project_platform_managed_model(_configuration())
     rendered = repr(projection)
     assert "not-exported-provider-secret" not in rendered
@@ -67,11 +71,11 @@ def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment() -> N
         config_loader=lambda: projection.provider_config,
     )
     assert provider is not None
-    assert provider.api_key == PLATFORM_MODEL_CREDENTIAL_ENV
-    assert provider.model == "deepseek-v4-flash"
+    assert provider.api_key == synthetic_token
+    assert provider.model == "deepseek-flash"
     assert {
         entry["id"] for entry in provider.to_models_config()["providers"]["omnigent"]["models"]
-    } == {"deepseek-v4-flash", "deepseek-v4-pro"}
+    } == {"deepseek-flash", "deepseek-v4-pro"}
 
 
 def test_projection_rejects_endpoint_or_default_model_drift() -> None:
@@ -169,12 +173,14 @@ def test_official_pi_reads_materialized_config_home(
         config_home=tmp_path / "config",
     )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(files.config_home))
+    synthetic_token = "session-bound-gateway-token"
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, synthetic_token)
 
     provider = resolve_pi_native_provider()
 
     assert provider is not None
-    assert provider.model == "deepseek-v4-flash"
-    assert provider.api_key == PLATFORM_MODEL_CREDENTIAL_ENV
+    assert provider.model == "deepseek-flash"
+    assert provider.api_key == synthetic_token
 
 
 def _owner_file(path: Path, value: str) -> Path:

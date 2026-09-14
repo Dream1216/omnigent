@@ -34,6 +34,15 @@ EXPECTED_PRODUCTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
         "runtime_provider_journal": "saas_runtime_provider_journal",
     }
 )
+EXPECTED_PLATFORM_MODEL_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
+    {
+        "app": "saas_app",
+        "authenticator": "saas_authenticator",
+        "billing": "saas_billing",
+        "platform_app": "saas_platform_app",
+        "secret_broker": "saas_secret_broker",
+    }
+)
 
 
 class ProductionServiceRoleBindingsError(ValueError):
@@ -108,7 +117,31 @@ def load_production_service_role_bindings(
 ) -> ProductionServiceRoleBindings:
     """Load the exact production service-role profile without database access."""
 
-    name = "OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE"
+    return _load_service_role_bindings(
+        source,
+        name="OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE",
+        expected_roles=EXPECTED_PRODUCTION_SERVICE_ROLES,
+    )
+
+
+def load_platform_model_service_role_bindings(
+    source: Mapping[str, str],
+) -> ProductionServiceRoleBindings:
+    """Load the isolated five-login Platform model deployment profile."""
+
+    return _load_service_role_bindings(
+        source,
+        name="OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE",
+        expected_roles=EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
+    )
+
+
+def _load_service_role_bindings(
+    source: Mapping[str, str],
+    *,
+    name: str,
+    expected_roles: Mapping[str, str],
+) -> ProductionServiceRoleBindings:
     path_value = source.get(name)
     if path_value is None or not path_value.strip() or path_value != path_value.strip():
         raise ProductionServiceRoleBindingsError(f"{name} is required")
@@ -161,16 +194,13 @@ def load_production_service_role_bindings(
             )
         )
     bindings = tuple(sorted(parsed, key=lambda binding: binding.service))
-    expected_services = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    expected_services = set(expected_roles)
     if (
         len(bindings) != len(expected_services)
         or {binding.service for binding in bindings} != expected_services
         or len({binding.login for binding in bindings}) != len(bindings)
         or len({binding.base_role for binding in bindings}) != len(bindings)
-        or any(
-            binding.base_role != EXPECTED_PRODUCTION_SERVICE_ROLES[binding.service]
-            for binding in bindings
-        )
+        or any(binding.base_role != expected_roles[binding.service] for binding in bindings)
     ):
         raise ProductionServiceRoleBindingsError(
             f"{name} must contain the exact production service-role profile"
@@ -186,10 +216,12 @@ def load_production_service_role_bindings(
 
 
 __all__ = [
+    "EXPECTED_PLATFORM_MODEL_SERVICE_ROLES",
     "EXPECTED_PRODUCTION_SERVICE_ROLES",
     "ProductionServiceRoleBinding",
     "ProductionServiceRoleBindings",
     "ProductionServiceRoleBindingsError",
+    "load_platform_model_service_role_bindings",
     "load_production_service_role_bindings",
     "render_production_service_role_bindings",
 ]

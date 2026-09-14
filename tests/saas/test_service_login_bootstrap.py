@@ -55,6 +55,186 @@ def _binding() -> SimpleNamespace:
     )
 
 
+def _platform_model_binding() -> SimpleNamespace:
+    return SimpleNamespace(
+        by_service={
+            "billing": SimpleNamespace(
+                login="platform_model_billing_login",
+                base_role="saas_billing",
+            ),
+            "platform_app": SimpleNamespace(
+                login="platform_model_app_login",
+                base_role="saas_platform_app",
+            ),
+        }
+    )
+
+
+def test_prepare_platform_model_login_uses_fixed_profile(monkeypatch) -> None:
+    engine = _Engine(("bootstrap", "bootstrap"))
+    created = False
+    received_passwords: list[str] = []
+    management = [("saas_billing", True, False, False, "bootstrap")]
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent",
+            sa.make_url("postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent"),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_platform_model_service_role_bindings",
+        lambda _source: _platform_model_binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+
+    def role_flags(_connection, role: str):
+        return {
+            "bootstrap": (True, True, True, True, True, True, True, -1, None),
+            "principal_operator": (True, False, False, True, False, False, True, -1, None),
+            "saas_billing": (False, False, False, False, False, False, True, -1, None),
+            "platform_model_billing_login": (
+                (True, False, False, False, False, False, True, -1, None) if created else None
+            ),
+        }[role]
+
+    def create_login(_connection, *, login: str, password: str) -> None:
+        nonlocal created
+        assert login == "platform_model_billing_login"
+        received_passwords.append(password)
+        created = True
+
+    monkeypatch.setattr(service_login_bootstrap, "_role_flags", role_flags)
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: list(management) if login == "principal_operator" else [],
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+    monkeypatch.setattr(service_login_bootstrap, "_create_login", create_login)
+
+    result = service_login_bootstrap.prepare_platform_model_service_login(
+        environ={"OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN": "principal_operator"},
+        service="billing",
+        password_stream=BytesIO(b"model billing password\n"),
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result == {
+        "schema_version": 1,
+        "status": "pass",
+        "production_authority": False,
+        "stage": "platform_model_login_prepared",
+        "service": "billing",
+        "login": "platform_model_billing_login",
+        "base_role": "saas_billing",
+        "created": True,
+    }
+    assert received_passwords == ["model billing password"]
+    assert "model billing password" not in str(result)
+    assert engine.disposed is True
+
+
+def test_bind_platform_model_login_uses_principal_operator(monkeypatch) -> None:
+    engine = _Engine(("principal_operator", "principal_operator"))
+    memberships: list[tuple[object, ...]] = []
+    management = [("saas_platform_app", True, False, False, "bootstrap")]
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://principal_operator:redacted@example.invalid/omnigent",
+            sa.make_url(
+                "postgresql+psycopg://principal_operator:redacted@example.invalid/omnigent"
+            ),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_platform_model_service_role_bindings",
+        lambda _source: _platform_model_binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_role_flags",
+        lambda _connection, role: {
+            "principal_operator": (True, False, False, True, False, False, True, -1, None),
+            "saas_platform_app": (False, False, False, False, False, False, True, -1, None),
+            "platform_model_app_login": (
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                None,
+            ),
+        }[role],
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: (
+            list(management) if login == "principal_operator" else list(memberships)
+        ),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+
+    def grant(_connection, *, base_role: str, login: str) -> None:
+        assert base_role == "saas_platform_app"
+        assert login == "platform_model_app_login"
+        memberships.append(
+            (
+                "saas_platform_app",
+                False,
+                True,
+                False,
+                "principal_operator",
+            )
+        )
+
+    monkeypatch.setattr(service_login_bootstrap, "_grant_named_base_role", grant)
+
+    result = service_login_bootstrap.bind_platform_model_service_login(
+        environ={},
+        service="platform_app",
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result["status"] == "pass"
+    assert result["stage"] == "platform_model_login_bound"
+    assert result["granted"] is True
+    assert memberships == [
+        (
+            "saas_platform_app",
+            False,
+            True,
+            False,
+            "principal_operator",
+        )
+    ]
+
+
+def test_platform_model_login_rejects_service_outside_fixed_profile() -> None:
+    try:
+        service_login_bootstrap.prepare_platform_model_service_login(
+            environ={},
+            service="runtime",
+            password_stream=BytesIO(b"password\n"),
+        )
+    except service_login_bootstrap.ProductionServiceLoginBootstrapError as error:
+        assert error.code == "authority_invalid"
+    else:
+        raise AssertionError("unlisted Platform-model service was accepted")
+
+
 def test_converge_runtime_journal_login_posture_as_superuser(monkeypatch) -> None:
     engine = _Engine(("bootstrap", "bootstrap"))
     configured = False
