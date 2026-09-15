@@ -3194,9 +3194,7 @@ export function NewChatLandingScreen() {
   // which have no knobs to remember.
   const selectedHost = allHosts.find((h) => h.host_id === selectedHostId);
 
-  // Readiness signal for the agent picker: only meaningful when
-  // a connected host is selected (a sandbox provisions its own tooling).
-  // Selection stays available for setup, but submission is blocked below so
+  // Only meaningful for a connected host; selection remains available for setup, but
   // an unavailable harness cannot create a session that will never start.
   const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
   // Smart Routing as a Model choice is offered on the two native harnesses

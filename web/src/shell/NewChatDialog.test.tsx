@@ -1288,11 +1288,12 @@ describe("NewChatLandingScreen", () => {
     );
   });
 
-  it("enables submit only once a message, host, agent and valid workspace are set", async () => {
+  it("enables submit only with a ready agent, message, host and valid workspace", async () => {
+    mockHosts([
+      { ...host("online"), configured_harnesses: { "codex-native": "needs-auth" } } as Host,
+    ]);
     renderLanding();
     const submit = screen.getByTestId("new-chat-landing-submit") as HTMLButtonElement;
-    // Host (auto-selected) + agent (default) + workspace (seeded from the
-    // recent) are all present, but with no message there's no task → disabled.
     await waitFor(() =>
       expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("repo"),
     );
@@ -1300,37 +1301,14 @@ describe("NewChatLandingScreen", () => {
     fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
       target: { value: "   " },
     });
-    // Whitespace-only is still empty after trim — button stays disabled.
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
       target: { value: "inspect the repo" },
     });
-    // Real text + the other gates satisfied → enabled. If canSubmit regressed
-    // (e.g. dropped the workspace gate), the blank cases above would have
-    // enabled too.
     expect(submit.disabled).toBe(false);
-  });
-
-  it("blocks a session whose selected harness is not ready on the host", async () => {
-    mockHosts([
-      {
-        ...host("online"),
-        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
-      } as Host,
-    ]);
-    renderLanding();
-    await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("repo"),
-    );
     selectAgent("a2");
-    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
-      target: { value: "inspect the repo" },
-    });
-
-    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
-    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent(
-      "choose Pi instead",
-    );
+    expect(submit.disabled).toBe(true);
+    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("choose Pi");
   });
 
   it("keeps the disabled reason tooltip on the new-chat submit button", async () => {
