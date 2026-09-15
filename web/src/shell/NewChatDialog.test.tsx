@@ -1308,7 +1308,7 @@ describe("NewChatLandingScreen", () => {
     expect(submit.disabled).toBe(false);
     selectAgent("a2");
     expect(submit.disabled).toBe(true);
-    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("choose Pi");
+    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("Responses");
   });
 
   it("keeps the disabled reason tooltip on the new-chat submit button", async () => {

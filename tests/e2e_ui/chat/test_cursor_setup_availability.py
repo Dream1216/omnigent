@@ -93,11 +93,9 @@ def test_cursor_missing_cli_shows_install_and_login_guidance(
     expect(warning).to_contain_text(f"Cursor isn't configured on {_HOST_NAME}")
     expect(warning).to_contain_text("omni setup")
 
-    # The guidance is visible before launch and blocks a session that the Host
-    # has already proved cannot start. This keeps the browser from creating a
-    # doomed session whose first turn can only fail inside the executor.
+    # The guidance is visible before launch and remains warning-only.
     composer.fill("help me inspect this repository")
-    expect(page.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
+    expect(page.get_by_test_id("new-chat-landing-submit")).to_be_enabled()
     expect(warning).to_be_visible()
 
     page.get_by_test_id("new-chat-landing-agent-select").click()
