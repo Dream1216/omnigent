@@ -629,8 +629,8 @@ function harnessWarningMessage(
   if (reason === "needs-auth" && isCodex) {
     return (
       <>
-        {agentName} needs Codex authentication on {hostName} — run <code>codex login</code> on that
-        machine.
+        {agentName} needs Codex authentication or a Responses-compatible provider on {hostName} —
+        run <code>codex login</code> on that machine.
       </>
     );
   }
@@ -3193,10 +3193,6 @@ export function NewChatLandingScreen() {
   // which have no knobs to remember.
   const selectedHost = allHosts.find((h) => h.host_id === selectedHostId);
 
-  // Warn-only readiness signal for the agent picker: only meaningful when
-  // a connected host is selected (a sandbox provisions its own tooling).
-  // Selection stays allowed — the host re-checks at launch and the create
-  // call surfaces a specific error if the harness really can't run.
   const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
   // Smart Routing as a Model choice is offered on the two native harnesses
   // whose running CLI accepts a per-turn model switch (the server injects
@@ -3594,6 +3590,8 @@ export function NewChatLandingScreen() {
     selectedAgent?.harness,
     harnessWarningHost,
   );
+  const selectedAgentLaunchBlocked =
+    selectedAgentUnconfigured && isCodexHarness(selectedAgent?.harness ?? "");
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
   // with one arm is just that arm. The Claude wrapper is the placeholder the
@@ -4062,6 +4060,7 @@ export function NewChatLandingScreen() {
     message.trim().length > 0 &&
     selectedAgent != null &&
     (sandboxSelected ? sandboxRepoValid : !!selectedHostId && workspaceValid) &&
+    !selectedAgentLaunchBlocked &&
     !creating;
 
   // Why submit is disabled, surfaced as the button's tooltip. Checked in the
@@ -4076,9 +4075,11 @@ export function NewChatLandingScreen() {
         ? "Please choose a host and working directory"
         : configuredAgentUnavailable && selectedAgent == null
           ? "This project's configured agent is unavailable — pick an agent to continue"
-          : message.trim().length === 0
-            ? "Enter a message to get started"
-            : null;
+          : selectedAgentLaunchBlocked
+            ? "Choose a ready agent or finish setting up this agent"
+            : message.trim().length === 0
+              ? "Enter a message to get started"
+              : null;
 
   // Chip display labels.
   const workspaceLabel = workspaceTrimmed
@@ -5957,10 +5958,8 @@ export function NewChatLandingScreen() {
                 host / working-directory / worktree / project chips. */}
           </div>
 
-          {/* Warn (don't block) when the selected agent's harness isn't
-              configured on the selected host — the host re-checks at
-              launch, so submitting surfaces a specific error if it
-              really can't run. Normal-flow directly under the composer
+          {/* Warn about unconfigured harnesses; Codex is blocked because a
+              parked native TUI cannot complete the first turn. Normal-flow
               (like the createError line below) so it reads as part of it. */}
           {selectedAgentUnconfigured && (
             <HarnessSetupNotice

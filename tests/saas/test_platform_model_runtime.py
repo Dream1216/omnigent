@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 
+from omnigent.harnesses.codex_native.app_server import resolve_native_codex_launch
 from omnigent.harnesses.pi_native.credentials import resolve_pi_native_provider
 from saas.control_plane.isolation import (
     SandboxLaunchContract,
@@ -19,6 +20,7 @@ from saas.control_plane.isolation import (
 )
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
 from saas.production import platform_model_runtime
+from saas.production.platform_model_host import PlatformModelHostProcess
 from saas.production.runner_control import RunnerControlError
 from saas.production.runner_executor import _optional_platform_model_projection
 from saas.production.service_bindings import (
@@ -38,6 +40,7 @@ from saas.runner_adapter.platform_models import (
     load_platform_managed_model_projection,
     project_platform_managed_model,
     render_platform_managed_model_projection,
+    render_platform_model_gateway_config,
 )
 
 
@@ -76,6 +79,75 @@ def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment(
     assert {
         entry["id"] for entry in provider.to_models_config()["providers"]["omnigent"]["models"]
     } == {"deepseek-flash", "deepseek-v4-pro"}
+
+
+def test_gateway_projection_routes_codex_without_cli_login(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, "session-bound-gateway-token")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+
+    launch = resolve_native_codex_launch(model=None)
+
+    assert launch.login_required is False
+    assert launch.model == "deepseek-flash"
+    rendered = "\n".join(launch.config_overrides)
+    assert 'base_url="http://omnigent-platform-model-gateway:8090/v1"' in rendered
+    assert 'wire_api="responses"' in rendered
+    assert "session-bound-gateway-token" in rendered
+
+
+@pytest.mark.asyncio
+async def test_platform_host_promotes_only_codex_auth_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+
+    async def base_probe(
+        _self: object,
+        *,
+        startup: bool,
+    ) -> dict[str, bool | str]:
+        assert startup is True
+        return {
+            "codex": "needs-auth",
+            "codex-native": "needs-auth",
+            "native-codex": "needs-auth",
+            "pi": True,
+            "claude-native": "needs-auth",
+        }
+
+    monkeypatch.setattr(
+        "omnigent.host.connect.HostProcess._probe_configured_harnesses", base_probe
+    )
+    host = object.__new__(PlatformModelHostProcess)
+
+    readiness = await host._probe_configured_harnesses(startup=True)
+
+    assert readiness == {
+        "codex": True,
+        "codex-native": True,
+        "native-codex": True,
+        "pi": True,
+        "claude-native": "needs-auth",
+    }
 
 
 def test_projection_rejects_endpoint_or_default_model_drift() -> None:

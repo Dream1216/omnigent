@@ -136,6 +136,7 @@ def _client(
             catalog_sha256="fc2923d2ab3ac92a2b1b16fef40cbcfbb139c3abcd9f4e7d3b3e3c34a8e8427c",
             prices=(
                 PlatformModelPrice(
+                    model_sha256="7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
                     peak_input_cache_hit_microusd_per_million_tokens=6_000,
                     peak_input_cache_miss_microusd_per_million_tokens=300_000,
                     peak_output_microusd_per_million_tokens=1_200_000,
@@ -193,6 +194,71 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         }
     ]
     assert not budgets.released
+
+
+def test_streams_responses_api_and_settles_nested_usage() -> None:
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/responses"
+        sent = json.loads(request.content)
+        assert sent["stream"] is True
+        assert "stream_options" not in sent
+        body = (
+            b"event: response.output_text.delta\n"
+            b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+            b"event: response.completed\n"
+            b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":10,"input_tokens_details":{"cached_tokens":4},'
+            b'"output_tokens":5,"total_tokens":15}}}\n\n'
+        )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model": "deepseek-flash",
+            "input": "hello",
+            "max_output_tokens": 100,
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert b'"delta":"hello"' in response.content
+    assert budgets.settled == [
+        {
+            "reservation_id": budgets.settled[0]["reservation_id"],
+            "actual_microusd": 5,
+            "actual_tokens": 15,
+        }
+    ]
+
+
+def test_responses_accepts_nullable_output_limit() -> None:
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        assert sent["max_output_tokens"] is None
+        body = (
+            b"event: response.completed\n"
+            b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+        )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, _budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model": "deepseek-flash",
+            "input": "hello",
+            "max_output_tokens": None,
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
 
 
 def test_provider_rejection_releases_budget_without_leaking_body() -> None:
@@ -334,6 +400,7 @@ def test_pricing_policy_requires_canonical_read_only_file(tmp_path: Path) -> Non
         "catalog_sha256": "fc2923d2ab3ac92a2b1b16fef40cbcfbb139c3abcd9f4e7d3b3e3c34a8e8427c",
         "rates": [
             {
+                "model_sha256": "7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
                 "off_peak_input_cache_hit_microusd_per_million_tokens": 3_000,
                 "off_peak_input_cache_miss_microusd_per_million_tokens": 150_000,
                 "off_peak_output_microusd_per_million_tokens": 600_000,
@@ -343,7 +410,7 @@ def test_pricing_policy_requires_canonical_read_only_file(tmp_path: Path) -> Non
             }
         ],
         "revision": "pricing-20260914",
-        "schema_version": 1,
+        "schema_version": 2,
     }
     path.write_text(
         json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
@@ -382,9 +449,10 @@ def test_packaged_pricing_tracks_current_deepseek_catalog_and_peak_windows() -> 
         }
     )
 
-    assert policy.revision == "pricing-20260914-v4.1"
+    assert policy.revision == "pricing-20260915-v4.2"
     prices = policy.for_catalog(("deepseek-flash", "deepseek-v4-pro"))
     assert set(prices) == {"deepseek-flash", "deepseek-v4-pro"}
+    assert set(policy.for_catalog(("deepseek-v4-pro",))) == {"deepseek-v4-pro"}
     flash = prices["deepseek-flash"]
     assert flash.rates_at(datetime(2026, 9, 14, 1, 0, tzinfo=timezone.utc)) == (
         6_000,
@@ -411,8 +479,10 @@ def test_host_gateway_config_contains_only_synthetic_bearer_name() -> None:
     document = json.loads(rendered)
     provider = document["providers"]["platform-deepseek"]["openai"]
 
+    assert document["providers"]["platform-deepseek"]["default"] == ["openai", "pi"]
     assert provider["base_url"] == "http://omnigent-platform-model-gateway:8090/v1"
     assert provider["api_key"] == PLATFORM_MODEL_CREDENTIAL_REFERENCE
+    assert provider["wire_api"] == "responses"
     assert "sk-" not in rendered
 
 
@@ -430,6 +500,7 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         catalog_sha256="fc2923d2ab3ac92a2b1b16fef40cbcfbb139c3abcd9f4e7d3b3e3c34a8e8427c",
         prices=(
             PlatformModelPrice(
+                model_sha256="7d963f65d1ede1bd9416a5f55575efe0d202e0a00519ef04e47dae20c3180445",
                 peak_input_cache_hit_microusd_per_million_tokens=6_000,
                 peak_input_cache_miss_microusd_per_million_tokens=300_000,
                 peak_output_microusd_per_million_tokens=1_200_000,

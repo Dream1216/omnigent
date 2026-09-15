@@ -63,6 +63,7 @@ _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
 
 @dataclass(frozen=True, slots=True)
 class PlatformModelPrice:
+    model_sha256: str
     peak_input_cache_hit_microusd_per_million_tokens: int
     peak_input_cache_miss_microusd_per_million_tokens: int
     peak_output_microusd_per_million_tokens: int
@@ -71,6 +72,10 @@ class PlatformModelPrice:
     off_peak_output_microusd_per_million_tokens: int
 
     def __post_init__(self) -> None:
+        if len(self.model_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in self.model_sha256
+        ):
+            raise ValueError("Platform model price is invalid")
         for value in (
             self.peak_input_cache_hit_microusd_per_million_tokens,
             self.peak_input_cache_miss_microusd_per_million_tokens,
@@ -129,18 +134,29 @@ class PlatformModelPricingPolicy:
             or not self.prices
         ):
             raise ValueError("Platform model pricing policy is invalid")
+        sealed_models = tuple(price.model_sha256 for price in self.prices)
+        if len(set(sealed_models)) != len(sealed_models):
+            raise ValueError("Platform model pricing policy is invalid")
 
     def for_catalog(self, models: tuple[str, ...]) -> Mapping[str, PlatformModelPrice]:
-        """Bind ordered rates to the exact administrator-configured catalog."""
+        """Return rates for a unique configured subset of the sealed catalog."""
 
-        canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
+        indexed = {price.model_sha256: price for price in self.prices}
+        model_hashes = tuple(hashlib.sha256(model.encode("utf-8")).hexdigest() for model in models)
         if (
-            len(models) != len(self.prices)
+            not models
             or len(set(models)) != len(models)
-            or hashlib.sha256(canonical).hexdigest() != self.catalog_sha256
+            or any(model_hash not in indexed for model_hash in model_hashes)
         ):
             raise ValueError("Platform model pricing catalog is unavailable")
-        return dict(zip(models, self.prices, strict=True))
+        if len(models) == len(self.prices):
+            canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
+            if hashlib.sha256(canonical).hexdigest() != self.catalog_sha256:
+                raise ValueError("Platform model pricing catalog is unavailable")
+        return {
+            model: indexed[model_hash]
+            for model, model_hash in zip(models, model_hashes, strict=True)
+        }
 
 
 class ConfigurationReader(Protocol):
@@ -210,10 +226,16 @@ class PlatformModelGateway:
             self._readiness_check()
 
     async def chat_completions(self, request: Request):
+        return await self._proxy_stream(request, upstream_path="chat/completions")
+
+    async def responses(self, request: Request):
+        return await self._proxy_stream(request, upstream_path="responses")
+
+    async def _proxy_stream(self, request: Request, *, upstream_path: str):
         claims = self._authenticate(request.headers.get("authorization", ""))
         raw = await request.body()
         try:
-            document = _request_document(raw)
+            document = _request_document(raw, responses=upstream_path == "responses")
         except ValueError:
             return _error(400, "platform_model_request_invalid")
         model = cast(str, document["model"])
@@ -232,7 +254,11 @@ class PlatformModelGateway:
         if price is None:
             return _error(503, "platform_model_pricing_unavailable")
 
-        requested_tokens = _requested_tokens(raw, document)
+        requested_tokens = _requested_tokens(
+            raw,
+            document,
+            responses=upstream_path == "responses",
+        )
         requested_microusd = _microusd(requested_tokens, price.reservation_rate)
         request_id = uuid4()
         requested_at = self._clock()
@@ -262,13 +288,16 @@ class PlatformModelGateway:
 
         outbound = dict(document)
         outbound["stream"] = True
-        outbound["stream_options"] = {"include_usage": True}
+        if upstream_path == "chat/completions":
+            outbound["stream_options"] = {"include_usage": True}
+        else:
+            outbound.pop("stream_options", None)
         client = self._client_factory()
         try:
             upstream = await client.send(
                 client.build_request(
                     "POST",
-                    f"{configuration.base_url.rstrip('/')}/chat/completions",
+                    f"{configuration.base_url.rstrip('/')}/{upstream_path}",
                     headers={
                         "Authorization": f"Bearer {configuration.api_key}",
                         "Content-Type": "application/json",
@@ -421,15 +450,32 @@ class _UsageParser:
         try:
             document = json.loads(payload)
             usage = document.get("usage") if isinstance(document, dict) else None
+            if not isinstance(usage, dict) and isinstance(document, dict):
+                response = document.get("response")
+                usage = response.get("usage") if isinstance(response, dict) else None
             if not isinstance(usage, dict):
                 return
-            prompt = _usage_integer(usage.get("prompt_tokens"))
-            completion = _usage_integer(usage.get("completion_tokens"))
+            responses_usage = "input_tokens" in usage or "output_tokens" in usage
+            prompt = _usage_integer(
+                usage.get("input_tokens") if responses_usage else usage.get("prompt_tokens")
+            )
+            completion = _usage_integer(
+                usage.get("output_tokens") if responses_usage else usage.get("completion_tokens")
+            )
             total = _usage_integer(usage.get("total_tokens"))
             if total != prompt + completion:
                 raise ValueError("Provider usage total is inconsistent")
-            cache_hit_value = usage.get("prompt_cache_hit_tokens")
-            cache_miss_value = usage.get("prompt_cache_miss_tokens")
+            details = usage.get("input_tokens_details")
+            cache_hit_value = (
+                details.get("cached_tokens")
+                if responses_usage and isinstance(details, dict)
+                else usage.get("prompt_cache_hit_tokens")
+            )
+            cache_miss_value = (
+                prompt - cache_hit_value
+                if responses_usage and isinstance(cache_hit_value, int)
+                else usage.get("prompt_cache_miss_tokens")
+            )
             if cache_hit_value is None and cache_miss_value is None:
                 cache_hit = 0
                 cache_miss = prompt
@@ -470,6 +516,10 @@ def create_platform_model_gateway_app(gateway: PlatformModelGateway) -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         return await gateway.chat_completions(request)
+
+    @app.post("/v1/responses")
+    async def responses(request: Request):
+        return await gateway.responses(request)
 
     return app
 
@@ -571,7 +621,7 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
         or not 0 < metadata.st_size <= 64 * 1024
         or not isinstance(document, dict)
         or set(document) != {"schema_version", "revision", "catalog_sha256", "rates"}
-        or document.get("schema_version") != 1
+        or document.get("schema_version") != 2
         or not isinstance(document.get("revision"), str)
         or not isinstance(document.get("catalog_sha256"), str)
         or not isinstance(document.get("rates"), list)
@@ -581,6 +631,7 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
     rate_rows = cast(list[object], document["rates"])
     for value in rate_rows:
         if not isinstance(value, dict) or set(value) != {
+            "model_sha256",
             "peak_input_cache_hit_microusd_per_million_tokens",
             "peak_input_cache_miss_microusd_per_million_tokens",
             "peak_output_microusd_per_million_tokens",
@@ -589,10 +640,13 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
             "off_peak_output_microusd_per_million_tokens",
         }:
             raise ValueError("Platform model pricing policy is invalid")
-        rates = {str(key): item for key, item in value.items()}
-        if any(isinstance(item, bool) or not isinstance(item, int) for item in rates.values()):
+        model_sha256 = value["model_sha256"]
+        rates = {str(key): item for key, item in value.items() if key != "model_sha256"}
+        if not isinstance(model_sha256, str) or any(
+            isinstance(item, bool) or not isinstance(item, int) for item in rates.values()
+        ):
             raise ValueError("Platform model pricing policy is invalid")
-        prices.append(PlatformModelPrice(**rates))
+        prices.append(PlatformModelPrice(model_sha256=model_sha256, **rates))
     revision = document["revision"]
     catalog_sha256 = document["catalog_sha256"]
     assert isinstance(revision, str)
@@ -651,7 +705,7 @@ def main() -> None:
     uvicorn.run(app, host=host, port=port, proxy_headers=False, server_header=False)
 
 
-def _request_document(raw: bytes) -> dict[str, object]:
+def _request_document(raw: bytes, *, responses: bool = False) -> dict[str, object]:
     if not 0 < len(raw) <= _MAX_REQUEST_BYTES:
         raise ValueError("Platform model request size is invalid")
     try:
@@ -665,19 +719,39 @@ def _request_document(raw: bytes) -> dict[str, object]:
         raise ValueError("Platform model request model is invalid")
     if document.get("stream") is not True:
         raise ValueError("Platform model gateway requires streaming")
-    max_tokens = document.get("max_tokens", document.get("max_completion_tokens", 4096))
-    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
-        raise ValueError("Platform model output limit is invalid")
-    if not 1 <= max_tokens <= _MAX_OUTPUT_TOKENS:
-        raise ValueError("Platform model output limit is invalid")
+    _output_token_limit(document, responses=responses)
     return document
 
 
-def _requested_tokens(raw: bytes, document: Mapping[str, object]) -> int:
-    max_tokens = cast(int, document.get("max_tokens", document.get("max_completion_tokens", 4096)))
+def _requested_tokens(
+    raw: bytes,
+    document: Mapping[str, object],
+    *,
+    responses: bool = False,
+) -> int:
+    max_tokens = _output_token_limit(document, responses=responses)
     # UTF-8 byte length is a conservative upper bound for ordinary BPE input;
     # the fixed allowance covers protocol/tool framing not present in messages.
     return len(raw) + max_tokens + 1024
+
+
+def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> int:
+    """Return the validated reservation limit for either OpenAI wire shape."""
+
+    value = (
+        document.get("max_output_tokens", 4096)
+        if responses
+        else document.get("max_tokens", document.get("max_completion_tokens", 4096))
+    )
+    # Responses declares max_output_tokens nullable. Treat explicit null like
+    # omission for reservation while preserving the upstream request verbatim.
+    if value is None:
+        return 4096
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Platform model output limit is invalid")
+    if not 1 <= value <= _MAX_OUTPUT_TOKENS:
+        raise ValueError("Platform model output limit is invalid")
+    return value
 
 
 def _usage_integer(value: object) -> int:
