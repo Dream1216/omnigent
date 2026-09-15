@@ -528,9 +528,8 @@ def build_platform_model_gateway(
             with billing_engine.connect() as connection:
                 connection.execute(sa.text("SELECT 1"))
             configuration = reader.load()
-            if configuration is None:
-                raise RuntimeError("Platform model Provider is unavailable")
-            pricing.for_catalog(configuration.allowed_models)
+            if configuration is not None:
+                pricing.for_catalog(configuration.allowed_models)
 
         gateway = PlatformModelGateway(
             tokens=tokens,
@@ -652,10 +651,6 @@ def main() -> None:
     uvicorn.run(app, host=host, port=port, proxy_headers=False, server_header=False)
 
 
-if __name__ == "__main__":
-    main()
-
-
 def _request_document(raw: bytes) -> dict[str, object]:
     if not 0 < len(raw) <= _MAX_REQUEST_BYTES:
         raise ValueError("Platform model request size is invalid")
@@ -718,3 +713,7 @@ __all__ = [
     "load_platform_model_pricing",
     "main",
 ]
+
+
+if __name__ == "__main__":
+    main()
