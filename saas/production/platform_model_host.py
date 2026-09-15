@@ -12,8 +12,10 @@ from uuid import UUID
 from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
 from omnigent.host.connect import HostProcess, run_host_process
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
+from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
+from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
 from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayTokenAuthority,
     inject_platform_model_gateway_token,
@@ -46,6 +48,31 @@ class PlatformModelHostProcess(HostProcess):
         super().__init__(identity, server_url, lifecycle_lock=lifecycle_lock)
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
+
+    async def _probe_configured_harnesses(
+        self,
+        *,
+        startup: bool,
+    ) -> dict[str, HarnessAvailability] | None:
+        """Credit the managed Provider without pretending a missing CLI exists.
+
+        Host-wide readiness runs before a per-session synthetic bearer exists.
+        The official Codex readiness probe therefore sees the deliberately
+        unresolved ``$OMNIGENT_PLATFORM_DEEPSEEK_KEY`` reference and reports
+        ``needs-auth``, even though this Host injects that bearer into every
+        Runner immediately before spawn. Promote only that auth-only state,
+        and only when the pinned platform Provider is the Codex default. A
+        missing or unsupported Codex binary remains unavailable.
+        """
+
+        configured = await super()._probe_configured_harnesses(startup=startup)
+        if configured is None or not _platform_codex_provider_configured():
+            return configured
+        promoted = dict(configured)
+        for harness in ("codex", "codex-native", "native-codex"):
+            if promoted.get(harness) == "needs-auth":
+                promoted[harness] = True
+        return promoted
 
     def _spawn_runner_proc(
         self,
@@ -116,6 +143,20 @@ def _required(source: Mapping[str, str], name: str) -> str:
     if not value or value != value.strip() or "\x00" in value:
         raise PlatformModelHostConfigurationError(f"{name} is invalid")
     return value
+
+
+def _platform_codex_provider_configured() -> bool:
+    """Return whether the immutable Host config routes Codex to our gateway."""
+
+    try:
+        provider = default_provider_for_harness(load_config(), "codex")
+    except Exception:  # noqa: BLE001 - readiness must fail closed, never break Host startup.
+        return False
+    return (
+        provider is not None
+        and provider.name == "platform-deepseek"
+        and provider.kind == "gateway"
+    )
 
 
 def _secret_file(source: Mapping[str, str], name: str) -> bytes:

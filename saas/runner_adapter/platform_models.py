@@ -197,11 +197,11 @@ def render_platform_model_gateway_config(
         "providers": {
             PLATFORM_MODEL_PROVIDER_NAME: {
                 "kind": "gateway",
-                "default": "pi",
+                "default": ["openai", "pi"],
                 "openai": {
                     "base_url": PLATFORM_MODEL_GATEWAY_BASE_URL,
                     "api_key": PLATFORM_MODEL_CREDENTIAL_REFERENCE,
-                    "wire_api": "chat",
+                    "wire_api": "responses",
                     "models": {
                         "default": default_model,
                         **{f"allowed-{index + 1}": model for index, model in enumerate(models)},
