@@ -1311,6 +1311,28 @@ describe("NewChatLandingScreen", () => {
     expect(submit.disabled).toBe(false);
   });
 
+  it("blocks a session whose selected harness is not ready on the host", async () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+      } as Host,
+    ]);
+    renderLanding();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("repo"),
+    );
+    selectAgent("a2");
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "inspect the repo" },
+    });
+
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent(
+      "choose Pi instead",
+    );
+  });
+
   it("keeps the disabled reason tooltip on the new-chat submit button", async () => {
     renderLanding();
     await waitFor(() =>

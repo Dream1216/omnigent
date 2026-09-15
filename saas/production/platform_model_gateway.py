@@ -63,6 +63,7 @@ _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
 
 @dataclass(frozen=True, slots=True)
 class PlatformModelPrice:
+    model_sha256: str
     peak_input_cache_hit_microusd_per_million_tokens: int
     peak_input_cache_miss_microusd_per_million_tokens: int
     peak_output_microusd_per_million_tokens: int
@@ -71,6 +72,10 @@ class PlatformModelPrice:
     off_peak_output_microusd_per_million_tokens: int
 
     def __post_init__(self) -> None:
+        if len(self.model_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in self.model_sha256
+        ):
+            raise ValueError("Platform model price is invalid")
         for value in (
             self.peak_input_cache_hit_microusd_per_million_tokens,
             self.peak_input_cache_miss_microusd_per_million_tokens,
@@ -129,18 +134,29 @@ class PlatformModelPricingPolicy:
             or not self.prices
         ):
             raise ValueError("Platform model pricing policy is invalid")
+        sealed_models = tuple(price.model_sha256 for price in self.prices)
+        if len(set(sealed_models)) != len(sealed_models):
+            raise ValueError("Platform model pricing policy is invalid")
 
     def for_catalog(self, models: tuple[str, ...]) -> Mapping[str, PlatformModelPrice]:
-        """Bind ordered rates to the exact administrator-configured catalog."""
+        """Return rates for a unique configured subset of the sealed catalog."""
 
-        canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
+        indexed = {price.model_sha256: price for price in self.prices}
+        model_hashes = tuple(hashlib.sha256(model.encode("utf-8")).hexdigest() for model in models)
         if (
-            len(models) != len(self.prices)
+            not models
             or len(set(models)) != len(models)
-            or hashlib.sha256(canonical).hexdigest() != self.catalog_sha256
+            or any(model_hash not in indexed for model_hash in model_hashes)
         ):
             raise ValueError("Platform model pricing catalog is unavailable")
-        return dict(zip(models, self.prices, strict=True))
+        if len(models) == len(self.prices):
+            canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
+            if hashlib.sha256(canonical).hexdigest() != self.catalog_sha256:
+                raise ValueError("Platform model pricing catalog is unavailable")
+        return {
+            model: indexed[model_hash]
+            for model, model_hash in zip(models, model_hashes, strict=True)
+        }
 
 
 class ConfigurationReader(Protocol):
@@ -571,7 +587,7 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
         or not 0 < metadata.st_size <= 64 * 1024
         or not isinstance(document, dict)
         or set(document) != {"schema_version", "revision", "catalog_sha256", "rates"}
-        or document.get("schema_version") != 1
+        or document.get("schema_version") != 2
         or not isinstance(document.get("revision"), str)
         or not isinstance(document.get("catalog_sha256"), str)
         or not isinstance(document.get("rates"), list)
@@ -581,6 +597,7 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
     rate_rows = cast(list[object], document["rates"])
     for value in rate_rows:
         if not isinstance(value, dict) or set(value) != {
+            "model_sha256",
             "peak_input_cache_hit_microusd_per_million_tokens",
             "peak_input_cache_miss_microusd_per_million_tokens",
             "peak_output_microusd_per_million_tokens",
@@ -589,10 +606,13 @@ def load_platform_model_pricing(environ: Mapping[str, str]) -> PlatformModelPric
             "off_peak_output_microusd_per_million_tokens",
         }:
             raise ValueError("Platform model pricing policy is invalid")
-        rates = {str(key): item for key, item in value.items()}
-        if any(isinstance(item, bool) or not isinstance(item, int) for item in rates.values()):
+        model_sha256 = value["model_sha256"]
+        rates = {str(key): item for key, item in value.items() if key != "model_sha256"}
+        if not isinstance(model_sha256, str) or any(
+            isinstance(item, bool) or not isinstance(item, int) for item in rates.values()
+        ):
             raise ValueError("Platform model pricing policy is invalid")
-        prices.append(PlatformModelPrice(**rates))
+        prices.append(PlatformModelPrice(model_sha256=model_sha256, **rates))
     revision = document["revision"]
     catalog_sha256 = document["catalog_sha256"]
     assert isinstance(revision, str)
