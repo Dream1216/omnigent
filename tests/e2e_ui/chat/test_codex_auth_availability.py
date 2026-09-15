@@ -1,7 +1,7 @@
 """E2E: auth-aware Codex availability in the New Chat landing screen.
 
 The landing composer (``NewChatLandingScreen`` in
-``web/src/shell/NewChatDialog.tsx``) warns — but does not block — when the
+``web/src/shell/NewChatDialog.tsx``) warns and blocks submission when the
 selected agent's harness is not ready on the selected host. For Codex the
 readiness signal is structured: the host's ``host.hello`` readiness map flows
 through ``host_store`` and ``GET /v1/hosts`` as a per-harness
@@ -10,8 +10,8 @@ available (absent / ``true``). This PR makes the picker render that distinction:
 
 * the **needs-auth message** under the composer
   (``new-chat-landing-harness-warning``):
-  ``"<agent> needs Codex authentication on <host> — run codex login on that
-  machine."`` — shown for any selected Codex agent (native or brain harness).
+  ``"<agent> needs a Responses-compatible provider or Codex authentication on
+  <host> ..."`` — shown for any selected Codex agent (native or brain harness).
 * the **needs-setup badge** (``new-chat-landing-harness-warning-codex``,
   text ``"needs auth"``) on the Codex row inside a bundle agent's per-entry
   "Agent Harness" config submenu.
@@ -255,7 +255,9 @@ async def _drive_codex_needs_auth(base_url: str) -> None:
             # message, so we match the surrounding copy).
             warning = page.get_by_test_id("new-chat-landing-harness-warning")
             await expect(warning).to_be_visible(timeout=30_000)
-            await expect(warning).to_contain_text("needs Codex authentication")
+            await expect(warning).to_contain_text(
+                "needs a Responses-compatible provider or Codex authentication"
+            )
             await expect(warning).to_contain_text(_HOST_NAME)
             await expect(warning).to_contain_text("codex login")
         finally:
