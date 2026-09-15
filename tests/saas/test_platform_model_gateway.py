@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,7 @@ from saas.runner_adapter.platform_models import (
 TENANT_ID = UUID("10000000-0000-0000-0000-000000000001")
 SESSION_ID = UUID("20000000-0000-0000-0000-000000000002")
 SIGNING_KEY = b"model-gateway-test-signing-key-32-bytes-minimum"
+_DEFAULT_CONFIGURATION = object()
 
 
 class _ConfigurationReader:
@@ -112,7 +114,9 @@ def _configuration() -> PlatformManagedModelRuntimeConfiguration:
 def _client(
     handler: httpx.AsyncBaseTransport | httpx.MockTransport,
     *,
-    configuration: PlatformManagedModelRuntimeConfiguration | None = None,
+    configuration: PlatformManagedModelRuntimeConfiguration
+    | object
+    | None = _DEFAULT_CONFIGURATION,
 ) -> tuple[TestClient, _Budgets, str]:
     authority = PlatformModelGatewayTokenAuthority(
         signing_key=SIGNING_KEY,
@@ -121,7 +125,11 @@ def _client(
     budgets = _Budgets()
     gateway = PlatformModelGateway(
         tokens=authority,
-        configurations=_ConfigurationReader(configuration or _configuration()),
+        configurations=_ConfigurationReader(
+            _configuration()
+            if configuration is _DEFAULT_CONFIGURATION
+            else cast(PlatformManagedModelRuntimeConfiguration | None, configuration)
+        ),
         budgets=budgets,
         pricing=PlatformModelPricingPolicy(
             revision="pricing-test-20260914",
@@ -202,6 +210,29 @@ def test_provider_rejection_releases_budget_without_leaking_body() -> None:
     assert "contains-sensitive-provider-detail" not in response.text
     assert len(budgets.released) == 1
     assert not budgets.settled
+
+
+def test_unconfigured_provider_is_ready_but_requests_fail_closed() -> None:
+    calls = 0
+
+    async def upstream(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    client, budgets, token = _client(httpx.MockTransport(upstream), configuration=None)
+
+    assert client.get("/healthz").status_code == 200
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "messages": [], "stream": True},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "platform_model_provider_unavailable"
+    assert calls == 0
+    assert not budgets.reserved
 
 
 def test_rejects_invalid_token_and_model_before_provider_egress() -> None:
@@ -440,6 +471,11 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
     monkeypatch.setattr(module, "_inspect_service_login", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(module, "build_production_secret_cipher", lambda _env: object())
     monkeypatch.setattr(module, "load_platform_model_pricing", lambda _env: pricing)
+    monkeypatch.setattr(
+        module,
+        "ModelProviderConfigurationReader",
+        lambda *_args, **_kwargs: _ConfigurationReader(None),
+    )
 
     app, built_engines = build_platform_model_gateway(
         {
@@ -450,5 +486,29 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
 
     assert app is not None
     assert built_engines == tuple(engines)
+    health = TestClient(app).get("/healthz")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "provider_secret_exported": False}
     for built in built_engines:
         built.dispose()
+
+
+def test_module_entrypoint_runs_after_response_helpers() -> None:
+    from saas.production import platform_model_gateway as module
+
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_error_response"
+    )
+    entrypoint = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "__name__"
+    )
+
+    assert entrypoint.lineno > (helper.end_lineno or helper.lineno)
