@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -28,6 +29,12 @@ def test_login_export_is_bound_to_reproducible_image_inputs() -> None:
 
 
 def test_exported_login_assets_and_csp_are_complete() -> None:
+    static_root = http.files("saas.login_ui").joinpath("static")
+    if (
+        os.environ.get("OMNIGENT_SKIP_WEB_UI") == "true"
+        and not static_root.joinpath("login.html").is_file()
+    ):
+        pytest.skip("the generic backend lane intentionally omits the login export")
     app = FastAPI()
     app.include_router(create_onboarding_ui_router())
     with TestClient(app) as client:
