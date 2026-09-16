@@ -66,6 +66,16 @@ so forbidden paths, reverse dependencies, the 0.85 isolation floor and the
 8-patch ceiling are unchanged. This is a Single-Owner Beta scope record, not
 production admission, vendor-account authentication or a merge waiver.
 
+The `harness-fleet-qwen-e2e-fixture-v2` corrective revision binds the official
+Qwen one-shot E2E to the active isolated mock-provider fixture. A real Host
+with Qwen installed otherwise reaches setup and fails before the test body
+because the removed fixture name cannot be resolved. This adds one directly
+changed test file while reducing the measured net delta from 2,119 to 2,117
+lines. The direct-file ceiling therefore moves from 47 to 48; the 2,119-line
+ceiling, patch count, isolation floor, forbidden paths and reverse-dependency
+checks remain unchanged. This is a Single-Owner Beta corrective record, not
+production admission or a merge waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |

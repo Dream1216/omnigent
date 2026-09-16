@@ -131,7 +131,7 @@ def test_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2144
-    assert budget["max_direct_upstream_files"] == 48
+    assert budget["max_direct_upstream_files"] == 49
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     report = evaluate_delta(
