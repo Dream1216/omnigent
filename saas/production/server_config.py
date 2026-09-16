@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy.engine import URL, make_url
 
+from saas.delivery.client import DeliveryConfig
 from saas.production.service_bindings import (
     ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
@@ -46,7 +47,7 @@ _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\."
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
-_CAPABILITIES = frozenset({"tenant", "run", "runner", "preview"})
+_CAPABILITIES = frozenset({"tenant", "run", "runner", "preview", "delivery"})
 _CORE_CAPABILITIES = frozenset({"tenant", "run"})
 _DATABASE_ROLES = ("runtime", "authenticator", "app", "governance", "public_api")
 _MAX_SECRET_FILE_BYTES = 16 * 1024
@@ -213,6 +214,7 @@ class ProductionServerConfig:
     secrets: ProductionServerSecrets = field(repr=False)
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
+    delivery_config: DeliveryConfig | None = field(default=None, repr=False)
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -993,6 +995,18 @@ def load_production_server_config(
     if not cookie_name.startswith("__Host-") or not _REVISION.fullmatch(cookie_name[7:]):
         raise ProductionServerConfigError("OMNIGENT_SAAS_COOKIE_NAME must use the __Host- prefix")
 
+    delivery_config = None
+    delivery_file = source.get("OMNIGENT_SAAS_DELIVERY_CONFIG_FILE")
+    if "delivery" in capabilities:
+        if not delivery_file:
+            raise ProductionServerConfigError(
+                "delivery capability requires its configuration file"
+            )
+        delivery_config = DeliveryConfig.from_file(Path(delivery_file))
+    elif delivery_file:
+        raise ProductionServerConfigError(
+            "delivery configuration requires the delivery capability"
+        )
     runner_adapter_factory = _factory_reference(source, capability="runner")
     preview_adapter_factory = _factory_reference(source, capability="preview")
     for capability, factory in (
@@ -1090,6 +1104,7 @@ def load_production_server_config(
         secrets=secrets,
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
+        delivery_config=delivery_config,
     )
 
 

@@ -1019,10 +1019,20 @@ def build_production_saas_services(
     """Build Tenant authentication, onboarding, and stable public Run API services."""
 
     adapters = external or ProductionExternalAdapters()
+    from saas.delivery.access import DeliveryAccess
+    from saas.delivery.client import DeliveryClient
+    from saas.delivery.http import create_delivery_router
+    from saas.delivery.legacy import create_legacy_delivery_router
+
+    delivery_client = DeliveryClient(config.delivery_config) if config.delivery_config else None
+    if "delivery" in config.capabilities and delivery_client is None:
+        raise ProductionServerCompositionError("delivery capability requires DCP configuration")
     checks: dict[str, ReadinessCheck] = {
         f"database.{role}": _runtime_database_check(engine)
         for role, engine in sessions.readiness_engines.items()
     }
+    if delivery_client is not None:
+        checks["external.delivery_contract"] = delivery_client.assert_ready
     for capability, adapter in (("runner", adapters.runner), ("preview", adapters.preview)):
         if capability in config.capabilities:
             if adapter is None:
@@ -1111,6 +1121,23 @@ def build_production_saas_services(
         ),
         runtime_router=runtime_router,
         runtime_initializer=runtime_initializer,
+    )
+    if integration.runtime_router is not None:
+        integration.runtime_router.include_router(
+            create_legacy_delivery_router(
+                DeliveryAccess(
+                    integration.auth_provider, context_resolver, sessions.app, delivery_client
+                )
+            )
+        )
+    integration.router.include_router(
+        create_delivery_router(
+            auth=integration.auth_provider,
+            resolver=context_resolver,
+            sessions=sessions.app,
+            client=delivery_client,
+            preview_enabled="preview" in config.capabilities,
+        )
     )
     if "preview" in config.capabilities:
         from saas.production.preview_control import (
