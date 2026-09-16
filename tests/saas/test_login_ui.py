@@ -15,6 +15,18 @@ from saas.control_plane.onboarding_http import create_onboarding_ui_router
 from saas.login_ui import http
 
 
+def test_login_export_is_bound_to_reproducible_image_inputs() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    config = (repo / "saas/login_web/next.config.mjs").read_text(encoding="utf-8")
+    dockerfile = (repo / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "generateBuildId" in config
+    assert "OMNIGENT_SOURCE_REVISION" in config
+    assert "OMNIGENT_SOURCE_REVISION=${SOURCE_REVISION}" in dockerfile
+    assert "find /login/saas/login_ui/static -depth" in dockerfile
+    assert "find /opt/venv /build -depth" in dockerfile
+
+
 def test_exported_login_assets_and_csp_are_complete() -> None:
     app = FastAPI()
     app.include_router(create_onboarding_ui_router())
