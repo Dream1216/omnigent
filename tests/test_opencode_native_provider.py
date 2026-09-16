@@ -19,6 +19,7 @@ from omnigent.harnesses.opencode_native.provider import (
     build_opencode_omnigent_mcp_server,
     build_opencode_provider_config,
     maybe_merge_user_provider_config,
+    resolve_configured_openai_gateway,
     resolve_databricks_gateway,
     write_opencode_provider_config,
 )
@@ -192,6 +193,70 @@ def test_resolve_gateway_defaults_non_gateway_model(monkeypatch: pytest.MonkeyPa
 def test_resolve_gateway_none_when_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_sdk(monkeypatch, host="https://ws.databricks.com", token=None)
     assert resolve_databricks_gateway("oss") is None
+
+
+def test_resolve_configured_openai_gateway_uses_session_bound_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("OMNIGENT_PLATFORM_DEEPSEEK_KEY", "session-bound-token")
+    (tmp_path / "config.yaml").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "platform-deepseek": {
+                        "kind": "gateway",
+                        "default": ["openai", "pi"],
+                        "openai": {
+                            "base_url": "http://omnigent-platform-model-gateway:8090/v1",
+                            "api_key": "$OMNIGENT_PLATFORM_DEEPSEEK_KEY",
+                            "wire_api": "responses",
+                            "models": {"default": "deepseek-v4-pro"},
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolution = resolve_configured_openai_gateway()
+
+    assert resolution is not None
+    assert resolution.provider_id == "platform-deepseek"
+    assert resolution.base_url == "http://omnigent-platform-model-gateway:8090/v1"
+    assert resolution.api_key == "session-bound-token"
+    assert resolution.model_id == "deepseek-v4-pro"
+    assert resolution.qualified_model == "platform-deepseek/deepseek-v4-pro"
+
+
+def test_resolve_configured_openai_gateway_fails_closed_without_session_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("OMNIGENT_PLATFORM_DEEPSEEK_KEY", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "platform-deepseek": {
+                        "kind": "gateway",
+                        "default": "openai",
+                        "openai": {
+                            "base_url": "http://omnigent-platform-model-gateway:8090/v1",
+                            "api_key": "$OMNIGENT_PLATFORM_DEEPSEEK_KEY",
+                            "models": {"default": "deepseek-v4-pro"},
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert resolve_configured_openai_gateway() is None
 
 
 def test_build_mcp_block_stdio_and_http() -> None:

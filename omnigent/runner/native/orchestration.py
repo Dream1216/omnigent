@@ -1256,6 +1256,7 @@ async def _auto_create_opencode_terminal(
         build_opencode_omnigent_mcp_server,
         build_opencode_provider_config,
         maybe_merge_user_provider_config,
+        resolve_configured_openai_gateway,
         resolve_databricks_gateway,
         write_opencode_provider_config,
     )
@@ -1266,6 +1267,8 @@ async def _auto_create_opencode_terminal(
     gateway = resolve_databricks_gateway(
         _opencode_native_profile_from_spec(agent_spec), model_id=model_override
     )
+    if gateway is None:
+        gateway = resolve_configured_openai_gateway(model_id=model_override)
     if gateway is not None:
         # Pin the per-prompt model to the synthesized provider/endpoint id, and
         # write it as opencode's default model too so the TUI launches on it.

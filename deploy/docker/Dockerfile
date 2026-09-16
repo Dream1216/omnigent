@@ -315,6 +315,8 @@ ARG SOURCE_DATE_EPOCH
 ARG CLAUDE_CODE_VERSION=2.1.236
 ARG CODEX_CLI_VERSION=0.139.0
 ARG PI_CODING_AGENT_VERSION=0.84.2
+ARG QWEN_CODE_VERSION=0.23.4
+ARG OPENCODE_VERSION=1.18.31
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -424,7 +426,9 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       '  "dependencies": {' \
       "    \"@anthropic-ai/claude-code\": \"${CLAUDE_CODE_VERSION}\"," \
       "    \"@earendil-works/pi-coding-agent\": \"${PI_CODING_AGENT_VERSION}\"," \
-      "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"" \
+      "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"," \
+      "    \"@qwen-code/qwen-code\": \"${QWEN_CODE_VERSION}\"," \
+      "    \"opencode-ai\": \"${OPENCODE_VERSION}\"" \
       '  }' \
       '}' > .github/ci-deps/package.json \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
@@ -433,12 +437,18 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
+ && test -x .github/ci-deps/node_modules/.bin/qwen \
+ && test -x .github/ci-deps/node_modules/.bin/opencode \
  && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
       *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
       *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
       *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(qwen --version 2>&1)" in *"${QWEN_CODE_VERSION}"*) ;; \
+      *) echo "ERROR: qwen CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(opencode --version 2>&1)" in *"${OPENCODE_VERSION}"*) ;; \
+      *) echo "ERROR: opencode CLI version mismatch" >&2; exit 1 ;; esac \
  && mkdir -p /usr/local/lib/node_modules \
  && cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm" \
       /usr/local/lib/node_modules/pnpm \

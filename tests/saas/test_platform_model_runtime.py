@@ -12,6 +12,7 @@ import pytest
 import sqlalchemy as sa
 
 from omnigent.harnesses.codex_native.app_server import resolve_native_codex_launch
+from omnigent.harnesses.opencode_native.provider import resolve_configured_openai_gateway
 from omnigent.harnesses.pi_native.credentials import resolve_pi_native_provider
 from saas.control_plane.isolation import (
     SandboxLaunchContract,
@@ -104,6 +105,28 @@ def test_gateway_projection_routes_codex_without_cli_login(
     assert 'base_url="http://omnigent-platform-model-gateway:8090/v1"' in rendered
     assert 'wire_api="responses"' in rendered
     assert "session-bound-gateway-token" in rendered
+
+
+def test_gateway_projection_routes_opencode_without_cli_login(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, "session-bound-gateway-token")
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+
+    resolution = resolve_configured_openai_gateway()
+
+    assert resolution is not None
+    assert resolution.provider_id == "platform-deepseek"
+    assert resolution.api_key == "session-bound-gateway-token"
+    assert resolution.model_id == "deepseek-flash"
 
 
 @pytest.mark.asyncio

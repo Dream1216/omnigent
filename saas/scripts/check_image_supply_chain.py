@@ -38,6 +38,8 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.236"),
     "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+    "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
+    "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
@@ -706,6 +708,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="Node dependency lock",
         violations=violations,
     )
+    pnpm_workspace = _read_repository_contract(
+        repo,
+        "pnpm-workspace.yaml",
+        label="pnpm workspace policy",
+        violations=violations,
+    )
     cli_manifest = _read_repository_contract(
         repo,
         ".github/ci-deps/package.json",
@@ -723,6 +731,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         runtime_revision_binder,
         uv_lock,
         pnpm_lock,
+        pnpm_workspace,
         cli_manifest,
         host_cli_normalizer,
     ):
@@ -967,6 +976,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'case "$(claude --version 2>&1)"',
         'case "$(codex --version 2>&1)"',
         'case "$(pi --version 2>&1)"',
+        'case "$(qwen --version 2>&1)"',
+        'case "$(opencode --version 2>&1)"',
         'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
         "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
         "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
@@ -990,6 +1001,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             < host_stage.index('case "$(claude --version 2>&1)"')
             < host_stage.index('case "$(codex --version 2>&1)"')
             < host_stage.index('case "$(pi --version 2>&1)"')
+            < host_stage.index('case "$(qwen --version 2>&1)"')
+            < host_stage.index('case "$(opencode --version 2>&1)"')
             < host_stage.index('cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"')
             < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn")
             < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx")
@@ -1047,18 +1060,25 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     }
     if cli_dependencies != expected_dependencies:
         violations.append("host CLI dependency manifest does not match approved direct versions")
+    required_host_cli_builds = {
+        "'@qwen-code/audio-capture': true",
+        "opencode-ai: true",
+    }
+    if any(fragment not in pnpm_workspace for fragment in required_host_cli_builds):
+        violations.append("host CLI install scripts must be explicitly allowed by pnpm policy")
     for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
         if f"ARG {argument}={version}" not in dockerfile:
             violations.append(f"host image must pin {package} to {version}")
         importer = re.compile(
-            rf"'{re.escape(package)}':\n\s+specifier: {re.escape(version)}\n"
+            rf"(?:'{re.escape(package)}'|{re.escape(package)}):\n"
+            rf"\s+specifier: {re.escape(version)}\n"
             rf"\s+version: {re.escape(version)}(?:\n|\()"
         )
         if importer.search(pnpm_lock) is None:
             violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
     if re.search(
         r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
-        r"@earendil-works/pi-coding-agent)",
+        r"@earendil-works/pi-coding-agent|@qwen-code/qwen-code|opencode-ai)",
         dockerfile,
     ):
         violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")

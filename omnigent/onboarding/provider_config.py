@@ -179,6 +179,11 @@ _HARNESS_FAMILY: dict[str, str] = {
     # normally maps it down via _provider_harness_name; accept both spellings
     # here so callers that pass the spec/CLI spelling directly resolve too.
     "openai-agents-sdk": OPENAI_FAMILY,
+    # OpenCode accepts an OpenAI-compatible provider block in its per-session
+    # opencode.json. The native adapter synthesizes that block from the same
+    # default family Provider used by Codex/Qwen, so it is provider-routed
+    # rather than permanently tied to a separate `opencode auth login`.
+    "opencode-native": OPENAI_FAMILY,
     # Antigravity is Gemini-native but routes generic-provider traffic over
     # the OpenAI-compatible wire, so it consumes the ``openai`` family.
     "antigravity": OPENAI_FAMILY,
@@ -1510,7 +1515,7 @@ def harness_owns_its_credential(harness: str) -> bool:
     provider for one would name a credential the session never uses.
 
     A harness mapped in :data:`_HARNESS_FAMILY` is provider-routed at spawn
-    (e.g. qwen consumes the openai family via its gateway env) even when its
+    (e.g. qwen and opencode-native consume the openai family) even when its
     capability record declares own-auth for the unconfigured fallback, so it
     is never declined here — its family default is genuinely what it runs on.
 

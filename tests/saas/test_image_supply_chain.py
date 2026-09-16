@@ -852,6 +852,22 @@ def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) 
     assert "pnpm-lock.yaml must bind @openai/codex to 0.139.0" in violations
 
 
+def test_image_material_lock_rejects_unapproved_host_cli_install_script(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    workspace = repo / "pnpm-workspace.yaml"
+    source = workspace.read_text(encoding="utf-8")
+    target = "opencode-ai: true"
+    assert target in source
+    workspace.write_text(source.replace(target, "opencode-ai: false", 1), encoding="utf-8")
+
+    assert (
+        "host CLI install scripts must be explicitly allowed by pnpm policy"
+        in validate_image_material_lock(repo)
+    )
+
+
 def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     action = repo / "saas/actions/build-oci-candidate/action.yml"
