@@ -110,7 +110,10 @@ def _qwen_spawn_env():
 def _kimi_spawn_env():
     from omnigent.inner.kimi_executor import KimiExecutor
 
-    return _bare(KimiExecutor)._build_spawn_env()
+    async def _no_gateway():
+        return {}
+
+    return asyncio.run(_bare(KimiExecutor, _resolve_gateway_env=_no_gateway)._build_spawn_env())
 
 
 def _hermes_spawn_env():
