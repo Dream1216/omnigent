@@ -740,6 +740,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     assert runtime_revision_binder is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
+    assert pnpm_workspace is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
 
