@@ -201,6 +201,15 @@ jobs:
             --file saas/control_plane/postgresql_database.psql
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
+      - name: Set up login UI build runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build React 18 login export
+        working-directory: saas/login_web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm ci --no-audit --no-fund && npm run build && npm run format:check
       - name: Run current-revision OSS and SaaS regressions
         run: >-
           uv run pytest

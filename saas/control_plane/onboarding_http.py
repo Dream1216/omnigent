@@ -32,6 +32,7 @@ from saas.control_plane.onboarding_status import (
     OnboardingStatusService,
     OnboardingStatusView,
 )
+from saas.login_ui.http import login_asset, login_page
 
 if TYPE_CHECKING:
     from saas.control_plane.http_auth import SaasAuthProvider
@@ -297,12 +298,19 @@ def create_onboarding_ui_router() -> APIRouter:
     @router.get("/signup", include_in_schema=False)
     @router.get("/signup/verify", include_in_schema=False)
     @router.get("/signup/status", include_in_schema=False)
-    @router.get("/saas/login", include_in_schema=False)
     def onboarding_shell() -> HTMLResponse:
         return HTMLResponse(
             files("saas.onboarding_ui").joinpath("onboarding.html").read_text(encoding="utf-8"),
             headers=_UI_HEADERS,
         )
+
+    @router.get("/saas/login", include_in_schema=False)
+    def login_shell() -> HTMLResponse:
+        return login_page(_UI_HEADERS) or onboarding_shell()
+
+    @router.get("/saas/login-assets/{path:path}", include_in_schema=False)
+    def login_static_asset(path: str) -> Response:
+        return login_asset(path)
 
     @router.get("/saas/onboarding-assets/onboarding.css", include_in_schema=False)
     def onboarding_css() -> Response:
