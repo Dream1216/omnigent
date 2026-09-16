@@ -324,6 +324,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000013",
     ): "c5fe0b9dd94ffd3b378e6935ed7f611dc1f528e6cd2f1c4d2f199e72b6a6d416",
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "813253bdda7aa38f62ba3a76afc523881cef7ff43ca6c9be199630df7742f2dd",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "7859924fdfb48d4a95c28b564b760248cf4e393f227bb9b17b45f16d2b0805b2",
 }
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
