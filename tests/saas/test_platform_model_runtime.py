@@ -12,7 +12,7 @@ import pytest
 import sqlalchemy as sa
 
 from omnigent.harnesses.codex_native.app_server import resolve_native_codex_launch
-from omnigent.harnesses.opencode_native.provider import resolve_configured_openai_gateway
+from omnigent.harnesses.opencode_native.provider import resolve_databricks_gateway
 from omnigent.harnesses.pi_native.credentials import resolve_pi_native_provider
 from saas.control_plane.isolation import (
     SandboxLaunchContract,
@@ -121,7 +121,7 @@ def test_gateway_projection_routes_opencode_without_cli_login(
         encoding="ascii",
     )
 
-    resolution = resolve_configured_openai_gateway()
+    resolution = resolve_databricks_gateway(None)
 
     assert resolution is not None
     assert resolution.provider_id == "platform-deepseek"

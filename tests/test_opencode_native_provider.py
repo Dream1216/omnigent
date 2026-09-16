@@ -144,7 +144,11 @@ def test_gateway_endpoint_normalization(model_id: str | None, expected: str | No
     assert _gateway_endpoint_for_model(model_id) == expected
 
 
-def test_resolve_gateway_none_without_profile() -> None:
+def test_resolve_gateway_none_without_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
     assert resolve_databricks_gateway(None) is None
     assert resolve_databricks_gateway("") is None
 
