@@ -198,6 +198,21 @@ jobs:
             uv pip install --no-deps "setuptools==83.0.0"
           fi
 
+      - name: Set up login UI build runtime
+        if: ${{ matrix.group == 'misc' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: saas/login_web/package-lock.json
+
+      - name: Build React 18 login export
+        if: ${{ matrix.group == 'misc' }}
+        working-directory: saas/login_web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm ci --no-audit --no-fund && npm run build && npm run format:check
+
       - name: Run pytest
         shell: bash
         env:
