@@ -104,12 +104,18 @@ RUN pnpm --filter web run build
 # The login is an isolated Next.js / React 18 export; no Node service is added.
 FROM ${NODE_IMAGE} AS login-web-builder
 ARG NPM_CONFIG_REGISTRY=
-ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} NEXT_TELEMETRY_DISABLED=1
+ARG SOURCE_DATE_EPOCH
+ARG SOURCE_REVISION
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
+    NEXT_TELEMETRY_DISABLED=1 \
+    OMNIGENT_SOURCE_REVISION=${SOURCE_REVISION}
 WORKDIR /login/saas/login_web
 COPY saas/login_web/package.json saas/login_web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY saas/login_web/ ./
-RUN npm run build
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
+ && npm run build \
+ && find /login/saas/login_ui/static -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # ── Python builder (shared: server + host) ──────────────
 # Installs the package (and its transitive native-extension deps) into
@@ -253,7 +259,10 @@ RUN set -eu; \
     }; \
     python -B -I -c 'import hashlib; from pathlib import Path; root=Path("/opt/venv"); bad=sorted(root.rglob("uv_cache.json")); assert not bad, bad; print("\n".join(f"{path.relative_to(root)} {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in sorted(root.rglob("*.pyc"))))' \
       > /tmp/venv-server-pyc.sha256; \
-    cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256
+    cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256; \
+    python -B -I ./saas/scripts/normalize_host_cli_tree.py \
+      --root=/opt/venv --source-date-epoch="${SOURCE_DATE_EPOCH}"; \
+    find /opt/venv /build -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
