@@ -60,7 +60,7 @@ OpenCode packages in the Host image and routes OpenCode through the existing
 OpenAI-compatible platform Provider with only the session-bound synthetic
 gateway credential. The generated pnpm lock, install policy, image checks and
 positive/negative routing tests raise the measured ceiling from 40 files /
-1,339 net lines to 48 files / 2,135 net lines. Patch 0007 carries the three
+1,348 net lines to 48 files / 2,144 net lines. Patch 0007 carries the three
 official Python seams; the initially proposed native Runner edit was removed,
 so forbidden paths, reverse dependencies, the 0.85 isolation floor and the
 8-patch ceiling are unchanged. This is a Single-Owner Beta scope record, not
@@ -70,11 +70,23 @@ The `harness-fleet-qwen-e2e-fixture-v3` corrective revision binds the official
 Qwen one-shot E2E to the active isolated mock-provider fixture. A real Host
 with Qwen installed otherwise reaches setup and fails before the test body
 because the removed fixture name cannot be resolved. This adds one directly
-changed test file while reducing the measured net delta from 2,135 to 2,133
-lines. The direct-file ceiling therefore moves from 48 to 49; the 2,135-line
+changed test file while reducing the measured net delta from 2,144 to 2,143
+lines. The direct-file ceiling therefore moves from 48 to 49; the 2,144-line
 ceiling, patch count, isolation floor, forbidden paths and reverse-dependency
 checks remain unchanged. This is a Single-Owner Beta corrective record, not
 production admission or a merge waiver.
+
+The `harness-fleet-qwen-e2e-snapshot-v5` corrective revision adds the missing
+deterministic Qwen one-shot acceptance snapshot. Once the active credential
+fixture allowed the Host-installed CLI to execute, the exact-SHA E2E shard
+correctly rejected the absent contract before evaluating the result. The new
+five-line snapshot requires zero exit status, clean stderr and non-empty
+assistant text. Together with the one-line build-aware CI shard correction,
+the measured source delta is exactly 50 files / 2,148 net lines; the hard
+ceilings are raised only to those values. Patch count, isolation floor,
+forbidden paths and reverse-dependency checks remain unchanged. This is a
+Single-Owner Beta corrective record, not production admission or a merge
+waiver.
 
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
