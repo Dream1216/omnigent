@@ -88,7 +88,7 @@ forbidden paths and reverse-dependency checks remain unchanged. This is a
 Single-Owner Beta corrective record, not production admission or a merge
 waiver.
 
-The `harness-fleet-kimi-provider-v1` revision pins the official
+The `harness-fleet-kimi-provider-v6` revision pins the official
 `@moonshot-ai/kimi-code` package and routes both headless and native Kimi
 through the existing OpenAI-compatible platform Provider. Only the Host's
 session-bound synthetic token is exported through Kimi's `KIMI_MODEL_*`
@@ -96,9 +96,10 @@ process environment; neither that token nor the upstream Provider key is
 written to `config.toml`. Patch 0008 carries seven official Kimi/onboarding
 seams. The initially proposed workflow and native Runner edits were removed,
 so forbidden paths remain untouched. Install, image-material, readiness,
-temporary-provider, secret-persistence and vendor-login fallback tests raise
-the exact measured ceiling from 47 files / 2,119 net lines to 58 files / 2,543
-net lines and the active patch count from six to seven. The 8-patch ceiling,
+temporary-provider, secret-persistence and vendor-login fallback tests plus
+the async spawn-environment canary raise the exact measured totals from 50
+files / 2,148 net lines to 62 files / 2,575 net lines and the active patch
+count from six to seven. The 8-patch ceiling,
 0.85 isolation floor and reverse-dependency checks remain unchanged. This is a
 Single-Owner Beta scope record, not production admission, vendor-account
 authentication or a merge waiver.

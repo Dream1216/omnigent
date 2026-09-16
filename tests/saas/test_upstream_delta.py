@@ -130,14 +130,14 @@ def test_kimi_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 2148
-    assert budget["max_direct_upstream_files"] == 50
+    assert budget["max_upstream_net_added_loc"] == 2575
+    assert budget["max_direct_upstream_files"] == 62
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 2148 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 13000, 0),
+            FileDelta("omnigent/stores/host_store.py", 2575 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 15000, 0),
         ],
         manifest,
         active_patch_count=7,
