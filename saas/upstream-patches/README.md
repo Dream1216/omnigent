@@ -55,23 +55,23 @@ patch count from four to five. The change imports no SaaS package and remains
 independently removable when upstream supports multi-model inline gateways.
 It is a Single-Owner Beta source-budget record, not production admission.
 
-The `harness-fleet-qwen-opencode-v1` revision pins the official Qwen Code and
+The `harness-fleet-qwen-opencode-v2` revision pins the official Qwen Code and
 OpenCode packages in the Host image and routes OpenCode through the existing
 OpenAI-compatible platform Provider with only the session-bound synthetic
 gateway credential. The generated pnpm lock, install policy, image checks and
-positive/negative routing tests raise the measured ceiling from 39 files /
-1,323 net lines to 47 files / 2,119 net lines. Patch 0007 carries the three
+positive/negative routing tests raise the measured ceiling from 40 files /
+1,339 net lines to 48 files / 2,135 net lines. Patch 0007 carries the three
 official Python seams; the initially proposed native Runner edit was removed,
 so forbidden paths, reverse dependencies, the 0.85 isolation floor and the
 8-patch ceiling are unchanged. This is a Single-Owner Beta scope record, not
 production admission, vendor-account authentication or a merge waiver.
 
-The `harness-fleet-qwen-e2e-fixture-v2` corrective revision binds the official
+The `harness-fleet-qwen-e2e-fixture-v3` corrective revision binds the official
 Qwen one-shot E2E to the active isolated mock-provider fixture. A real Host
 with Qwen installed otherwise reaches setup and fails before the test body
 because the removed fixture name cannot be resolved. This adds one directly
-changed test file while reducing the measured net delta from 2,119 to 2,117
-lines. The direct-file ceiling therefore moves from 47 to 48; the 2,119-line
+changed test file while reducing the measured net delta from 2,135 to 2,133
+lines. The direct-file ceiling therefore moves from 48 to 49; the 2,135-line
 ceiling, patch count, isolation floor, forbidden paths and reverse-dependency
 checks remain unchanged. This is a Single-Owner Beta corrective record, not
 production admission or a merge waiver.
