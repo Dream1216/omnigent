@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>交付工作台 · Omnigent</title>
+    <link rel="stylesheet" href="/saas/delivery/assets/delivery.css" />
+    <script src="/saas/delivery/assets/delivery.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a href="/">OMNIGENT <span> / 交付工作台</span></a
+      ><a href="/">返回工作区 ↗</a>
+    </header>
+    <main>
+      <div class="intro">
+        <p class="eyebrow">PROJECT DELIVERY</p>
+        <h1>从构建，到上线。</h1>
+        <p>
+          选择已完成会话的检查点或源码快照，构建并预览；确认效果后，将同一制品发布到生产。
+        </p>
+      </div>
+      <p id="message" role="status" aria-live="polite"></p>
+      <form id="login" hidden class="panel">
+        <h2>登录工作区</h2>
+        <label
+          >邮箱<input
+            id="email"
+            type="email"
+            autocomplete="username"
+            required /></label
+        ><label
+          >密码<input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            required /></label
+        ><button type="submit">登录</button>
+      </form>
+      <section id="workspace" hidden>
+        <div class="project-bar">
+          <label
+            >当前项目<select id="project" aria-label="当前项目"></select></label
+          ><button id="refresh" class="secondary">刷新状态</button
+          ><span id="updated"></span>
+        </div>
+        <div class="columns">
+          <form id="build" class="panel">
+            <p class="step">01 / BUILD</p>
+            <h2>构建与发布预览</h2>
+            <label>构建来源<select id="snapshot" required></select></label>
+            <label id="context-row" hidden
+              >源码子目录<input id="context-path" value="." required
+            /></label>
+            <p id="source-note" class="muted"></p>
+            <div class="fields">
+              <label
+                >构建方式<select id="mode">
+                  <option value="auto">自动识别</option>
+                  <option value="static">静态站点</option>
+                  <option value="dockerfile">Dockerfile</option>
+                </select></label
+              ><label
+                >服务端口<input
+                  id="port"
+                  type="number"
+                  value="8080"
+                  min="1"
+                  max="65535"
+                  required
+              /></label>
+            </div>
+            <div class="fields">
+              <label
+                >Dockerfile 路径<input
+                  id="dockerfile"
+                  value="Dockerfile"
+                  required /></label
+              ><label
+                >健康检查路径<input id="health" value="/" required
+              /></label>
+            </div>
+            <button id="build-submit" type="submit">构建并预览 →</button>
+            <p class="muted">
+              提交后可以关闭页面。构建和预览发布会在后台继续。
+            </p>
+          </form>
+          <section class="panel">
+            <p class="step">02 / RELEASE</p>
+            <h2>生产版本</h2>
+            <div id="production" class="production"></div>
+            <label
+              >回滚到已验证的历史版本<select
+                id="rollback-target"
+              ></select></label
+            ><button id="rollback" class="secondary">回滚到所选版本</button>
+            <p class="muted">
+              回滚会重新发布所选制品，并保留原有版本和操作记录。
+            </p>
+          </section>
+        </div>
+        <section class="panel history">
+          <div class="section-title">
+            <div>
+              <p class="step">DELIVERY HISTORY</p>
+              <h2>交付记录</h2>
+            </div>
+            <span class="muted">最近 50 条</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间 / 交付</th>
+                  <th>阶段</th>
+                  <th>版本</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="deliveries"></tbody>
+            </table>
+          </div>
+          <p id="empty" class="muted" hidden>
+            还没有交付记录。从一份已验证的源码快照开始。
+          </p>
+        </section>
+        <section class="panel" id="live-preview" hidden>
+          <p class="step">RUN PREVIEW</p>
+          <h2>运行预览</h2>
+          <p class="muted">
+            查看已完成 Run 的检查点。运行预览不会生成生产发布版本。
+          </p>
+          <div class="project-bar">
+            <label>已完成的 Run<select id="run"></select></label
+            ><button id="start-preview">打开运行预览</button
+            ><button id="stop-preview" class="secondary" disabled>
+              停止预览</button
+            ><a id="live-link" target="_blank" rel="noopener noreferrer" hidden
+              >在新窗口查看 ↗</a
+            >
+          </div>
+          <p id="live-status" role="status"></p>
+        </section>
+      </section>
+      <dialog id="release-preview">
+        <form method="dialog">
+          <h2>预览已就绪</h2>
+          <p>
+            <a
+              id="release-preview-link"
+              target="_blank"
+              rel="noopener noreferrer"
+              >在新窗口查看预览 ↗</a
+            >
+          </p>
+          <button>关闭</button>
+        </form>
+      </dialog>
+      <dialog id="confirm">
+        <form method="dialog">
+          <h2 id="confirm-title"></h2>
+          <p id="confirm-text"></p>
+          <div class="actions">
+            <button value="cancel" class="secondary">取消</button
+            ><button value="accept">确认操作</button>
+          </div>
+        </form>
+      </dialog>
+    </main>
+    <footer>OMNIGENT · 版本、制品与操作记录保持关联</footer>
+  </body>
+</html>

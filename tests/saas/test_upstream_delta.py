@@ -124,19 +124,19 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_platform_model_catalog_budget_revision_retains_a_hard_loc_ceiling(
+def test_delivery_entrypoint_budget_revision_retains_a_hard_loc_ceiling(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 1055
-    assert budget["max_direct_upstream_files"] == 34
+    assert budget["max_upstream_net_added_loc"] == 1323
+    assert budget["max_direct_upstream_files"] == 39
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 1055 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 1323 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 10000, 0),
         ],
         manifest,
@@ -152,7 +152,7 @@ def test_platform_model_catalog_budget_revision_retains_a_hard_loc_ceiling(
 
 
 @pytest.mark.parametrize("extra_files", [0, 1])
-def test_platform_model_catalog_budget_revision_retains_a_hard_file_ceiling(
+def test_delivery_entrypoint_budget_revision_retains_a_hard_file_ceiling(
     extra_files: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]

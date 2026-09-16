@@ -11,6 +11,10 @@ import { useChatStore } from "@/store/chatStore";
 import { clearSessionDrafts, hasSessionDraft } from "@/lib/sessionDrafts";
 import { setOmnigentHostConfig } from "@/lib/host";
 import { COMPOSER_SEND_SHORTCUT_STORAGE_KEY } from "@/lib/composerSendShortcutPreferences";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
+import * as identity from "@/lib/identity";
 
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions). These slash-command tests don't exercise that, so stub the hook
@@ -137,6 +141,77 @@ function activeRow(): HTMLElement | null {
 function renderWithTooltips(ui: ReactElement) {
   return render(<TooltipProvider>{ui}</TooltipProvider>);
 }
+
+describe("SaaS session preview in the actual chat composer", () => {
+  it("resolves this conversation, starts, opens, and stops its scoped preview", async () => {
+    const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const previous = useChatStore.getState().conversationId;
+    useChatStore.setState({ conversationId: "session-delivery" });
+    const run = {
+      id: "run-one",
+      tenant_id: "tenant-one",
+      space_id: "space-one",
+      project_id: "project-one",
+    };
+    const base = "/saas/tenants/tenant-one/spaces/space-one/projects/project-one/previews";
+    const ready = {
+      preview_id: "preview-one",
+      status: "ready",
+      url: "https://preview.example.test",
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+    };
+    const fetcher = vi
+      .spyOn(identity, "authenticatedFetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input).startsWith("/saas/delivery/sessions/"))
+          return Response.json({ runs: [run], preview_enabled: true, preview: null });
+        if (String(input) === base && init?.method === "POST") return Response.json(ready);
+        if (String(input) === `${base}/preview-one`)
+          return Response.json({
+            ...ready,
+            status: init?.method === "DELETE" ? "stopped" : "ready",
+          });
+        throw new Error(`Unexpected preview request: ${String(input)}`);
+      });
+    try {
+      renderWithTooltips(
+        <QueryClientProvider client={query}>
+          <CapabilitiesProvider info={{ ...FALLBACK_SERVER_INFO, login_url: "/saas/login" }}>
+            <Composer {...composerProps()} />
+          </CapabilitiesProvider>
+        </QueryClientProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "会话预览" }));
+      const start = await screen.findByRole("button", { name: "启动预览" });
+      await waitFor(() => expect(start).not.toBeDisabled());
+      fireEvent.click(start);
+      expect(await screen.findByRole("link", { name: "打开预览" })).toHaveAttribute(
+        "href",
+        ready.url,
+      );
+      const submitted = fetcher.mock.calls.find(
+        ([url, options]) => url === base && options?.method === "POST",
+      );
+      expect(JSON.parse(String(submitted?.[1]?.body))).toEqual({
+        run_id: "run-one",
+        preview_kind: "static_web_v1",
+      });
+      expect(screen.getByRole("link", { name: "构建与发布此会话" })).toHaveAttribute(
+        "href",
+        "/saas/delivery?session_id=session-delivery",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "停止预览" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("link", { name: "打开预览" })).not.toBeInTheDocument(),
+      );
+    } finally {
+      cleanup();
+      query.clear();
+      fetcher.mockRestore();
+      useChatStore.setState({ conversationId: previous });
+    }
+  });
+});
 
 function tooltipKeys(tooltip: HTMLElement): string[] {
   return Array.from(tooltip.querySelectorAll('[data-slot="kbd"]')).map(

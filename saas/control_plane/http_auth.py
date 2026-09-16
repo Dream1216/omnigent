@@ -760,6 +760,13 @@ class SaasAuthContextMiddleware:
     def _is_public_request(self, path: str, method: str) -> bool:
         if path in self._public_paths:
             return True
+        if method == "GET" and path in {
+            "/saas/delivery",
+            "/saas/delivery/assets/delivery.js",
+            "/saas/delivery/assets/delivery.css",
+            "/saas/delivery/.well-known/jwks.json",
+        }:
+            return True
         if method == "GET" and path == "/saas/onboarding/catalog":
             return True
         if method == "POST":
@@ -901,6 +908,13 @@ class SaasAuthContextMiddleware:
         return matches[0]
 
     def _is_runtime_path(self, path: str) -> bool:
+        # Delivery resolves project scope itself; cookie validation and CSRF
+        # still apply before its router is called.
+        if any(
+            path == base or path.startswith(base + "/")
+            for base in ("/v1/builds", "/v1/deployments")
+        ):
+            return False
         return path not in self._runtime_exclusions and any(
             path.startswith(prefix) for prefix in self._runtime_prefixes
         )

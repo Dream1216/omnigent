@@ -33,6 +33,7 @@ import {
 import { useNavigate, useParams } from "@/lib/routing";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { Button } from "@/components/ui/button";
+import { PreviewControl } from "@/components/PreviewControl";
 import { useAppName } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
@@ -2190,6 +2191,7 @@ function ComposerStatusLine({
    */
   onHostReconnect?: () => void;
 }) {
+  const serverInfo = useServerInfo();
   const conversationId = useChatStore((s) => s.conversationId);
   // A client-only temp id has no server session — gate the server-scoped hooks
   // below on it so they never fetch `/v1/sessions/temp:*` during the create
@@ -2234,7 +2236,17 @@ function ComposerStatusLine({
   // the badge is where it lives and an unreachable session often has no
   // branch/ring at all.
   const showHostBadge = showHost && isHostBound;
-  if (!showBranch && !showPr && !showPlanMode && !showGoal && !showRing && !showHostBadge)
+  const showPreview =
+    !!sessionId && serverInfo !== "loading" && serverInfo.login_url === "/saas/login";
+  if (
+    !showBranch &&
+    !showPr &&
+    !showPlanMode &&
+    !showGoal &&
+    !showRing &&
+    !showHostBadge &&
+    !showPreview
+  )
     return null;
 
   return (
@@ -2274,6 +2286,9 @@ function ComposerStatusLine({
       </div>
       {/* Right: model/effort and context ring, never shrinks. */}
       <div className="flex min-w-0 shrink-0 items-center gap-3">
+        {showPreview && sessionId && (
+          <PreviewControl key={sessionId} sessionId={sessionId} enabled />
+        )}
         {showPlanMode && (
           <span
             data-testid="composer-plan-mode"
