@@ -18,12 +18,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from playwright.sync_api import Page, Request, Route, expect, sync_playwright
+from playwright.sync_api import Browser, Page, Request, Route, expect, sync_playwright
 
 from saas.control_plane.onboarding_http import create_onboarding_ui_router
 
@@ -40,8 +41,8 @@ _CSRF_TOKEN = "e2e-tab-scoped-csrf"
 _EMAIL = "founder@example.test"
 
 
-@pytest.fixture
-def onboarding_ui_page() -> Iterator[tuple[Page, str]]:
+@pytest.fixture(scope="module")
+def onboarding_ui_browser() -> Iterator[tuple[Browser, str]]:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -59,14 +60,23 @@ def onboarding_ui_page() -> Iterator[tuple[Page, str]]:
         raise RuntimeError("onboarding browser server failed to start")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 1440, "height": 1000})
         try:
-            yield page, f"http://127.0.0.1:{port}"
+            yield browser, f"http://127.0.0.1:{port}"
         finally:
             browser.close()
             server.should_exit = True
             thread.join(timeout=10)
             listener.close()
+
+
+@pytest.fixture
+def onboarding_ui_page(onboarding_ui_browser: tuple[Browser, str]) -> Iterator[tuple[Page, str]]:
+    browser, live_server = onboarding_ui_browser
+    context = browser.new_context(viewport={"width": 1440, "height": 1000})
+    try:
+        yield context.new_page(), live_server
+    finally:
+        context.close()
 
 
 @dataclass
@@ -128,6 +138,7 @@ def test_packaged_pages_and_assets_have_locked_down_headers() -> None:
             .headers["content-type"]
             .startswith("text/css")
         )
+        assert "login-assets" not in client.get("/signup").text
         assert (
             client.get("/saas/onboarding-assets/onboarding.js")
             .headers["content-type"]
@@ -366,18 +377,182 @@ def test_registration_journey_reaches_ready_workspace(
     assert all(_VERIFICATION_TOKEN not in referer for referer in captured.referers)
 
 
-def test_login_rejects_backslash_cross_origin_return_target(
+@pytest.mark.parametrize(
+    "target",
+    [
+        "%2F%5Cevil.example",
+        "https%3A%2F%2Fevil.example",
+        "%2F%2Fevil.example",
+        "javascript%3Aalert(1)",
+    ],
+)
+def test_login_rejects_cross_origin_return_target(
     onboarding_ui_page: tuple[Page, str],
+    target: str,
 ) -> None:
     page, live_server = onboarding_ui_page
     _install_saas_routes(page)
 
-    page.goto(f"{live_server}/saas/login?return_to=%2F%5Cevil.example")
+    page.goto(f"{live_server}/saas/login?return_to={target}")
     page.get_by_label("Work email").fill(_EMAIL)
-    page.get_by_label("Password").fill("correct-horse-battery")
+    page.get_by_label("Password", exact=True).fill("correct-horse-battery")
     page.get_by_role("button", name="Sign in").click()
 
     expect(page).to_have_url(f"{live_server}/")
+
+
+@pytest.mark.parametrize(
+    "width,height", [(1440, 1000), (1024, 768), (768, 1024), (390, 844), (320, 740)]
+)
+def test_login_layout_is_responsive_and_has_no_registration_steps(
+    onboarding_ui_page: tuple[Page, str],
+    width: int,
+    height: int,
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.set_viewport_size({"width": width, "height": height})
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on(
+        "console",
+        lambda message: (
+            errors.append(message.text) if "Content Security Policy" in message.text else None
+        ),
+    )
+    page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
+    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible()
+    expect(page.get_by_label("Work email")).to_be_enabled()
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Create a workspace")).to_be_visible()
+    expect(page.locator(".steps")).to_have_count(0)
+    expect(page.locator("#return-context")).to_have_text("After sign-in → Account settings")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert errors == []
+    _screenshot(page, f"saas-login-{width}.png")
+
+
+def test_login_password_toggle_and_account_return_after_retry(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    captured = _install_saas_routes(page, fail_first_login=True)
+    page.route("**/settings/account", lambda route: route.fulfill(body="Account settings"))
+    page.goto(
+        f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount&email=FOUNDER%40example.test"
+    )
+    expect(page.get_by_label("Work email")).to_have_value("FOUNDER@example.test")
+    password = page.get_by_label("Password", exact=True)
+    password.fill("correct-horse-battery")
+    page.get_by_role("button", name="Show password", exact=True).click()
+    expect(password).to_have_attribute("type", "text")
+    expect(page.get_by_role("button", name="Hide password")).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    page.get_by_role("button", name="Hide password", exact=True).click()
+    expect(password).to_have_attribute("type", "password")
+    expect(password).to_have_value("correct-horse-battery")
+
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page.locator("#login-error")).to_have_text("retry login")
+    expect(page.locator("#login-error")).to_have_attribute("role", "alert")
+    expect(page.locator("#login-error")).to_be_focused()
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_enabled()
+    expect(page.locator("#login")).to_have_attribute("aria-busy", "false")
+    _screenshot(page, "saas-login-error.png")
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page).to_have_url(f"{live_server}/settings/account")
+    assert captured.login == [{"email": _EMAIL, "password": "correct-horse-battery"}] * 2
+    assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
+
+
+def test_login_pending_submission_is_deduplicated_and_network_error_is_retryable(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    requests: list[Route] = []
+    page.route("**/saas/auth/login", lambda route: requests.append(route))
+    page.goto(f"{live_server}/saas/login")
+    page.get_by_label("Work email").fill(_EMAIL)
+    page.get_by_label("Password", exact=True).fill("correct-horse-battery")
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page.get_by_role("button", name="Signing in…")).to_be_disabled()
+    expect(page.locator("#login")).to_have_attribute("aria-busy", "true")
+    expect(page.get_by_label("Work email")).to_be_disabled()
+    # A duplicate submission from another event path must also be ignored.
+    page.locator("#login").dispatch_event("submit")
+    assert len(requests) == 1
+    _screenshot(page, "saas-login-pending.png")
+    requests[0].abort("failed")
+    expect(page.locator("#login-error")).to_have_text(
+        "Could not reach the server. Check your connection and try again."
+    )
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_enabled()
+    expect(page.get_by_label("Password", exact=True)).to_have_value("correct-horse-battery")
+
+
+def test_login_email_prefill_is_text_and_empty_fields_use_native_validation(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    captured = _install_saas_routes(page)
+    untrusted_email = '<img id="injected" src=x onerror=alert(1)>@example.test'
+    page.goto(f"{live_server}/saas/login?{urlencode({'email': untrusted_email})}")
+    expect(page.get_by_label("Work email")).to_have_value(untrusted_email)
+    expect(page.locator("#injected")).to_have_count(0)
+    expect(page.locator("#return-context")).to_be_hidden()
+    page.get_by_label("Work email").fill("")
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page.get_by_label("Work email")).to_be_focused()
+    assert captured.login == []
+
+
+@pytest.mark.parametrize("status", [200, 401, 429])
+def test_login_handles_invalid_sessions_and_untrusted_error_text(
+    onboarding_ui_page: tuple[Page, str],
+    status: int,
+) -> None:
+    page, live_server = onboarding_ui_page
+    message = "<img src=x onerror=alert(1)> Check your credentials."
+    payload = {"csrf_token": None} if status == 200 else {"detail": {"message": message}}
+    page.route(
+        "**/saas/auth/login",
+        lambda route: route.fulfill(status=status, json=payload, headers={"Retry-After": "30"}),
+    )
+    page.goto(f"{live_server}/saas/login")
+    page.evaluate("sessionStorage.setItem('omnigent.saas.csrf', 'stale')")
+    page.get_by_label("Work email").fill(_EMAIL)
+    page.get_by_label("Password", exact=True).fill("correct-horse-battery")
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    error = page.locator("#login-error")
+    expect(error).to_be_visible()
+    if status == 200:
+        expect(error).to_have_text("The server returned an invalid response. Please try again.")
+    else:
+        expect(error).to_have_text(f"{message} Try again in 30 seconds.")
+    expect(error.locator("img")).to_have_count(0)
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_enabled()
+    if status == 401:
+        assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") is None
+
+
+def test_login_without_javascript_explains_why_form_is_disabled(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    assert page.context.browser is not None
+    context = page.context.browser.new_context(java_script_enabled=False)
+    try:
+        no_js_page = context.new_page()
+        no_js_page.goto(f"{live_server}/saas/login")
+        expect(no_js_page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible()
+        expect(no_js_page.locator("noscript .login-error")).to_be_visible()
+        expect(no_js_page.locator("noscript .login-error")).to_contain_text(
+            "Enable JavaScript in your browser"
+        )
+        expect(no_js_page.get_by_role("button", name="Sign in", exact=True)).to_be_disabled()
+    finally:
+        context.close()
 
 
 def test_verification_link_does_not_reuse_another_registration_email(

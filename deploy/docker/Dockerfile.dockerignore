@@ -24,6 +24,9 @@ venv/
 # Dockerfile's `npm ci` step — breaking `npm run build` with
 # "tsc: not found" if the host install was incomplete or wrong-platform.
 node_modules/
+saas/login_web/.next/
+saas/login_web/out/
+saas/login_ui/static/
 
 # Test + dev artifacts
 tests/

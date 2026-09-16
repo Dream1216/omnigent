@@ -101,6 +101,16 @@ RUN pnpm install --frozen-lockfile --filter web
 COPY web/ ./web/
 RUN pnpm --filter web run build
 
+# The login is an isolated Next.js / React 18 export; no Node service is added.
+FROM ${NODE_IMAGE} AS login-web-builder
+ARG NPM_CONFIG_REGISTRY=
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} NEXT_TELEMETRY_DISABLED=1
+WORKDIR /login/saas/login_web
+COPY saas/login_web/package.json saas/login_web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY saas/login_web/ ./
+RUN npm run build
+
 # ── Python builder (shared: server + host) ──────────────
 # Installs the package (and its transitive native-extension deps) into
 # a virtualenv the runtime stages copy verbatim. Keeps build-essential
@@ -208,6 +218,7 @@ ARG SOURCE_REVISION
 # checkout (with no prebuilt bundle on the host) still produces a
 # complete image. This replaces the old "prebuild or hard-fail" check.
 COPY --from=web-builder /web/omnigent/server/static/web-ui ./omnigent/server/static/web-ui
+COPY --from=login-web-builder /login/saas/login_ui/static ./saas/login_ui/static
 RUN test -f ./omnigent/server/static/web-ui/index.html \
     || (echo "ERROR: SPA bundle missing after web-builder stage — check the web build." && exit 1)
 
