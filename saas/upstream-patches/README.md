@@ -88,6 +88,21 @@ forbidden paths and reverse-dependency checks remain unchanged. This is a
 Single-Owner Beta corrective record, not production admission or a merge
 waiver.
 
+The `harness-fleet-kimi-provider-v1` revision pins the official
+`@moonshot-ai/kimi-code` package and routes both headless and native Kimi
+through the existing OpenAI-compatible platform Provider. Only the Host's
+session-bound synthetic token is exported through Kimi's `KIMI_MODEL_*`
+process environment; neither that token nor the upstream Provider key is
+written to `config.toml`. Patch 0008 carries seven official Kimi/onboarding
+seams. The initially proposed workflow and native Runner edits were removed,
+so forbidden paths remain untouched. Install, image-material, readiness,
+temporary-provider, secret-persistence and vendor-login fallback tests raise
+the exact measured ceiling from 47 files / 2,119 net lines to 58 files / 2,543
+net lines and the active patch count from six to seven. The 8-patch ceiling,
+0.85 isolation floor and reverse-dependency checks remain unchanged. This is a
+Single-Owner Beta scope record, not production admission, vendor-account
+authentication or a merge waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `06c33aea` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
@@ -96,3 +111,4 @@ waiver.
 | `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/runner/transports/ws_tunnel/serve.py`; `omnigent/server/routes/host_tunnel.py`; `omnigent/stores/host_store.py` | owner-only rotatable token-file contract; physical workspace propagation across Host spawn, Runner bootstrap, callback, and tunnel paths; tenant tunnel-route isolation; revocation heartbeat; exact expiry boundary; explicit Kubernetes container-proc sandbox contract | Generic external Host credential/file-source, Runtime Partition selector propagation, and Kubernetes nested-sandbox proposal pending | `06c33aea` | Remove when upstream supports file-backed external Host credentials, path-bound workspace propagation for managed Runners, an explicit tenant route, reconnect rotation, live revocation fencing, and a vetted Kubernetes proc-bind backend |
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/credentials.py` | multi-model Platform gateway projection; secret-free Pi config; allowed-catalog picker regression | Generic upstream gateway-catalog proposal pending | `06c33aea` | Remove when upstream publishes all configured inline gateway models to Pi |
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official OpenCode gateway resolution; configured-provider readiness; platform runtime synthetic-token routing; no native Runner edit | Generic upstream OpenCode provider-fallback proposal pending | `06c33aea` | Remove when upstream can route OpenCode through an OpenAI-compatible configured Provider without persisting its upstream credential |
+| `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official package install; headless/native temporary Provider routing; no persisted token; vendor-login fallback; no workflow/native Runner edit | Generic upstream Kimi temporary-provider proposal pending | `06c33aea` after patches 0002-0007 | Remove when upstream can install Kimi and route it through an OpenAI-compatible configured Provider without persisting its upstream credential |

@@ -37,6 +37,19 @@ from omnigent.inner.kimi_executor import (
 from omnigent.runtime.harnesses import _HARNESS_MODULES
 from omnigent.spec._omnigent_compat import OMNIGENT_HARNESS_ALIASES, OMNIGENT_HARNESSES
 
+
+@pytest.fixture(autouse=True)
+def _isolate_managed_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep executor tests independent from a developer's live Provider config."""
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    monkeypatch.setattr(
+        provider_mod,
+        "resolve_configured_openai_gateway",
+        lambda **_kwargs: None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry / allowlist
 # ---------------------------------------------------------------------------
@@ -170,6 +183,53 @@ def test_executor_gateway_env_uses_temporary_provider(
     assert env["KIMI_MODEL_BASE_URL"] == "https://gateway.example/v1"
     assert env["KIMI_MODEL_API_KEY"] == "session-token"
     assert env["KIMI_MODEL_NAME"] == "deepseek-chat"
+
+
+def test_executor_falls_back_to_managed_platform_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No per-agent gateway is required for the managed SaaS default."""
+    from types import SimpleNamespace
+
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    captured: dict[str, str | None] = {}
+
+    def _resolve(*, model_id: str | None = None) -> SimpleNamespace:
+        captured["model_id"] = model_id
+        return SimpleNamespace(
+            base_url="https://gateway.example/v1",
+            api_key="session-bound-token",
+            model_id="deepseek-v4-pro",
+        )
+
+    monkeypatch.setattr(provider_mod, "resolve_configured_openai_gateway", _resolve)
+    ex = KimiExecutor(binary_path="kimi", model="deepseek-v4-pro")
+
+    env = asyncio.run(ex._build_spawn_env())
+
+    assert captured == {"model_id": "deepseek-v4-pro"}
+    assert env["KIMI_MODEL_PROVIDER_TYPE"] == "openai"
+    assert env["KIMI_MODEL_BASE_URL"] == "https://gateway.example/v1"
+    assert env["KIMI_MODEL_API_KEY"] == "session-bound-token"
+    assert env["KIMI_MODEL_NAME"] == "deepseek-v4-pro"
+
+
+def test_executor_without_managed_provider_keeps_vendor_login_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    monkeypatch.setattr(
+        provider_mod,
+        "resolve_configured_openai_gateway",
+        lambda **_kwargs: None,
+    )
+    ex = KimiExecutor(binary_path="kimi")
+
+    env = asyncio.run(ex._build_spawn_env())
+
+    assert not any(key.startswith("KIMI_MODEL_") for key in env)
 
 
 def test_executor_factory_falls_back_to_runner_workspace_cwd(

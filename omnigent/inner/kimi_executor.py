@@ -469,7 +469,25 @@ class KimiExecutor(Executor):
         token without ever writing it to the Kimi config directory.
         """
         if not self._gateway_base_url or not self._gateway_auth_command:
-            return {}
+            # Keep the generic workflow/Runner seams untouched: managed SaaS
+            # routing is an adapter concern. The established OpenCode provider
+            # resolver reads only a safely translatable OpenAI-compatible
+            # default and expands the Host's session-bound synthetic token.
+            # Import lazily to avoid coupling OSS Kimi startup to an optional
+            # Provider configuration path.
+            from omnigent.harnesses.opencode_native.provider import (
+                resolve_configured_openai_gateway,
+            )
+
+            resolution = resolve_configured_openai_gateway(model_id=self._model)
+            if resolution is None:
+                return {}
+            return {
+                "KIMI_MODEL_PROVIDER_TYPE": "openai",
+                "KIMI_MODEL_BASE_URL": resolution.base_url,
+                "KIMI_MODEL_API_KEY": resolution.api_key,
+                "KIMI_MODEL_NAME": resolution.model_id,
+            }
         proc = await asyncio.create_subprocess_exec(
             "sh",
             "-c",

@@ -1419,8 +1419,11 @@ def test_codex_undismissed_config_provider_routes_via_detection(
 # ── Kimi Code CLI spawn-env ────────────────────────────────────────────────
 
 
-def test_kimi_spawn_env_threads_spec_model_without_provider(config_home: Path) -> None:
-    """Without a Provider, Kimi retains its own login/config fallback."""
+def test_kimi_spawn_env_threads_spec_model_only(config_home: Path) -> None:
+    """The kimi builder only emits ``HARNESS_KIMI_MODEL`` (when set) and
+    ``HARNESS_KIMI_CWD`` (when workdir given). Upstream kimi has no per-spawn
+    provider override, so no HARNESS_KIMI_GATEWAY_* / _DATABRICKS_PROFILE
+    env vars are emitted — provider routing lives in ``~/.kimi-code/config.toml``."""
     _write_config(config_home, {"providers": {}})
     spec = _make_spec(harness="kimi", model="kimi-k2-turbo")
 
@@ -1449,7 +1452,8 @@ def test_kimi_no_provider_emits_no_gateway_vars(config_home: Path) -> None:
     ``kimi login`` credentials — no HARNESS_KIMI_GATEWAY_* leaks in.
 
     A regression here would either steal an ambient OPENAI_API_KEY (mis-billing)
-    or point at a stale URL the user never configured."""
+    or point at a stale URL the user never configured. Upstream kimi reads its
+    provider config from ``~/.kimi-code/config.toml``; Omnigent never injects."""
     _write_config(config_home, {"providers": {}})
     spec = _make_spec(harness="kimi")
 
@@ -1462,30 +1466,51 @@ def test_kimi_no_provider_emits_no_gateway_vars(config_home: Path) -> None:
     assert "HARNESS_KIMI_DATABRICKS_PROFILE" not in env
 
 
-def test_kimi_uses_global_openai_provider(config_home: Path) -> None:
-    """Kimi receives the neutral gateway contract for its temporary Provider."""
+def test_kimi_ignores_global_default_provider(config_home: Path) -> None:
+    """An openai default provider does NOT inject creds into the kimi env.
+
+    Counterpart to the other harnesses: their spawn-env builders adopt the
+    global default. For kimi we DO NOT — upstream has no per-spawn provider
+    override flag, so silently injecting a key the executor can't pass to the
+    subprocess would be misleading (and would mis-bill the user against an
+    OpenAI key when their ``~/.kimi-code/config.toml`` actually points at
+    Moonshot). The builder emits no gateway vars regardless of what's
+    configured."""
     _write_config(config_home, _openai_default_config())
     spec = _make_spec(harness="kimi")
 
     env = _build_kimi_spawn_env(spec, cwd=None)
 
-    assert env["HARNESS_KIMI_GATEWAY"] == "true"
-    assert env["HARNESS_KIMI_GATEWAY_BASE_URL"] == "https://openai.example.com/v1"
-    assert env["HARNESS_KIMI_GATEWAY_HOST"] == "https://openai.example.com"
-    assert env["HARNESS_KIMI_GATEWAY_AUTH_COMMAND"] == "printf %s sk-oai-secret"
-    assert env["HARNESS_KIMI_MODEL"] == "gpt-default-model"
+    assert "HARNESS_KIMI_GATEWAY_BASE_URL" not in env
+    assert "HARNESS_KIMI_GATEWAY_API_KEY" not in env
 
 
-def test_kimi_named_provider_routes_per_invocation(config_home: Path) -> None:
-    """An explicitly named Provider wins and is not persisted to Kimi config."""
-    config = _openai_default_config()
-    _write_config(config_home, config)
-    spec = _make_spec(harness="kimi", auth=ProviderAuth(name="vendor-openai"))
+@pytest.mark.parametrize(
+    "auth",
+    [
+        ApiKeyAuth(api_key="sk-secret"),
+        DatabricksAuth(profile="my-profile"),
+        ProviderAuth(name="vendor-named"),
+    ],
+)
+def test_kimi_declared_auth_raises(
+    config_home: Path,
+    auth: ApiKeyAuth | DatabricksAuth | ProviderAuth,
+) -> None:
+    """A kimi spec that declares any ``executor.auth`` fails loud.
 
-    env = _build_kimi_spawn_env(spec, cwd=None)
+    Upstream kimi has no per-spawn provider override (no ``--config-file`` /
+    ``--mcp-config-file``), so declared auth can't be threaded. Silently
+    launching against whatever ambient ``~/.kimi-code/config.toml`` resolves to
+    would be a confused-deputy / mis-attribution risk, so the builder raises
+    instead. Regression guard for the originally-dead ``OmnigentError``."""
+    from omnigent.errors import OmnigentError
 
-    assert env["HARNESS_KIMI_GATEWAY_BASE_URL"] == "https://openai.example.com/v1"
-    assert env["HARNESS_KIMI_GATEWAY_AUTH_COMMAND"] == "printf %s sk-oai-secret"
+    _write_config(config_home, {"providers": {}})
+    spec = _make_spec(harness="kimi", auth=auth)
+
+    with pytest.raises(OmnigentError, match=r"kimi.*does not support"):
+        _build_kimi_spawn_env(spec, cwd=None)
 
 
 def test_kimi_os_env_serialized(config_home: Path) -> None:

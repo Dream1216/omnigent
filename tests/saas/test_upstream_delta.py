@@ -119,12 +119,12 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     report = check_patch_queue(repo)
 
     assert report["status"] == "pass"
-    assert report["patch_count"] == 6
+    assert report["patch_count"] == 7
     assert report["covered_paths"] == report["official_source_paths"]
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
+def test_kimi_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
@@ -140,7 +140,7 @@ def test_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
             FileDelta("saas/control_plane/service.py", 13000, 0),
         ],
         manifest,
-        active_patch_count=6,
+        active_patch_count=7,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,
@@ -152,7 +152,7 @@ def test_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
 
 
 @pytest.mark.parametrize("extra_files", [0, 1])
-def test_harness_fleet_budget_revision_retains_a_hard_file_ceiling(
+def test_kimi_harness_fleet_budget_revision_retains_a_hard_file_ceiling(
     extra_files: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
@@ -161,7 +161,7 @@ def test_harness_fleet_budget_revision_retains_a_hard_file_ceiling(
     report = evaluate_delta(
         [FileDelta(f"omnigent/budget_probe_{index}.py", 0, 0) for index in range(file_count)],
         manifest,
-        active_patch_count=6,
+        active_patch_count=7,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,

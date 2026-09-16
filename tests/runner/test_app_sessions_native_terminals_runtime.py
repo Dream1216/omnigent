@@ -9,7 +9,6 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -2087,7 +2086,6 @@ async def test_auto_create_kimi_forwards_launch_args_to_kimi_argv(
     import omnigent.harnesses.kimi_native.credentials as kimi_creds_mod
     import omnigent.harnesses.kimi_native.forwarder as kimi_fwd_mod
     import omnigent.harnesses.kimi_native.main as kimi_mod
-    import omnigent.harnesses.opencode_native.provider as opencode_provider_mod
     from omnigent.harnesses.kimi_native import bridge as kimi_bridge_mod
     from omnigent.runner import app as runner_app_mod
     from omnigent.runner.app import _auto_create_kimi_terminal
@@ -2100,15 +2098,6 @@ async def test_auto_create_kimi_forwards_launch_args_to_kimi_argv(
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://ap.example")
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     monkeypatch.setattr(kimi_mod, "resolve_kimi_executable", lambda: "/fake/bin/kimi")
-    monkeypatch.setattr(
-        opencode_provider_mod,
-        "resolve_configured_openai_gateway",
-        lambda **_kwargs: SimpleNamespace(
-            base_url="https://gateway.example/v1",
-            api_key="session-bound-token",
-            model_id="deepseek-chat",
-        ),
-    )
     # Keep the session-home build off the user's real kimi config.
     monkeypatch.setattr(
         kimi_creds_mod,
@@ -2174,10 +2163,6 @@ async def test_auto_create_kimi_forwards_launch_args_to_kimi_argv(
     # Bare ``kimi`` plus the persisted pass-through args, verbatim.
     assert spec.command == "/fake/bin/kimi"
     assert spec.args == ["--yolo"]
-    assert spec.env["KIMI_MODEL_PROVIDER_TYPE"] == "openai"
-    assert spec.env["KIMI_MODEL_BASE_URL"] == "https://gateway.example/v1"
-    assert spec.env["KIMI_MODEL_API_KEY"] == "session-bound-token"
-    assert spec.env["KIMI_MODEL_NAME"] == "deepseek-chat"
 
 
 @pytest.mark.asyncio
