@@ -45,37 +45,49 @@
   "source_intrusion_budget": {
     "max_active_patches": 8,
     "max_direct_upstream_files": 40,
-    "max_upstream_net_added_loc": 1339,
+    "max_upstream_net_added_loc": 1348,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-16",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 39,
-    "previous_max_upstream_net_added_loc": 1323,
-    "previous_measured_upstream_net_added_loc": 1323,
+    "previous_max_direct_upstream_files": 40,
+    "previous_max_upstream_net_added_loc": 1339,
+    "previous_measured_upstream_net_added_loc": 1339,
     "previous_revision": {
       "approved_at": "2026-09-16",
       "governance_mode": "single_owner_beta",
-      "previous_max_direct_upstream_files": 34,
-      "previous_max_upstream_net_added_loc": 1055,
-      "previous_measured_upstream_net_added_loc": 1054,
-      "reason": "User-requested delivery lifecycle integration into the current next SaaS mainline: mount session preview in the actual chat composer and retain the legacy deployments route. The reviewed frontend delta is exactly five files and 269 net lines (using one existing budgeted line of headroom), including 75 integration-test lines. The backend, contract, assets and authorization remain under saas/ and tests/saas/. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and strict file/line ceilings. This records only the authorized Single-Owner Beta feature scope, not production admission or a merge waiver.",
-      "revision": "delivery-session-preview-entrypoints-v1",
-      "scoped_frontend_delta": {
-        "web/src/App.tsx": 2,
-        "web/src/components/PreviewControl.tsx": 164,
-        "web/src/pages/ChatPage.composer.test.tsx": 75,
-        "web/src/pages/ChatPage.tsx": 15,
-        "web/src/pages/DeploymentsPage.tsx": 13
+      "previous_max_direct_upstream_files": 39,
+      "previous_max_upstream_net_added_loc": 1323,
+      "previous_measured_upstream_net_added_loc": 1323,
+      "previous_revision": {
+        "approved_at": "2026-09-16",
+        "governance_mode": "single_owner_beta",
+        "previous_max_direct_upstream_files": 34,
+        "previous_max_upstream_net_added_loc": 1055,
+        "previous_measured_upstream_net_added_loc": 1054,
+        "reason": "User-requested delivery lifecycle integration into the current next SaaS mainline: mount session preview in the actual chat composer and retain the legacy deployments route. The reviewed frontend delta is exactly five files and 269 net lines (using one existing budgeted line of headroom), including 75 integration-test lines. The backend, contract, assets and authorization remain under saas/ and tests/saas/. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and strict file/line ceilings. This records only the authorized Single-Owner Beta feature scope, not production admission or a merge waiver.",
+        "revision": "delivery-session-preview-entrypoints-v1",
+        "scoped_frontend_delta": {
+          "web/src/App.tsx": 2,
+          "web/src/components/PreviewControl.tsx": 164,
+          "web/src/pages/ChatPage.composer.test.tsx": 75,
+          "web/src/pages/ChatPage.tsx": 15,
+          "web/src/pages/DeploymentsPage.tsx": 13
+        }
+      },
+      "reason": "User-requested React 18 login UI for the current next SaaS Beta: build the isolated Next.js login application into the existing Python runtime image while preserving the auth, cookie, CSRF and safe return-target contracts. The reviewed build integration adds one newly divergent upstream-owned Docker ignore file and exactly 16 upstream net lines across the Docker and Python packaging seams. Raise the hard ceilings only to the measured 40 files and 1339 net lines; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta revision grants no formal production admission or merge waiver.",
+      "revision": "react18-login-ui-build-seam-v1",
+      "scoped_upstream_delta": {
+        "deploy/docker/Dockerfile": 11,
+        "deploy/docker/Dockerfile.dockerignore": 3,
+        "pyproject.toml": 2
       }
     },
-    "reason": "User-requested React 18 login UI for the current next SaaS Beta: build the isolated Next.js login application into the existing Python runtime image while preserving the auth, cookie, CSRF and safe return-target contracts. The reviewed build integration adds one newly divergent upstream-owned Docker ignore file and exactly 16 upstream net lines across the Docker and Python packaging seams. Raise the hard ceilings only to the measured 40 files and 1339 net lines; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta revision grants no formal production admission or merge waiver.",
-    "revision": "react18-login-ui-build-seam-v1",
+    "reason": "The protected signed-image candidate for the user-requested React 18 login UI failed because the isolated Next.js export emitted a random build ID and retained wall-clock filesystem metadata in the Server image. The reviewed repair adds exactly nine upstream net lines to bind the build ID to the exact source revision and normalize the login export plus the reinstalled Server venv/build tree. Raise only the line ceiling to the measured 1348 while retaining the 40-file, 8-patch, 0.85 isolation, forbidden-path and reverse-dependency constraints. This Single-Owner Beta revision records reproducibility repair scope only; it grants no formal production admission or merge waiver.",
+    "revision": "react18-login-ui-reproducibility-v1",
     "scoped_upstream_delta": {
-      "deploy/docker/Dockerfile": 11,
-      "deploy/docker/Dockerfile.dockerignore": 3,
-      "pyproject.toml": 2
+      "deploy/docker/Dockerfile": 9
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
