@@ -48,6 +48,8 @@ App 启用 `OMNIGENT_SAAS_CAPABILITIES` 中的 `delivery`，并设置 `OMNIGENT_
   "key_id": "delivery-candidate",
   "private_key_file": "/run/secrets/delivery-signing.pem",
   "ca_file": "/run/secrets/delivery-ca.pem",
+  "client_certificate_file": "/run/secrets/delivery-client.pem",
+  "client_private_key_file": "/run/secrets/delivery-client-key.pem",
   "repository_mirrors": {"repository-binding-key": "/srv/delivery-mirrors/project.git"},
   "projects": [{
     "tenant_id": "00000000-0000-4000-8000-000000000001",
@@ -59,6 +61,8 @@ App 启用 `OMNIGENT_SAAS_CAPABILITIES` 中的 `delivery`，并设置 `OMNIGENT_
   }]
 }
 ```
+
+DCP 的强制 mTLS 监听器要求 App 同时配置客户端证书与私钥；证书必须由 DCP 信任的客户端 CA 签发，私钥遵循上述文件权限约束。普通 API 请求和同步、异步契约检查使用同一组 TLS 配置，保留服务器证书校验。Kubernetes Secret 投影应先由初始化容器复制为服务用户拥有的普通文件，不能直接使用投影符号链接。
 
 DCP 的 App workload profile 使用上述 issuer、`/saas/delivery/.well-known/jwks.json` 和 audience `omnigent-deployment-control-plane`。在既有 formal identity 环境保留 human broker，并使用相互独立且权限不交叉的 workload profile；不要为了接入关闭 formal identity、容量或配额治理。
 
