@@ -79,6 +79,8 @@ def test_executor_factory_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("HARNESS_KIMI_PLAN", "yes")
     monkeypatch.setenv("HARNESS_KIMI_CONTINUE_LAST", "true")
     monkeypatch.setenv("HARNESS_KIMI_SKILLS_DIRS", json.dumps(["/a", "/b"]))
+    monkeypatch.setenv("HARNESS_KIMI_GATEWAY_BASE_URL", "https://gateway.example/v1")
+    monkeypatch.setenv("HARNESS_KIMI_GATEWAY_AUTH_COMMAND", "token-command")
 
     captured: dict[str, Any] = {}
 
@@ -97,6 +99,8 @@ def test_executor_factory_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> Non
     assert captured["plan"] is True
     assert captured["continue_last_session"] is True
     assert captured["skills_dirs"] == ["/a", "/b"]
+    assert captured["gateway_base_url"] == "https://gateway.example/v1"
+    assert captured["gateway_auth_command"] == "token-command"
 
 
 def test_executor_factory_defaults_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +111,8 @@ def test_executor_factory_defaults_when_env_unset(monkeypatch: pytest.MonkeyPatc
         "HARNESS_KIMI_PLAN",
         "HARNESS_KIMI_CONTINUE_LAST",
         "HARNESS_KIMI_SKILLS_DIRS",
+        "HARNESS_KIMI_GATEWAY_BASE_URL",
+        "HARNESS_KIMI_GATEWAY_AUTH_COMMAND",
         # Cleared too: cwd now falls back to it, so a dev with it exported
         # mustn't flip this default-path assertion.
         "OMNIGENT_RUNNER_WORKSPACE",
@@ -132,6 +138,38 @@ def test_executor_factory_defaults_when_env_unset(monkeypatch: pytest.MonkeyPatc
     assert captured["model"] is None
     assert captured["cwd"] is None
     assert captured["skills_dirs"] == []
+    assert captured["gateway_base_url"] is None
+    assert captured["gateway_auth_command"] is None
+
+
+def test_executor_gateway_env_uses_temporary_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolved gateway becomes Kimi's in-memory Provider, never a file."""
+
+    class _AuthProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"session-token\n", b""
+
+    async def _spawn(*_args: object, **_kwargs: object) -> _AuthProcess:
+        return _AuthProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+    ex = KimiExecutor(
+        binary_path="kimi",
+        model="deepseek-chat",
+        gateway_base_url="https://gateway.example/v1",
+        gateway_auth_command="mint-session-token",
+    )
+
+    env = asyncio.run(ex._build_spawn_env())
+
+    assert env["KIMI_MODEL_PROVIDER_TYPE"] == "openai"
+    assert env["KIMI_MODEL_BASE_URL"] == "https://gateway.example/v1"
+    assert env["KIMI_MODEL_API_KEY"] == "session-token"
+    assert env["KIMI_MODEL_NAME"] == "deepseek-chat"
 
 
 def test_executor_factory_falls_back_to_runner_workspace_cwd(

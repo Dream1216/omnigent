@@ -3669,11 +3669,11 @@ async def _auto_create_kimi_terminal(
         workspace snapshot read).
     :param ensure_comment_relay: Unused; kept for call-site parity with the
         other native auto-create helpers.
-    :param agent_spec: Unused for now (model pinning via the kimi TUI is a
-        follow-up); kept for call-site parity.
+    :param agent_spec: Optional agent spec whose model pin is preferred over the
+        platform Provider default.
     :returns: Created terminal resource view.
     """
-    del ensure_comment_relay, agent_spec
+    del ensure_comment_relay
     from omnigent.harnesses.kimi_native.bridge import (
         bridge_dir_for_session_id,
         write_hook_config,
@@ -3737,6 +3737,28 @@ async def _auto_create_kimi_terminal(
         bridge_dir / "kimi-code-home",
         bridge_dir=bridge_dir,
     )
+    # Prefer the platform OpenAI-compatible Provider over a shared host login.
+    # resolve_configured_openai_gateway expands only the short-lived,
+    # session-bound token injected into this Runner; the upstream DeepSeek key
+    # remains behind OpenBao/Gateway and nothing is written to the Kimi home.
+    from omnigent.harnesses.opencode_native.provider import resolve_configured_openai_gateway
+
+    model_override: str | None = launch_config.model_override
+    if model_override is None and agent_spec is not None:
+        executor = getattr(agent_spec, "executor", None)
+        candidate = getattr(executor, "model", None)
+        if isinstance(candidate, str) and candidate.strip():
+            model_override = candidate.strip()
+    gateway = resolve_configured_openai_gateway(model_id=model_override)
+    if gateway is not None:
+        kimi_env.update(
+            {
+                "KIMI_MODEL_PROVIDER_TYPE": "openai",
+                "KIMI_MODEL_BASE_URL": gateway.base_url,
+                "KIMI_MODEL_API_KEY": gateway.api_key,
+                "KIMI_MODEL_NAME": gateway.model_id,
+            }
+        )
     terminal_view = await resource_registry.launch_required_terminal(
         session_id=session_id,
         terminal_name="kimi",

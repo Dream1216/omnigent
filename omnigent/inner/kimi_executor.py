@@ -1,8 +1,8 @@
 """Kimi Code CLI executor.
 
 Drives Moonshot AI's upstream ``kimi`` CLI from
-https://github.com/MoonshotAI/Kimi-Code (the curl-installed
-single-binary build at https://code.kimi.com/kimi-code/install.sh).
+https://github.com/MoonshotAI/Kimi-Code (the official
+``@moonshot-ai/kimi-code`` package).
 The legacy pypi ``kimi-cli`` package is **not** supported — its
 command-line surface (``--print``, list-of-blocks content, etc.) is
 incompatible with the upstream binary the issue (#271) targets.
@@ -48,11 +48,10 @@ Env-var contract (read once at construction by
   ``--skills-dir <path>`` per entry. Empty / unset = use kimi's
   default skill discovery (user + project dirs).
 
-Per-invocation provider routing (``--config-file`` / ``--mcp-config-file``
-/ gateway env vars) is **not** wired: upstream kimi has no per-spawn
-config override. Provider configuration lives in ``~/.kimi-code/config.toml``
-and is managed out-of-band via ``kimi provider add`` (Omnigent-side
-provider injection is a deferred follow-up).
+Per-invocation provider routing uses Kimi Code's documented ``KIMI_MODEL_*``
+temporary-provider environment family. Omnigent resolves a gateway token once
+at subprocess start and exports only that session-bound token; no Provider key
+or generated provider block is persisted to disk.
 """
 
 from __future__ import annotations
@@ -401,6 +400,8 @@ class KimiExecutor(Executor):
         plan: bool = False,
         continue_last_session: bool = False,
         skills_dirs: list[str] | None = None,
+        gateway_base_url: str | None = None,
+        gateway_auth_command: str | None = None,
     ) -> None:
         self._cwd = cwd
         self._os_env = os_env
@@ -409,6 +410,8 @@ class KimiExecutor(Executor):
         self._plan = plan
         self._continue_last_session = continue_last_session
         self._skills_dirs = list(skills_dirs or [])
+        self._gateway_base_url = gateway_base_url
+        self._gateway_auth_command = gateway_auth_command
 
         # Per-session state: kimi session id captured from the prior turn's
         # ``role:"meta"`` event, fed to ``-S <id>`` on the next turn.
@@ -441,21 +444,56 @@ class KimiExecutor(Executor):
 
     # -- helpers -------------------------------------------------------------
 
-    def _build_spawn_env(self) -> dict[str, str]:
+    async def _build_spawn_env(self) -> dict[str, str]:
         """The env handed to the kimi subprocess.
 
-        Inherits the harness wrap's own env (so ``KIMI_*`` auth vars
-        the user exported reach the subprocess) and adds nothing — all
-        ``HARNESS_KIMI_*`` knobs are read on the wrap side and
-        translated into CLI flags.
+        Inherits Kimi's own ambient env for the vendor-login fallback. When a
+        gateway is configured, the resolved session token and endpoint replace
+        that fallback through Kimi Code's in-memory ``KIMI_MODEL_*`` provider.
         """
         # Deny-by-default: base + kimi's own families + the spec's
         # env_passthrough. Keeps the documented ambient KIMI_/MOONSHOT_ auth
         # while no longer handing the CLI every other provider's key (#3445).
-        return clean_agent_env(
+        env = clean_agent_env(
             allow_prefixes=("KIMI_", "MOONSHOT_"),
             extra_allowed=declared_passthrough(self._os_env),
         )
+        env.update(await self._resolve_gateway_env())
+        return env
+
+    async def _resolve_gateway_env(self) -> dict[str, str]:
+        """Resolve the neutral gateway contract into Kimi's temporary provider.
+
+        The auth command is evaluated once per Kimi subprocess. A resumed turn
+        starts a new subprocess and therefore refreshes an expiring session
+        token without ever writing it to the Kimi config directory.
+        """
+        if not self._gateway_base_url or not self._gateway_auth_command:
+            return {}
+        proc = await asyncio.create_subprocess_exec(
+            "sh",
+            "-c",
+            self._gateway_auth_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            detail = err.decode("utf-8", errors="replace").strip()[:200]
+            raise RuntimeError(
+                f"kimi gateway auth command failed (exit {proc.returncode}): {detail}"
+            )
+        token = out.decode("utf-8", errors="replace").strip()
+        if not token:
+            raise RuntimeError("kimi gateway auth command produced an empty token")
+        env = {
+            "KIMI_MODEL_PROVIDER_TYPE": "openai",
+            "KIMI_MODEL_BASE_URL": self._gateway_base_url,
+            "KIMI_MODEL_API_KEY": token,
+        }
+        if self._model:
+            env["KIMI_MODEL_NAME"] = self._model
+        return env
 
     def _sandbox_launch_path(self, spawn_env_names: Sequence[str]) -> str:
         """Return the path to spawn for kimi — sandbox launcher or bare binary.
@@ -497,8 +535,8 @@ class KimiExecutor(Executor):
             sandbox = resolve_sandbox(os_env, cwd)
             if not sandbox.active:
                 return self._binary_path
-            # kimi is a curl-installed single binary: it must read its own
-            # install dir and write its config dir ($KIMI_CODE_HOME, default
+            # kimi must read its own install dir and write its config dir
+            # ($KIMI_CODE_HOME, default
             # ~/.kimi-code) and /tmp, or it can't start inside the jail.
             from omnigent.harnesses.kimi_native.credentials import resolve_user_kimi_home
 
@@ -738,7 +776,11 @@ class KimiExecutor(Executor):
             return
 
         argv = self._build_argv(prompt_text=prompt_text)
-        env = self._build_spawn_env()
+        try:
+            env = await self._build_spawn_env()
+        except RuntimeError as exc:
+            yield ExecutorError(message=str(exc), retryable=True)
+            return
         # Resolve argv[0]: the bare binary, or a sandbox launcher wrapping it
         # when the spec's os_env requests confinement (so kimi's in-process
         # Bash/edit/read tools run inside the spec's read/write roots).

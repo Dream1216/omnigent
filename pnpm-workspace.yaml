@@ -102,6 +102,8 @@ overrides:
 allowBuilds:
   '@anthropic-ai/claude-code': true
   '@google/genai': true
+  # Kimi Code selects its integrity-locked native payload during postinstall.
+  '@moonshot-ai/kimi-code': true
   # Qwen Code loads its pinned native audio addon when voice input is used.
   # The package and its transitive artifacts are integrity-locked below, so
   # permit the install script instead of leaving pnpm's interactive placeholder.
@@ -119,6 +121,9 @@ allowBuilds:
   esbuild: true
   keytar: true
   msw: true
+  # Kimi Code's interactive terminal bridge requires its integrity-locked PTY
+  # native addon; without the build the package installs but the TUI cannot run.
+  node-pty: true
   # The pinned OpenCode wrapper selects the integrity-locked platform binary in
   # postinstall. Without this, the CLI package is present but `opencode` cannot
   # start in the Host image.
@@ -127,3 +132,6 @@ allowBuilds:
   protobufjs: true
   sharp: true
   workerd: true
+
+minimumReleaseAgeExclude:
+  - '@moonshot-ai/kimi-code@0.43.1'

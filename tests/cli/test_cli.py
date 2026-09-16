@@ -7293,15 +7293,10 @@ def test_manage_goose_harness_configure_launches(
 # ── omnigent setup: Kimi Code drill-in (_manage_kimi_harness) ────────────
 
 
-def test_manage_kimi_harness_not_installed_shows_hint_returns(
+def test_manage_kimi_harness_not_installed_can_decline_npm_install(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing kimi CLI shows the curl install_hint and returns.
-
-    Kimi is curl-installed (no npm ``package``), so the drill-in can't
-    auto-install it — it must surface the install_hint and bail without
-    touching login.
-    """
+    """A missing Kimi CLI offers the official npm installer and can return."""
     import omnigent.onboarding.harness_install as hi
     import omnigent.onboarding.interactive as it
 
@@ -7310,15 +7305,14 @@ def test_manage_kimi_harness_not_installed_shows_hint_returns(
     monkeypatch.setattr(it, "console", console)
     login = Mock()
     monkeypatch.setattr(hi, "harness_login", login)
-    # If the drill-in wrongly reached the menu loop, this select would drive it.
-    monkeypatch.setattr(it, "select", lambda *a, **k: 0)
+    install = Mock(return_value=True)
+    monkeypatch.setattr(hi, "install_harness_cli", install)
+    monkeypatch.setattr(it, "select", lambda *a, **k: 1)
 
     _manage_kimi_harness()
 
     login.assert_not_called()
-    # The curl install command was surfaced to the user.
-    printed = " ".join(str(c.args[0]) for c in console.print.call_args_list if c.args)
-    assert "code.kimi.com/kimi-code/install.sh" in printed
+    install.assert_not_called()
 
 
 def test_manage_kimi_harness_back_does_not_login(

@@ -30,10 +30,9 @@ Env vars read at startup (full contract in
   falls back to ``caller_process + sandbox=none`` (kimi handles its
   own sandbox + approval flow internally).
 
-Provider routing for kimi happens via ``kimi provider add`` / its
-``~/.kimi-code/config.toml`` (out-of-band from Omnigent) — upstream kimi
-has no per-spawn ``--config-file`` or env-var provider override.
-Omnigent-side provider injection remains a deferred follow-up.
+Provider routing uses Kimi Code's ``KIMI_MODEL_*`` temporary-provider
+environment family. Omnigent resolves the configured gateway token at process
+start and never persists it in ``~/.kimi-code/config.toml``.
 """
 
 from __future__ import annotations
@@ -62,6 +61,8 @@ _ENV_PLAN = "HARNESS_KIMI_PLAN"
 _ENV_CONTINUE_LAST = "HARNESS_KIMI_CONTINUE_LAST"
 _ENV_SKILLS_DIRS = "HARNESS_KIMI_SKILLS_DIRS"
 _ENV_OS_ENV = "HARNESS_KIMI_OS_ENV"
+_ENV_GATEWAY_BASE_URL = "HARNESS_KIMI_GATEWAY_BASE_URL"
+_ENV_GATEWAY_AUTH_COMMAND = "HARNESS_KIMI_GATEWAY_AUTH_COMMAND"
 
 
 def _parse_truthy_with_default(value: str | None, *, default: bool) -> bool:
@@ -133,6 +134,8 @@ def _build_kimi_executor() -> Executor:
             os.environ.get(_ENV_CONTINUE_LAST), default=False
         ),
         skills_dirs=_resolve_skills_dirs(os.environ.get(_ENV_SKILLS_DIRS)),
+        gateway_base_url=os.environ.get(_ENV_GATEWAY_BASE_URL, "").strip() or None,
+        gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND, "").strip() or None,
     )
 
 

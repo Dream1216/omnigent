@@ -16,7 +16,8 @@ Three user-observable failure modes are guarded here:
    ``omnigent/runtime/workflow.py`` still points users at ``~/.kimi/``.
 
 Failure modes 1–2 were fixed by "fix(onboarding): correct the kimi and hermes
-CLI version floors" (the floor is now 0.7.0); the tests here guard that fix so
+CLI version floors" (the floor is now 0.43.0 for temporary Provider support);
+the tests here guard that fix so
 a future edit can't silently re-import kimi-cli's 1.x series. Failure mode 3 is
 guarded by ``test_kimi_auth_rejection_names_the_real_kimi_code_config_path``,
 which fails while any user-visible guidance names the legacy path.
