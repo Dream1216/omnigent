@@ -202,7 +202,7 @@ class DeliveryClient:
         )
 
     async def check_contract(self) -> None:
-        frozen = Path(__file__).with_name("dcp-openapi-v1.json").read_bytes()
+        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
         async with self._http() as client:
             response = await client.get("/v1/openapi.json")
             response.raise_for_status()
@@ -224,6 +224,6 @@ class DeliveryClient:
         current = (
             json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode()
-        frozen = Path(__file__).with_name("dcp-openapi-v1.json").read_bytes()
+        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
         if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
             raise ValueError("App and DCP contract revisions differ")

@@ -134,7 +134,7 @@ def create_delivery_router(
     @router.get("/delivery", include_in_schema=False)
     def page() -> FileResponse:
         return FileResponse(
-            Path(__file__).with_name("index.html"),
+            Path(__file__).parents[1] / "admin_ui" / "delivery.html",
             headers={
                 "Content-Security-Policy": (
                     "default-src 'none'; script-src 'self'; style-src 'self'; "
@@ -149,7 +149,7 @@ def create_delivery_router(
     def asset(name: str) -> FileResponse:
         if name not in {"delivery.js", "delivery.css"}:
             raise HTTPException(404)
-        return FileResponse(Path(__file__).with_name(name))
+        return FileResponse(Path(__file__).parents[1] / "admin_ui" / name)
 
     @router.get("/delivery/.well-known/jwks.json")
     def jwks() -> dict[str, Any]:
