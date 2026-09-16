@@ -44,32 +44,38 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 39,
-    "max_upstream_net_added_loc": 1323,
+    "max_direct_upstream_files": 40,
+    "max_upstream_net_added_loc": 1339,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-16",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 34,
-    "previous_max_upstream_net_added_loc": 1055,
-    "previous_measured_upstream_net_added_loc": 1054,
+    "previous_max_direct_upstream_files": 39,
+    "previous_max_upstream_net_added_loc": 1323,
+    "previous_measured_upstream_net_added_loc": 1323,
     "previous_revision": {
-      "approved_at": "2026-09-14",
+      "approved_at": "2026-09-16",
       "governance_mode": "single_owner_beta",
-      "previous_max_direct_upstream_files": 33,
-      "previous_max_upstream_net_added_loc": 1047,
-      "reason": "user-requested Platform-managed model closure: expose every configured inline gateway model through Pi while keeping the Provider key behind the existing SaaS Credential Proxy; add one generic official Pi seam with no downstream import, an independently replayable fifth patch, and exact adapter tests; increase the measured ceiling by one direct file and eight net lines while retaining the 8-patch ceiling, isolation floor, forbidden paths and reverse-dependency checks; this Single-Owner Beta revision grants no production admission or merge waiver",
-      "revision": "platform-managed-model-catalog-v1"
+      "previous_max_direct_upstream_files": 34,
+      "previous_max_upstream_net_added_loc": 1055,
+      "previous_measured_upstream_net_added_loc": 1054,
+      "reason": "User-requested delivery lifecycle integration into the current next SaaS mainline: mount session preview in the actual chat composer and retain the legacy deployments route. The reviewed frontend delta is exactly five files and 269 net lines (using one existing budgeted line of headroom), including 75 integration-test lines. The backend, contract, assets and authorization remain under saas/ and tests/saas/. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and strict file/line ceilings. This records only the authorized Single-Owner Beta feature scope, not production admission or a merge waiver.",
+      "revision": "delivery-session-preview-entrypoints-v1",
+      "scoped_frontend_delta": {
+        "web/src/App.tsx": 2,
+        "web/src/components/PreviewControl.tsx": 164,
+        "web/src/pages/ChatPage.composer.test.tsx": 75,
+        "web/src/pages/ChatPage.tsx": 15,
+        "web/src/pages/DeploymentsPage.tsx": 13
+      }
     },
-    "reason": "User-requested delivery lifecycle integration into the current next SaaS mainline: mount session preview in the actual chat composer and retain the legacy deployments route. The reviewed frontend delta is exactly five files and 269 net lines (using one existing budgeted line of headroom), including 75 integration-test lines. The backend, contract, assets and authorization remain under saas/ and tests/saas/. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and strict file/line ceilings. This records only the authorized Single-Owner Beta feature scope, not production admission or a merge waiver.",
-    "revision": "delivery-session-preview-entrypoints-v1",
-    "scoped_frontend_delta": {
-      "web/src/App.tsx": 2,
-      "web/src/components/PreviewControl.tsx": 164,
-      "web/src/pages/ChatPage.composer.test.tsx": 75,
-      "web/src/pages/ChatPage.tsx": 15,
-      "web/src/pages/DeploymentsPage.tsx": 13
+    "reason": "User-requested React 18 login UI for the current next SaaS Beta: build the isolated Next.js login application into the existing Python runtime image while preserving the auth, cookie, CSRF and safe return-target contracts. The reviewed build integration adds one newly divergent upstream-owned Docker ignore file and exactly 16 upstream net lines across the Docker and Python packaging seams. Raise the hard ceilings only to the measured 40 files and 1339 net lines; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta revision grants no formal production admission or merge waiver.",
+    "revision": "react18-login-ui-build-seam-v1",
+    "scoped_upstream_delta": {
+      "deploy/docker/Dockerfile": 11,
+      "deploy/docker/Dockerfile.dockerignore": 3,
+      "pyproject.toml": 2
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
