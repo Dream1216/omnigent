@@ -102,9 +102,14 @@ def test_delivery_client_uses_mtls_for_requests_and_both_readiness_paths(
         missing = DeliveryClient(
             replace(config, client_certificate_file=None, client_private_key_file=None)
         )
-        with pytest.raises(httpx.HTTPError):
+        # Depending on whether TLS 1.3 surfaces the server alert while httpcore
+        # is reading the response or while it is closing the stream, the
+        # rejection is exposed as an HTTPX transport error or the underlying
+        # stdlib SSL error. Both prove that the certificate-less client was
+        # rejected before an HTTP response was accepted.
+        with pytest.raises((httpx.HTTPError, ssl.SSLError)):
             missing.assert_ready()
-        with pytest.raises(httpx.HTTPError):
+        with pytest.raises((httpx.HTTPError, ssl.SSLError)):
             asyncio.run(missing.check_contract())
         wrong_root = tmp_path / "wrong-root"
         wrong_root.mkdir()
