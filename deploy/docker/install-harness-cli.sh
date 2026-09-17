@@ -47,7 +47,7 @@
 #               the sandbox cannot run the installer at session start
 #   cursor    → vendor installer (cursor.com/install) — always fetches the
 #               latest agent build, so VERSION pins are rejected
-#   kimi      → vendor installer (code.kimi.com/kimi-code/install.sh)
+#   kimi      → npm @moonshot-ai/kimi-code (default pin 0.43.1)
 #   agy       → pinned per-arch GitHub release asset + sha256 (AGY_VERSION +
 #               the two AGY_SHA256_* values) — the same control as the default
 #               image, exposed as a row because UBI does not bake agy by default
@@ -59,7 +59,7 @@
 #
 # Supply-chain note: only agy here (and kiro-cli baked in the Dockerfile) is
 # pinned to an immutable asset + sha256. The vendor-installer rows (goose,
-# jcode, cursor, kimi) run the harness's own curl-piped install script off
+# jcode, cursor) run the harness's own curl-piped install script off
 # mutable refs and are checked only with `--version`; cursor cannot be
 # pinned at all.
 # Off-by-default bounds this, but a deployment needing kiro-cli-grade integrity
@@ -210,23 +210,6 @@ install_cursor() {
     verify cursor-agent
 }
 
-install_kimi() { # <version|"">
-    local version="$1"
-    # kimi installs a single static binary at ${KIMI_INSTALL_DIR}/bin/kimi —
-    # point it at BIN_DIR's parent so it lands on the shared PATH.
-    [[ "$BIN_DIR" == */bin ]] \
-        || die "kimi needs BIN_DIR to end in /bin (got $BIN_DIR)"
-    local -a install_env=(
-        "KIMI_INSTALL_DIR=${BIN_DIR%/bin}"
-        "KIMI_NO_MODIFY_PATH=1"
-    )
-    [ -z "$version" ] || install_env+=("KIMI_VERSION=$version")
-    echo ">> installing kimi ${version:-<latest>} via code.kimi.com installer"
-    curl -fsSL https://code.kimi.com/kimi-code/install.sh \
-        | env "${install_env[@]}" bash
-    verify kimi
-}
-
 [ $# -gt 0 ] || die "usage: install-harness-cli.sh NAME[@VERSION]... | npm:<pkg-spec>..."
 
 for spec in "$@"; do
@@ -257,7 +240,7 @@ for spec in "$@"; do
                 || die "cursor's installer always fetches the latest build — cursor@VERSION pins are not supported"
             install_cursor
             ;;
-        kimi)     install_kimi "$version" ;;
+        kimi)     install_npm "@moonshot-ai/kimi-code@${version:-0.43.1}" kimi ;;
         hermes)
             die "hermes needs Node >= 26 at runtime and the host image ships Node 22 — its installer's managed Node lands in the build user's home. Raise the image's Node baseline first; no EXTRA_HARNESS_CLIS row until then" ;;
         claude)   die "claude ships in the host image by default (unpinned npm install) — pin a different version via the npm: escape hatch: npm:@anthropic-ai/claude-code@<version>" ;;

@@ -2738,8 +2738,8 @@ def _print_kimi_auth_help() -> None:
         '            type = "kimi"\n'
         '            base_url = "https://api.kimi.com/coding/v1"\n'
         '            api_key = "sk-…"[/dim]\n'
-        "    • Omnigent stores no kimi credential and cannot thread one per "
-        "spawn — configure it once in the kimi CLI\n"
+        "    • Managed SaaS can also supply an Omnigent platform Provider "
+        "per session; its short-lived token is never written to this config\n"
     )
 
 
@@ -2773,25 +2773,30 @@ def _manage_kimi_harness() -> None:
     from omnigent.onboarding.harness_install import (
         KIMI_KEY,
         harness_cli_installed,
-        harness_install_spec,
         harness_login,
+        install_harness_cli,
     )
     from omnigent.onboarding.interactive import console, select
     from omnigent.onboarding.kimi_auth import kimi_auth_configured
 
-    # Gate on the CLI. Kimi ships a single binary via a curl installer (not
-    # npm), so there's no in-process auto-install — name the command and let
-    # the user run it, then re-open. Mirrors how ``harness_setup_hint`` treats
-    # the other curl-installed CLI (cursor-agent).
+    # Gate on the CLI. Kimi now publishes an official npm package, so setup can
+    # install it directly instead of sending the user to a mutable curl script.
     if not harness_cli_installed(KIMI_KEY):
-        spec = harness_install_spec(KIMI_KEY)
-        hint = (spec.install_hint if spec else None) or "see Kimi Code docs"
-        console.print(
-            "  Kimi Code's CLI isn't installed. Install it with:\n"
-            f"    [bold]{hint}[/bold]\n"
-            "  then re-open this menu to sign in."
+        choice = select(
+            "Kimi Code isn't installed. Install it now?",
+            ["Yes — install official npm package", "No — back to harnesses"],
+            default=0,
+            clear_on_exit=True,
         )
-        return
+        if choice != 0:
+            return
+        console.print("  [dim]Installing @moonshot-ai/kimi-code…[/dim]")
+        if not install_harness_cli(KIMI_KEY):
+            console.print(
+                "  [red]Install failed.[/red] Run "
+                "[bold]npm install -g @moonshot-ai/kimi-code[/bold], then re-open."
+            )
+            return
 
     # Seed the status line with the detected auth state so a pay-per-use user who
     # already set an API key isn't nudged to run a login that will be rejected.

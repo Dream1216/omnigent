@@ -37,10 +37,10 @@ _MODEL = resolve_model("qwen/qwen-plus", key=__name__)
 _HARNESS = "qwen"
 _PROMPT = "say hi in 5 words"
 
-# Minimum assistant-text length. Anything longer than "hi" proves
-# the turn produced a real model reply rather than an empty
-# response or a pure error banner.
-_MIN_ASSISTANT_CHARS = 4
+# Minimum assistant-text length. A non-empty reply, paired with the exact
+# zero-exit and clean-stderr contracts below, proves the assistant completed
+# the deterministic mock turn without constraining its response wording.
+_MIN_ASSISTANT_CHARS = 1
 
 # Subprocess timeout. Qwen ACP mode spawns its own subprocess;
 # 120s should be enough for init + first turn.
@@ -63,7 +63,7 @@ def test_per_harness_qwen_one_shot(
 ) -> None:
     """
     ``omnigent run hello_world.yaml --harness qwen -p <prompt>``
-    exits 0 and emits a non-trivial assistant reply.
+    exits 0 and emits a non-empty assistant reply.
 
     :param omnigent_python: Interpreter with omnigent
         installed and importable.

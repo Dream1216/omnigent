@@ -315,6 +315,7 @@ ARG SOURCE_DATE_EPOCH
 ARG CLAUDE_CODE_VERSION=2.1.266
 ARG CODEX_CLI_VERSION=0.139.0
 ARG PI_CODING_AGENT_VERSION=0.84.2
+ARG KIMI_CODE_VERSION=0.43.1
 ARG QWEN_CODE_VERSION=0.23.4
 ARG OPENCODE_VERSION=1.18.31
 ARG SOURCE_REVISION
@@ -426,6 +427,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       '  "dependencies": {' \
       "    \"@anthropic-ai/claude-code\": \"${CLAUDE_CODE_VERSION}\"," \
       "    \"@earendil-works/pi-coding-agent\": \"${PI_CODING_AGENT_VERSION}\"," \
+      "    \"@moonshot-ai/kimi-code\": \"${KIMI_CODE_VERSION}\"," \
       "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"," \
       "    \"@qwen-code/qwen-code\": \"${QWEN_CODE_VERSION}\"," \
       "    \"opencode-ai\": \"${OPENCODE_VERSION}\"" \
@@ -437,6 +439,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && test -x .github/ci-deps/node_modules/.bin/claude \
  && test -x .github/ci-deps/node_modules/.bin/codex \
  && test -x .github/ci-deps/node_modules/.bin/pi \
+ && test -x .github/ci-deps/node_modules/.bin/kimi \
  && test -x .github/ci-deps/node_modules/.bin/qwen \
  && test -x .github/ci-deps/node_modules/.bin/opencode \
  && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
@@ -445,6 +448,8 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       *) echo "ERROR: codex CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(pi --version 2>&1)" in *"${PI_CODING_AGENT_VERSION}"*) ;; \
       *) echo "ERROR: pi CLI version mismatch" >&2; exit 1 ;; esac \
+ && case "$(kimi --version 2>&1)" in *"${KIMI_CODE_VERSION}"*) ;; \
+      *) echo "ERROR: kimi CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(qwen --version 2>&1)" in *"${QWEN_CODE_VERSION}"*) ;; \
       *) echo "ERROR: qwen CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(opencode --version 2>&1)" in *"${OPENCODE_VERSION}"*) ;; \

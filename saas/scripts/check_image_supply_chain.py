@@ -37,6 +37,7 @@ _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
     "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
     "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
@@ -1093,7 +1094,9 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if cli_dependencies != expected_dependencies:
         violations.append("host CLI dependency manifest does not match approved direct versions")
     required_host_cli_builds = {
+        "'@moonshot-ai/kimi-code': true",
         "'@qwen-code/audio-capture': true",
+        "node-pty: true",
         "opencode-ai: true",
     }
     if any(fragment not in pnpm_workspace for fragment in required_host_cli_builds):
@@ -1133,7 +1136,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
     if re.search(
         r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
-        r"@earendil-works/pi-coding-agent|@qwen-code/qwen-code|opencode-ai)",
+        r"@earendil-works/pi-coding-agent|@moonshot-ai/kimi-code|@qwen-code/qwen-code|opencode-ai)",
         dockerfile,
     ):
         violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")

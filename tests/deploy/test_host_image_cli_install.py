@@ -76,5 +76,9 @@ def test_extra_cli_rows_match_harness_install_table() -> None:
     assert qwen.package == "@qwen-code/qwen-code"
     assert f"{qwen.package}${{version:+@$version}}" in script
 
+    kimi = hi._HARNESS_INSTALL[hi.KIMI_KEY]
+    assert kimi.package == "@moonshot-ai/kimi-code"
+    assert f"{kimi.package}@${{version:-0.43.1}}" in script
+
     # goose's default pin mirrors the runtime's minimum supported goose.
     assert f"${{1:-{hi._GOOSE_MIN_VERSION}}}" in script

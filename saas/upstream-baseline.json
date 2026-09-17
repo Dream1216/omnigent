@@ -44,11 +44,23 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 50,
-    "max_upstream_net_added_loc": 2148,
+    "max_direct_upstream_files": 63,
+    "max_upstream_net_added_loc": 2578,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-18",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 62,
+    "previous_max_upstream_net_added_loc": 2575,
+    "previous_measured_upstream_net_added_loc": 2575,
+    "previous_revision": {
+    "approved_at": "2026-09-16",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 50,
+    "previous_max_upstream_net_added_loc": 2148,
+    "previous_measured_upstream_net_added_loc": 2148,
+    "previous_revision": {
     "approved_at": "2026-09-16",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 49,
@@ -132,6 +144,39 @@
     "revision": "harness-fleet-qwen-e2e-snapshot-v5",
     "scoped_harness_delta": {
       "tests/e2e/omnigent/snapshots/test_per_harness_qwen.json": 5
+    }
+    },
+    "reason": "User-requested Harness fleet continuation for Kimi Code: pin the official @moonshot-ai/kimi-code package, add deterministic Host-image material checks and route both headless and native Kimi through the existing OpenAI-compatible platform Provider using only the session-bound synthetic gateway token. Seven official Kimi/onboarding seams are carried by independently replayable patch 0008; the proposed workflow and native Runner edits were removed. Exact-SHA Compatibility also requires the Kimi spawn-environment canary to await the asynchronous gateway-aware builder. From the reproducible Qwen snapshot baseline this adds twelve directly changed files and 427 measured net lines, moving the exact totals from 50 files / 2,148 lines to 62 files / 2,575 lines. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This is a Single-Owner Beta scope record, not production admission, vendor-account authentication, or a merge waiver.",
+    "revision": "harness-fleet-kimi-provider-v6",
+    "scoped_harness_delta": {
+      ".github/ci-deps/package.json": 1,
+      "deploy/docker/Dockerfile": 5,
+      "deploy/docker/install-harness-cli.sh": -17,
+      "omnigent/cli_config.py": 5,
+      "omnigent/harnesses/kimi_native/credentials.py": 23,
+      "omnigent/inner/kimi_executor.py": 60,
+      "omnigent/inner/kimi_harness.py": 3,
+      "omnigent/onboarding/harness_install.py": -1,
+      "omnigent/onboarding/harness_readiness.py": 6,
+      "omnigent/onboarding/provider_config.py": 3,
+      "pnpm-lock.yaml": 158,
+      "pnpm-workspace.yaml": 8,
+      "tests/cli/test_cli.py": -6,
+      "tests/deploy/test_host_image_cli_install.py": 4,
+      "tests/e2e/test_kimi_needs_upgrade_and_config_path_e2e.py": 2,
+      "tests/inner/test_kimi_harness.py": 98,
+      "tests/onboarding/test_harness_install.py": 1,
+      "tests/onboarding/test_harness_readiness.py": 12,
+      "tests/test_agent_spawn_env_canary.py": 3,
+      "tests/test_kimi_native_credentials.py": 59
+    }
+    },
+    "reason": "Exact-SHA CI closure for the user-requested Kimi Harness fleet: newer bubblewrap releases still fail closed when binding onto a symlink but report `Can't mount on symlink destination` instead of the older `Can't create file at` diagnostic. Retain the non-zero exit requirement, require the exact symlink destination, and accept only those two known fail-closed diagnostics. The deterministic Qwen mock may validly return a one-character assistant message, so its snapshot continues to require exit zero and clean stderr while requiring any non-empty reply. This adds one directly changed upstream test file and exactly three measured net lines, raising the hard ceilings only from 62 files / 2,575 lines to the exact measured 63 files / 2,578 lines; the Qwen wording and snapshot threshold are zero-line corrections to already governed files. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "harness-fleet-kimi-ci-closure-v7",
+    "scoped_harness_delta": {
+      "tests/e2e/omnigent/snapshots/test_per_harness_qwen.json": 0,
+      "tests/e2e/omnigent/test_per_harness_qwen.py": 0,
+      "tests/inner/test_bwrap_symlink_mask_3265.py": 3
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

@@ -557,17 +557,13 @@ def test_configured_harness_map_probes_codex_readiness_once(
     assert result["native-codex"] == "needs-auth"
 
 
-def test_kimi_readiness_keys_off_binary_and_credential(
+def test_kimi_readiness_keys_off_binary_and_credential_or_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Kimi is configured iff the ``kimi`` binary is on PATH AND auth exists.
 
-    Kimi authenticates against Moonshot AI's backend via ``kimi login`` (OAuth,
-    membership) or a Moonshot API key in ``~/.kimi-code/config.toml``
-    (pay-per-use). Like agy, the daemon has no CLI login-status probe, so
-    readiness is binary presence PLUS a subprocess-free credential check
-    (``kimi_auth_configured``). The alias ``kimi-code`` resolves to the same
-    verdict via canonicalization.
+    Kimi accepts its own login/config or an Omnigent-managed Provider, but the
+    binary remains mandatory. The alias resolves to the same verdict.
     """
     import omnigent.onboarding.kimi_auth as _ka
 
@@ -580,10 +576,26 @@ def test_kimi_readiness_keys_off_binary_and_credential(
     # Binary present but no auth → still not configured.
     _all_clis_installed(monkeypatch)
     monkeypatch.setattr(_ka, "kimi_auth_configured", lambda: False)
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured",
+        lambda _h: False,
+    )
     assert harness_is_configured("kimi") is False
     assert harness_is_configured("kimi-code") is False
 
+    # Managed Provider satisfies auth without a shared Moonshot login.
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured",
+        lambda _h: True,
+    )
+    assert harness_is_configured("kimi") is True
+    assert harness_is_configured("kimi-code") is True
+
     # Binary present and auth detected → configured.
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured",
+        lambda _h: False,
+    )
     monkeypatch.setattr(_ka, "kimi_auth_configured", lambda: True)
     assert harness_is_configured("kimi") is True
     assert harness_is_configured("kimi-code") is True

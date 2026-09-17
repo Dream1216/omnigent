@@ -6,6 +6,7 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.266",
     "@earendil-works/pi-coding-agent": "0.84.2",
+    "@moonshot-ai/kimi-code": "0.43.1",
     "@openai/codex": "0.139.0",
     "@qwen-code/qwen-code": "0.23.4",
     "opencode-ai": "1.18.31"

@@ -305,6 +305,12 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
     # OAuth creds on the first interactive browser run instead.
     if availability is not True:
         return availability
+    # Kimi can use either its own Moonshot login/config OR an Omnigent-managed
+    # OpenAI-compatible provider injected per session through KIMI_MODEL_*.
+    # The latter is the managed-SaaS path and must not remain yellow merely
+    # because the host has no shared vendor OAuth credential.
+    if install_key == KIMI_KEY and _family_provider_configured(KIMI_SURFACE):
+        return True
     credential_check = _FAMILY_CREDENTIAL_CHECK.get(install_key)
     if credential_check is not None:
         return credential_check()

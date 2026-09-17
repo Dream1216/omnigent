@@ -71,9 +71,8 @@ QWEN_KEY = "qwen"
 # installer rather than npm — so it carries an ``install_hint``, not a ``package``.
 CURSOR_KEY = "cursor"
 
-# Kimi authenticates against Moonshot AI's backend (``kimi login`` OAuth or a
-# Moonshot API key), not via the ambient provider config; like Cursor it ships
-# via a curl installer rather than npm, so it carries an ``install_hint``.
+# Kimi Code publishes an official npm package. It can authenticate with its own
+# Moonshot login or consume Omnigent's OpenAI-compatible Provider per session.
 KIMI_KEY = "kimi"
 
 # Kiro authenticates against its own backend and ships as a standalone native
@@ -113,8 +112,8 @@ KIRO_KEY = "kiro"
 #   to the day after 2026-06-01 so we don't support stale pre-June builds.
 # - kimi: the harness drives Moonshot's ``kimi-code`` CLI (the ``kimi`` binary
 #   this spec installs), whose releases are a 0.x series — NOT the separate
-#   ``kimi-cli`` project, which numbers from 1.x. Its first release after
-#   2026-06-01 is 0.7.0.
+#   ``kimi-cli`` project, which numbers from 1.x. Managed Provider injection
+#   through KIMI_MODEL_* requires 0.43.0 or newer.
 # - hermes: parent_session_id schema introduced in v0.17.0. Hermes reports a
 #   semver version with the build date alongside it
 #   (``Hermes Agent v0.19.1 (2026.7.30)``), so the floor is that semver.
@@ -126,7 +125,8 @@ _HERMES_MIN_VERSION = "0.17.0"
 _KIRO_MIN_VERSION = "2.10.0"
 _CLAUDE_MIN_VERSION = "2.1.161"
 _CURSOR_MIN_VERSION = "2026.06.02"
-_KIMI_MIN_VERSION = "0.7.0"
+# KIMI_MODEL_* temporary Provider injection is the managed-SaaS auth boundary.
+_KIMI_MIN_VERSION = "0.43.0"
 _ANTIGRAVITY_MIN_VERSION = "1.1.13"
 
 # OpenCode native harness CLI (``opencode serve`` / ``opencode attach``),
@@ -257,10 +257,10 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
         # after 2026-06-01 for the native harness path.
         min_version=_CURSOR_MIN_VERSION,
     ),
-    # Kimi Code CLI ships a single-binary ``kimi`` via a curl installer (no
-    # npm). ``kimi login`` is the interactive OAuth device flow (membership);
-    # pay-per-use users instead set a Kimi API key in
-    # ``~/.kimi-code/config.toml``. ``status_args`` is intentionally ``None``:
+    # Kimi Code CLI ships an official npm package and ``kimi login`` remains
+    # the optional interactive OAuth device flow. Managed SaaS sessions instead
+    # receive an in-memory KIMI_MODEL_* Provider. ``status_args`` is
+    # intentionally ``None``:
     # kimi has no first-class "am I logged in?" exit-code probe — readiness is
     # inspected file-based via ``kimi_auth.kimi_auth_configured`` instead (login
     # credential OR configured API key). With ``None`` the login path runs every
@@ -272,9 +272,8 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
     KIMI_KEY: HarnessInstallSpec(
         "Kimi",
         "kimi",
-        package=None,
+        package="@moonshot-ai/kimi-code",
         login_args=("login",),
-        install_hint="curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
         # First kimi-code release after 2026-06-01. Older builds may lack
         # newer TUI/session wiring needed by the native harness.
         min_version=_KIMI_MIN_VERSION,

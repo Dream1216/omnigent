@@ -188,10 +188,13 @@ _HARNESS_FAMILY: dict[str, str] = {
     # the OpenAI-compatible wire, so it consumes the ``openai`` family.
     "antigravity": OPENAI_FAMILY,
     "agy": OPENAI_FAMILY,
-    # NB: ``kimi`` is intentionally absent. Upstream Kimi Code CLI has no
-    # per-spawn provider override flag, so Omnigent cannot thread a generic
-    # provider through. Provider routing for kimi lives in ``~/.kimi-code/config.toml``
-    # and is managed out-of-band via ``kimi provider add``.
+    # Kimi Code supports an in-memory OpenAI-compatible provider through the
+    # KIMI_MODEL_* environment family. Both the headless and native adapters
+    # synthesize those values per session, so no upstream key is persisted in
+    # ~/.kimi-code/config.toml.
+    "kimi": OPENAI_FAMILY,
+    "kimi-native": OPENAI_FAMILY,
+    "native-kimi": OPENAI_FAMILY,
     # Qwen Code is OpenAI-compatible; the native TUI keys both spellings (mirroring
     # codex-native) so a same-agent qwen→qwen fork/switch reads as same-family.
     "qwen": OPENAI_FAMILY,
