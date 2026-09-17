@@ -19,8 +19,8 @@
   },
   "patch_replay": {
     "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
-    "patch_count": 6,
-    "official_source_path_count": 15,
+    "patch_count": 7,
+    "official_source_path_count": 20,
     "content_mismatch_count": 0,
     "status": "passed"
   },
@@ -45,6 +45,12 @@
       "passed": 9,
       "failed": 0,
       "note": "model-option pass-through tests pin the configuration-source seam and no longer depend on a developer's local provider config"
+    },
+    "kimi_main_reconciliation": {
+      "passed": 133,
+      "skipped": 2,
+      "failed": 0,
+      "note": "preserves the merged Kimi platform-provider delivery while replaying patch 0008 from the 9616 baseline"
     },
     "postgresql_16_real_replay": {
       "passed": 1,
@@ -72,16 +78,16 @@
     "patch_queue": "passed",
     "pre_commit_all_files": "passed",
     "pnpm_frozen_web_install": {
-      "lock_entries_verified": 2003,
-      "minimum_release_age_exclusions": 15,
+      "lock_entries_verified": 2022,
+      "minimum_release_age_exclusions": 16,
       "scope": "exact_integrity_locked_harness_artifact_versions",
       "status": "passed"
     },
     "source_intrusion_budget": {
-      "patch_count": 6,
-      "direct_upstream_file_count": 50,
-      "upstream_net_added_loc": 2065,
-      "isolated_custom_code_ratio": 0.9935,
+      "patch_count": 7,
+      "direct_upstream_file_count": 63,
+      "upstream_net_added_loc": 2489,
+      "isolated_custom_code_ratio": 0.992,
       "status": "passed"
     }
   },
@@ -104,6 +110,19 @@
     "validation": {
       "passed": 234,
       "failed": 0
+    }
+  },
+  "latest_main_reconciliation": {
+    "revision": "75322493346efc4016a5d1878293e340837e8d92",
+    "main_parent_revision": "be303951b048985edbc9a1adac4cfc8ce60b483a",
+    "main_pull_request": 68,
+    "resolution": "preserved the merged Kimi platform-provider delivery, combined the Kimi and Qwen/OpenCode pnpm policy entries, retained the audited bubblewrap fail-closed diagnostic contract, and regenerated patch 0008 against 9616 after patches 0002-0007",
+    "validation": {
+      "passed": 133,
+      "skipped": 2,
+      "failed": 0,
+      "patch_replay": "passed",
+      "pnpm_frozen_lock_entries": 2022
     }
   }
 }
