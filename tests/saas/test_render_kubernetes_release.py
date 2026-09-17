@@ -157,7 +157,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "owner_incarnation": "a" * 32,
             "pod_cidr": "10.42.0.0/16",
             "relay_trust_bundle_versions": ["preview-relay-v1", "preview-relay-v2"],
-            "root_domain": "preview.next.jxhh.com",
+            "root_domain": "jxhh.com",
             "service_cidr": "10.43.0.0/16",
         },
         "product_revision": "1" * 40,

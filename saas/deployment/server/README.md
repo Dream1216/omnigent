@@ -397,6 +397,11 @@ revoked execution. Edge has no raw INSERT/UPDATE authority over Preview session
 rows; its exchange, authorize, rotate, and revoke operations are narrow
 `SECURITY DEFINER` functions with fixed `search_path` and no PUBLIC execute.
 
+The Preview root may be the parent DNS zone of the primary SaaS host because
+both SaaS and Preview cookies are host-only. Public Preview hosts use the fixed
+`app-<24 lowercase hex>.<root>` shape. A parent-domain `Domain` attribute on
+SaaS authentication cookies would violate this isolation contract.
+
 The first execution profile is the closed `static_web_v1` contract. A server-owned
 child Run selects the fixed trusted module
 `python -P -m saas.runner_adapter.static_web_preview` and fixed `dist/` directory;

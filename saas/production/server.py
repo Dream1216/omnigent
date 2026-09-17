@@ -1147,7 +1147,7 @@ def build_production_saas_services(
 
         if config.preview_root_domain is None:
             raise ProductionServerCompositionError(
-                "Preview capability requires a cookie-isolated root domain"
+                "Preview capability requires a dedicated Preview root domain"
             )
         if config.secrets.preview_exchange_hmac_key is None:
             raise ProductionServerCompositionError(

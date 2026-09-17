@@ -1,6 +1,6 @@
 """Production Preview-origin composition over fenced leases and mTLS relay.
 
-The public Preview origin is deliberately a separate process and cookie domain
+The public Preview origin is deliberately a separate process and host-only cookie scope
 from the SaaS application.  PostgreSQL ``saas_preview_edge`` authority
 validates the exact host/token/Run/Runner/Worktree fences on every request.  A
 deployment-owned tunnel factory must provide the existing authenticated

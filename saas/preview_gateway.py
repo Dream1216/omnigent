@@ -313,7 +313,7 @@ def create_preview_gateway_app(
     maximum_request_bytes: int = 1_048_576,
     maximum_response_bytes: int = 10_485_760,
 ) -> FastAPI:
-    """Create the independent Preview-origin app; never mount it on the SaaS cookie domain."""
+    """Create the independent Preview-origin app on a host separate from the SaaS app."""
 
     if maximum_request_bytes <= 0 or maximum_response_bytes <= 0:
         raise ValueError("Preview gateway byte limits must be positive")
