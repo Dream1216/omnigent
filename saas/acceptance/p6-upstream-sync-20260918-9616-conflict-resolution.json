@@ -60,10 +60,16 @@
     "web_typecheck": "passed",
     "patch_queue": "passed",
     "pre_commit_all_files": "passed",
+    "pnpm_frozen_web_install": {
+      "lock_entries_verified": 2003,
+      "minimum_release_age_exclusions": 15,
+      "scope": "exact_integrity_locked_harness_artifact_versions",
+      "status": "passed"
+    },
     "source_intrusion_budget": {
       "patch_count": 6,
       "direct_upstream_file_count": 49,
-      "upstream_net_added_loc": 2055,
+      "upstream_net_added_loc": 2079,
       "isolated_custom_code_ratio": 0.9935,
       "status": "passed"
     }
