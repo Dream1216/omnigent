@@ -943,6 +943,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "--root /opt/omnigent-host-cli",
         "--root /usr/local/lib/node_modules/pnpm",
         "rm -f /tmp/normalize_host_cli_tree.py",
+        "find /tmp -mindepth 1 -depth -delete",
+        'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         'touch -h -d "@${SOURCE_DATE_EPOCH}"',
         "/usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx",
         "/usr/local/bin /usr/local/lib/node_modules /tmp /root",
@@ -975,6 +977,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
         'test ! -e "$OMNIGENT_CLI_STATE"',
         "rm -f /tmp/normalize_host_cli_tree.py",
+        "find /tmp -mindepth 1 -depth -delete",
+        'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         'touch -h -d "@${SOURCE_DATE_EPOCH}"',
     }
     if (
@@ -1002,6 +1006,10 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             < host_stage.index('test ! -e "$OMNIGENT_CLI_STATE"')
             < host_stage.index(hardlink_invocation)
             < host_stage.index("rm -f /tmp/normalize_host_cli_tree.py")
+            < host_stage.index("find /tmp -mindepth 1 -depth -delete")
+            < host_stage.index(
+                'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
+            )
             < host_stage.index('touch -h -d "@${SOURCE_DATE_EPOCH}"')
         )
     ):
