@@ -1468,7 +1468,7 @@ revision `75322493346efc4016a5d1878293e340837e8d92` then merges downstream main
 `be303951b048985edbc9a1adac4cfc8ce60b483a` from PR 68 and preserves its Kimi
 platform-provider delivery. The resulting seven-patch queue covers twenty
 official source paths without a content mismatch. Candidate implementation
-revision `75322493346efc4016a5d1878293e340837e8d92` binds the Harness CLI
+revision `27a83f5cb8554b013a9214739d8710b04b292b29` binds the Harness CLI
 release-age exceptions to the sixteen exact, integrity-locked
 Qwen/OpenCode/Kimi artifacts accepted on downstream main, refreshes
 the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and

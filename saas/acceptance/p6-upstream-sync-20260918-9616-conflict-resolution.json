@@ -113,7 +113,7 @@
     }
   },
   "latest_main_reconciliation": {
-    "revision": "75322493346efc4016a5d1878293e340837e8d92",
+    "revision": "27a83f5cb8554b013a9214739d8710b04b292b29",
     "main_parent_revision": "be303951b048985edbc9a1adac4cfc8ce60b483a",
     "main_pull_request": 68,
     "resolution": "preserved the merged Kimi platform-provider delivery, combined the Kimi and Qwen/OpenCode pnpm policy entries, retained the audited bubblewrap fail-closed diagnostic contract, and regenerated patch 0008 against 9616 after patches 0002-0007",
