@@ -1,0 +1,121 @@
+diff --git a/omnigent/harnesses/opencode_native/provider.py b/omnigent/harnesses/opencode_native/provider.py
+index 2676c6e7f7ddc2d3284c09784b3b1d27d8792682..5d6e61270e4a1668bbdcf7b22060de4e08cf7821 100644
+--- a/omnigent/harnesses/opencode_native/provider.py
++++ b/omnigent/harnesses/opencode_native/provider.py
+@@ -41,0 +42 @@ DATABRICKS_GATEWAY_PROVIDER_NAME = "Databricks AI Gateway"
++CONFIGURED_GATEWAY_PROVIDER_NAME = "Omnigent configured gateway"
+@@ -283 +284 @@ def resolve_databricks_gateway(
+-    Resolve a Databricks AI gateway for opencode from a ``~/.databrickscfg`` profile.
++    Resolve the configured OpenCode gateway, preferring a Databricks profile.
+@@ -287,3 +288,4 @@ def resolve_databricks_gateway(
+-    OpenAI-compatible ``/serving-endpoints``. Best-effort: returns ``None`` when
+-    the SDK is absent, the profile is unknown, or auth fails — the caller then
+-    leaves opencode on its ambient provider config.
++    OpenAI-compatible ``/serving-endpoints``. When no usable profile exists,
++    fall back to Omnigent's default OpenAI-compatible Provider. Keeping both
++    choices behind this established adapter seam avoids adding SaaS routing to
++    the native Runner orchestration path.
+@@ -292 +294 @@ def resolve_databricks_gateway(
+-        ``None`` short-circuits.
++        ``None`` selects the configured Provider fallback.
+@@ -295 +297 @@ def resolve_databricks_gateway(
+-    :returns: A resolution, or ``None`` when the gateway can't be resolved.
++    :returns: A resolution, or ``None`` when neither gateway can be resolved.
+@@ -298 +300 @@ def resolve_databricks_gateway(
+-        return None
++        return resolve_configured_openai_gateway(model_id=model_id)
+@@ -313 +315 @@ def resolve_databricks_gateway(
+-        return None
++        return resolve_configured_openai_gateway(model_id=model_id)
+@@ -326,0 +329,64 @@ def resolve_databricks_gateway(
++def resolve_configured_openai_gateway(
++    *,
++    model_id: str | None = None,
++) -> OpenCodeGatewayResolution | None:
++    """Resolve OpenCode from Omnigent's default OpenAI-compatible Provider.
++
++    The managed SaaS Host injects a short-lived, session-bound bearer before
++    the Runner starts. ``ProviderEntry.family()`` expands that bearer from the
++    immutable ``$OMNIGENT_PLATFORM_DEEPSEEK_KEY`` reference, so the generated
++    OpenCode config contains the synthetic gateway token, never the real
++    upstream Provider key. The same path also supports a user's ordinary
++    key/gateway/local OpenAI-compatible default.
++
++    Subscription, Databricks and cli-config providers are intentionally
++    excluded: those credentials belong to another CLI/profile and cannot be
++    copied into OpenCode. Dynamic ``auth_command`` credentials are also left
++    to their owning adapter because OpenCode's provider config requires a
++    concrete value at launch.
++
++    :param model_id: Optional session/spec model override.
++    :returns: A custom OpenCode provider resolution, or ``None`` when the
++        configured default is not safely translatable.
++    """
++    try:
++        from omnigent.onboarding.provider_config import (
++            GATEWAY_KIND,
++            KEY_KIND,
++            LOCAL_KIND,
++            default_provider_for_harness,
++            load_config,
++        )
++
++        provider = default_provider_for_harness(load_config(), "opencode-native")
++        if provider is None or provider.kind not in {KEY_KIND, GATEWAY_KIND, LOCAL_KIND}:
++            return None
++        family = provider.family("openai")
++        if family is None or not family.api_key:
++            return None
++        resolved_model = model_id or family.default_model
++        if not resolved_model:
++            return None
++        provider_id = provider.name
++        if not provider_id or any(
++            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
++            for character in provider_id
++        ):
++            return None
++        prefix = f"{provider_id}/"
++        if resolved_model.startswith(prefix):
++            resolved_model = resolved_model[len(prefix) :]
++        if not resolved_model:
++            return None
++        return OpenCodeGatewayResolution(
++            base_url=family.base_url.rstrip("/"),
++            api_key=family.api_key,
++            model_id=resolved_model,
++            provider_id=provider_id,
++            provider_name=CONFIGURED_GATEWAY_PROVIDER_NAME,
++        )
++    except Exception:  # noqa: BLE001 - optional provider fallback must be best-effort.
++        _logger.info("opencode configured gateway resolve failed", exc_info=True)
++        return None
++
++
+diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
+index 3405503f2bd3a5d8870e16be63eae863177a829e..f0ba39b7c3f35c92fcb39e076aa60f3ab6847306 100644
+--- a/omnigent/onboarding/harness_readiness.py
++++ b/omnigent/onboarding/harness_readiness.py
+@@ -113,3 +113,3 @@ KIMI_SURFACE = "kimi"
+-# Native OpenCode harness. Like pi, it wraps a CLI (``opencode``) with no
+-# ``_HARNESS_FAMILY`` entry, so it must be gated explicitly or it would fail
+-# open like an unknown harness.
++# Native OpenCode harness. It wraps the ``opencode`` CLI and now consumes the
++# OpenAI-compatible provider family through a per-session synthesized config;
++# retain this set for install-key and alias handling.
+@@ -433,0 +434,2 @@ def _cli_family_availability(canonical: str, install_key: str) -> HarnessAvailab
++        if _family_provider_configured(canonical):
++            return True
+diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
+index bb4c2c59ab49ea279a5373e385449f43b26107bc..6f9f34c4edeafcc76ff8f3f66b27d486f3d1f89e 100644
+--- a/omnigent/onboarding/provider_config.py
++++ b/omnigent/onboarding/provider_config.py
+@@ -181,0 +182,5 @@ _HARNESS_FAMILY: dict[str, str] = {
++    # OpenCode accepts an OpenAI-compatible provider block in its per-session
++    # opencode.json. The native adapter synthesizes that block from the same
++    # default family Provider used by Codex/Qwen, so it is provider-routed
++    # rather than permanently tied to a separate `opencode auth login`.
++    "opencode-native": OPENAI_FAMILY,
+@@ -1513 +1518 @@ def harness_owns_its_credential(harness: str) -> bool:
+-    (e.g. qwen consumes the openai family via its gateway env) even when its
++    (e.g. qwen and opencode-native consume the openai family) even when its

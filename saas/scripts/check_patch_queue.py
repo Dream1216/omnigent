@@ -79,6 +79,7 @@ def check_patch_queue(repo: Path) -> dict[str, Any]:
                 checkout,
                 "apply",
                 "--check",
+                "--unidiff-zero",
                 str(patch),
                 check=False,
             )
@@ -94,7 +95,7 @@ def check_patch_queue(repo: Path) -> dict[str, Any]:
             if not applied:
                 violations.append(f"patch does not apply to replay state: {patch.name}")
                 break
-            _run(checkout, "apply", str(patch))
+            _run(checkout, "apply", "--unidiff-zero", str(patch))
 
         for path in sorted(official_deltas):
             replayed = checkout / path

@@ -698,7 +698,17 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
         (
             "> /tmp/venv-server-pyc.sha256",
             "> /tmp/venv-server-pyc-unchecked.sha256",
-            "server venv must preserve the deterministic seed bytecode manifest",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
+        ),
+        (
+            "-cf /tmp/server-venv.tar venv",
+            "-cf /tmp/server-venv-volatile.tar venv",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
+        ),
+        (
+            "COPY --from=server-builder /opt/server-venv-export /opt/venv",
+            "COPY --from=server-builder /opt/venv /opt/venv",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
         ),
         (
             "rm -f /var/cache/ldconfig/aux-cache",
@@ -860,6 +870,22 @@ def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) 
 
     assert "uv.lock must resolve psycopg exactly to 3.3.4" in violations
     assert "pnpm-lock.yaml must bind @openai/codex to 0.139.0" in violations
+
+
+def test_image_material_lock_rejects_unapproved_host_cli_install_script(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    workspace = repo / "pnpm-workspace.yaml"
+    source = workspace.read_text(encoding="utf-8")
+    target = "opencode-ai: true"
+    assert target in source
+    workspace.write_text(source.replace(target, "opencode-ai: false", 1), encoding="utf-8")
+
+    assert (
+        "host CLI install scripts must be explicitly allowed by pnpm policy"
+        in validate_image_material_lock(repo)
+    )
 
 
 def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:

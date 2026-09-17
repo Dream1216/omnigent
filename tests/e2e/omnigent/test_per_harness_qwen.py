@@ -59,7 +59,7 @@ pytestmark = pytest.mark.skipif(
 def test_per_harness_qwen_one_shot(
     omnigent_repo_root: Path,
     omnigent_python: Path,
-    omnigent_credentials_env: dict[str, str],
+    mock_credentials_env: dict[str, str],
 ) -> None:
     """
     ``omnigent run hello_world.yaml --harness qwen -p <prompt>``
@@ -69,10 +69,8 @@ def test_per_harness_qwen_one_shot(
         installed and importable.
     :param omnigent_repo_root: Cwd for the subprocess so the
         YAML spec and example tool modules resolve on sys.path.
-    :param omnigent_credentials_env: Env vars with
-        ``OPENAI_API_KEY`` / ``OPENAI_BASE_URL`` /
-        ``DATABRICKS_CONFIG_PROFILE`` populated from
-        ``--llm-api-key``.
+    :param mock_credentials_env: Isolated env vars that route the run through
+        the deterministic mock LLM provider.
     """
     yaml_path = omnigent_repo_root / "tests" / "resources" / "examples" / "hello_world.yaml"
 
@@ -92,7 +90,7 @@ def test_per_harness_qwen_one_shot(
             "--no-log",
             "--no-session",
         ],
-        env=omnigent_credentials_env,
+        env=mock_credentials_env,
         cwd=str(omnigent_repo_root),
         capture_output=True,
         text=True,

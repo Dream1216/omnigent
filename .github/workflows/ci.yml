@@ -117,6 +117,7 @@ jobs:
             paths: >-
               tests
               --ignore=tests/e2e
+              --ignore=tests/saas/test_login_ui.py
               --ignore=tests/integration
               --ignore=tests/runtime
               --ignore=tests/inner

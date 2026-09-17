@@ -241,6 +241,28 @@ def test_claude_ready_via_configured_provider_without_cli_login(
     assert configured_harness_map()["claude-native"] is True
 
 
+def test_opencode_ready_via_configured_openai_provider_without_cli_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenCode uses the same per-session provider route as Codex/Qwen."""
+    _all_clis_installed(monkeypatch)
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured", lambda _h: True
+    )
+
+    import omnigent.onboarding.opencode_auth as oc
+
+    monkeypatch.setattr(
+        oc,
+        "opencode_auth_summary",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("OpenCode login probed despite a configured provider")
+        ),
+    )
+
+    assert configured_harness_map()["opencode-native"] is True
+
+
 def test_family_provider_configured_excludes_subscription(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
