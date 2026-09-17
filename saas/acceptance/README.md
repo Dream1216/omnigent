@@ -1465,10 +1465,13 @@ and the exact official revision as its two parents. Integration revision
 main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
 OpenCode support while replaying patch 0007 against `9616bf97`. The resulting
 six-patch queue covers fifteen official source paths without a content mismatch.
-Candidate implementation revision `6728bc27274979590d5eae837b15baa06dfcdf69`
+Candidate implementation revision `064d1c851017dc85847f9dcd19fd64e8fbf99dc4`
 also binds the Harness CLI release-age exceptions to the fifteen exact,
-integrity-locked Qwen/OpenCode artifacts accepted on downstream main. Wildcards,
-version drift, and unrelated packages remain rejected by the supply-chain gate.
+integrity-locked Qwen/OpenCode artifacts accepted on downstream main, refreshes
+the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and
+RLS migration assertions to the reviewed 0.15 runtime and `hh1b2c3d4e5f` head.
+Wildcards, version drift, and unrelated packages remain rejected by the
+supply-chain gate.
 
 Local validation passed all 65 newly affected upstream tests, the 1,356-test
 security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14
