@@ -1460,9 +1460,11 @@ The official baseline advances by three commits from
 `6aef59afe6877943bb0c261df7d5fee30e733f7d` to
 `9616bf97cd38494db7164a1f6f350e853da4d8d3` (`0.15.0.dev0`). Merge revision
 `751095758b99c3a9561061b91c54c357b50e9040` has the prior downstream candidate
-and the exact official revision as its two parents. The advance is conflict-free,
-does not overlap any of the twelve patched official source paths, and preserves
-the five-patch replay without a content mismatch.
+and the exact official revision as its two parents. Integration revision
+`90ed64b98eaf16a65c1e1d75982c1f2265b4429f` then merges current downstream
+main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
+OpenCode support while replaying patch 0007 against `9616bf97`. The resulting
+six-patch queue covers fifteen official source paths without a content mismatch.
 
 Local validation passed all 65 newly affected upstream tests, the 1,356-test
 security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14

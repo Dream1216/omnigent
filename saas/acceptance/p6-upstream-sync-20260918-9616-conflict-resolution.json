@@ -19,8 +19,8 @@
   },
   "patch_replay": {
     "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
-    "patch_count": 5,
-    "official_source_path_count": 12,
+    "patch_count": 6,
+    "official_source_path_count": 15,
     "content_mismatch_count": 0,
     "status": "passed"
   },
@@ -59,7 +59,14 @@
     },
     "web_typecheck": "passed",
     "patch_queue": "passed",
-    "pre_commit_all_files": "passed"
+    "pre_commit_all_files": "passed",
+    "source_intrusion_budget": {
+      "patch_count": 6,
+      "direct_upstream_file_count": 49,
+      "upstream_net_added_loc": 2055,
+      "isolated_custom_code_ratio": 0.9935,
+      "status": "passed"
+    }
   },
   "remote_validation": {
     "exact_head_ci": "required",
@@ -67,5 +74,19 @@
     "deployment": "authorized_pending_pr_merge_and_existing_recovery_writer_handoff"
   },
   "release_decision": "NO-GO",
-  "status": "resolved_local_candidate"
+  "status": "resolved_local_candidate",
+  "downstream_main_integration": {
+    "revision": "90ed64b98eaf16a65c1e1d75982c1f2265b4429f",
+    "main_parent_revision": "63f0c48b73a077043d9f3b005e4268488579e87d",
+    "resolved_files": [
+      "omnigent/harnesses/opencode_native/provider.py",
+      "saas/upstream-patches/README.md",
+      "tests/test_opencode_native_provider.py"
+    ],
+    "resolution": "preserved official 9616 gateway catalog behavior and downstream configured OpenAI provider fallback; replayed patch 0007 against 9616; aligned the Host image Claude Code pin to official 2.1.266",
+    "validation": {
+      "passed": 234,
+      "failed": 0
+    }
+  }
 }
