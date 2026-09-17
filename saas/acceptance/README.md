@@ -1465,20 +1465,22 @@ and the exact official revision as its two parents. Integration revision
 main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
 OpenCode support while replaying patch 0007 against `9616bf97`. The resulting
 six-patch queue covers fifteen official source paths without a content mismatch.
-Candidate implementation revision `064d1c851017dc85847f9dcd19fd64e8fbf99dc4`
+Candidate implementation revision `dc65a9d8cc7711979fe03d44371f49aa753f0769`
 also binds the Harness CLI release-age exceptions to the fifteen exact,
 integrity-locked Qwen/OpenCode artifacts accepted on downstream main, refreshes
 the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and
 RLS migration assertions to the reviewed 0.15 runtime and `hh1b2c3d4e5f` head.
-Wildcards, version drift, and unrelated packages remain rejected by the
-supply-chain gate.
+It also accepts both audited bubblewrap file-shape diagnostics while still
+requiring a nonzero exit and the exact rejected symlink path. Wildcards,
+version drift, and unrelated packages remain rejected by the supply-chain gate.
 
 Local validation passed all 65 newly affected upstream tests, the 1,356-test
 security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14
 and 18.4 clean/repeated/N-1 migration replays, the 38-test PostgreSQL catalog
 contract with one URL-dependent skip, TypeScript, and every pre-commit hook. The
 frozen pnpm Web install and its 2,003-entry supply-chain policy verification also
-pass with the exact-version exception set. The
+pass with the exact-version exception set. The hard-sandbox subset passes 42
+tests with 23 bubblewrap-dependent skips on macOS. The
 three upstream commits change no Web source, so the preceding 8,475-assertion Web
 result remains the browser regression evidence while the exact candidate passed
 Web static validation. Exact-Head remote CI, merge inclusion, image publication,
