@@ -111,9 +111,9 @@ _PI_HARNESSES: frozenset[str] = frozenset({PI_SURFACE, "pi-native"})
 # member of the anthropic/openai families that :data:`_HARNESS_FAMILY` keys.
 KIMI_SURFACE = "kimi"
 
-# Native OpenCode harness. Like pi, it wraps a CLI (``opencode``) with no
-# ``_HARNESS_FAMILY`` entry, so it must be gated explicitly or it would fail
-# open like an unknown harness.
+# Native OpenCode harness. It wraps the ``opencode`` CLI and now consumes the
+# OpenAI-compatible provider family through a per-session synthesized config;
+# retain this set for install-key and alias handling.
 _OPENCODE_HARNESSES: frozenset[str] = frozenset({"opencode-native"})
 
 # Native Cursor harnesses. These boot the ``cursor-agent`` TUI (``omni cursor``)
@@ -442,6 +442,8 @@ def _cli_family_availability(canonical: str, install_key: str) -> HarnessAvailab
     if install_key == OPENCODE_KEY:
         from omnigent.onboarding.opencode_auth import opencode_auth_summary
 
+        if _family_provider_configured(canonical):
+            return True
         return True if opencode_auth_summary().has_provider else "needs-auth"
     # claude: ready when EITHER an omnigent-managed provider serves the family
     # (an API key / gateway the user set, incl. from the UI) OR the harness's

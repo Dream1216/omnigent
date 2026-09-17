@@ -35,9 +35,11 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "11.15.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.236"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
     "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+    "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
+    "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
@@ -706,6 +708,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="Node dependency lock",
         violations=violations,
     )
+    pnpm_workspace = _read_repository_contract(
+        repo,
+        "pnpm-workspace.yaml",
+        label="pnpm workspace policy",
+        violations=violations,
+    )
     cli_manifest = _read_repository_contract(
         repo,
         ".github/ci-deps/package.json",
@@ -723,6 +731,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         runtime_revision_binder,
         uv_lock,
         pnpm_lock,
+        pnpm_workspace,
         cli_manifest,
         host_cli_normalizer,
     ):
@@ -731,6 +740,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     assert runtime_revision_binder is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
+    assert pnpm_workspace is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
 
@@ -785,19 +795,22 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             "production Python installs and executable stages must bind the exact runtime revision"
         )
     core_bytecode_contract = {
-        "> /tmp/venv-seed-pyc.sha256",
-        "> /tmp/venv-core-pyc.sha256",
-        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
-        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py",
-        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
-        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
-        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv",
-        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar",
-        "COPY --from=builder /opt/venv-export /opt/venv",
-        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+        "> /tmp/venv-seed-pyc.sha256": 1,
+        "> /tmp/venv-core-pyc.sha256": 1,
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256": 1,
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 1,
+        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"': 1,
+        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"': 2,
+        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv": 1,
+        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar": 1,
+        "COPY --from=builder /opt/venv-export /opt/venv": 1,
+        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +': 1,
     }
     if (
-        any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
+        any(
+            dockerfile.count(fragment) != expected_count
+            for fragment, expected_count in core_bytecode_contract.items()
+        )
         or dockerfile.count('root.rglob("uv_cache.json")') != 2
         or dockerfile.count("python -B -I -c") < 3
     ):
@@ -805,9 +818,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
+        "-cf /tmp/server-venv.tar venv",
+        "tar -C /opt/server-venv-export --strip-components=1",
+        "COPY --from=server-builder /opt/server-venv-export /opt/venv",
     }
     if any(dockerfile.count(fragment) != 1 for fragment in server_bytecode_contract):
-        violations.append("server venv must preserve the deterministic seed bytecode manifest")
+        violations.append(
+            "server venv must preserve deterministic bytecode and use a canonical export layer"
+        )
 
     try:
         lock_packages = tomllib.loads(uv_lock).get("package", [])
@@ -943,6 +961,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "--root /opt/omnigent-host-cli",
         "--root /usr/local/lib/node_modules/pnpm",
         "rm -f /tmp/normalize_host_cli_tree.py",
+        "find /tmp -mindepth 1 -depth -delete",
+        'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         'touch -h -d "@${SOURCE_DATE_EPOCH}"',
         "/usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx",
         "/usr/local/bin /usr/local/lib/node_modules /tmp /root",
@@ -967,6 +987,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'case "$(claude --version 2>&1)"',
         'case "$(codex --version 2>&1)"',
         'case "$(pi --version 2>&1)"',
+        'case "$(qwen --version 2>&1)"',
+        'case "$(opencode --version 2>&1)"',
         'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
         "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
         "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
@@ -975,6 +997,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
         'test ! -e "$OMNIGENT_CLI_STATE"',
         "rm -f /tmp/normalize_host_cli_tree.py",
+        "find /tmp -mindepth 1 -depth -delete",
+        'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         'touch -h -d "@${SOURCE_DATE_EPOCH}"',
     }
     if (
@@ -990,6 +1014,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             < host_stage.index('case "$(claude --version 2>&1)"')
             < host_stage.index('case "$(codex --version 2>&1)"')
             < host_stage.index('case "$(pi --version 2>&1)"')
+            < host_stage.index('case "$(qwen --version 2>&1)"')
+            < host_stage.index('case "$(opencode --version 2>&1)"')
             < host_stage.index('cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"')
             < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn")
             < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx")
@@ -1002,6 +1028,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             < host_stage.index('test ! -e "$OMNIGENT_CLI_STATE"')
             < host_stage.index(hardlink_invocation)
             < host_stage.index("rm -f /tmp/normalize_host_cli_tree.py")
+            < host_stage.index("find /tmp -mindepth 1 -depth -delete")
+            < host_stage.index('find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +')
             < host_stage.index('touch -h -d "@${SOURCE_DATE_EPOCH}"')
         )
     ):
@@ -1047,18 +1075,25 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     }
     if cli_dependencies != expected_dependencies:
         violations.append("host CLI dependency manifest does not match approved direct versions")
+    required_host_cli_builds = {
+        "'@qwen-code/audio-capture': true",
+        "opencode-ai: true",
+    }
+    if any(fragment not in pnpm_workspace for fragment in required_host_cli_builds):
+        violations.append("host CLI install scripts must be explicitly allowed by pnpm policy")
     for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
         if f"ARG {argument}={version}" not in dockerfile:
             violations.append(f"host image must pin {package} to {version}")
         importer = re.compile(
-            rf"'{re.escape(package)}':\n\s+specifier: {re.escape(version)}\n"
+            rf"(?:'{re.escape(package)}'|{re.escape(package)}):\n"
+            rf"\s+specifier: {re.escape(version)}\n"
             rf"\s+version: {re.escape(version)}(?:\n|\()"
         )
         if importer.search(pnpm_lock) is None:
             violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
     if re.search(
         r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
-        r"@earendil-works/pi-coding-agent)",
+        r"@earendil-works/pi-coding-agent|@qwen-code/qwen-code|opencode-ai)",
         dockerfile,
     ):
         violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")

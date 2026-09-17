@@ -42,6 +42,7 @@ _logger = logging.getLogger(__name__)
 # The per-prompt model is pinned as ``{DATABRICKS_GATEWAY_PROVIDER_ID}/<endpoint>``.
 DATABRICKS_GATEWAY_PROVIDER_ID = "databricks-gateway"
 DATABRICKS_GATEWAY_PROVIDER_NAME = "Databricks AI Gateway"
+CONFIGURED_GATEWAY_PROVIDER_NAME = "Omnigent configured gateway"
 # Endpoint that exposes the workspace's OpenAI-compatible chat completions.
 _SERVING_ENDPOINTS_PATH = "serving-endpoints"
 # Optional deployment default: a ``databricks-*`` serving-endpoint id used when a
@@ -294,22 +295,23 @@ def resolve_databricks_gateway(
     model_id: str | None = None,
 ) -> OpenCodeGatewayResolution | None:
     """
-    Resolve a Databricks AI gateway for opencode from a ``~/.databrickscfg`` profile.
+    Resolve the configured OpenCode gateway, preferring a Databricks profile.
 
     Uses ``databricks-sdk`` (the ``databricks`` extra) to obtain the workspace
     host + a bearer token for *profile*, then targets the workspace's
-    OpenAI-compatible ``/serving-endpoints``. Best-effort: returns ``None`` when
-    the SDK is absent, the profile is unknown, or auth fails — the caller then
-    leaves opencode on its ambient provider config.
+    OpenAI-compatible ``/serving-endpoints``. When no usable profile exists,
+    fall back to Omnigent's default OpenAI-compatible Provider. Keeping both
+    choices behind this established adapter seam avoids adding SaaS routing to
+    the native Runner orchestration path.
 
     :param profile: A ``~/.databrickscfg`` profile name, e.g. ``"oss"``;
-        ``None`` short-circuits.
+        ``None`` selects the configured Provider fallback.
     :param model_id: Endpoint/model id to pin. When omitted or incompatible,
         the Databricks Claude catalog supplies the endpoint.
-    :returns: A resolution, or ``None`` when the gateway can't be resolved.
+    :returns: A resolution, or ``None`` when neither gateway can be resolved.
     """
     if not profile:
-        return None
+        return resolve_configured_openai_gateway(model_id=model_id)
     try:
         from databricks.sdk.core import Config
 
@@ -324,7 +326,7 @@ def resolve_databricks_gateway(
             return None
     except Exception as exc:  # noqa: BLE001 - SDK absent / auth failure / bad profile.
         _logger.info("opencode Databricks gateway resolve failed for %r: %r", profile, exc)
-        return None
+        return resolve_configured_openai_gateway(model_id=model_id)
 
     resolved_model = _gateway_endpoint_for_model(model_id)
     if resolved_model is None:
@@ -376,6 +378,70 @@ def _list_gateway_models(config: Config) -> tuple[str, ...]:
     except Exception as exc:  # noqa: BLE001 - SDK absent / list denied / bad shape.
         _logger.info("opencode Databricks gateway model list failed: %r", exc)
         return ()
+
+
+def resolve_configured_openai_gateway(
+    *,
+    model_id: str | None = None,
+) -> OpenCodeGatewayResolution | None:
+    """Resolve OpenCode from Omnigent's default OpenAI-compatible Provider.
+
+    The managed SaaS Host injects a short-lived, session-bound bearer before
+    the Runner starts. ``ProviderEntry.family()`` expands that bearer from the
+    immutable ``$OMNIGENT_PLATFORM_DEEPSEEK_KEY`` reference, so the generated
+    OpenCode config contains the synthetic gateway token, never the real
+    upstream Provider key. The same path also supports a user's ordinary
+    key/gateway/local OpenAI-compatible default.
+
+    Subscription, Databricks and cli-config providers are intentionally
+    excluded: those credentials belong to another CLI/profile and cannot be
+    copied into OpenCode. Dynamic ``auth_command`` credentials are also left
+    to their owning adapter because OpenCode's provider config requires a
+    concrete value at launch.
+
+    :param model_id: Optional session/spec model override.
+    :returns: A custom OpenCode provider resolution, or ``None`` when the
+        configured default is not safely translatable.
+    """
+    try:
+        from omnigent.onboarding.provider_config import (
+            GATEWAY_KIND,
+            KEY_KIND,
+            LOCAL_KIND,
+            default_provider_for_harness,
+            load_config,
+        )
+
+        provider = default_provider_for_harness(load_config(), "opencode-native")
+        if provider is None or provider.kind not in {KEY_KIND, GATEWAY_KIND, LOCAL_KIND}:
+            return None
+        family = provider.family("openai")
+        if family is None or not family.api_key:
+            return None
+        resolved_model = model_id or family.default_model
+        if not resolved_model:
+            return None
+        provider_id = provider.name
+        if not provider_id or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for character in provider_id
+        ):
+            return None
+        prefix = f"{provider_id}/"
+        if resolved_model.startswith(prefix):
+            resolved_model = resolved_model[len(prefix) :]
+        if not resolved_model:
+            return None
+        return OpenCodeGatewayResolution(
+            base_url=family.base_url.rstrip("/"),
+            api_key=family.api_key,
+            model_id=resolved_model,
+            provider_id=provider_id,
+            provider_name=CONFIGURED_GATEWAY_PROVIDER_NAME,
+        )
+    except Exception:  # noqa: BLE001 - optional provider fallback must be best-effort.
+        _logger.info("opencode configured gateway resolve failed", exc_info=True)
+        return None
 
 
 def _gateway_endpoint_for_model(model_id: str | None) -> str | None:

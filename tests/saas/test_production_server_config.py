@@ -11,10 +11,12 @@ from saas.production.server_config import (
     load_production_server_config,
 )
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     compose_production_service_role_graph,
+    load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
     render_production_service_role_bindings,
@@ -55,6 +57,25 @@ def _platform_bindings(path: Path) -> str:
             base_role=base_role,
         )
         for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_production_service_role_bindings(bindings), encoding="ascii")
+    path.chmod(0o400)
+    return str(path)
+
+
+def _platform_admin_bindings(path: Path) -> str:
+    shared_logins = {
+        "platform_app": "platform_model_platform_app_login",
+        "platform_governance": "platform_governance_login",
+    }
+    bindings = tuple(
+        ProductionServiceRoleBinding(
+            service=service,
+            login=shared_logins.get(service, f"platform_admin_{service}_login"),
+            base_role=base_role,
+        )
+        for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_production_service_role_bindings(bindings), encoding="ascii")
@@ -252,14 +273,18 @@ def test_loads_exact_release_and_owner_only_secret_files(tmp_path: Path) -> None
     assert config.official_cross_workspace_scheduler_enabled is False
 
 
-def test_loads_platform_model_graph_and_binds_it_to_migration_receipt(tmp_path: Path) -> None:
+def test_loads_platform_extensions_and_binds_them_to_migration_receipt(tmp_path: Path) -> None:
     environment = _environment(tmp_path)
     environment["OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE"] = _platform_bindings(
         tmp_path / "platform-model-service-bindings.json"
     )
+    environment["OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE"] = (
+        _platform_admin_bindings(tmp_path / "platform-admin-service-bindings.json")
+    )
     production = load_production_service_role_bindings(environment)
     platform = load_platform_model_service_role_bindings(environment)
-    graph = compose_production_service_role_graph(production, platform)
+    platform_admin = load_platform_admin_service_role_bindings(environment)
+    graph = compose_production_service_role_graph(production, platform, platform_admin)
     receipt_path = Path(environment["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])
     receipt_path.chmod(0o600)
     _receipt(
@@ -271,7 +296,8 @@ def test_loads_platform_model_graph_and_binds_it_to_migration_receipt(tmp_path: 
     config = load_production_server_config(environment)
 
     assert config.platform_model_service_role_bindings == platform
-    assert len(config.service_role_graph.bindings) == 17
+    assert config.platform_admin_service_role_bindings == platform_admin
+    assert len(config.service_role_graph.bindings) == 18
     assert config.migration_receipt.service_role_graph_sha256 == graph.sha256
     assert config.version_document["service_role_graph_sha256"] == graph.sha256
 

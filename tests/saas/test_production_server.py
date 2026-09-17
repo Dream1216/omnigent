@@ -115,6 +115,7 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
         preview_adapter_factory=None,
         service_role_bindings=service_role_bindings,
         platform_model_service_role_bindings=None,
+        platform_admin_service_role_bindings=None,
         migration_receipt=ProductionMigrationReceipt(
             path=tmp_path / "migration-receipt.json",
             product_revision="1" * 40,

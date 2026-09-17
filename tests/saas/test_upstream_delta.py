@@ -119,28 +119,28 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     report = check_patch_queue(repo)
 
     assert report["status"] == "pass"
-    assert report["patch_count"] == 5
+    assert report["patch_count"] == 6
     assert report["covered_paths"] == report["official_source_paths"]
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_login_ui_budget_revision_retains_a_hard_loc_ceiling(
+def test_harness_fleet_budget_revision_retains_a_hard_loc_ceiling(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 1348
-    assert budget["max_direct_upstream_files"] == 40
+    assert budget["max_upstream_net_added_loc"] == 2148
+    assert budget["max_direct_upstream_files"] == 50
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 1348 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 10000, 0),
+            FileDelta("omnigent/stores/host_store.py", 2148 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 13000, 0),
         ],
         manifest,
-        active_patch_count=5,
+        active_patch_count=6,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,
@@ -152,7 +152,7 @@ def test_login_ui_budget_revision_retains_a_hard_loc_ceiling(
 
 
 @pytest.mark.parametrize("extra_files", [0, 1])
-def test_login_ui_budget_revision_retains_a_hard_file_ceiling(
+def test_harness_fleet_budget_revision_retains_a_hard_file_ceiling(
     extra_files: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
@@ -161,7 +161,7 @@ def test_login_ui_budget_revision_retains_a_hard_file_ceiling(
     report = evaluate_delta(
         [FileDelta(f"omnigent/budget_probe_{index}.py", 0, 0) for index in range(file_count)],
         manifest,
-        active_patch_count=5,
+        active_patch_count=6,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,

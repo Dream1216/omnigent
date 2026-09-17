@@ -34,6 +34,7 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBindings,
@@ -443,6 +444,7 @@ class ProductionPostgreSqlPlan:
     saas_owner: PostgreSqlAuthority
     service_role_bindings: ProductionServiceRoleBindings
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
+    platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
 
@@ -457,6 +459,7 @@ class ProductionPostgreSqlPlan:
         saas_owner_url: str,
         service_role_bindings: ProductionServiceRoleBindings,
         platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
     ) -> ProductionPostgreSqlPlan:
@@ -484,6 +487,7 @@ class ProductionPostgreSqlPlan:
             ),
             service_role_bindings=service_role_bindings,
             platform_model_service_role_bindings=platform_model_service_role_bindings,
+            platform_admin_service_role_bindings=platform_admin_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
         )
@@ -504,6 +508,7 @@ class ProductionPostgreSqlPlan:
             return compose_production_service_role_graph(
                 self.service_role_bindings,
                 self.platform_model_service_role_bindings,
+                self.platform_admin_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -701,6 +706,20 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
             or any(binding.login in _CAPABILITY_ROLES for binding in platform_bindings.bindings)
             or set(logins) & {binding.login for binding in platform_bindings.bindings}
             or _SHA256.fullmatch(platform_bindings.sha256) is None
+        ):
+            raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    platform_admin_bindings = plan.platform_admin_service_role_bindings
+    if platform_admin_bindings is not None:
+        if (
+            {binding.service: binding.base_role for binding in platform_admin_bindings.bindings}
+            != dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
+            or len({binding.login for binding in platform_admin_bindings.bindings})
+            != len(platform_admin_bindings.bindings)
+            or any(
+                binding.login in _CAPABILITY_ROLES for binding in platform_admin_bindings.bindings
+            )
+            or set(logins) & {binding.login for binding in platform_admin_bindings.bindings}
+            or _SHA256.fullmatch(platform_admin_bindings.sha256) is None
         ):
             raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     graph = plan.service_role_graph

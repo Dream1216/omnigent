@@ -43,6 +43,13 @@ EXPECTED_PLATFORM_MODEL_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
         "secret_broker": "saas_secret_broker",
     }
 )
+EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
+    {
+        "platform_app": "saas_platform_app",
+        "platform_authenticator": "saas_platform_authenticator",
+        "platform_governance": "saas_platform_governance",
+    }
+)
 
 
 class ProductionServiceRoleBindingsError(ValueError):
@@ -135,12 +142,15 @@ def render_production_service_role_bindings(
 def compose_production_service_role_graph(
     production: ProductionServiceRoleBindings,
     platform_model: ProductionServiceRoleBindings | None = None,
+    platform_admin: ProductionServiceRoleBindings | None = None,
 ) -> ProductionServiceRoleGraph:
     """Compose profiles without permitting an overlap or login to change meaning."""
 
     by_service = {binding.service: binding for binding in production.bindings}
-    if platform_model is not None:
-        for binding in platform_model.bindings:
+    for extension in (platform_model, platform_admin):
+        if extension is None:
+            continue
+        for binding in extension.bindings:
             existing = by_service.get(binding.service)
             if existing is not None and existing != binding:
                 raise ProductionServiceRoleBindingsError(
@@ -187,6 +197,18 @@ def load_platform_model_service_role_bindings(
         source,
         name="OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE",
         expected_roles=EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
+    )
+
+
+def load_platform_admin_service_role_bindings(
+    source: Mapping[str, str],
+) -> ProductionServiceRoleBindings:
+    """Load the isolated three-login Platform Admin deployment profile."""
+
+    return _load_service_role_bindings(
+        source,
+        name="OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE",
+        expected_roles=EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     )
 
 
@@ -270,6 +292,7 @@ def _load_service_role_bindings(
 
 
 __all__ = [
+    "EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES",
     "EXPECTED_PLATFORM_MODEL_SERVICE_ROLES",
     "EXPECTED_PRODUCTION_SERVICE_ROLES",
     "ProductionServiceRoleBinding",
@@ -277,6 +300,7 @@ __all__ = [
     "ProductionServiceRoleBindingsError",
     "ProductionServiceRoleGraph",
     "compose_production_service_role_graph",
+    "load_platform_admin_service_role_bindings",
     "load_platform_model_service_role_bindings",
     "load_production_service_role_bindings",
     "render_production_service_role_bindings",

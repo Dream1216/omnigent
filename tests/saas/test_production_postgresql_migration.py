@@ -11,6 +11,7 @@ import pytest
 
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -50,6 +51,27 @@ def _platform_bindings() -> ProductionServiceRoleBindings:
                 base_role=base_role,
             )
             for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+        ),
+    )
+
+
+def _platform_admin_bindings() -> ProductionServiceRoleBindings:
+    production = _bindings().by_service
+    platform_model = _platform_bindings().by_service
+    return ProductionServiceRoleBindings(
+        path=Path("/platform-admin-bindings.json"),
+        sha256="d" * 64,
+        bindings=tuple(
+            production[service]
+            if service in production
+            else platform_model[service]
+            if service in platform_model
+            else ProductionServiceRoleBinding(
+                service=service,
+                login=f"platform_admin_{service}_login",
+                base_role=base_role,
+            )
+            for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
         ),
     )
 
@@ -158,7 +180,9 @@ def test_plan_requires_distinct_logins_and_one_target(monkeypatch: pytest.Monkey
     assert target_error.value.code == "authority_targets_differ"
 
 
-def test_plan_composes_exact_platform_model_role_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_composes_exact_platform_extension_role_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: _REVISION)
     base = _plan()
     plan = migration.ProductionPostgreSqlPlan(
@@ -169,13 +193,18 @@ def test_plan_composes_exact_platform_model_role_graph(monkeypatch: pytest.Monke
         saas_owner=base.saas_owner,
         service_role_bindings=base.service_role_bindings,
         platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
     )
 
     migration._validate_plan(plan)
 
-    assert len(plan.service_role_graph.bindings) == 17
+    assert len(plan.service_role_graph.bindings) == 18
     assert plan.service_role_graph.login_for("app") == "app_login"
     assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
+    assert (
+        plan.service_role_graph.login_for("platform_authenticator")
+        == "platform_admin_platform_authenticator_login"
+    )
     expected = migration._expected_service_principal_graph(
         bindings=plan.service_role_graph,
         principal_operator="principal_operator",

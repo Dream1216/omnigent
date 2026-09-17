@@ -861,10 +861,15 @@
   }
 
   async function load() {
-    await context();
     if (state.initialized) return;
     state.initialized = true;
     clearResult();
+    try {
+      await context();
+    } catch (error) {
+      state.initialized = false;
+      throw error;
+    }
     const saved = sessionStorage.getItem(STORAGE_KEY);
     if (!saved) return;
     try {
