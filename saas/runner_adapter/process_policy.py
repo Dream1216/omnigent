@@ -159,10 +159,16 @@ class ManagedHostProcess(HostProcess):
         server_url: str,
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
+        interactive_shells: list[str] | None = None,
         launch_authority: ManagedRunnerLaunchAuthority,
         envelope_directory: Path,
     ) -> None:
-        super().__init__(identity, server_url, lifecycle_lock=lifecycle_lock)
+        super().__init__(
+            identity,
+            server_url,
+            lifecycle_lock=lifecycle_lock,
+            interactive_shells=interactive_shells,
+        )
         self._launch_authority = launch_authority
         self._envelope_directory = envelope_directory
         self._pending_metering: dict[str, ManagedMeteringGrant] = {}
@@ -272,11 +278,13 @@ def run_managed_host_process(
         resolved_server_url: str,
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
+        interactive_shells: list[str] | None = None,
     ) -> ManagedHostProcess:
         return ManagedHostProcess(
             identity,
             resolved_server_url,
             lifecycle_lock=lifecycle_lock,
+            interactive_shells=interactive_shells,
             launch_authority=launch_authority,
             envelope_directory=envelope_directory,
         )
