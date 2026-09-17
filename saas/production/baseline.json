@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "baseline_id": "omnigent-saas-single-region-v1",
-  "reviewed_at": "2026-09-10",
+  "reviewed_at": "2026-09-18",
   "revision_contract": {
     "upstream_manifest": "saas/upstream-baseline.json",
-    "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+    "upstream_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p0s000000014",
     "deployment_scope": "single-region-multi-az"

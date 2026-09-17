@@ -2,9 +2,9 @@
   "schema_version": 1,
   "policy_id": "omnigent-saas-commercial-readiness-v1",
   "evidence_kind": "production_commercial_acceptance",
-  "reviewed_at": "2026-09-05",
+  "reviewed_at": "2026-09-18",
   "revision_contract": {
-    "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+    "upstream_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
     "adapter_contract_version": "0.2.0",
     "control_plane_schema_revision": "p0s000000014"
   },

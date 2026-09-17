@@ -1,0 +1,99 @@
+{
+  "schema_version": "omnigent.saas.upstream-conflict-resolution.v1",
+  "downstream_base_revision": "62f874c1c592cce97d65451b5688eacde825b766",
+  "frozen_upstream_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
+  "merge_revision": "f31ef3267a22248ef5a71efb2147574af4dad425",
+  "merge_base_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+  "changed_in_both_file_count": 28,
+  "changed_in_both_files": [
+    ".github/actions/compat-smoke-run/action.yml",
+    ".github/actions/compat-smoke-ui-run/action.yml",
+    ".github/workflows/ci.yml",
+    "omnigent/db/utils.py",
+    "omnigent/harnesses/pi_native/credentials.py",
+    "omnigent/host/connect.py",
+    "omnigent/host/identity.py",
+    "omnigent/inner/bwrap_sandbox.py",
+    "omnigent/runner/_entry.py",
+    "omnigent/runner/identity.py",
+    "omnigent/runner/transports/ws_tunnel/serve.py",
+    "omnigent/runtime/agent_cache.py",
+    "omnigent/server/routes/host_tunnel.py",
+    "omnigent/stores/host_store.py",
+    "pyproject.toml",
+    "tests/cli/test_cli.py",
+    "tests/host/test_connect.py",
+    "tests/runner/test_runner_entry.py",
+    "tests/server/integration/test_hosts_store_credential.py",
+    "uv.lock",
+    "web/src/lib/identity.test.ts",
+    "web/src/lib/identity.ts",
+    "web/src/pages/ChatPage.composer.test.tsx",
+    "web/src/pages/ChatPage.tsx",
+    "web/src/pages/SettingsPage.test.tsx",
+    "web/src/pages/SettingsPage.tsx",
+    "web/src/shell/NewChatDialog.test.tsx",
+    "web/src/shell/NewChatDialog.tsx"
+  ],
+  "security_fixes": {
+    "agent_spec_tool_grant": "c90e5de45018dc86893981ef01450a7702a64e4d",
+    "sidecar_mcp_tool_allowlist": "f754c1402d1f25aae1ed12f3140d3e2ad875d3b3",
+    "status": "present_and_regressed"
+  },
+  "lockfile": {
+    "command": "uv lock",
+    "python_version": "3.12.13",
+    "resolved_package_count": 293,
+    "check": "passed"
+  },
+  "patch_replay": {
+    "upstream_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
+    "patch_count": 5,
+    "official_source_path_count": 12,
+    "content_mismatch_count": 0,
+    "status": "passed"
+  },
+  "local_validation": {
+    "security_harness_host_contract": {
+      "passed": 1356,
+      "skipped": 1,
+      "failed": 0
+    },
+    "postgresql_16_real_replay": {
+      "passed": 1,
+      "failed": 0
+    },
+    "postgresql_18_real_replay": {
+      "passed": 1,
+      "failed": 0
+    },
+    "postgresql_catalog_contract": {
+      "passed": 38,
+      "skipped_without_url": 1,
+      "failed": 0
+    },
+    "web_default_timeout": {
+      "passed": 8474,
+      "expected_fail": 3,
+      "skipped": 1,
+      "timed_out": 1,
+      "disposition": "the single Sidebar timing test passed independently and in the complete 10-second local-timeout run"
+    },
+    "web_10_second_local_timeout": {
+      "passed": 8475,
+      "expected_fail": 3,
+      "skipped": 1,
+      "failed": 0
+    },
+    "web_typecheck": "passed",
+    "patch_queue": "passed",
+    "pre_commit_all_files": "passed"
+  },
+  "remote_validation": {
+    "exact_head_ci": "required",
+    "branch_protection": "not_observed",
+    "deployment": "not_authorized"
+  },
+  "release_decision": "NO-GO",
+  "status": "resolved_local_candidate"
+}

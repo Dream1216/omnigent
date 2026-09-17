@@ -1432,3 +1432,24 @@ historical: the ADR gate is again `pending`, the ledger has eleven pending gates
 and release remains `NO-GO`. No signed production image, deployment, one-hour
 Canary, 900-second rollback, Multi-AZ/PITR recovery receipt, or independent
 production approval is claimed.
+
+## 2026-09-18 official-main upstream baseline candidate
+
+The frozen official revision is
+`6aef59afe6877943bb0c261df7d5fee30e733f7d` (`0.15.0.dev0`), with
+`f31ef3267a22248ef5a71efb2147574af4dad425` as the local merge revision. The
+five-patch downstream queue replays across twelve official source paths with no
+content mismatch. The candidate includes the upstream AgentSpec tool-grant and
+sidecar MCP allow-list security fixes, preserves the external Host credential
+and workspace-routing contract, and rebases the official migration head to
+`hh1b2c3d4e5f`.
+
+Local acceptance passed the 1,356-test security/Harness/Host regression, real
+clean migration replay on PostgreSQL 16 and 18, the PostgreSQL catalog contract,
+TypeScript checks, all pre-commit hooks, and all 8,479 Web assertions under a
+10-second local timeout. With the upstream default 5-second timeout, one
+Sidebar timing test exceeded the limit while passing independently; that timing
+fact remains recorded in the conflict-resolution evidence. Exact-Head remote
+CI, branch protection, signed images, deployment, Canary, rollback and fresh
+production approval remain unobserved or unauthorized, so release stays
+`NO-GO`.
