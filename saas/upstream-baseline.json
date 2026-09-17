@@ -44,11 +44,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 62,
-    "max_upstream_net_added_loc": 2575,
+    "max_direct_upstream_files": 63,
+    "max_upstream_net_added_loc": 2578,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-18",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 62,
+    "previous_max_upstream_net_added_loc": 2575,
+    "previous_measured_upstream_net_added_loc": 2575,
+    "previous_revision": {
     "approved_at": "2026-09-16",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 50,
@@ -163,6 +169,14 @@
       "tests/onboarding/test_harness_readiness.py": 12,
       "tests/test_agent_spawn_env_canary.py": 3,
       "tests/test_kimi_native_credentials.py": 59
+    }
+    },
+    "reason": "Exact-SHA CI closure for the user-requested Kimi Harness fleet: newer bubblewrap releases still fail closed when binding onto a symlink but report `Can't mount on symlink destination` instead of the older `Can't create file at` diagnostic. Retain the non-zero exit requirement, require the exact symlink destination, and accept only those two known fail-closed diagnostics. The deterministic Qwen mock may validly return a one-character assistant message, so its snapshot continues to require exit zero and clean stderr while requiring any non-empty reply. This adds one directly changed upstream test file and exactly three measured net lines, raising the hard ceilings only from 62 files / 2,575 lines to the exact measured 63 files / 2,578 lines; the Qwen wording and snapshot threshold are zero-line corrections to already governed files. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "harness-fleet-kimi-ci-closure-v7",
+    "scoped_harness_delta": {
+      "tests/e2e/omnigent/snapshots/test_per_harness_qwen.json": 0,
+      "tests/e2e/omnigent/test_per_harness_qwen.py": 0,
+      "tests/inner/test_bwrap_symlink_mask_3265.py": 3
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
