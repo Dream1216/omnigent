@@ -103,10 +103,11 @@ def test_claude_setup_hint_names_the_native_installer() -> None:
     assert "claude auth login --claudeai" in hint
 
 
-def test_kimi_install_spec_is_login_only_no_npm() -> None:
-    """Kimi ships via a curl installer (no npm package) and authenticates
-    through its own ``kimi login`` (OAuth or Moonshot API key), so it carries
-    an ``install_hint`` instead of a ``package`` and intentionally has no
+def test_kimi_install_spec_uses_official_npm_package() -> None:
+    """Kimi ships an official npm package and retains optional ``kimi login``.
+
+    Managed SaaS may authenticate it through a platform Provider, while a local
+    user can still use Moonshot OAuth. It intentionally has no
     ``status_args`` (no exit-code "am I logged in?" probe to read). It has no
     ``kimi logout`` subcommand (verified against kimi CLI v0.29.1), so
     ``logout_args`` is ``None`` and ``harness_logout`` is a no-op for it.
@@ -114,8 +115,8 @@ def test_kimi_install_spec_is_login_only_no_npm() -> None:
     spec = hi.harness_install_spec(hi.KIMI_KEY)
     assert spec is not None
     assert spec.binary == "kimi"
-    assert spec.package is None
-    assert spec.install_hint is not None and "code.kimi.com" in spec.install_hint
+    assert spec.package == "@moonshot-ai/kimi-code"
+    assert spec.install_hint is None
     assert spec.login_args == ("login",)
     assert spec.logout_args is None
     assert spec.status_args is None
@@ -1298,7 +1299,7 @@ def test_ui_setup_steps_generic_for_non_installable() -> None:
     [
         (hi.OPENCODE_KEY, "1.17.7", "1.19.0"),
         (hi.CURSOR_KEY, "2026.06.02", None),
-        (hi.KIMI_KEY, "0.7.0", None),
+        (hi.KIMI_KEY, "0.43.0", None),
         (ANTHROPIC_FAMILY, "2.1.161", None),
         (OPENAI_FAMILY, "0.137.0", None),
         (hi.PI_KEY, "0.84.2", None),
@@ -1419,7 +1420,7 @@ def test_the_kimi_floor_accepts_the_cli_this_spec_installs(
     def _run(argv: list[str], **k: object) -> subprocess.CompletedProcess[str]:
         if len(argv) >= 2 and argv[1] == "--version":
             return subprocess.CompletedProcess(
-                args=argv, returncode=0, stdout="0.34.0\n", stderr=""
+                args=argv, returncode=0, stdout="0.43.1\n", stderr=""
             )
         raise AssertionError(f"unexpected subprocess: {argv!r}")
 
@@ -1427,7 +1428,7 @@ def test_the_kimi_floor_accepts_the_cli_this_spec_installs(
     assert hi.harness_cli_installed(hi.KIMI_KEY) is True
 
 
-@pytest.mark.parametrize("version", ["0.7.0", "0.32.0"])
+@pytest.mark.parametrize("version", ["0.43.0", "0.43.1"])
 def test_the_kimi_floor_accepts_the_floor_and_the_reported_version(
     monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
@@ -1437,7 +1438,7 @@ def test_the_kimi_floor_accepts_the_floor_and_the_reported_version(
     general case at 0.34.0, and the default-floors parametrize covers 0.6.0 /
     0.34.0. Neither pins the two values that carry the regression:
 
-    * ``0.7.0`` is the floor itself. An off-by-one there — ``>`` where the
+    * ``0.43.0`` is the floor itself. An off-by-one there — ``>`` where the
       comparison should be ``>=`` — rejects the exact version this spec
       declares as supported, and every existing test still passes.
     * ``0.32.0`` is the version the reporter ran when setup showed
@@ -1539,7 +1540,7 @@ def test_parse_harness_cli_version_normalizes_date_versions(raw: str, expected: 
     "key,outdated,satisfying",
     [
         (hi.CURSOR_KEY, "2026.05.24", "2026.06.22"),
-        (hi.KIMI_KEY, "0.6.0", "0.34.0"),
+        (hi.KIMI_KEY, "0.42.0", "0.43.1"),
         (hi.HERMES_KEY, "0.16.9", "0.19.1"),
     ],
 )

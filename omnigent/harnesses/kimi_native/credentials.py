@@ -119,8 +119,9 @@ def build_kimi_session_home(
     :param bridge_dir: The kimi-native bridge dir the hook commands read.
     :param python_executable: Interpreter for the hook commands (see
         :func:`render_kimi_hooks_toml`).
-    :returns: ``{"KIMI_CODE_HOME": str(session_home)}`` to merge into the
-        launched kimi process env.
+    :returns: The session-home override plus a temporary ``KIMI_MODEL_*``
+        Provider when the managed Host exposes a safely translatable,
+        session-bound OpenAI-compatible gateway. No token is written to disk.
     """
     session_home.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
@@ -156,4 +157,26 @@ def build_kimi_session_home(
         base_config += "\n"
     (session_home / _CONFIG_FILE).write_text(base_config + hooks, encoding="utf-8")
 
-    return {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
+    env = {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
+
+    # Native Kimi is launched directly by the existing Runner orchestration
+    # seam, so resolve the managed Provider here rather than modifying that
+    # protected upstream path. The resolver yields the Host's short-lived
+    # synthetic token; the real upstream Provider key remains behind the
+    # platform gateway. Kimi consumes these values from process memory and the
+    # session config written above remains secret-free.
+    from omnigent.harnesses.opencode_native.provider import (
+        resolve_configured_openai_gateway,
+    )
+
+    resolution = resolve_configured_openai_gateway()
+    if resolution is not None:
+        env.update(
+            {
+                "KIMI_MODEL_PROVIDER_TYPE": "openai",
+                "KIMI_MODEL_BASE_URL": resolution.base_url,
+                "KIMI_MODEL_API_KEY": resolution.api_key,
+                "KIMI_MODEL_NAME": resolution.model_id,
+            }
+        )
+    return env

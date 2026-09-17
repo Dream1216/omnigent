@@ -132,4 +132,7 @@ def test_bwrap_rejects_a_bind_onto_a_symlink(tmp_path: pathlib.Path) -> None:
         text=True,
     )
     assert bad.returncode != 0
-    assert "Can't create file at" in bad.stderr
+    assert str(link) in bad.stderr
+    assert (
+        "Can't create file at" in bad.stderr or "Can't mount on symlink destination" in bad.stderr
+    )

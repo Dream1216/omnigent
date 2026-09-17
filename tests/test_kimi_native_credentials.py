@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import tomllib
@@ -12,6 +13,14 @@ from omnigent.harnesses.kimi_native.credentials import (
     build_kimi_session_home,
     render_kimi_hooks_toml,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_managed_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep credential tests independent from a developer's live Provider config."""
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    monkeypatch.setattr(provider_mod, "resolve_configured_openai_gateway", lambda: None)
 
 
 def _fake_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -66,6 +75,56 @@ def test_build_session_home_preserves_user_config_and_appends_hooks(
     assert "managed" in parsed["providers"]
     # … and the Omnigent hooks appended.
     assert {h["event"] for h in parsed["hooks"]} == {"PreToolUse", "PermissionRequest"}
+
+
+def test_build_session_home_routes_managed_provider_in_process_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native Kimi gets only the synthetic token and never persists it."""
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    _fake_user_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        provider_mod,
+        "resolve_configured_openai_gateway",
+        lambda: SimpleNamespace(
+            base_url="https://gateway.example/v1",
+            api_key="session-bound-token",
+            model_id="deepseek-v4-pro",
+        ),
+    )
+    session_home = tmp_path / "session-home"
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+
+    env = build_kimi_session_home(session_home, bridge_dir=bridge_dir)
+
+    assert env == {
+        KIMI_CODE_HOME_ENV_VAR: str(session_home),
+        "KIMI_MODEL_PROVIDER_TYPE": "openai",
+        "KIMI_MODEL_BASE_URL": "https://gateway.example/v1",
+        "KIMI_MODEL_API_KEY": "session-bound-token",
+        "KIMI_MODEL_NAME": "deepseek-v4-pro",
+    }
+    config = (session_home / "config.toml").read_text(encoding="utf-8")
+    assert "session-bound-token" not in config
+    assert "gateway.example" not in config
+
+
+def test_build_session_home_without_managed_provider_keeps_vendor_auth_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import omnigent.harnesses.opencode_native.provider as provider_mod
+
+    _fake_user_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(provider_mod, "resolve_configured_openai_gateway", lambda: None)
+    session_home = tmp_path / "session-home"
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+
+    env = build_kimi_session_home(session_home, bridge_dir=bridge_dir)
+
+    assert env == {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
 
 
 def test_build_session_home_symlinks_auth_but_not_config(

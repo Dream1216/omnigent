@@ -1,0 +1,262 @@
+diff --git a/omnigent/cli_config.py b/omnigent/cli_config.py
+index b1c9ca4e05563112d5c325fae43f038fc352d60a..f3abb820a4ad21ca2d00c31e53fc9627c4bece8e 100644
+--- a/omnigent/cli_config.py
++++ b/omnigent/cli_config.py
+@@ -2668,2 +2668,2 @@ def _print_kimi_auth_help() -> None:
+-        "    • Omnigent stores no kimi credential and cannot thread one per "
+-        "spawn — configure it once in the kimi CLI\n"
++        "    • Managed SaaS can also supply an Omnigent platform Provider "
++        "per session; its short-lived token is never written to this config\n"
+@@ -2703 +2702,0 @@ def _manage_kimi_harness() -> None:
+-        harness_install_spec,
+@@ -2704,0 +2704 @@ def _manage_kimi_harness() -> None:
++        install_harness_cli,
+@@ -2709,4 +2709,2 @@ def _manage_kimi_harness() -> None:
+-    # Gate on the CLI. Kimi ships a single binary via a curl installer (not
+-    # npm), so there's no in-process auto-install — name the command and let
+-    # the user run it, then re-open. Mirrors how ``harness_setup_hint`` treats
+-    # the other curl-installed CLI (cursor-agent).
++    # Gate on the CLI. Kimi now publishes an official npm package, so setup can
++    # install it directly instead of sending the user to a mutable curl script.
+@@ -2714,6 +2712,5 @@ def _manage_kimi_harness() -> None:
+-        spec = harness_install_spec(KIMI_KEY)
+-        hint = (spec.install_hint if spec else None) or "see Kimi Code docs"
+-        console.print(
+-            "  Kimi Code's CLI isn't installed. Install it with:\n"
+-            f"    [bold]{hint}[/bold]\n"
+-            "  then re-open this menu to sign in."
++        choice = select(
++            "Kimi Code isn't installed. Install it now?",
++            ["Yes — install official npm package", "No — back to harnesses"],
++            default=0,
++            clear_on_exit=True,
+@@ -2721 +2718,9 @@ def _manage_kimi_harness() -> None:
+-        return
++        if choice != 0:
++            return
++        console.print("  [dim]Installing @moonshot-ai/kimi-code…[/dim]")
++        if not install_harness_cli(KIMI_KEY):
++            console.print(
++                "  [red]Install failed.[/red] Run "
++                "[bold]npm install -g @moonshot-ai/kimi-code[/bold], then re-open."
++            )
++            return
+diff --git a/omnigent/harnesses/kimi_native/credentials.py b/omnigent/harnesses/kimi_native/credentials.py
+index 5d2d771c0345898a053b78a59e176028949999e7..86aba9cd1ad07d8e6c77a378496f49eadcb221bf 100644
+--- a/omnigent/harnesses/kimi_native/credentials.py
++++ b/omnigent/harnesses/kimi_native/credentials.py
+@@ -122,2 +122,3 @@ def build_kimi_session_home(
+-    :returns: ``{"KIMI_CODE_HOME": str(session_home)}`` to merge into the
+-        launched kimi process env.
++    :returns: The session-home override plus a temporary ``KIMI_MODEL_*``
++        Provider when the managed Host exposes a safely translatable,
++        session-bound OpenAI-compatible gateway. No token is written to disk.
+@@ -159 +160,23 @@ def build_kimi_session_home(
+-    return {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
++    env = {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
++
++    # Native Kimi is launched directly by the existing Runner orchestration
++    # seam, so resolve the managed Provider here rather than modifying that
++    # protected upstream path. The resolver yields the Host's short-lived
++    # synthetic token; the real upstream Provider key remains behind the
++    # platform gateway. Kimi consumes these values from process memory and the
++    # session config written above remains secret-free.
++    from omnigent.harnesses.opencode_native.provider import (
++        resolve_configured_openai_gateway,
++    )
++
++    resolution = resolve_configured_openai_gateway()
++    if resolution is not None:
++        env.update(
++            {
++                "KIMI_MODEL_PROVIDER_TYPE": "openai",
++                "KIMI_MODEL_BASE_URL": resolution.base_url,
++                "KIMI_MODEL_API_KEY": resolution.api_key,
++                "KIMI_MODEL_NAME": resolution.model_id,
++            }
++        )
++    return env
+diff --git a/omnigent/inner/kimi_executor.py b/omnigent/inner/kimi_executor.py
+index 9ee8e8432565e5b9939167216b533d4408ea39fb..59b9ca343f5319cf1a8c91abd132a20e2c447f1c 100644
+--- a/omnigent/inner/kimi_executor.py
++++ b/omnigent/inner/kimi_executor.py
+@@ -4,2 +4,2 @@ Drives Moonshot AI's upstream ``kimi`` CLI from
+-https://github.com/MoonshotAI/Kimi-Code (the curl-installed
+-single-binary build at https://code.kimi.com/kimi-code/install.sh).
++https://github.com/MoonshotAI/Kimi-Code (the official
++``@moonshot-ai/kimi-code`` package).
+@@ -51,5 +51,4 @@ Env-var contract (read once at construction by
+-Per-invocation provider routing (``--config-file`` / ``--mcp-config-file``
+-/ gateway env vars) is **not** wired: upstream kimi has no per-spawn
+-config override. Provider configuration lives in ``~/.kimi-code/config.toml``
+-and is managed out-of-band via ``kimi provider add`` (Omnigent-side
+-provider injection is a deferred follow-up).
++Per-invocation provider routing uses Kimi Code's documented ``KIMI_MODEL_*``
++temporary-provider environment family. Omnigent resolves a gateway token once
++at subprocess start and exports only that session-bound token; no Provider key
++or generated provider block is persisted to disk.
+@@ -403,0 +403,2 @@ class KimiExecutor(Executor):
++        gateway_base_url: str | None = None,
++        gateway_auth_command: str | None = None,
+@@ -411,0 +413,2 @@ class KimiExecutor(Executor):
++        self._gateway_base_url = gateway_base_url
++        self._gateway_auth_command = gateway_auth_command
+@@ -444 +447 @@ class KimiExecutor(Executor):
+-    def _build_spawn_env(self) -> dict[str, str]:
++    async def _build_spawn_env(self) -> dict[str, str]:
+@@ -447,4 +450,3 @@ class KimiExecutor(Executor):
+-        Inherits the harness wrap's own env (so ``KIMI_*`` auth vars
+-        the user exported reach the subprocess) and adds nothing — all
+-        ``HARNESS_KIMI_*`` knobs are read on the wrap side and
+-        translated into CLI flags.
++        Inherits Kimi's own ambient env for the vendor-login fallback. When a
++        gateway is configured, the resolved session token and endpoint replace
++        that fallback through Kimi Code's in-memory ``KIMI_MODEL_*`` provider.
+@@ -455 +457 @@ class KimiExecutor(Executor):
+-        return clean_agent_env(
++        env = clean_agent_env(
+@@ -458,0 +461,54 @@ class KimiExecutor(Executor):
++        env.update(await self._resolve_gateway_env())
++        return env
++
++    async def _resolve_gateway_env(self) -> dict[str, str]:
++        """Resolve the neutral gateway contract into Kimi's temporary provider.
++
++        The auth command is evaluated once per Kimi subprocess. A resumed turn
++        starts a new subprocess and therefore refreshes an expiring session
++        token without ever writing it to the Kimi config directory.
++        """
++        if not self._gateway_base_url or not self._gateway_auth_command:
++            # Keep the generic workflow/Runner seams untouched: managed SaaS
++            # routing is an adapter concern. The established OpenCode provider
++            # resolver reads only a safely translatable OpenAI-compatible
++            # default and expands the Host's session-bound synthetic token.
++            # Import lazily to avoid coupling OSS Kimi startup to an optional
++            # Provider configuration path.
++            from omnigent.harnesses.opencode_native.provider import (
++                resolve_configured_openai_gateway,
++            )
++
++            resolution = resolve_configured_openai_gateway(model_id=self._model)
++            if resolution is None:
++                return {}
++            return {
++                "KIMI_MODEL_PROVIDER_TYPE": "openai",
++                "KIMI_MODEL_BASE_URL": resolution.base_url,
++                "KIMI_MODEL_API_KEY": resolution.api_key,
++                "KIMI_MODEL_NAME": resolution.model_id,
++            }
++        proc = await asyncio.create_subprocess_exec(
++            "sh",
++            "-c",
++            self._gateway_auth_command,
++            stdout=asyncio.subprocess.PIPE,
++            stderr=asyncio.subprocess.PIPE,
++        )
++        out, err = await proc.communicate()
++        if proc.returncode != 0:
++            detail = err.decode("utf-8", errors="replace").strip()[:200]
++            raise RuntimeError(
++                f"kimi gateway auth command failed (exit {proc.returncode}): {detail}"
++            )
++        token = out.decode("utf-8", errors="replace").strip()
++        if not token:
++            raise RuntimeError("kimi gateway auth command produced an empty token")
++        env = {
++            "KIMI_MODEL_PROVIDER_TYPE": "openai",
++            "KIMI_MODEL_BASE_URL": self._gateway_base_url,
++            "KIMI_MODEL_API_KEY": token,
++        }
++        if self._model:
++            env["KIMI_MODEL_NAME"] = self._model
++        return env
+@@ -500,2 +556,2 @@ class KimiExecutor(Executor):
+-            # kimi is a curl-installed single binary: it must read its own
+-            # install dir and write its config dir ($KIMI_CODE_HOME, default
++            # kimi must read its own install dir and write its config dir
++            # ($KIMI_CODE_HOME, default
+@@ -741 +797,5 @@ class KimiExecutor(Executor):
+-        env = self._build_spawn_env()
++        try:
++            env = await self._build_spawn_env()
++        except RuntimeError as exc:
++            yield ExecutorError(message=str(exc), retryable=True)
++            return
+diff --git a/omnigent/inner/kimi_harness.py b/omnigent/inner/kimi_harness.py
+index fc45cd555920f01d59ba5e6eb67cef174f6a0c1d..21970f4ecc637879f91b25d1c590b48513500a30 100644
+--- a/omnigent/inner/kimi_harness.py
++++ b/omnigent/inner/kimi_harness.py
+@@ -33,4 +33,3 @@ Env vars read at startup (full contract in
+-Provider routing for kimi happens via ``kimi provider add`` / its
+-``~/.kimi-code/config.toml`` (out-of-band from Omnigent) — upstream kimi
+-has no per-spawn ``--config-file`` or env-var provider override.
+-Omnigent-side provider injection remains a deferred follow-up.
++Provider routing uses Kimi Code's ``KIMI_MODEL_*`` temporary-provider
++environment family. Omnigent resolves the configured gateway token at process
++start and never persists it in ``~/.kimi-code/config.toml``.
+@@ -64,0 +64,2 @@ _ENV_OS_ENV = "HARNESS_KIMI_OS_ENV"
++_ENV_GATEWAY_BASE_URL = "HARNESS_KIMI_GATEWAY_BASE_URL"
++_ENV_GATEWAY_AUTH_COMMAND = "HARNESS_KIMI_GATEWAY_AUTH_COMMAND"
+@@ -135,0 +137,2 @@ def _build_kimi_executor() -> Executor:
++        gateway_base_url=os.environ.get(_ENV_GATEWAY_BASE_URL, "").strip() or None,
++        gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND, "").strip() or None,
+diff --git a/omnigent/onboarding/harness_install.py b/omnigent/onboarding/harness_install.py
+index 48dabacf7b1ea2e31acd771a4b78cdc27600285e..af1fed8c4850d4dc78b27a939ce079a1607b3faa 100644
+--- a/omnigent/onboarding/harness_install.py
++++ b/omnigent/onboarding/harness_install.py
+@@ -74,3 +74,2 @@ CURSOR_KEY = "cursor"
+-# Kimi authenticates against Moonshot AI's backend (``kimi login`` OAuth or a
+-# Moonshot API key), not via the ambient provider config; like Cursor it ships
+-# via a curl installer rather than npm, so it carries an ``install_hint``.
++# Kimi Code publishes an official npm package. It can authenticate with its own
++# Moonshot login or consume Omnigent's OpenAI-compatible Provider per session.
+@@ -116,2 +115,2 @@ KIRO_KEY = "kiro"
+-#   ``kimi-cli`` project, which numbers from 1.x. Its first release after
+-#   2026-06-01 is 0.7.0.
++#   ``kimi-cli`` project, which numbers from 1.x. Managed Provider injection
++#   through KIMI_MODEL_* requires 0.43.0 or newer.
+@@ -129 +128,2 @@ _CURSOR_MIN_VERSION = "2026.06.02"
+-_KIMI_MIN_VERSION = "0.7.0"
++# KIMI_MODEL_* temporary Provider injection is the managed-SaaS auth boundary.
++_KIMI_MIN_VERSION = "0.43.0"
+@@ -251,4 +251,4 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+-    # Kimi Code CLI ships a single-binary ``kimi`` via a curl installer (no
+-    # npm). ``kimi login`` is the interactive OAuth device flow (membership);
+-    # pay-per-use users instead set a Kimi API key in
+-    # ``~/.kimi-code/config.toml``. ``status_args`` is intentionally ``None``:
++    # Kimi Code CLI ships an official npm package and ``kimi login`` remains
++    # the optional interactive OAuth device flow. Managed SaaS sessions instead
++    # receive an in-memory KIMI_MODEL_* Provider. ``status_args`` is
++    # intentionally ``None``:
+@@ -266 +266 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+-        package=None,
++        package="@moonshot-ai/kimi-code",
+@@ -268 +267,0 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+-        install_hint="curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
+index f0ba39b7c3f35c92fcb39e076aa60f3ab6847306..8638c9a1060af4421b694366b027fe9245580d88 100644
+--- a/omnigent/onboarding/harness_readiness.py
++++ b/omnigent/onboarding/harness_readiness.py
+@@ -296,0 +297,6 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
++    # Kimi can use either its own Moonshot login/config OR an Omnigent-managed
++    # OpenAI-compatible provider injected per session through KIMI_MODEL_*.
++    # The latter is the managed-SaaS path and must not remain yellow merely
++    # because the host has no shared vendor OAuth credential.
++    if install_key == KIMI_KEY and _family_provider_configured(KIMI_SURFACE):
++        return True
+diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
+index 6f9f34c4edeafcc76ff8f3f66b27d486f3d1f89e..94153aa19707386b41c34f033111d8e8e8613879 100644
+--- a/omnigent/onboarding/provider_config.py
++++ b/omnigent/onboarding/provider_config.py
+@@ -191,4 +191,7 @@ _HARNESS_FAMILY: dict[str, str] = {
+-    # NB: ``kimi`` is intentionally absent. Upstream Kimi Code CLI has no
+-    # per-spawn provider override flag, so Omnigent cannot thread a generic
+-    # provider through. Provider routing for kimi lives in ``~/.kimi-code/config.toml``
+-    # and is managed out-of-band via ``kimi provider add``.
++    # Kimi Code supports an in-memory OpenAI-compatible provider through the
++    # KIMI_MODEL_* environment family. Both the headless and native adapters
++    # synthesize those values per session, so no upstream key is persisted in
++    # ~/.kimi-code/config.toml.
++    "kimi": OPENAI_FAMILY,
++    "kimi-native": OPENAI_FAMILY,
++    "native-kimi": OPENAI_FAMILY,

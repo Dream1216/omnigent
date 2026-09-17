@@ -5,7 +5,8 @@ Three user-observable failure modes are guarded here:
 1. ``omni setup`` reported ``Kimi Code ✗ Needs upgrade`` for every shipping
    Kimi Code CLI because ``_KIMI_MIN_VERSION`` was derived from the separate
    ``kimi-cli`` project's 1.x changelog while Kimi Code ships a 0.x series
-   (0.32.0 at report time). No release could satisfy ``>=1.47.0``.
+   (0.43.1 for the pinned official package). No 0.x release could satisfy
+   ``>=1.47.0``.
 2. The same predicate (``harness_cli_installed`` → ``harness_is_configured``)
    made the host refuse every kimi launch, so the harness was unusable.
 3. The Kimi auth guidance Omnigent prints names the wrong config path:
@@ -16,14 +17,15 @@ Three user-observable failure modes are guarded here:
    ``omnigent/runtime/workflow.py`` still points users at ``~/.kimi/``.
 
 Failure modes 1–2 were fixed by "fix(onboarding): correct the kimi and hermes
-CLI version floors" (the floor is now 0.7.0); the tests here guard that fix so
+CLI version floors" (the floor is now 0.43.0 for temporary Provider support);
+the tests here guard that fix so
 a future edit can't silently re-import kimi-cli's 1.x series. Failure mode 3 is
 guarded by ``test_kimi_auth_rejection_names_the_real_kimi_code_config_path``,
 which fails while any user-visible guidance names the legacy path.
 
 All three tests drive real user surfaces: the ``omni setup`` TUI under a
 pseudo-TTY and the ``omnigent run`` launcher as a subprocess, with a stub
-``kimi`` binary reporting the exact version from the report (0.32.0) placed
+``kimi`` binary reporting the exact pinned package version (0.43.1) placed
 first on ``PATH``.
 
 Usage::
@@ -50,7 +52,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The Kimi Code CLI version from the bug report — a current, shipping 0.x
 # build that the (buggy) 1.47.0 floor rejected.
-_REPORTED_KIMI_VERSION = "0.32.0"
+_REPORTED_KIMI_VERSION = "0.43.1"
 
 # Strip ANSI escape sequences (CSI, OSC, and keypad-mode toggles) so TUI
 # rows can be matched as plain text.
@@ -122,7 +124,7 @@ def test_kimi_version_floor_targets_kimi_code_0x_series() -> None:
     The bug was the floor being re-derived from the wrong upstream project
     (``kimi-cli``, a 1.x series). Kimi Code ships 0.x releases, so any floor
     at or above 1.0.0 is unsatisfiable by every build of the binary the spec
-    itself installs. Also asserts the report's shipping build (0.32.0)
+    itself installs. Also asserts the pinned official package build (0.43.1)
     satisfies the declared floor.
     """
     from omnigent.onboarding import harness_install as hi
@@ -145,7 +147,7 @@ def test_setup_kimi_row_does_not_read_needs_upgrade(tmp_path: Path) -> None:
     """``omni setup`` with a current Kimi Code CLI never shows "Needs upgrade".
 
     Reconstructs the reported journey: a fully up-to-date Kimi Code CLI
-    (0.32.0) on PATH, fresh config, run ``omni setup``. On the buggy build the
+    (0.43.1) on PATH, fresh config, run ``omni setup``. On the buggy build the
     Kimi Code row read ``✗ Needs upgrade``; on a fixed build it reads
     ``Not configured`` (installed, no credential yet) or ``Signed in``.
     """
