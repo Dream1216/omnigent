@@ -1,11 +1,12 @@
 """Escaping-symlink masks must not emit a mount onto the symlink path.
 
 bwrap resolves a mount destination *through* a final symlink, so masking a
-symlink aborts the whole namespace (``Can't create file at <link>`` for the
-file shape, ``Can't mount tmpfs on <link>`` for the dir shape) and kills the
-launcher at spawn. Skipping symlink entries is safe: the mount namespace
-already confines symlink resolution, so the link is followed inside the
-sandbox view where an escaping target is unmounted or separately masked.
+symlink aborts the whole namespace (reported as either ``Can't create file at
+<link>`` or ``Can't mount on symlink destination <link>`` for the file shape,
+and ``Can't mount tmpfs on <link>`` for the dir shape) and kills the launcher
+at spawn. Skipping symlink entries is safe: the mount namespace already
+confines symlink resolution, so the link is followed inside the sandbox view
+where an escaping target is unmounted or separately masked.
 """
 
 from __future__ import annotations
@@ -20,6 +21,17 @@ from omnigent.inner.bwrap_sandbox import _dotfile_and_symlink_mask_args
 from omnigent.inner.sandbox import SandboxPolicy
 
 _BWRAP = shutil.which("bwrap")
+_SYMLINK_DESTINATION_ERRORS = (
+    "Can't create file at",
+    "Can't mount on symlink destination",
+)
+
+
+def _assert_symlink_bind_rejected(*, returncode: int, stderr: str, link: pathlib.Path) -> None:
+    """Require a fail-closed result that names the symlink destination."""
+    assert returncode != 0
+    assert str(link) in stderr
+    assert any(message in stderr for message in _SYMLINK_DESTINATION_ERRORS)
 
 
 def _mask_args_for(tmp_path: pathlib.Path) -> list[str]:
@@ -131,5 +143,31 @@ def test_bwrap_rejects_a_bind_onto_a_symlink(tmp_path: pathlib.Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert bad.returncode != 0
-    assert "Can't create file at" in bad.stderr
+    _assert_symlink_bind_rejected(
+        returncode=bad.returncode,
+        stderr=bad.stderr,
+        link=link,
+    )
+
+
+@pytest.mark.parametrize("message", _SYMLINK_DESTINATION_ERRORS)
+def test_known_bwrap_symlink_rejections_remain_fail_closed(
+    tmp_path: pathlib.Path, message: str
+) -> None:
+    link = tmp_path / "link"
+    stderr = f"bwrap: {message} {link}\n"
+
+    _assert_symlink_bind_rejected(returncode=1, stderr=stderr, link=link)
+
+
+def test_unrelated_bwrap_failure_does_not_satisfy_symlink_contract(
+    tmp_path: pathlib.Path,
+) -> None:
+    link = tmp_path / "link"
+
+    with pytest.raises(AssertionError):
+        _assert_symlink_bind_rejected(
+            returncode=1,
+            stderr=f"bwrap: unrelated failure at {link}\n",
+            link=link,
+        )
