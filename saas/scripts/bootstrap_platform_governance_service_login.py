@@ -11,9 +11,11 @@ from pathlib import Path
 
 from saas.production.service_login_bootstrap import (
     ProductionServiceLoginBootstrapError,
+    bind_platform_admin_service_login,
     bind_platform_governance_service_login,
     bind_platform_model_service_login,
     converge_runtime_provider_journal_login_posture,
+    prepare_platform_admin_service_login,
     prepare_platform_governance_service_login,
     prepare_platform_model_service_login,
 )
@@ -58,13 +60,24 @@ def main() -> int:
         help="grant one fixed Platform-model service-role membership",
     )
     bind_model.add_argument("--service", required=True, choices=("billing", "platform_app"))
+    prepare_admin = commands.add_parser(
+        "prepare-platform-admin",
+        help="create or rotate one fixed Platform Admin service login",
+    )
+    prepare_admin.add_argument("--service", required=True, choices=("platform_authenticator",))
+    prepare_admin.add_argument("--password-file", required=True)
+    bind_admin = commands.add_parser(
+        "bind-platform-admin",
+        help="grant one fixed Platform Admin service-role membership",
+    )
+    bind_admin.add_argument("--service", required=True, choices=("platform_authenticator",))
     commands.add_parser(
         "converge-runtime-journal-posture",
         help="pin the journal login search path through managed superuser authority",
     )
     args = parser.parse_args()
     try:
-        if args.command in ("prepare", "prepare-platform-model"):
+        if args.command in ("prepare", "prepare-platform-model", "prepare-platform-admin"):
             path = _password_path(parser, args.password_file)
             with path.open("rb") as stream:
                 if args.command == "prepare":
@@ -72,8 +85,14 @@ def main() -> int:
                         environ=os.environ,
                         password_stream=stream,
                     )
-                else:
+                elif args.command == "prepare-platform-model":
                     receipt = prepare_platform_model_service_login(
+                        environ=os.environ,
+                        service=args.service,
+                        password_stream=stream,
+                    )
+                else:
+                    receipt = prepare_platform_admin_service_login(
                         environ=os.environ,
                         service=args.service,
                         password_stream=stream,
@@ -82,6 +101,11 @@ def main() -> int:
             receipt = bind_platform_governance_service_login(environ=os.environ)
         elif args.command == "bind-platform-model":
             receipt = bind_platform_model_service_login(
+                environ=os.environ,
+                service=args.service,
+            )
+        elif args.command == "bind-platform-admin":
+            receipt = bind_platform_admin_service_login(
                 environ=os.environ,
                 service=args.service,
             )

@@ -39,6 +39,7 @@ _MAX_FAILURES = 5
 _LOCK_TIME = timedelta(minutes=15)
 _SESSION_TTL = timedelta(hours=8)
 _INITIAL_STAFF_BOOTSTRAP_LOCK = 0x4F4D4E4953545057
+_LOCAL_OPERATOR_TRANSITION_LOCK = 0x4F4D4E4953544C50
 
 
 def _utcnow() -> datetime:
@@ -213,6 +214,164 @@ class PlatformPasswordAuthenticationService:
                     assigned_by_principal_id=principal_id,
                     approval_ref="local-password-initial-bootstrap",
                     reason="initial local Staff operator",
+                    created_at=changed_at,
+                    updated_at=changed_at,
+                )
+            )
+        return principal_id
+
+    def transition_local_operator(
+        self,
+        *,
+        username: str,
+        password: str,
+        authorized_by_principal_id: UUID,
+        approval_ref: str,
+        reason: str,
+        display_name: str | None = None,
+        email_normalized: str | None = None,
+        now: datetime | None = None,
+    ) -> UUID:
+        """Create the first local operator in an occupied legacy Staff store.
+
+        The named authorizer must be an active operator. Retries return the same
+        principal only when the username, password, assignment, and approval all
+        match the completed transition.
+        """
+
+        normalized = normalize_staff_username(username)
+        _validate_password(password)
+        approval = approval_ref.strip()
+        justification = reason.strip()
+        changed_at = now or _utcnow()
+        if changed_at.tzinfo is None or changed_at.utcoffset() is None:
+            raise PlatformSecurityError("platform_time_invalid", "now must include a timezone")
+        if (
+            authorized_by_principal_id.int == 0
+            or not approval
+            or len(approval) > 256
+            or not justification
+            or len(justification) > 1024
+        ):
+            raise PlatformSecurityError(
+                "platform_transition_invalid", "local Staff operator transition is incomplete"
+            )
+        encoded = hash_password(password)
+        with self._governance.begin() as db:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(
+                    sa.text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": _LOCAL_OPERATOR_TRANSITION_LOCK},
+                )
+            authorizer = db.get(PlatformStaffPrincipalRecord, authorized_by_principal_id)
+            authorizer_assignment = db.execute(
+                sa.select(PlatformRoleAssignmentRecord).where(
+                    PlatformRoleAssignmentRecord.principal_id == authorized_by_principal_id,
+                    PlatformRoleAssignmentRecord.role == "platform_operator",
+                    PlatformRoleAssignmentRecord.status == "active",
+                    sa.or_(
+                        PlatformRoleAssignmentRecord.expires_at.is_(None),
+                        PlatformRoleAssignmentRecord.expires_at > changed_at,
+                    ),
+                )
+            ).scalar_one_or_none()
+            if (
+                authorizer is None
+                or authorizer.status != "active"
+                or authorizer_assignment is None
+            ):
+                raise PlatformSecurityError(
+                    "platform_transition_authority_invalid",
+                    "active legacy Staff operator authorization is required",
+                )
+
+            credential = db.execute(
+                sa.select(PlatformPasswordCredentialRecord).where(
+                    PlatformPasswordCredentialRecord.username_normalized == normalized
+                )
+            ).scalar_one_or_none()
+            if credential is not None:
+                principal = db.get(PlatformStaffPrincipalRecord, credential.principal_id)
+                assignment = db.execute(
+                    sa.select(PlatformRoleAssignmentRecord).where(
+                        PlatformRoleAssignmentRecord.principal_id == credential.principal_id,
+                        PlatformRoleAssignmentRecord.role == "platform_operator",
+                        PlatformRoleAssignmentRecord.status == "active",
+                        sa.or_(
+                            PlatformRoleAssignmentRecord.expires_at.is_(None),
+                            PlatformRoleAssignmentRecord.expires_at > changed_at,
+                        ),
+                    )
+                ).scalar_one_or_none()
+                try:
+                    verify_password(password, credential.password_hash)
+                except InvalidPasswordError:
+                    password_matches = False
+                else:
+                    password_matches = True
+                if (
+                    principal is None
+                    or principal.status != "active"
+                    or principal.issuer != STAFF_PASSWORD_ISSUER
+                    or principal.subject != normalized
+                    or assignment is None
+                    or assignment.assigned_by_principal_id != authorized_by_principal_id
+                    or assignment.approval_ref != approval
+                    or assignment.reason != justification
+                    or not password_matches
+                ):
+                    raise PlatformSecurityError(
+                        "platform_transition_conflict",
+                        "local Staff operator transition conflicts with existing state",
+                    )
+                return principal.id
+
+            existing_local_accounts = db.execute(
+                sa.select(sa.func.count()).select_from(PlatformPasswordCredentialRecord)
+            ).scalar_one()
+            if existing_local_accounts != 0:
+                raise PlatformSecurityError(
+                    "platform_transition_conflict",
+                    "the first local Staff operator transition is no longer available",
+                )
+
+            principal_id = uuid4()
+            db.add(
+                PlatformStaffPrincipalRecord(
+                    id=principal_id,
+                    identity_connection_ref=f"local-password:{normalized}",
+                    issuer=STAFF_PASSWORD_ISSUER,
+                    subject=normalized,
+                    display_name=display_name.strip() if display_name else None,
+                    email_normalized=(
+                        email_normalized.strip().casefold() if email_normalized else None
+                    ),
+                    status="active",
+                    security_version=1,
+                    created_at=changed_at,
+                    updated_at=changed_at,
+                )
+            )
+            db.add(
+                PlatformPasswordCredentialRecord(
+                    principal_id=principal_id,
+                    username_normalized=normalized,
+                    password_hash=encoded,
+                    password_version=1,
+                    failed_attempts=0,
+                    updated_at=changed_at,
+                )
+            )
+            db.add(
+                PlatformRoleAssignmentRecord(
+                    id=uuid4(),
+                    principal_id=principal_id,
+                    role="platform_operator",
+                    status="active",
+                    version=1,
+                    assigned_by_principal_id=authorized_by_principal_id,
+                    approval_ref=approval,
+                    reason=justification,
                     created_at=changed_at,
                     updated_at=changed_at,
                 )
