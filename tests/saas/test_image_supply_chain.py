@@ -888,6 +888,31 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     )
 
 
+@pytest.mark.parametrize(
+    ("target", "replacement"),
+    [
+        ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
+        ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
+        ("'opencode-linux-x64@1.18.31'", "'unrelated-package@1.0.0'"),
+    ],
+)
+def test_image_material_lock_rejects_release_age_exclusion_drift(
+    tmp_path: Path,
+    target: str,
+    replacement: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    workspace = repo / "pnpm-workspace.yaml"
+    source = workspace.read_text(encoding="utf-8")
+    assert target in source
+    workspace.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    assert (
+        "pnpm minimumReleaseAgeExclude must match the approved exact Harness artifact versions"
+        in validate_image_material_lock(repo)
+    )
+
+
 def test_candidate_composite_build_contract_rejects_action_drift(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     action = repo / "saas/actions/build-oci-candidate/action.yml"

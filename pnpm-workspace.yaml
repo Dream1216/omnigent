@@ -10,6 +10,26 @@ packages:
 # 7-day dependency cooldown, mirroring the Python-side exclude-newer = "P7D" in uv.toml.
 minimumReleaseAge: 10080
 
+# These exact, integrity-locked Harness artifacts were admitted with the CLI
+# fleet update. Keep the exception version-scoped so later releases still wait
+# for the full cooldown; remove entries after their seven-day window has elapsed.
+minimumReleaseAgeExclude:
+  - '@qwen-code/audio-capture@0.23.4'
+  - '@qwen-code/qwen-code@0.23.4'
+  - 'opencode-ai@1.18.31'
+  - 'opencode-darwin-arm64@1.18.31'
+  - 'opencode-darwin-x64-baseline@1.18.31'
+  - 'opencode-darwin-x64@1.18.31'
+  - 'opencode-linux-arm64-musl@1.18.31'
+  - 'opencode-linux-arm64@1.18.31'
+  - 'opencode-linux-x64-baseline-musl@1.18.31'
+  - 'opencode-linux-x64-baseline@1.18.31'
+  - 'opencode-linux-x64-musl@1.18.31'
+  - 'opencode-linux-x64@1.18.31'
+  - 'opencode-windows-arm64@1.18.31'
+  - 'opencode-windows-x64-baseline@1.18.31'
+  - 'opencode-windows-x64@1.18.31'
+
 settings:
   autoInstallPeers: false
   strictPeerDependencies: false

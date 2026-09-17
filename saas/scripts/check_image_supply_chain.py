@@ -41,6 +41,23 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
+_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
+    "@qwen-code/audio-capture@0.23.4",
+    "@qwen-code/qwen-code@0.23.4",
+    "opencode-ai@1.18.31",
+    "opencode-darwin-arm64@1.18.31",
+    "opencode-darwin-x64-baseline@1.18.31",
+    "opencode-darwin-x64@1.18.31",
+    "opencode-linux-arm64-musl@1.18.31",
+    "opencode-linux-arm64@1.18.31",
+    "opencode-linux-x64-baseline-musl@1.18.31",
+    "opencode-linux-x64-baseline@1.18.31",
+    "opencode-linux-x64-musl@1.18.31",
+    "opencode-linux-x64@1.18.31",
+    "opencode-windows-arm64@1.18.31",
+    "opencode-windows-x64-baseline@1.18.31",
+    "opencode-windows-x64@1.18.31",
+}
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "NODE_IMAGE",
@@ -1081,6 +1098,29 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     }
     if any(fragment not in pnpm_workspace for fragment in required_host_cli_builds):
         violations.append("host CLI install scripts must be explicitly allowed by pnpm policy")
+    release_age_block = re.search(
+        r"(?m)^minimumReleaseAgeExclude:\n(?P<body>(?:^[ \t]+.*\n)*)",
+        pnpm_workspace,
+    )
+    release_age_exclusions: set[str] = set()
+    release_age_policy_valid = release_age_block is not None
+    if release_age_block is not None:
+        for line in release_age_block.group("body").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            item = re.fullmatch(r"- ['\"]([^'\"]+)['\"]", stripped)
+            if item is None:
+                release_age_policy_valid = False
+                continue
+            release_age_exclusions.add(item.group(1))
+    if (
+        not release_age_policy_valid
+        or release_age_exclusions != _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS
+    ):
+        violations.append(
+            "pnpm minimumReleaseAgeExclude must match the approved exact Harness artifact versions"
+        )
     for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
         if f"ARG {argument}={version}" not in dockerfile:
             violations.append(f"host image must pin {package} to {version}")
