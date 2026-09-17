@@ -168,19 +168,19 @@ def _build_http_authority() -> tuple[
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     requester_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http-requester",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http-requester",
         now=now,
     )
     approver_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http-approver",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http-approver",
         now=now,
     )
     assigner_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http-assigner",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http-assigner",
         now=now,
     )
@@ -223,10 +223,10 @@ def _build_http_authority() -> tuple[
         )
     requester = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy-http-requester",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -234,10 +234,10 @@ def _build_http_authority() -> tuple[
     )
     approver = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy-http-approver",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),

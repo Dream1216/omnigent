@@ -11,6 +11,7 @@ import pytest
 
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -50,6 +51,27 @@ def _platform_bindings() -> ProductionServiceRoleBindings:
                 base_role=base_role,
             )
             for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+        ),
+    )
+
+
+def _platform_admin_bindings() -> ProductionServiceRoleBindings:
+    production = _bindings().by_service
+    platform_model = _platform_bindings().by_service
+    return ProductionServiceRoleBindings(
+        path=Path("/platform-admin-bindings.json"),
+        sha256="d" * 64,
+        bindings=tuple(
+            production[service]
+            if service in production
+            else platform_model[service]
+            if service in platform_model
+            else ProductionServiceRoleBinding(
+                service=service,
+                login=f"platform_admin_{service}_login",
+                base_role=base_role,
+            )
+            for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
         ),
     )
 
@@ -158,7 +180,9 @@ def test_plan_requires_distinct_logins_and_one_target(monkeypatch: pytest.Monkey
     assert target_error.value.code == "authority_targets_differ"
 
 
-def test_plan_composes_exact_platform_model_role_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_composes_exact_platform_extension_role_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: _REVISION)
     base = _plan()
     plan = migration.ProductionPostgreSqlPlan(
@@ -169,13 +193,18 @@ def test_plan_composes_exact_platform_model_role_graph(monkeypatch: pytest.Monke
         saas_owner=base.saas_owner,
         service_role_bindings=base.service_role_bindings,
         platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
     )
 
     migration._validate_plan(plan)
 
-    assert len(plan.service_role_graph.bindings) == 17
+    assert len(plan.service_role_graph.bindings) == 18
     assert plan.service_role_graph.login_for("app") == "app_login"
     assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
+    assert (
+        plan.service_role_graph.login_for("platform_authenticator")
+        == "platform_admin_platform_authenticator_login"
+    )
     expected = migration._expected_service_principal_graph(
         bindings=plan.service_role_graph,
         principal_operator="principal_operator",
@@ -414,25 +443,25 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         (
             16,
             "ge1b2c3d4e5f",
-            "p0s000000013",
-        ): "8094ae2186ca82f153be054043461e1997c8991a62b227cf7547845e4cf79d3b",
+            "p0s000000014",
+        ): "775cdf24568506b246dd9bbc6c194541f34a93c41dc09a4412a1e9baae4e8a4a",
         (
             18,
             "ge1b2c3d4e5f",
-            "p0s000000013",
-        ): "6d49f0e2072cc4e82734e868c78e43dca828ae22d95c4b46a6767db6fd292022",
+            "p0s000000014",
+        ): "f62f0d5cef73fae51870adeae0ce1553878eab3b59e3155eabb4ba063ed2c536",
     }
     current_security = {
         (
             16,
             "ge1b2c3d4e5f",
-            "p0s000000013",
-        ): "f030f29ad8505f226ddcf4befdd085b7a6f0cefa3deedf2b948318f952e1483e",
+            "p0s000000014",
+        ): "35ed8656006aed4820d702cb50737fa6848bb10752679130ddccedd4c60ae341",
         (
             18,
             "ge1b2c3d4e5f",
-            "p0s000000013",
-        ): "2f3d25460eab0c9bb6e903399e146f5ff17ac526ebec5cf27b4d727ca8ee8d55",
+            "p0s000000014",
+        ): "7d0c59e271b9bd2c602dfadf99430598d9c952ac60f8f085d4ebb33e02872dfc",
     }
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
@@ -447,6 +476,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
             "ge1b2c3d4e5f",
             "p0s000000013",
         ): "c5fe0b9dd94ffd3b378e6935ed7f611dc1f528e6cd2f1c4d2f199e72b6a6d416",
+        (
+            16,
+            "ge1b2c3d4e5f",
+            "p0s000000014",
+        ): "813253bdda7aa38f62ba3a76afc523881cef7ff43ca6c9be199630df7742f2dd",
+        (
+            18,
+            "ge1b2c3d4e5f",
+            "p0s000000014",
+        ): "7859924fdfb48d4a95c28b564b760248cf4e393f227bb9b17b45f16d2b0805b2",
     }
     assert (
         migration._PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256.items()

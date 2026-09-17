@@ -443,12 +443,18 @@ from saas.control_plane.platform_models import (
     ModelProviderTenantDailyUsageRecord,
     PlatformAuthSessionRecord,
     PlatformLifecycleOperationRecord,
+    PlatformPasswordCredentialRecord,
     PlatformRoleAssignmentRecord,
     PlatformStaffPrincipalRecord,
     PlatformTenantProjectionRecord,
     PlatformUserProjectionRecord,
 )
 from saas.control_plane.platform_notification_http import create_platform_notification_router
+from saas.control_plane.platform_password_auth import (
+    STAFF_PASSWORD_ISSUER,
+    PlatformPasswordAuthenticationService,
+    normalize_staff_username,
+)
 from saas.control_plane.platform_security import (
     InitialPlatformStaffIdentity,
     IssuedPlatformSession,
@@ -661,6 +667,7 @@ __all__ = [
     "PROJECT_ROLE_PERMISSIONS",
     "RESOURCE_ROLE_PERMISSIONS",
     "SPACE_ROLE_PERMISSIONS",
+    "STAFF_PASSWORD_ISSUER",
     "TENANT_ROLE_PERMISSIONS",
     "ActivatedPreviewGatewayCertificate",
     "ActivatedRunnerCertificate",
@@ -869,6 +876,8 @@ __all__ = [
     "PlatformLifecycleService",
     "PlatformLifecycleTargetPreview",
     "PlatformManagedModelRuntimeConfiguration",
+    "PlatformPasswordAuthenticationService",
+    "PlatformPasswordCredentialRecord",
     "PlatformProjectionPage",
     "PlatformProjectionService",
     "PlatformRoleAssignmentRecord",
@@ -1132,6 +1141,7 @@ __all__ = [
     "load_runtime_compatibility_policy",
     "mask_email",
     "normalize_email",
+    "normalize_staff_username",
     "oidc_identity_locator_hash",
     "onboarding_scope_from_payload",
     "password_email_locator_hash",

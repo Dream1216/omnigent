@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -15,11 +15,11 @@ from saas.control_plane import (
     ModelProviderConfigurationService,
     PlatformAuthorizationService,
     PlatformHttpConfig,
+    PlatformPasswordAuthenticationService,
     PlatformProjectionService,
     PlatformRoleAssignmentRecord,
     PlatformSessionService,
     SaasBase,
-    StaffIdentityAssertion,
     create_platform_admin_app,
 )
 
@@ -90,16 +90,15 @@ def _client(
     factory = sessionmaker(engine, expire_on_commit=False)
     authorization = PlatformAuthorizationService(factory)
     sessions = PlatformSessionService(factory, origin=_ORIGIN, audience=_AUDIENCE)
-    operator_id = authorization.provision_staff_principal(
-        identity_connection_ref="staff-idp:model-operator",
-        issuer="https://staff-idp.example.test",
-        subject="model-operator",
+    password_authentication = PlatformPasswordAuthenticationService(factory, sessions)
+    operator_id = password_authentication.provision_account(
+        username="model-operator",
+        password="model-operator-password-2026",
         now=now,
     )
-    assigner_id = authorization.provision_staff_principal(
-        identity_connection_ref="staff-idp:model-assigner",
-        issuer="https://staff-idp.example.test",
-        subject="model-assigner",
+    assigner_id = password_authentication.provision_account(
+        username="model-assigner",
+        password="model-assigner-password-2026",
         now=now,
     )
     with factory.begin() as db:
@@ -116,15 +115,9 @@ def _client(
                 updated_at=now,
             )
         )
-    issued = sessions.issue_session(
-        StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
-            subject="model-operator",
-            authn_method="webauthn",
-            mfa_strength="phishing_resistant",
-            authenticated_at=now,
-        ),
-        expires_at=now + timedelta(hours=1),
+    issued = password_authentication.authenticate(
+        "model-operator",
+        "model-operator-password-2026",
         now=now,
     )
     cipher = _Cipher()
@@ -141,6 +134,7 @@ def _client(
         authorization=authorization,
         projections=PlatformProjectionService(factory),
         model_provider=model_provider,
+        password_authentication=password_authentication,
     )
     client = TestClient(app, base_url=_ORIGIN)
     client.cookies.set(config.cookie_name, issued.token)

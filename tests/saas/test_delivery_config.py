@@ -14,6 +14,7 @@ from saas.production.server_config import (
     ProductionServerConfigError,
     load_production_server_config,
 )
+from tests.saas.test_billing_metering_transport import _certificate_fixture
 from tests.saas.test_production_server_config import _environment
 
 
@@ -69,6 +70,21 @@ def test_delivery_configuration_requires_private_files_and_explicit_capability(
         load_production_server_config(environment)
     environment["OMNIGENT_SAAS_DELIVERY_CONFIG_FILE"] = str(path)
     assert load_production_server_config(environment).delivery_config == config
+    certificates = _certificate_fixture(tmp_path, (uuid4(),))["runner-0"]
+    certificates.private_key.chmod(0o600)
+    raw = json.loads(path.read_text())
+    raw.update(
+        ca_file=str(certificates.ca),
+        client_certificate_file=str(certificates.certificate),
+        client_private_key_file=str(certificates.private_key),
+    )
+    path.write_text(json.dumps(raw))
+    assert load_production_server_config(environment).delivery_config == replace(
+        config,
+        ca_file=certificates.ca,
+        client_certificate_file=certificates.certificate,
+        client_private_key_file=certificates.private_key,
+    )
     key.chmod(0o640)
     with pytest.raises(ValueError, match="owner-only"):
         DeliveryConfig.from_file(path)

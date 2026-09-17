@@ -532,10 +532,13 @@ async def test_process_signal_during_startup_releases_identity_certificates_and_
     )
     stop = asyncio.Event()
     process = asyncio.create_task(run_preview_gateway_runtime(runtime, stop_event=stop))
-    await asyncio.wait_for(readiness.started.wait(), timeout=1)
-
-    stop.set()
-    await asyncio.wait_for(process, timeout=2)
+    try:
+        # Registration and certificate persistence run in worker threads and
+        # may take several seconds under CI load before readiness begins.
+        await asyncio.wait_for(readiness.started.wait(), timeout=10)
+    finally:
+        stop.set()
+        await asyncio.wait_for(process, timeout=10)
 
     assert runtime.state == "stopped" and not runtime.ready
     assert relay.closed and provider.discarded == provider.installed

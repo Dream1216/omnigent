@@ -25,7 +25,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
   "tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475"
-  "tests/saas/test_image_supply_chain.py|bf0eaf64604195dc5f295cf2a868b70cd636e617c697d8a665cd77952da4c4c3"
+  "tests/saas/test_image_supply_chain.py|a6813577e66cbecbaf9fa0e897639848e17fa51ef9ef70925021909eb68d78ee"
   "saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d"
   "saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
   "saas/n1_compat/manifest.json|eb74bc6f938da18792a190ade70f3604f247f50f6c1b25f70bb96ac68d56d99f"
@@ -34,9 +34,9 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
   "tests/saas/test_n1_merge_gate_candidate.py|45a29ba955b638c0a8850d5f39e62e0d4dd537cf8d8be3b65e5c40a958a1f2cc"
   "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
-  "tests/saas/test_n1_outbox_admission.py|38a4e9c7b36eabcdab6c2bdcb72a9bfcc3390dc94a40766e1ec9680456c0ecd9"
-  "tests/saas/test_control_plane_migration.py|ddbe931a5523952527d8b2159997d4adab902395a87fd8b5c83e948213e88ba1"
-  "tests/saas/test_production_runner_postgresql.py|14cedc3269363e4ad2554b45e07346247a629e44ab3a577251679c715b4a7080"
+  "tests/saas/test_n1_outbox_admission.py|05087e68310e0045fa18cbdd72614a45dddd6c7e3d4b703fcf2dac160b34fc1e"
+  "tests/saas/test_control_plane_migration.py|22178ebb77d198f3a2a2979b8ea6270549f332be05c3b4f7aa6dd5c0113e08b8"
+  "tests/saas/test_production_runner_postgresql.py|384f5ecdc9ec341d498d99a634c82c02d3e2456af3b4c89a4a6430fec25bfe39"
 )
 
 POSTGRESQL_N1_PATHS=(

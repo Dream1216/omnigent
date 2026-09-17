@@ -9,7 +9,7 @@ PostgreSQL migration. The K3s path is authoritative for `next.jxhh.com`.
 The rendered profile becomes **Beta-deployable only after** its external PG18,
 Runner database-fleet, repository-mirror, artifact, PKI, containment, and
 stability admission receipts all pass for the same release. Until then it is a
-fail-closed candidate with `p0s000000013` and exactly
+fail-closed candidate with `p0s000000014` and exactly
 `tenant,run,runner,preview`. The source Runner A/B Deployments deliberately have
 `replicas: 0`; stage rendering keeps every long-running Deployment at zero, and
 only the trusted final renderer may restore the reviewed Server/Worker/Edge/Owner
@@ -94,7 +94,7 @@ replaced in a release copy before server-side apply. The image reference is alwa
    worker.
    The driver order is fixed and fail-closed: `postgresql_principals.sql` then
    `postgresql_database.sql`, official Alembic, SaaS Alembic through exact head
-   `p0s000000013`, the runtime and control-plane projections from
+   `p0s000000014`, the runtime and control-plane projections from
    `postgresql_roles.sql`, and the final database ACL projection and verifier.
    A different or partial order is not an admissible receipt.
    Before this phase, the cluster owner or audited superuser must revoke

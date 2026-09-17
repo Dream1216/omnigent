@@ -154,7 +154,7 @@ def governed() -> GovernedFixture:
             session_id=uuid4(),
             principal_id=principal_ids[name],
             security_version=1,
-            authn_method="passkey",
+            authn_method="password",
             authenticated_at=NOW,
             expires_at=NOW + timedelta(hours=1),
             roles=frozenset({role}),

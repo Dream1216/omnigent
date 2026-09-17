@@ -522,6 +522,16 @@ def test_host_cli_normalizer_canonicalizes_multiple_roots(tmp_path: Path) -> Non
             "/usr/local/bin/pnpm",
         ),
         (
+            "deploy/docker/Dockerfile",
+            "find /tmp -mindepth 1 -depth -delete",
+            "true # residual temporary state retained",
+        ),
+        (
+            "deploy/docker/Dockerfile",
+            'find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+            "true # root metadata normalization removed",
+        ),
+        (
             "saas/scripts/normalize_host_cli_tree.py",
             "shutil.copy2(path, temporary, follow_symlinks=False)",
             "shutil.copyfile(path, temporary, follow_symlinks=False)",
