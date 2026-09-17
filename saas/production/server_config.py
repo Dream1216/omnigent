@@ -31,6 +31,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
     ProductionServiceRoleGraph,
     compose_production_service_role_graph,
+    load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
 )
@@ -209,6 +210,7 @@ class ProductionServerConfig:
     preview_adapter_factory: str | None
     service_role_bindings: ProductionServiceRoleBindings = field(repr=False)
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = field(repr=False)
+    platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = field(repr=False)
     migration_receipt: ProductionMigrationReceipt
     artifact_admission_receipt: ProductionArtifactAdmissionReceipt
     secrets: ProductionServerSecrets = field(repr=False)
@@ -225,6 +227,7 @@ class ProductionServerConfig:
         return compose_production_service_role_graph(
             self.service_role_bindings,
             self.platform_model_service_role_bindings,
+            self.platform_admin_service_role_bindings,
         )
 
     @property
@@ -965,9 +968,15 @@ def load_production_server_config(
             if "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE" in source
             else None
         )
+        platform_admin_service_role_bindings = (
+            load_platform_admin_service_role_bindings(source)
+            if "OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE" in source
+            else None
+        )
         service_role_graph = compose_production_service_role_graph(
             service_role_bindings,
             platform_model_service_role_bindings,
+            platform_admin_service_role_bindings,
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
@@ -1099,6 +1108,7 @@ def load_production_server_config(
         preview_adapter_factory=preview_adapter_factory,
         service_role_bindings=service_role_bindings,
         platform_model_service_role_bindings=platform_model_service_role_bindings,
+        platform_admin_service_role_bindings=platform_admin_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,

@@ -31,6 +31,12 @@ role. Destructive User/Tenant deletion and production release remain separate ga
    configuration and must remain in the separate recovery Realm.
 5. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, password
    lockout, database-role and negative-matrix checks below pass for the exact release revision.
+6. Run the standalone production process with
+   `python -m saas.production.platform_admin`. Set
+   `OMNIGENT_SAAS_PLATFORM_ADMIN_ENABLED=true`, the exact Staff Origin and Audience,
+   the canonical Platform Admin service-role binding file, and only the
+   `platform_authenticator` and `platform_app` database URL files. The process refuses
+   owner, migration, Tenant app, or Platform governance credentials.
 
 ## PC4 Platform Console
 
@@ -65,6 +71,15 @@ role. Destructive User/Tenant deletion and production release remain separate ga
   `saas_platform_governance`. The bootstrap exception self-records the initial role;
   later role changes still use the normal RBAC separation-of-duties path. Never turn a
   Tenant Owner or database login into a product Platform role.
+- If a reviewed pre-P0S14 Beta already contains a temporary Staff operator, do not
+  delete or rewrite it to bypass the empty-store guard. First create and bind the exact
+  `platform_authenticator` service login with the split superuser/principal-operator
+  commands in `bootstrap_platform_governance_service_login`. Then run
+  `python -m saas.scripts.transition_local_platform_operator` with owner-only username
+  and password files, the pinned active legacy operator principal ID, approval reference,
+  and reason. The transition creates only the first local credential and a separately
+  attributed `platform_operator` assignment; exact retries are idempotent and drift fails
+  closed. Keep the governance database URL in this one-shot Job, never in the Web process.
 - Login failures use one generic response for unknown users and wrong passwords. Five
   consecutive failures lock the account for 15 minutes. Password verification issues
   an Origin/Audience-bound Staff Cookie with an eight-hour maximum lifetime; logout,
@@ -187,6 +202,9 @@ Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
 
 ```bash
 uv run pytest -q \
+  tests/saas/test_production_platform_admin.py \
+  tests/saas/test_production_service_bindings.py \
+  tests/saas/test_service_login_bootstrap.py \
   tests/saas/test_platform_security.py \
   tests/saas/test_platform_http.py \
   tests/saas/test_platform_admin_browser.py \

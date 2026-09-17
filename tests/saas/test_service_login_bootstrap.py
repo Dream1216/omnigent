@@ -70,6 +70,167 @@ def _platform_model_binding() -> SimpleNamespace:
     )
 
 
+def _platform_admin_binding() -> SimpleNamespace:
+    return SimpleNamespace(
+        by_service={
+            "platform_authenticator": SimpleNamespace(
+                login="platform_admin_authenticator_login",
+                base_role="saas_platform_authenticator",
+            ),
+        }
+    )
+
+
+def test_prepare_platform_admin_authenticator_login_uses_fixed_profile(monkeypatch) -> None:
+    engine = _Engine(("bootstrap", "bootstrap"))
+    created = False
+    management = [("saas_platform_authenticator", True, False, False, "bootstrap")]
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent",
+            sa.make_url("postgresql+psycopg://bootstrap:redacted@example.invalid/omnigent"),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_platform_admin_service_role_bindings",
+        lambda _source: _platform_admin_binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+
+    def role_flags(_connection, role: str):
+        return {
+            "bootstrap": (True, True, True, True, True, True, True, -1, None),
+            "principal_operator": (True, False, False, True, False, False, True, -1, None),
+            "saas_platform_authenticator": (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                None,
+            ),
+            "platform_admin_authenticator_login": (
+                (True, False, False, False, False, False, True, -1, None) if created else None
+            ),
+        }[role]
+
+    def create_login(_connection, *, login: str, password: str) -> None:
+        nonlocal created
+        assert login == "platform_admin_authenticator_login"
+        assert password == "platform authenticator password"
+        created = True
+
+    monkeypatch.setattr(service_login_bootstrap, "_role_flags", role_flags)
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: list(management) if login == "principal_operator" else [],
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+    monkeypatch.setattr(service_login_bootstrap, "_create_login", create_login)
+
+    result = service_login_bootstrap.prepare_platform_admin_service_login(
+        environ={"OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN": "principal_operator"},
+        service="platform_authenticator",
+        password_stream=BytesIO(b"platform authenticator password\n"),
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result["stage"] == "platform_admin_login_prepared"
+    assert result["service"] == "platform_authenticator"
+    assert result["base_role"] == "saas_platform_authenticator"
+    assert result["created"] is True
+    assert engine.disposed is True
+
+
+def test_bind_platform_admin_authenticator_login_uses_principal_operator(monkeypatch) -> None:
+    engine = _Engine(("principal_operator", "principal_operator"))
+    memberships: list[tuple[object, ...]] = []
+    management = [("saas_platform_authenticator", True, False, False, "bootstrap")]
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_production_database_url_file",
+        lambda _source, role: (
+            "postgresql+psycopg://principal_operator:redacted@example.invalid/omnigent",
+            sa.make_url(
+                "postgresql+psycopg://principal_operator:redacted@example.invalid/omnigent"
+            ),
+            f"/{role}-dsn",
+        ),
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "load_platform_admin_service_role_bindings",
+        lambda _source: _platform_admin_binding(),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_bootstrap_name", lambda *_args: "bootstrap")
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_role_flags",
+        lambda _connection, role: {
+            "principal_operator": (True, False, False, True, False, False, True, -1, None),
+            "saas_platform_authenticator": (
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                None,
+            ),
+            "platform_admin_authenticator_login": (
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                -1,
+                None,
+            ),
+        }[role],
+    )
+    monkeypatch.setattr(
+        service_login_bootstrap,
+        "_memberships",
+        lambda _connection, login: (
+            list(management) if login == "principal_operator" else list(memberships)
+        ),
+    )
+    monkeypatch.setattr(service_login_bootstrap, "_incoming_membership_count", lambda *_args: 0)
+
+    def grant(_connection, *, base_role: str, login: str) -> None:
+        assert base_role == "saas_platform_authenticator"
+        assert login == "platform_admin_authenticator_login"
+        memberships.append(
+            ("saas_platform_authenticator", False, True, False, "principal_operator")
+        )
+
+    monkeypatch.setattr(service_login_bootstrap, "_grant_named_base_role", grant)
+
+    result = service_login_bootstrap.bind_platform_admin_service_login(
+        environ={},
+        service="platform_authenticator",
+        engine_factory=lambda _url: engine,
+    )
+
+    assert result["stage"] == "platform_admin_login_bound"
+    assert result["granted"] is True
+    assert memberships == [
+        ("saas_platform_authenticator", False, True, False, "principal_operator")
+    ]
+
+
 def test_prepare_platform_model_login_uses_fixed_profile(monkeypatch) -> None:
     engine = _Engine(("bootstrap", "bootstrap"))
     created = False

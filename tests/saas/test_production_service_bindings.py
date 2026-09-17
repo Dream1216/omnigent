@@ -7,12 +7,14 @@ from pathlib import Path
 import pytest
 
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
     compose_production_service_role_graph,
+    load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
     render_production_service_role_bindings,
@@ -38,6 +40,17 @@ def _platform_model_bindings() -> tuple[ProductionServiceRoleBinding, ...]:
             base_role=base_role,
         )
         for service, base_role in sorted(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES.items())
+    )
+
+
+def _platform_admin_bindings() -> tuple[ProductionServiceRoleBinding, ...]:
+    return tuple(
+        ProductionServiceRoleBinding(
+            service=service,
+            login=f"next_beta_{service}",
+            base_role=base_role,
+        )
+        for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
     )
 
 
@@ -94,6 +107,23 @@ def test_loads_isolated_platform_model_binding_profile(tmp_path: Path) -> None:
         )
 
 
+def test_loads_isolated_platform_admin_binding_profile(tmp_path: Path) -> None:
+    rendered = render_production_service_role_bindings(_platform_admin_bindings())
+    path = tmp_path / "platform-admin-service-bindings.json"
+    path.write_text(rendered, encoding="ascii")
+    path.chmod(0o400)
+
+    loaded = load_platform_admin_service_role_bindings(
+        {"OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE": str(path)}
+    )
+
+    assert len(loaded.bindings) == 3
+    assert loaded.login_for("platform_authenticator") == "next_beta_platform_authenticator"
+    assert loaded.login_for("platform_app") == "next_beta_platform_app"
+    assert loaded.login_for("platform_governance") == "next_beta_platform_governance"
+    assert set(loaded.by_service) == set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
+
+
 def test_composes_exact_platform_model_extension_without_weakening_core() -> None:
     production = ProductionServiceRoleBindings(
         path=Path("/production.json"),
@@ -128,6 +158,29 @@ def test_composes_exact_platform_model_extension_without_weakening_core() -> Non
             render_production_service_role_bindings(graph.bindings).encode("ascii")
         ).hexdigest()
     )
+
+    platform_by_service = platform.by_service
+    platform_admin = ProductionServiceRoleBindings(
+        path=Path("/platform-admin.json"),
+        sha256="c" * 64,
+        bindings=tuple(
+            production_by_service[service]
+            if service in production_by_service
+            else platform_by_service[service]
+            if service in platform_by_service
+            else ProductionServiceRoleBinding(
+                service=service,
+                login=f"next_beta_{service}",
+                base_role=base_role,
+            )
+            for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
+        ),
+    )
+    extended = compose_production_service_role_graph(production, platform, platform_admin)
+    assert len(extended.bindings) == 18
+    assert extended.login_for("platform_authenticator") == "next_beta_platform_authenticator"
+    assert extended.login_for("platform_app") == "next_beta_platform_app"
+    assert extended.login_for("platform_governance") == "prod_platform_governance"
 
 
 def test_composition_rejects_changed_overlap_and_reused_login() -> None:
