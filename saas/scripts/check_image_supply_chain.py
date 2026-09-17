@@ -43,6 +43,7 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
+    "@moonshot-ai/kimi-code@0.43.1",
     "@qwen-code/audio-capture@0.23.4",
     "@qwen-code/qwen-code@0.23.4",
     "opencode-ai@1.18.31",

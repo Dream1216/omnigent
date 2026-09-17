@@ -891,6 +891,7 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
 @pytest.mark.parametrize(
     ("target", "replacement"),
     [
+        ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
         ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
         ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
         ("'opencode-linux-x64@1.18.31'", "'unrelated-package@1.0.0'"),
