@@ -1,9 +1,10 @@
 """Escaping-symlink masks must not emit a mount onto the symlink path.
 
 bwrap resolves a mount destination *through* a final symlink, so masking a
-symlink aborts the whole namespace (``Can't create file at <link>`` for the
-file shape, ``Can't mount tmpfs on <link>`` for the dir shape) and kills the
-launcher at spawn. Skipping symlink entries is safe: the mount namespace
+symlink aborts the whole namespace (``Can't create file at <link>`` or
+``Can't mount on symlink destination <link>`` for the file shape,
+``Can't mount tmpfs on <link>`` for the dir shape) and kills the launcher at
+spawn. Skipping symlink entries is safe: the mount namespace
 already confines symlink resolution, so the link is followed inside the
 sandbox view where an escaping target is unmounted or separately masked.
 """
@@ -132,4 +133,8 @@ def test_bwrap_rejects_a_bind_onto_a_symlink(tmp_path: pathlib.Path) -> None:
         text=True,
     )
     assert bad.returncode != 0
-    assert "Can't create file at" in bad.stderr
+    assert str(link) in bad.stderr
+    assert any(
+        message in bad.stderr
+        for message in ("Can't create file at", "Can't mount on symlink destination")
+    )
