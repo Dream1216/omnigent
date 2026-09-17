@@ -464,7 +464,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       --root /opt/omnigent-host-cli \
       --root /usr/local/lib/node_modules/pnpm \
  && rm -f /tmp/normalize_host_cli_tree.py \
- && touch -h -d "@${SOURCE_DATE_EPOCH}" \
+ && find /tmp -mindepth 1 -depth -delete && find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + && touch -h -d "@${SOURCE_DATE_EPOCH}" \
       /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
       /usr/local/bin /usr/local/lib/node_modules /tmp /root
 
