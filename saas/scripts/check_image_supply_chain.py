@@ -795,19 +795,22 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             "production Python installs and executable stages must bind the exact runtime revision"
         )
     core_bytecode_contract = {
-        "> /tmp/venv-seed-pyc.sha256",
-        "> /tmp/venv-core-pyc.sha256",
-        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256",
-        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py",
-        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"',
-        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"',
-        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv",
-        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar",
-        "COPY --from=builder /opt/venv-export /opt/venv",
-        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+        "> /tmp/venv-seed-pyc.sha256": 1,
+        "> /tmp/venv-core-pyc.sha256": 1,
+        "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256": 1,
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 1,
+        '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"': 1,
+        'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"': 2,
+        "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv": 1,
+        "tar -C /opt/venv-export --strip-components=1 -xf /tmp/venv.tar": 1,
+        "COPY --from=builder /opt/venv-export /opt/venv": 1,
+        'find /build -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +': 1,
     }
     if (
-        any(dockerfile.count(fragment) != 1 for fragment in core_bytecode_contract)
+        any(
+            dockerfile.count(fragment) != expected_count
+            for fragment, expected_count in core_bytecode_contract.items()
+        )
         or dockerfile.count('root.rglob("uv_cache.json")') != 2
         or dockerfile.count("python -B -I -c") < 3
     ):
@@ -815,9 +818,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
+        "-cf /tmp/server-venv.tar venv",
+        "tar -C /opt/server-venv-export --strip-components=1",
+        "COPY --from=server-builder /opt/server-venv-export /opt/venv",
     }
     if any(dockerfile.count(fragment) != 1 for fragment in server_bytecode_contract):
-        violations.append("server venv must preserve the deterministic seed bytecode manifest")
+        violations.append(
+            "server venv must preserve deterministic bytecode and use a canonical export layer"
+        )
 
     try:
         lock_packages = tomllib.loads(uv_lock).get("package", [])

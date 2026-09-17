@@ -688,7 +688,17 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
         (
             "> /tmp/venv-server-pyc.sha256",
             "> /tmp/venv-server-pyc-unchecked.sha256",
-            "server venv must preserve the deterministic seed bytecode manifest",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
+        ),
+        (
+            "-cf /tmp/server-venv.tar venv",
+            "-cf /tmp/server-venv-volatile.tar venv",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
+        ),
+        (
+            "COPY --from=server-builder /opt/server-venv-export /opt/venv",
+            "COPY --from=server-builder /opt/venv /opt/venv",
+            ("server venv must preserve deterministic bytecode and use a canonical export layer"),
         ),
         (
             "rm -f /var/cache/ldconfig/aux-cache",

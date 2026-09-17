@@ -262,7 +262,7 @@ RUN set -eu; \
     cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256; \
     python -B -I ./saas/scripts/normalize_host_cli_tree.py \
       --root=/opt/venv --source-date-epoch="${SOURCE_DATE_EPOCH}"; \
-    find /opt/venv /build -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+    find /opt/venv /build -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +; tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/server-venv.tar venv; mkdir /opt/server-venv-export; tar -C /opt/server-venv-export --strip-components=1 -xf /tmp/server-venv.tar; rm -f /tmp/server-venv.tar
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
@@ -642,7 +642,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
 # Preserve /build/ in the runtime stage — the venv's editable install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute
 # path. Copying these to /app/ would break the import paths silently.
-COPY --from=server-builder /opt/venv /opt/venv
+COPY --from=server-builder /opt/server-venv-export /opt/venv
 COPY --from=server-builder /build /build
 COPY deploy/docker/entrypoint.py /app/entrypoint.py
 RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
