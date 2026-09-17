@@ -165,6 +165,77 @@ def test_initial_local_password_operator_bootstrap_is_exactly_once(
     assert repeated.value.code == "platform_bootstrap_conflict"
 
 
+def test_local_operator_transition_requires_existing_operator_and_is_idempotent(
+    platform_control_plane,
+) -> None:
+    factory, authorization, sessions, _projections = platform_control_plane
+    legacy_operator = authorization.provision_staff_principal(
+        identity_connection_ref="single-owner-beta-bridge",
+        issuer="urn:omnigent:single-owner-beta",
+        subject="legacy-owner",
+        now=NOW,
+    )
+    roleless_legacy = authorization.provision_staff_principal(
+        identity_connection_ref="single-owner-beta-roleless",
+        issuer="urn:omnigent:single-owner-beta",
+        subject="legacy-roleless",
+        now=NOW,
+    )
+    _seed_role(
+        factory,
+        principal_id=legacy_operator,
+        assigned_by=roleless_legacy,
+        role="platform_operator",
+    )
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+
+    principal_id = passwords.transition_local_operator(
+        username="staff-admin",
+        password="staff-admin-password-2026",
+        authorized_by_principal_id=legacy_operator,
+        approval_ref="BETA-LOCAL-STAFF-TRANSITION-20260917",
+        reason="replace the temporary Tenant bridge with local Staff login",
+        now=NOW,
+    )
+    assert (
+        passwords.transition_local_operator(
+            username="STAFF-ADMIN",
+            password="staff-admin-password-2026",
+            authorized_by_principal_id=legacy_operator,
+            approval_ref="BETA-LOCAL-STAFF-TRANSITION-20260917",
+            reason="replace the temporary Tenant bridge with local Staff login",
+            now=NOW,
+        )
+        == principal_id
+    )
+    with factory.begin() as db:
+        assignment = db.scalar(
+            sa.select(PlatformRoleAssignmentRecord).where(
+                PlatformRoleAssignmentRecord.principal_id == principal_id
+            )
+        )
+        assert assignment is not None
+        assert assignment.role == "platform_operator"
+        assert assignment.assigned_by_principal_id == legacy_operator
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(PlatformPasswordCredentialRecord))
+            == 1
+        )
+
+    issued = passwords.authenticate("staff-admin", "staff-admin-password-2026", now=NOW)
+    assert issued.principal_id == principal_id
+    with pytest.raises(PlatformSecurityError) as unauthorized:
+        passwords.transition_local_operator(
+            username="second-admin",
+            password="second-admin-password-2026",
+            authorized_by_principal_id=roleless_legacy,
+            approval_ref="BETA-LOCAL-STAFF-TRANSITION-20260917",
+            reason="unauthorized retry",
+            now=NOW,
+        )
+    assert unauthorized.value.code == "platform_transition_authority_invalid"
+
+
 def test_local_staff_password_authentication_is_generic_and_locks_failures(
     platform_control_plane,
 ) -> None:

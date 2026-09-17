@@ -17,6 +17,7 @@ from saas.production.server_config import (
 from saas.production.service_bindings import (
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindingsError,
+    load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
 )
@@ -32,6 +33,9 @@ _PRINCIPAL_OPERATOR_LOGIN = "OMNIGENT_SAAS_PRINCIPAL_OPERATOR_LOGIN"
 _PLATFORM_MODEL_SERVICES = {
     "billing": "saas_billing",
     "platform_app": "saas_platform_app",
+}
+_PLATFORM_ADMIN_SERVICES = {
+    "platform_authenticator": "saas_platform_authenticator",
 }
 _EXPECTED_LOGIN_FLAGS = (
     True,
@@ -501,6 +505,21 @@ def _platform_model_binding(
     return binding
 
 
+def _platform_admin_binding(
+    environ: Mapping[str, str], service: str
+) -> ProductionServiceRoleBinding:
+    expected_base_role = _PLATFORM_ADMIN_SERVICES.get(service)
+    if expected_base_role is None:
+        raise ProductionServiceLoginBootstrapError("authority_invalid")
+    try:
+        binding = load_platform_admin_service_role_bindings(environ).by_service[service]
+    except (KeyError, ProductionServiceRoleBindingsError):
+        raise ProductionServiceLoginBootstrapError("authority_invalid") from None
+    if binding.base_role != expected_base_role:
+        raise ProductionServiceLoginBootstrapError("authority_invalid")
+    return binding
+
+
 def prepare_platform_model_service_login(
     *,
     environ: Mapping[str, str],
@@ -678,6 +697,190 @@ def bind_platform_model_service_login(
         "status": "pass",
         "production_authority": False,
         "stage": "platform_model_login_bound",
+        "service": service,
+        "login": binding.login,
+        "base_role": binding.base_role,
+        "granted": granted,
+    }
+
+
+def prepare_platform_admin_service_login(
+    *,
+    environ: Mapping[str, str],
+    service: str,
+    password_stream: BinaryIO,
+    engine_factory: Callable[[str], Engine] = lambda url: sa.create_engine(
+        url,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+    ),
+) -> dict[str, object]:
+    """Create or rotate one fixed Platform Admin login as the bootstrap superuser."""
+
+    binding = _platform_admin_binding(environ, service)
+    superuser_url, superuser_authority = _database_authority(environ, "superuser")
+    principal_operator = environ.get(_PRINCIPAL_OPERATOR_LOGIN, "")
+    if (
+        principal_operator != principal_operator.strip()
+        or _ROLE_NAME.fullmatch(principal_operator) is None
+    ):
+        raise ProductionServiceLoginBootstrapError("authority_invalid")
+    expected_membership = (
+        binding.base_role,
+        False,
+        True,
+        False,
+        principal_operator,
+    )
+    expected_management = (
+        binding.base_role,
+        True,
+        False,
+        False,
+        str(superuser_authority.username),
+    )
+    password, mutable_password = _read_password(password_stream)
+    engine: Engine | None = None
+    created = False
+    try:
+        engine = _engine(superuser_url, engine_factory)
+        with engine.begin() as connection:
+            if (
+                _identity(connection)
+                != (superuser_authority.username, superuser_authority.username)
+                or _bootstrap_name(connection) != superuser_authority.username
+                or not _superuser_flags_are_safe(
+                    _role_flags(connection, str(superuser_authority.username))
+                )
+                or _role_flags(connection, principal_operator) != _EXPECTED_OPERATOR_FLAGS
+                or _role_flags(connection, binding.base_role) != _EXPECTED_BASE_FLAGS
+                or expected_management not in _memberships(connection, principal_operator)
+            ):
+                raise ProductionServiceLoginBootstrapError("authority_invalid")
+
+            login_flags = _role_flags(connection, binding.login)
+            memberships = _memberships(connection, binding.login)
+            if _incoming_membership_count(connection, binding.login):
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+            if login_flags is None:
+                if memberships:
+                    raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+                _create_login(connection, login=binding.login, password=password)
+                created = True
+            elif login_flags == _EXPECTED_LOGIN_FLAGS and memberships in (
+                [],
+                [expected_membership],
+            ):
+                _set_login_password(connection, login=binding.login, password=password)
+            else:
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+
+            if (
+                _role_flags(connection, binding.login) != _EXPECTED_LOGIN_FLAGS
+                or _incoming_membership_count(connection, binding.login)
+                or _memberships(connection, binding.login) not in ([], [expected_membership])
+            ):
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+    except ProductionServiceLoginBootstrapError:
+        raise
+    except (sa.exc.SQLAlchemyError, AttributeError, TypeError, ValueError):
+        raise ProductionServiceLoginBootstrapError("bootstrap_failed") from None
+    finally:
+        mutable_password[:] = b"\0" * len(mutable_password)
+        password = ""
+        if engine is not None:
+            engine.dispose()
+
+    return {
+        "schema_version": 1,
+        "status": "pass",
+        "production_authority": False,
+        "stage": "platform_admin_login_prepared",
+        "service": service,
+        "login": binding.login,
+        "base_role": binding.base_role,
+        "created": created,
+    }
+
+
+def bind_platform_admin_service_login(
+    *,
+    environ: Mapping[str, str],
+    service: str,
+    engine_factory: Callable[[str], Engine] = lambda url: sa.create_engine(
+        url,
+        pool_pre_ping=True,
+        poolclass=sa.pool.NullPool,
+    ),
+) -> dict[str, object]:
+    """Bind one fixed Platform Admin login through principal-operator authority."""
+
+    binding = _platform_admin_binding(environ, service)
+    operator_url, operator_authority = _database_authority(environ, "principal_operator")
+    expected_membership = (
+        binding.base_role,
+        False,
+        True,
+        False,
+        str(operator_authority.username),
+    )
+    engine: Engine | None = None
+    granted = False
+    try:
+        engine = _engine(operator_url, engine_factory)
+        with engine.begin() as connection:
+            bootstrap_name = _bootstrap_name(connection)
+            if bootstrap_name is None:
+                raise ProductionServiceLoginBootstrapError("authority_invalid")
+            expected_management = (
+                binding.base_role,
+                True,
+                False,
+                False,
+                bootstrap_name,
+            )
+            if (
+                _identity(connection) != (operator_authority.username, operator_authority.username)
+                or _role_flags(connection, str(operator_authority.username))
+                != _EXPECTED_OPERATOR_FLAGS
+                or _role_flags(connection, binding.base_role) != _EXPECTED_BASE_FLAGS
+                or _role_flags(connection, binding.login) != _EXPECTED_LOGIN_FLAGS
+                or _incoming_membership_count(connection, binding.login)
+                or expected_management
+                not in _memberships(connection, str(operator_authority.username))
+            ):
+                raise ProductionServiceLoginBootstrapError("authority_invalid")
+
+            memberships = _memberships(connection, binding.login)
+            if memberships == []:
+                _grant_named_base_role(
+                    connection,
+                    base_role=binding.base_role,
+                    login=binding.login,
+                )
+                granted = True
+            elif memberships != [expected_membership]:
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+
+            if (
+                _role_flags(connection, binding.login) != _EXPECTED_LOGIN_FLAGS
+                or _incoming_membership_count(connection, binding.login)
+                or _memberships(connection, binding.login) != [expected_membership]
+            ):
+                raise ProductionServiceLoginBootstrapError("login_projection_invalid")
+    except ProductionServiceLoginBootstrapError:
+        raise
+    except (sa.exc.SQLAlchemyError, AttributeError, TypeError, ValueError):
+        raise ProductionServiceLoginBootstrapError("bootstrap_failed") from None
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+    return {
+        "schema_version": 1,
+        "status": "pass",
+        "production_authority": False,
+        "stage": "platform_admin_login_bound",
         "service": service,
         "login": binding.login,
         "base_role": binding.base_role,
