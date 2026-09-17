@@ -98,6 +98,48 @@ class PlatformStaffPrincipalRecord(SaasBase):
     )
 
 
+class PlatformPasswordCredentialRecord(SaasBase):
+    """Argon2id credential for the independent local Staff Realm."""
+
+    __tablename__ = "saas_platform_password_credentials"
+
+    principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    username_normalized: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    password_version: Mapped[int] = mapped_column(nullable=False, default=1)
+    failed_attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "length(username_normalized) >= 3",
+            name="ck_platform_password_username_nonempty",
+        ),
+        sa.CheckConstraint(
+            "length(password_hash) > 0",
+            name="ck_platform_password_hash_nonempty",
+        ),
+        sa.CheckConstraint(
+            "password_version > 0",
+            name="ck_platform_password_version",
+        ),
+        sa.CheckConstraint(
+            "failed_attempts >= 0",
+            name="ck_platform_password_failed_attempts",
+        ),
+        sa.Index("ix_platform_password_lock", "locked_until"),
+    )
+
+
 class PlatformRoleAssignmentRecord(SaasBase):
     """Versioned, expiring assignment of one immutable platform role."""
 
@@ -160,7 +202,7 @@ class PlatformRoleAssignmentRecord(SaasBase):
 
 
 class PlatformAuthSessionRecord(SaasBase):
-    """Origin- and Audience-bound phishing-resistant Staff Realm session."""
+    """Origin- and Audience-bound local-password Staff Realm session."""
 
     __tablename__ = "saas_platform_auth_sessions"
 
@@ -194,7 +236,8 @@ class PlatformAuthSessionRecord(SaasBase):
             "length(authn_method) > 0", name="ck_platform_session_authn_method_nonempty"
         ),
         sa.CheckConstraint(
-            "mfa_strength = 'phishing_resistant'", name="ck_platform_session_mfa_strength"
+            "mfa_strength IN ('not_required', 'phishing_resistant')",
+            name="ck_platform_session_mfa_strength",
         ),
         sa.CheckConstraint(
             "authenticated_at < expires_at", name="ck_platform_session_expiry_order"

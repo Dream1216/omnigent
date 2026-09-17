@@ -11,13 +11,17 @@ from sqlalchemy.pool import StaticPool
 from saas.control_plane.db_models import GlobalUser, SaasBase
 from saas.control_plane.platform_models import (
     PlatformAuthSessionRecord,
+    PlatformPasswordCredentialRecord,
     PlatformRoleAssignmentRecord,
     PlatformStaffPrincipalRecord,
     PlatformTenantProjectionRecord,
     PlatformUserProjectionRecord,
 )
+from saas.control_plane.platform_password_auth import (
+    STAFF_PASSWORD_ISSUER,
+    PlatformPasswordAuthenticationService,
+)
 from saas.control_plane.platform_security import (
-    InitialPlatformStaffIdentity,
     PlatformAuthorizationService,
     PlatformProjectionService,
     PlatformSecurityError,
@@ -31,16 +35,6 @@ from saas.control_plane.platform_security import (
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
 NOW = datetime(2026, 8, 7, 13, 0, tzinfo=timezone.utc)
-
-
-def _initial_identity(name: str) -> InitialPlatformStaffIdentity:
-    return InitialPlatformStaffIdentity(
-        identity_connection_ref=f"ssh-signed-owner-bootstrap:{name}",
-        issuer="urn:omnigent:staff-bootstrap:owner-approved",
-        subject=name,
-        display_name=f"Initial {name.title()}",
-        email_normalized=f"{name}@jxhh.com",
-    )
 
 
 @pytest.fixture
@@ -70,8 +64,8 @@ def _provision(
     name: str,
 ) -> UUID:
     return authorization.provision_staff_principal(
-        identity_connection_ref=f"staff-idp:{name}",
-        issuer="https://staff-idp.example.test",
+        identity_connection_ref=f"local-password:{name}",
+        issuer=STAFF_PASSWORD_ISSUER,
         subject=name,
         display_name=name.title(),
         email_normalized=f"{name}@example.test",
@@ -96,8 +90,8 @@ def _seed_role(
                 status="active",
                 version=1,
                 assigned_by_principal_id=assigned_by,
-                approval_ref="staff-idp-bootstrap-approval",
-                reason="initial Staff IdP role sync",
+                approval_ref="local-password-bootstrap-approval",
+                reason="initial local Staff role assignment",
                 created_at=NOW,
                 updated_at=NOW,
             )
@@ -111,10 +105,10 @@ def _issue(
 ):
     return sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer=STAFF_PASSWORD_ISSUER,
             subject=subject,
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=NOW,
         ),
         expires_at=NOW + timedelta(hours=1),
@@ -131,85 +125,154 @@ def _validate(sessions: PlatformSessionService, token: str):
     )
 
 
-def test_initial_staff_bootstrap_is_short_lived_two_party_and_exactly_once(
+def test_initial_local_password_operator_bootstrap_is_exactly_once(
     platform_control_plane,
 ) -> None:
-    factory, authorization, _sessions, _projections = platform_control_plane
-    actor = authorization.bootstrap_initial_staff_pair(
-        operator=_initial_identity("operator"),
-        auditor=_initial_identity("auditor"),
-        approval_ref="owner-approved:smtp-bootstrap:2026-09-07",
-        reason="single Owner risk waiver; initial SMTP bootstrap only",
-        expires_at=NOW + timedelta(minutes=30),
+    factory, _authorization, sessions, _projections = platform_control_plane
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+    principal_id = passwords.bootstrap_initial_operator(
+        username="admin",
+        password="admin-password-2026",
+        display_name="Initial Administrator",
+        email_normalized="admin@jxhh.com",
         now=NOW,
     )
 
-    assert actor.authn_method == "ssh-signed-owner-bootstrap"
-    assert actor.roles == frozenset({"platform_operator"})
-    assert "platform.email_configuration.manage" in actor.permissions
     with factory.begin() as db:
-        principals = db.scalars(
-            sa.select(PlatformStaffPrincipalRecord).order_by(PlatformStaffPrincipalRecord.subject)
-        ).all()
-        assignments = db.scalars(
-            sa.select(PlatformRoleAssignmentRecord).order_by(PlatformRoleAssignmentRecord.role)
-        ).all()
-        assert [principal.subject for principal in principals] == ["auditor", "operator"]
-        assert {assignment.role for assignment in assignments} == {
-            "platform_operator",
-            "platform_security_auditor",
-        }
-        assert all(
-            assignment.expires_at == (NOW + timedelta(minutes=30)).replace(tzinfo=None)
-            for assignment in assignments
+        principal = db.get(PlatformStaffPrincipalRecord, principal_id)
+        credential = db.get(PlatformPasswordCredentialRecord, principal_id)
+        assignment = db.scalar(
+            sa.select(PlatformRoleAssignmentRecord).where(
+                PlatformRoleAssignmentRecord.principal_id == principal_id
+            )
         )
-        by_role = {assignment.role: assignment for assignment in assignments}
-        assert by_role["platform_operator"].principal_id == actor.principal_id
-        assert (
-            by_role["platform_operator"].assigned_by_principal_id
-            == by_role["platform_security_auditor"].principal_id
-        )
-        assert (
-            by_role["platform_security_auditor"].assigned_by_principal_id
-            == by_role["platform_operator"].principal_id
-        )
+        assert principal is not None
+        assert principal.issuer == STAFF_PASSWORD_ISSUER
+        assert principal.subject == "admin"
+        assert credential is not None
+        assert credential.username_normalized == "admin"
+        assert credential.password_hash != "admin-password-2026"
+        assert assignment is not None
+        assert assignment.role == "platform_operator"
         assert db.scalar(sa.select(sa.func.count()).select_from(PlatformAuthSessionRecord)) == 0
 
     with pytest.raises(PlatformSecurityError) as repeated:
-        authorization.bootstrap_initial_staff_pair(
-            operator=_initial_identity("operator-2"),
-            auditor=_initial_identity("auditor-2"),
-            approval_ref="owner-approved:smtp-bootstrap:repeated",
-            reason="must fail closed",
-            expires_at=NOW + timedelta(minutes=30),
+        passwords.bootstrap_initial_operator(
+            username="admin-2",
+            password="admin-password-2026",
             now=NOW,
         )
     assert repeated.value.code == "platform_bootstrap_conflict"
 
 
-def test_initial_staff_bootstrap_rejects_one_party_and_long_lived_authority(
+def test_local_staff_password_authentication_is_generic_and_locks_failures(
     platform_control_plane,
 ) -> None:
-    _factory, authorization, _sessions, _projections = platform_control_plane
-    operator = _initial_identity("operator")
+    factory, _authorization, sessions, _projections = platform_control_plane
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+    passwords.provision_account(
+        username="Case.Sensitive",
+        password="correct-password-2026",
+        now=NOW,
+    )
 
-    for auditor, expires_at in (
-        (operator, NOW + timedelta(minutes=30)),
-        (_initial_identity("auditor"), NOW + timedelta(hours=1, seconds=1)),
-    ):
-        with pytest.raises(PlatformSecurityError) as invalid:
-            authorization.bootstrap_initial_staff_pair(
-                operator=operator,
-                auditor=auditor,
-                approval_ref="owner-approved:smtp-bootstrap:invalid",
-                reason="must fail closed",
-                expires_at=expires_at,
-                now=NOW,
-            )
-        assert invalid.value.code == "platform_bootstrap_invalid"
+    for username in ("unknown", "case.sensitive"):
+        with pytest.raises(PlatformSecurityError) as denied:
+            passwords.authenticate(username, "wrong-password-2026", now=NOW)
+        assert denied.value.code == "platform_invalid_credentials"
+
+    for _attempt in range(4):
+        with pytest.raises(PlatformSecurityError) as denied:
+            passwords.authenticate("CASE.SENSITIVE", "wrong-password-2026", now=NOW)
+        assert denied.value.code == "platform_invalid_credentials"
+    with pytest.raises(PlatformSecurityError) as locked:
+        passwords.authenticate("case.sensitive", "correct-password-2026", now=NOW)
+    assert locked.value.code == "platform_invalid_credentials"
+
+    with pytest.raises(PlatformSecurityError) as expired_lock_failure:
+        passwords.authenticate(
+            "case.sensitive",
+            "wrong-password-2026",
+            now=NOW + timedelta(minutes=16),
+        )
+    assert expired_lock_failure.value.code == "platform_invalid_credentials"
+    issued = passwords.authenticate(
+        "case.sensitive",
+        "correct-password-2026",
+        now=NOW + timedelta(minutes=16, seconds=1),
+    )
+    assert _validate(sessions, issued.token).authn_method == "password"
 
 
-def test_staff_realm_requires_dedicated_identity_phishing_resistant_mfa_and_origin(
+def test_invalid_username_shape_cannot_lock_a_real_sentinel_named_account(
+    platform_control_plane,
+) -> None:
+    factory, _authorization, sessions, _projections = platform_control_plane
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+    passwords.provision_account(
+        username="invalid-staff-user",
+        password="sentinel-password-2026",
+        now=NOW,
+    )
+
+    for _attempt in range(5):
+        with pytest.raises(PlatformSecurityError) as denied:
+            passwords.authenticate("invalid username!", "wrong-password-2026", now=NOW)
+        assert denied.value.code == "platform_invalid_credentials"
+
+    issued = passwords.authenticate(
+        "invalid-staff-user",
+        "sentinel-password-2026",
+        now=NOW,
+    )
+    assert issued.principal_id is not None
+
+
+def test_local_staff_password_reset_revokes_sessions_and_unlocks_account(
+    platform_control_plane,
+) -> None:
+    factory, _authorization, sessions, _projections = platform_control_plane
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+    principal_id = passwords.provision_account(
+        username="resettable",
+        password="initial-password-2026",
+        now=NOW,
+    )
+    issued = passwords.authenticate("resettable", "initial-password-2026", now=NOW)
+
+    assert (
+        passwords.reset_password(
+            principal_id=principal_id,
+            new_password="replacement-password-2026",
+            expected_version=1,
+            now=NOW + timedelta(minutes=1),
+        )
+        == 2
+    )
+    with pytest.raises(PlatformSecurityError) as revoked:
+        sessions.validate_session(
+            issued.token,
+            origin=ORIGIN,
+            audience=AUDIENCE,
+            now=NOW + timedelta(minutes=1, seconds=1),
+        )
+    assert revoked.value.code == "platform_session_invalid"
+    with pytest.raises(PlatformSecurityError) as old_password:
+        passwords.authenticate(
+            "resettable",
+            "initial-password-2026",
+            now=NOW + timedelta(minutes=1),
+        )
+    assert old_password.value.code == "platform_invalid_credentials"
+    replacement = passwords.authenticate(
+        "resettable",
+        "replacement-password-2026",
+        now=NOW + timedelta(minutes=1),
+    )
+    assert replacement.principal_id == principal_id
+
+
+def test_staff_realm_requires_local_password_identity_and_exact_origin(
     platform_control_plane,
 ) -> None:
     factory, authorization, sessions, _projections = platform_control_plane
@@ -228,19 +291,19 @@ def test_staff_realm_requires_dedicated_identity_phishing_resistant_mfa_and_orig
         _issue(sessions, "customer-only-subject")
     assert no_staff_identity.value.code == "platform_principal_inactive"
 
-    with pytest.raises(PlatformSecurityError) as weak_mfa:
+    with pytest.raises(PlatformSecurityError) as disallowed_method:
         sessions.issue_session(
             StaffIdentityAssertion(
-                issuer="https://staff-idp.example.test",
+                issuer=STAFF_PASSWORD_ISSUER,
                 subject="operator",
-                authn_method="password",
-                mfa_strength="password_only",
+                authn_method="webauthn",
+                mfa_strength="not_required",
                 authenticated_at=NOW,
             ),
             expires_at=NOW + timedelta(hours=1),
             now=NOW,
         )
-    assert weak_mfa.value.code == "platform_mfa_required"
+    assert disallowed_method.value.code == "platform_authn_method_invalid"
 
     issued = _issue(sessions, "operator")
     principal = _validate(sessions, issued.token)
@@ -435,8 +498,8 @@ def test_staff_provisioning_is_roleless_idempotent_and_conflict_safe(
     factory, authorization, _sessions, _projections = platform_control_plane
     principal_id = _provision(authorization, "auditor")
     replayed_id = authorization.provision_staff_principal(
-        identity_connection_ref="staff-idp:auditor",
-        issuer="https://staff-idp.example.test",
+        identity_connection_ref="local-password:auditor",
+        issuer=STAFF_PASSWORD_ISSUER,
         subject="auditor",
         display_name="Updated Auditor",
         email_normalized="auditor@example.test",
@@ -451,8 +514,8 @@ def test_staff_provisioning_is_roleless_idempotent_and_conflict_safe(
 
     with pytest.raises(PlatformSecurityError) as conflict:
         authorization.provision_staff_principal(
-            identity_connection_ref="staff-idp:somebody-else",
-            issuer="https://staff-idp.example.test",
+            identity_connection_ref="local-password:somebody-else",
+            issuer=STAFF_PASSWORD_ISSUER,
             subject="auditor",
             now=NOW + timedelta(seconds=2),
         )
