@@ -24,7 +24,9 @@
             "saas/acceptance/p3-upstream-sync-ci-30897083447.json",
             "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
             "saas/acceptance/p6-upstream-sync-20260918-freeze.json",
-            "saas/acceptance/p6-upstream-sync-20260918-conflict-resolution.json"
+            "saas/acceptance/p6-upstream-sync-20260918-conflict-resolution.json",
+            "saas/acceptance/p6-upstream-sync-20260918-9616-freeze.json",
+            "saas/acceptance/p6-upstream-sync-20260918-9616-conflict-resolution.json"
           ]
         },
         {

@@ -1453,3 +1453,23 @@ fact remains recorded in the conflict-resolution evidence. Exact-Head remote
 CI, branch protection, signed images, deployment, Canary, rollback and fresh
 production approval remain unobserved or unauthorized, so release stays
 `NO-GO`.
+
+## 2026-09-18 official-main `9616bf97` advance
+
+The official baseline advances by three commits from
+`6aef59afe6877943bb0c261df7d5fee30e733f7d` to
+`9616bf97cd38494db7164a1f6f350e853da4d8d3` (`0.15.0.dev0`). Merge revision
+`751095758b99c3a9561061b91c54c357b50e9040` has the prior downstream candidate
+and the exact official revision as its two parents. The advance is conflict-free,
+does not overlap any of the twelve patched official source paths, and preserves
+the five-patch replay without a content mismatch.
+
+Local validation passed all 65 newly affected upstream tests, the 1,356-test
+security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14
+and 18.4 clean/repeated/N-1 migration replays, the 38-test PostgreSQL catalog
+contract with one URL-dependent skip, TypeScript, and every pre-commit hook. The
+three upstream commits change no Web source, so the preceding 8,475-assertion Web
+result remains the browser regression evidence while the exact candidate passed
+Web static validation. Exact-Head remote CI, merge inclusion, image publication,
+deployment, Canary, rollback, recovery, and fresh production approval remain
+separate gates at this local-candidate stage.
