@@ -639,7 +639,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
 
-# Preserve /build/ in the runtime stage — the venv's editable install
+# Copy the canonical venv export and preserve /build/ — editable-install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute
 # path. Copying these to /app/ would break the import paths silently.
 COPY --from=server-builder /opt/server-venv-export /opt/venv
