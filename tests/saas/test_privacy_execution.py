@@ -383,7 +383,7 @@ def test_claim_hashes_lease_and_executor_and_rejects_staff_identity(
         session_id=uuid4(),
         principal_id=execution.staff_id,
         security_version=1,
-        authn_method="passkey",
+        authn_method="password",
         authenticated_at=NOW,
         expires_at=NOW + timedelta(hours=1),
         roles=frozenset(),

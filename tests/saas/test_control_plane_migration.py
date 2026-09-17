@@ -239,13 +239,14 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000013"
+        assert revision == "p0s000000014"
         assert {
             "saas_model_provider_configurations",
             "saas_model_provider_configuration_receipts",
             "saas_model_provider_monthly_budgets",
             "saas_model_provider_tenant_daily_usage",
             "saas_model_provider_budget_reservations",
+            "saas_platform_password_credentials",
         }.issubset(application_tables)
         dispatch_profile = next(
             foreign_key
@@ -489,6 +490,76 @@ def test_platform_model_provider_migration_is_exact_and_reversible() -> None:
         assert "saas_model_provider_configurations" not in tables
         assert "saas_model_provider_configuration_receipts" not in tables
         assert budget_tables.isdisjoint(tables)
+    engine.dispose()
+
+
+def test_local_staff_password_migration_round_trip_revokes_new_sessions() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000013")
+        assert "saas_platform_password_credentials" not in sa.inspect(connection).get_table_names()
+
+        command.upgrade(config, "p0s000000014")
+        inspector = sa.inspect(connection)
+        assert "saas_platform_password_credentials" in inspector.get_table_names()
+        assert {
+            "principal_id",
+            "username_normalized",
+            "password_hash",
+            "password_version",
+            "failed_attempts",
+            "locked_until",
+            "updated_at",
+        } == {
+            column["name"]
+            for column in inspector.get_columns("saas_platform_password_credentials")
+        }
+
+        principal_id = uuid4().hex
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_platform_staff_principals "
+                "(id, identity_connection_ref, issuer, subject, status, security_version) "
+                "VALUES (:id, 'local-password:rollback', 'urn:omnigent:staff-password', "
+                "'rollback', 'active', 1)"
+            ),
+            {"id": principal_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_platform_auth_sessions "
+                "(id, principal_id, token_hash, csrf_token_hash, security_version, audience, "
+                "origin, authn_method, mfa_strength, authenticated_at, expires_at) VALUES "
+                "(:session_id, :principal_id, :token_hash, :csrf_hash, 1, 'platform', "
+                "'https://platform.example.test', 'password', 'not_required', "
+                "CURRENT_TIMESTAMP, datetime(CURRENT_TIMESTAMP, '+1 hour'))"
+            ),
+            {
+                "session_id": uuid4().hex,
+                "principal_id": principal_id,
+                "token_hash": "a" * 64,
+                "csrf_hash": "b" * 64,
+            },
+        )
+
+        command.downgrade(config, "p0s000000013")
+        assert "saas_platform_password_credentials" not in sa.inspect(connection).get_table_names()
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT count(*) FROM saas_platform_auth_sessions "
+                    "WHERE mfa_strength = 'not_required'"
+                )
+            )
+            == 0
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "p0s000000013"
+        )
+
+        command.upgrade(config, "p0s000000014")
+        assert "saas_platform_password_credentials" in sa.inspect(connection).get_table_names()
     engine.dispose()
 
 
@@ -1796,7 +1867,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000013"
+                == "p0s000000014"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -4266,7 +4337,7 @@ def test_real_postgresql_p0s11_policy_role_scope_round_trip(
             command.upgrade(config, "head")
             assert _p0s11_policy_projection(connection) == successor
             assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-                "p0s000000013"
+                "p0s000000014"
             )
     finally:
         engine.dispose()

@@ -34,9 +34,9 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
   "tests/saas/test_n1_merge_gate_candidate.py|45a29ba955b638c0a8850d5f39e62e0d4dd537cf8d8be3b65e5c40a958a1f2cc"
   "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
-  "tests/saas/test_n1_outbox_admission.py|38a4e9c7b36eabcdab6c2bdcb72a9bfcc3390dc94a40766e1ec9680456c0ecd9"
-  "tests/saas/test_control_plane_migration.py|ddbe931a5523952527d8b2159997d4adab902395a87fd8b5c83e948213e88ba1"
-  "tests/saas/test_production_runner_postgresql.py|14cedc3269363e4ad2554b45e07346247a629e44ab3a577251679c715b4a7080"
+  "tests/saas/test_n1_outbox_admission.py|05087e68310e0045fa18cbdd72614a45dddd6c7e3d4b703fcf2dac160b34fc1e"
+  "tests/saas/test_control_plane_migration.py|22178ebb77d198f3a2a2979b8ea6270549f332be05c3b4f7aa6dd5c0113e08b8"
+  "tests/saas/test_production_runner_postgresql.py|384f5ecdc9ec341d498d99a634c82c02d3e2456af3b4c89a4a6430fec25bfe39"
 )
 
 POSTGRESQL_N1_PATHS=(

@@ -1117,7 +1117,7 @@
   $("#logout-button").addEventListener("click", () => void run(async () => {
     await api("/v2/platform-admin/session/logout", { method: "POST" });
     sessionStorage.removeItem("omnigent.platform.csrf");
-    window.location.reload();
+    window.location.assign("/platform-admin/login");
   }));
 
   $("#support-expires-at").value = localDateTime(Date.now() + 60 * 60_000);

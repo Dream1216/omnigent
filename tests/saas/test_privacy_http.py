@@ -37,19 +37,19 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     sessions = PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE)
     operator_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http",
         now=now,
     )
     reader_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http-reader",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http-reader",
         now=now,
     )
     roleless_id = authorization.provision_staff_principal(
         identity_connection_ref="staff-idp:privacy-http-roleless",
-        issuer="https://staff-idp.example.test",
+        issuer="urn:omnigent:staff-password",
         subject="privacy-http-roleless",
         now=now,
     )
@@ -92,10 +92,10 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
         )
     operator_session = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy-http",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -103,10 +103,10 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     )
     roleless_session = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy-http-roleless",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),
@@ -114,10 +114,10 @@ def test_privacy_http_requires_staff_cookie_permission_csrf_and_exact_manifest()
     )
     reader_session = sessions.issue_session(
         StaffIdentityAssertion(
-            issuer="https://staff-idp.example.test",
+            issuer="urn:omnigent:staff-password",
             subject="privacy-http-reader",
-            authn_method="passkey",
-            mfa_strength="phishing_resistant",
+            authn_method="password",
+            mfa_strength="not_required",
             authenticated_at=now,
         ),
         expires_at=now + timedelta(hours=1),

@@ -92,12 +92,27 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
             ),
             {
                 "operator": operator_id,
-                "operator_ref": f"staff-idp:{operator_id}",
+                "operator_ref": f"local-password:{operator_id}",
                 "operator_subject": f"operator-{operator_id}",
                 "roleless": roleless_id,
-                "roleless_ref": f"staff-idp:{roleless_id}",
+                "roleless_ref": f"local-password:{roleless_id}",
                 "roleless_subject": f"roleless-{roleless_id}",
-                "issuer": "https://staff-idp.example.test",
+                "issuer": "urn:omnigent:staff-password",
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_platform_password_credentials "
+                "(principal_id, username_normalized, password_hash, password_version, "
+                "failed_attempts, updated_at) VALUES "
+                "(:operator, :operator_subject, '$argon2id$operator-fixture', 1, 0, now()), "
+                "(:roleless, :roleless_subject, '$argon2id$roleless-fixture', 1, 0, now())"
+            ),
+            {
+                "operator": operator_id,
+                "operator_subject": f"operator-{operator_id}",
+                "roleless": roleless_id,
+                "roleless_subject": f"roleless-{roleless_id}",
             },
         )
         connection.execute(
@@ -117,10 +132,10 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
                 "origin, authn_method, mfa_strength, authenticated_at, expires_at) VALUES "
                 "(:operator_id, :operator, :operator_hash, :operator_csrf, 1, "
                 "'omnigent-platform-admin', 'https://platform-admin.example.test', "
-                "'passkey', 'phishing_resistant', now(), now() + interval '1 hour'), "
+                "'password', 'not_required', now(), now() + interval '1 hour'), "
                 "(:roleless_id, :roleless, :roleless_hash, :roleless_csrf, 1, "
                 "'omnigent-platform-admin', 'https://platform-admin.example.test', "
-                "'passkey', 'phishing_resistant', now(), now() + interval '1 hour')"
+                "'password', 'not_required', now(), now() + interval '1 hour')"
             ),
             {
                 "operator_id": operator_session_id,
@@ -169,6 +184,12 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
         connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_auth_login")
         assert (
             connection.execute(
+                sa.text("SELECT count(*) FROM saas_platform_password_credentials")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
                 sa.text("SELECT count(*) FROM saas_platform_auth_sessions")
             ).scalar_one()
             == 0
@@ -186,7 +207,7 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
         connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_auth_login")
         connection.execute(
             sa.text("SELECT set_config('app.platform_identity_issuer', :value, true)"),
-            {"value": "https://staff-idp.example.test"},
+            {"value": "urn:omnigent:staff-password"},
         )
         connection.execute(
             sa.text("SELECT set_config('app.platform_identity_subject', :value, true)"),
@@ -198,12 +219,25 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
             ).scalar_one()
             == operator_id
         )
+        assert (
+            connection.execute(
+                sa.text("SELECT principal_id FROM saas_platform_password_credentials")
+            ).scalar_one()
+            == operator_id
+        )
+        connection.execute(
+            sa.text(
+                "UPDATE saas_platform_password_credentials SET failed_attempts = 1 "
+                "WHERE principal_id = :principal"
+            ),
+            {"principal": operator_id},
+        )
 
     with engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE pc1_platform_auth_login")
         connection.execute(
             sa.text("SELECT set_config('app.platform_identity_issuer', :value, true)"),
-            {"value": "https://staff-idp.example.test"},
+            {"value": "urn:omnigent:staff-password"},
         )
         connection.execute(
             sa.text("SELECT set_config('app.platform_identity_subject', 'unknown', true)")
@@ -390,7 +424,7 @@ def test_real_postgresql_platform_roles_are_content_blind_exact_and_not_emergenc
                     "audience, origin, authn_method, mfa_strength, authenticated_at, "
                     "expires_at) VALUES (:id, :roleless, :token_hash, :csrf, 1, "
                     "'omnigent-platform-admin', 'https://platform-admin.example.test', "
-                    "'passkey', 'phishing_resistant', now(), now() + interval '1 hour')"
+                    "'password', 'not_required', now(), now() + interval '1 hour')"
                 ),
                 {
                     "id": uuid4(),
