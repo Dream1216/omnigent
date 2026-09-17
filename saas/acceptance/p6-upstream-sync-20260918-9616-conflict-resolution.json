@@ -41,6 +41,11 @@
       "failed": 0,
       "note": "requires a nonzero exit, the rejected symlink path, and either audited bubblewrap file-shape rejection diagnostic"
     },
+    "host_model_source_isolation": {
+      "passed": 9,
+      "failed": 0,
+      "note": "model-option pass-through tests pin the configuration-source seam and no longer depend on a developer's local provider config"
+    },
     "postgresql_16_real_replay": {
       "passed": 1,
       "failed": 0,
@@ -75,8 +80,8 @@
     "source_intrusion_budget": {
       "patch_count": 6,
       "direct_upstream_file_count": 50,
-      "upstream_net_added_loc": 2084,
-      "isolated_custom_code_ratio": 0.9934,
+      "upstream_net_added_loc": 2065,
+      "isolated_custom_code_ratio": 0.9935,
       "status": "passed"
     }
   },
