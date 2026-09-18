@@ -194,6 +194,9 @@ replaced in a release copy before server-side apply. The image reference is alwa
    rather than self-destructing when that deadline passes. Startup and every
    claim revalidate the signed fleet/catalog/registration projection; drift is a
    sticky poison.
+   Runner pool and registration compatibility use the official runtime schema
+   revision from `OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION`; the catalog projection
+   independently requires the packaged control-plane head `p0s000000014`.
 7. **Pre-provision the exact-one repository profile.** This isolated Beta
    manifest supports exactly one reviewed binding named `primary`. Each
    canonical provisioning spec must declare
@@ -396,6 +399,11 @@ bounded grace window, and rejects replay, forged host, stale generation, or
 revoked execution. Edge has no raw INSERT/UPDATE authority over Preview session
 rows; its exchange, authorize, rotate, and revoke operations are narrow
 `SECURITY DEFINER` functions with fixed `search_path` and no PUBLIC execute.
+
+The Preview root may be the parent DNS zone of the primary SaaS host because
+both SaaS and Preview cookies are host-only. Public Preview hosts use the fixed
+`app-<24 lowercase hex>.<root>` shape. A parent-domain `Domain` attribute on
+SaaS authentication cookies would violate this isolation contract.
 
 The first execution profile is the closed `static_web_v1` contract. A server-owned
 child Run selects the fixed trusted module

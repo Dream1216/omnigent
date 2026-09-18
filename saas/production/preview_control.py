@@ -111,12 +111,8 @@ class ProductionPreviewControlPolicy:
             raise ValueError("Primary Preview control origin must use HTTPS")
         preview_root = self.preview_root_domain.lower().rstrip(".")
         primary_host = primary.hostname.lower().rstrip(".")
-        if (
-            preview_root == primary_host
-            or preview_root.endswith(f".{primary_host}")
-            or primary_host.endswith(f".{preview_root}")
-        ):
-            raise ValueError("Preview root must be cookie-isolated from the primary host")
+        if preview_root == primary_host or preview_root.endswith(f".{primary_host}"):
+            raise ValueError("Preview root must not be the primary host or its child")
         _ = self.execution_policy
 
     @property

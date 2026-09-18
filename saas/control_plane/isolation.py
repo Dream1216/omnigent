@@ -31,6 +31,7 @@ from saas.control_plane.isolation_models import (
     SecretAccessLeaseRecord,
     SecretBindingRecord,
 )
+from saas.control_plane.preview_hosts import new_preview_host
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
 from saas.control_plane.scheduling_models import RunDispatchRecord, RunnerRegistrationRecord
@@ -322,14 +323,16 @@ class PreviewOriginConfig:
             raise IsolationControlPlaneError(
                 "primary_cookie_domain_invalid", "primary cookie domain does not own the origin"
             )
-        if (
-            preview_root == cookie_domain
-            or preview_root.endswith(f".{cookie_domain}")
-            or cookie_domain.endswith(f".{preview_root}")
-        ):
+        preview_inside_cookie_domain = preview_root == cookie_domain or preview_root.endswith(
+            f".{cookie_domain}"
+        )
+        shared_parent_cookie_domain = cookie_domain != primary_host and cookie_domain.endswith(
+            f".{preview_root}"
+        )
+        if preview_inside_cookie_domain or shared_parent_cookie_domain:
             raise IsolationControlPlaneError(
                 "preview_origin_not_isolated",
-                "Preview root must be outside the primary cookie domain",
+                "Preview hosts must be isolated from the primary cookie scope",
             )
         if self.maximum_lease <= timedelta(0) or self.maximum_lease > timedelta(hours=1):
             raise IsolationControlPlaneError(
@@ -1153,7 +1156,7 @@ class IsolationControlPlane:
         lifetime: timedelta,
         now: datetime | None = None,
     ) -> IssuedPreviewLease:
-        """Issue a short-lived public route on a root outside the SaaS cookie domain."""
+        """Issue a short-lived public route isolated from SaaS host-only cookies."""
 
         issued_at = now or _utcnow()
         _validate_time(issued_at)
@@ -1194,7 +1197,7 @@ class IsolationControlPlane:
             )
         opaque_key = f"pvr_{secrets.token_hex(24)}"
         preview_root = _normalize_hostname(origin.preview_root_domain, field="preview_root_domain")
-        preview_host = f"pv-{opaque_key[4:28]}.{preview_root}"
+        preview_host = new_preview_host(preview_root)
         raw_token = f"pv_{secrets.token_urlsafe(40)}"
         expires_at = min(issued_at + lifetime, capability.expires_at)
         preview_id = uuid4()

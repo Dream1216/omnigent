@@ -314,7 +314,15 @@ def test_cross_tenant_is_non_disclosing_and_stop_is_idempotency_keyed() -> None:
 
 
 def test_policy_requires_isolated_https_domain_and_explicit_exchange_key() -> None:
-    with pytest.raises(ValueError, match="cookie-isolated"):
+    wildcard_policy = ProductionPreviewControlPolicy.from_origins(
+        primary_origin="https://next.jxhh.com",
+        preview_root_domain="jxhh.com",
+        lease_seconds=300,
+        exchange_hmac_key=b"x" * 32,
+    )
+    assert wildcard_policy.preview_root_domain == "jxhh.com"
+
+    with pytest.raises(ValueError, match="must not be the primary host"):
         ProductionPreviewControlPolicy.from_origins(
             primary_origin="https://next.example.test",
             preview_root_domain="preview.next.example.test",
