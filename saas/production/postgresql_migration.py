@@ -369,6 +369,18 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
         "p0s000000014",
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
+_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "238747cc8731a8b0bbcf11b1c96df8bae6b3aeafbf9b2be211e7f6e4fde2bc4e",
+    (
+        18,
+        "ge1b2c3d4e5f",
+        "p0s000000014",
+    ): "37565bbc3ba91e9950a3689f803bafd55f3ff714bf25c9a9b51a3e63e297488e",
+}
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -960,6 +972,9 @@ def _source_security_catalog_baselines(
     platform_model = {**core, **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)}
     if observed == platform_model:
         return _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+    platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
+    if observed == platform_admin:
+        return _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
