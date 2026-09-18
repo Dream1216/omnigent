@@ -106,11 +106,13 @@ def _context(*, path: Path = Path("/context"), sha256: str = "c" * 64):
         namespace="omnigent-next-beta",
         release_incarnation="3" * 32,
         admission_epoch=7,
-        cnpg_cluster_namespace="omnigent-next-beta-data",
-        cnpg_cluster_name="omnigent-next-beta-postgres",
-        cnpg_cluster_uid=UUID("33333333-3333-4333-8333-333333333333"),
-        cnpg_cluster_resource_version="2001",
-        cnpg_postgresql_major=18,
+        database_cluster_api_version="postgresql.cnpg.io/v1",
+        database_cluster_kind="Cluster",
+        database_cluster_namespace="omnigent-next-beta-data",
+        database_cluster_name="omnigent-next-beta-postgres",
+        database_cluster_uid=UUID("33333333-3333-4333-8333-333333333333"),
+        database_cluster_resource_version="2001",
+        postgresql_major=18,
         database="omnigent_next_beta",
         database_oid=16384,
         database_system_identifier="7543210987654321000",
@@ -668,7 +670,7 @@ def test_evidence_context_binds_deployments_templates_secret_metadata_and_fleet(
     context = load_runner_database_fleet_evidence_context(source, fleet=fleet)
 
     assert context.namespace == "omnigent-next-beta"
-    assert context.cnpg_cluster_namespace == "omnigent-next-beta-data"
+    assert context.database_cluster_namespace == "omnigent-next-beta-data"
     assert context.runners[0].deployment_uid == _DEPLOYMENT_A
     assert context.runners[1].deployment_template_sha256 == "6" * 64
     assert context.runners[0].database_secret_uid == _SECRET_A
@@ -677,6 +679,28 @@ def test_evidence_context_binds_deployments_templates_secret_metadata_and_fleet(
     assert "deployment_template_sha256" in rendered
     assert "database_secret_value" not in rendered
     assert "postgresql+psycopg" not in rendered
+
+
+def test_evidence_context_accepts_the_bound_postgresql18_deployment_authority() -> None:
+    context = replace(
+        _context(),
+        database_cluster_api_version="apps/v1",
+        database_cluster_kind="Deployment",
+        database_cluster_namespace="omnigent-next-beta",
+        database_cluster_name="omnigent-next-postgresql",
+        database_service_name="omnigent-next-postgresql",
+        database_service_dns="omnigent-next-postgresql.omnigent-next-beta.svc",
+    )
+    rendered = render_runner_database_fleet_evidence_context(context)
+    document = json.loads(rendered)
+    assert document["schema_version"] == 3
+    assert document["database_cluster_api_version"] == "apps/v1"
+    assert document["database_cluster_kind"] == "Deployment"
+
+    with pytest.raises(RunnerDatabaseFleetError, match="controller identity"):
+        render_runner_database_fleet_evidence_context(
+            replace(context, database_cluster_kind="StatefulSet")
+        )
 
 
 def test_evidence_context_rejects_pair_or_metadata_drift(tmp_path: Path) -> None:
