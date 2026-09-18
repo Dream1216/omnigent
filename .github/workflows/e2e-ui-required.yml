@@ -13,12 +13,14 @@ name: E2E UI Required
 # weaken the gate), and `labeled`/`unlabeled` let the skip label re-evaluate it.
 #
 # SECURITY -- the LLM judge reads the PR's (attacker-controlled) diff as TEXT and
-# sends it to the gateway with the rate-limited, revocable test token (same risk
-# profile as fork e2e). The job never checks out or runs PR-head code: it checks
-# out ONLY .github/scripts from main (pinned, no persisted credentials) and reads
-# state via the API. The judge prompt is hardened against injection and fails
-# closed; a wrong "pass" can't merge anything since the required `Maintainer
-# Approval` check + a human reviewer still gate merge.
+# sends it to the configured gateway, or to Copilot through the job-scoped
+# GITHUB_TOKEN when the gateway is not configured. The job never checks out or
+# runs PR-head code: it checks out ONLY .github/scripts from main (pinned, no
+# persisted credentials) and reads state via the API. The Copilot fallback runs
+# in an empty directory with only the read-only `view` tool exposed. The judge
+# prompt is hardened against injection and fails closed; a wrong "pass" can't
+# merge anything since the required `Maintainer Approval` check + a human
+# reviewer still gate merge.
 #
 # NO `paths:` filter on purpose: a path-filtered required check never reports on
 # non-matching PRs, stranding the status pending forever. This always runs and
@@ -46,6 +48,7 @@ jobs:
       contents: read
       pull-requests: read
       actions: write   # dispatch a Merge Ready re-evaluation when this flips green
+      copilot-requests: write  # secretless judge fallback via the job-scoped token
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -63,6 +66,42 @@ jobs:
           REPO: ${{ github.repository }}
         run: bash .github/scripts/merge-ready/load-maintainers.sh
 
+      - name: Select e2e_ui judge backend
+        id: judge
+        env:
+          OPENAI_BASE_URL: ${{ secrets.GATEWAY_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          if [[ -n "$OPENAI_BASE_URL" && -n "$OPENAI_API_KEY" ]]; then
+            echo "backend=gateway" >> "$GITHUB_OUTPUT"
+          elif [[ -z "$OPENAI_BASE_URL" && -z "$OPENAI_API_KEY" ]]; then
+            echo "backend=copilot" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Incomplete e2e_ui judge gateway configuration; set both GATEWAY_BASE_URL and LLM_API_KEY, or neither."
+            exit 1
+          fi
+
+      - name: Install pinned Copilot CLI
+        if: steps.judge.outputs.backend == 'copilot'
+        env:
+          COPILOT_VERSION: 1.0.86
+          COPILOT_PACKAGE_INTEGRITY: sha512-ytl6vkox1l6Y+UqLhX0+SOuTkS84VCp8R2CJqzgJ8QfnOlWe3U6z1ZVRm/sYWGMLchWQpnC7d+wWZ1mTUTFuuQ==
+          COPILOT_LINUX_X64_INTEGRITY: sha512-ROyWMEP8nKFoa+7l2majzfgA5jaqid0qEYTClf9oooS+8S6CIhKYlW1VO6Lt3lDicoCI1S2RWbR7vJ6ZQy/TFw==
+        run: |
+          set -euo pipefail
+          actual_package=$(npm view "@github/copilot@$COPILOT_VERSION" dist.integrity)
+          actual_binary=$(npm view "@github/copilot-linux-x64@$COPILOT_VERSION" dist.integrity)
+          [[ "$actual_package" == "$COPILOT_PACKAGE_INTEGRITY" ]] \
+            || { echo "::error::Copilot CLI package integrity mismatch"; exit 1; }
+          [[ "$actual_binary" == "$COPILOT_LINUX_X64_INTEGRITY" ]] \
+            || { echo "::error::Copilot CLI Linux binary integrity mismatch"; exit 1; }
+
+          install_root="$RUNNER_TEMP/copilot-cli"
+          npm install --global --prefix "$install_root" --no-audit --no-fund \
+            "@github/copilot@$COPILOT_VERSION"
+          echo "$install_root/bin" >> "$GITHUB_PATH"
+          "$install_root/bin/copilot" --version | grep -F "GitHub Copilot CLI $COPILOT_VERSION"
+
       - name: Require e2e_ui coverage or effective waiver
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,8 +112,9 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.GATEWAY_BASE_URL }}
           OPENAI_API_KEY: ${{ secrets.LLM_API_KEY }}
           E2E_UI_JUDGE_MODEL: ${{ vars.OMNIGENT_CI_E2E_JUDGE_MODEL }}
+          E2E_UI_COPILOT_MODEL: ${{ vars.OMNIGENT_CI_E2E_COPILOT_MODEL }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          : "${E2E_UI_JUDGE_MODEL:?Set OMNIGENT_CI_E2E_JUDGE_MODEL repository variable}"
           bash .github/scripts/e2e-ui-required/check.sh
 
       # Merge Ready (the single required gating check) does NOT re-evaluate when

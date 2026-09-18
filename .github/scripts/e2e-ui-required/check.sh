@@ -19,15 +19,16 @@
 #      APPROVED).                                          enough; a fork author
 #                                                          cannot self-waive.
 #
-# Case 2 sends the PR's web/** + tests/e2e_ui/** diff to the LLM gateway
-# (OpenAI-compatible: OPENAI_BASE_URL + OPENAI_API_KEY, model E2E_UI_JUDGE_MODEL).
-# It is the only non-deterministic step. SECURITY: under pull_request_target the
-# diff is attacker-controlled text. We never execute PR code; we only pass diff
-# *text* to the judge (same accepted-risk profile as fork e2e running with the
-# rate-limited, revocable test token). The judge prompt is hardened to ignore
-# instructions embedded in the diff and to fail-closed (needs_test=true) on any
-# uncertainty. A wrong/injected "pass" cannot merge anything on its own: the
-# separate required `Maintainer Approval` check still gates merge.
+# Case 2 sends the PR's web/** + tests/e2e_ui/** diff to an OpenAI-compatible
+# gateway when OPENAI_BASE_URL + OPENAI_API_KEY are configured. When both are
+# absent it uses Copilot CLI with the job-scoped GITHUB_TOKEN. SECURITY: under
+# pull_request_target the diff is attacker-controlled text. We never execute PR
+# code. The Copilot fallback runs in an empty directory with repository
+# instructions and MCPs disabled, and exposes only the read-only `view` tool.
+# The judge prompt is hardened to ignore instructions embedded in the diff and
+# to fail closed (needs_test=true) on uncertainty. A wrong/injected "pass"
+# cannot merge anything on its own: the separate required `Maintainer Approval`
+# check still gates merge.
 #
 # Case 3 applies the maintainer-effective waiver: the `skip-e2e-ui-test` label
 # is honoured only when the author is a maintainer, or a maintainer's latest
@@ -39,7 +40,8 @@
 #
 # Env in:  GH_TOKEN, REPO, PR, MAINTAINERS (space-separated, from
 #          merge-ready/load-maintainers.sh), OPENAI_BASE_URL, OPENAI_API_KEY,
-#          E2E_UI_JUDGE_MODEL.
+#          E2E_UI_JUDGE_MODEL. Optional: E2E_UI_COPILOT_MODEL, COPILOT_BIN,
+#          RUNNER_TEMP.
 # Exit:    0 = gate satisfied; 1 = blocked.
 
 set -euo pipefail
@@ -131,34 +133,88 @@ Rules:
 
 USER_CONTENT=$(printf 'PR title: %s\n\nDiff (web/** and tests/e2e_ui/** only):\n%s\n' "$PR_TITLE" "$DIFF_BLOB")
 
-# Build the request body with jq so diff content is safely JSON-encoded and
-# cannot break out of the string or inject request fields.
-REQ_BODY=$(jq -n \
-  --arg model "$E2E_UI_JUDGE_MODEL" \
-  --arg sys "$SYSTEM_PROMPT" \
-  --arg user "$USER_CONTENT" \
-  '{model: $model, temperature: 0, max_tokens: 200,
-    messages: [{role: "system", content: $sys}, {role: "user", content: $user}]}')
+HAVE_GATEWAY_URL=false
+HAVE_GATEWAY_KEY=false
+[[ -n "${OPENAI_BASE_URL:-}" ]] && HAVE_GATEWAY_URL=true
+[[ -n "${OPENAI_API_KEY:-}" ]] && HAVE_GATEWAY_KEY=true
 
-set +e
-RESP=$(curl -sS --fail-with-body --max-time 90 \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST "${OPENAI_BASE_URL%/}/chat/completions" \
-  -d "$REQ_BODY")
-CURL_RC=$?
-set -e
-
-if [[ $CURL_RC -ne 0 ]]; then
-  # Fail closed on infra error, but distinguish it from a real "missing test"
-  # so the author knows to retry or use the waiver rather than scramble to
-  # write a test. The skip label remains the escape hatch.
-  fail "Could not reach the e2e_ui judge (gateway error, exit $CURL_RC). Re-run the check; if it keeps failing, a maintainer can apply 'skip-e2e-ui-test'."
+if [[ "$HAVE_GATEWAY_URL" != "$HAVE_GATEWAY_KEY" ]]; then
+  fail "Incomplete e2e_ui judge gateway configuration; set both OPENAI_BASE_URL and OPENAI_API_KEY, or neither."
 fi
 
-CONTENT=$(echo "$RESP" | jq -r '.choices[0].message.content // empty')
+if [[ "$HAVE_GATEWAY_URL" == "true" ]]; then
+  : "${E2E_UI_JUDGE_MODEL:?Set OMNIGENT_CI_E2E_JUDGE_MODEL repository variable}"
+
+  # Build the request body with jq so diff content is safely JSON-encoded and
+  # cannot break out of the string or inject request fields.
+  REQ_BODY=$(jq -n \
+    --arg model "$E2E_UI_JUDGE_MODEL" \
+    --arg sys "$SYSTEM_PROMPT" \
+    --arg user "$USER_CONTENT" \
+    '{model: $model, temperature: 0, max_tokens: 200,
+      messages: [{role: "system", content: $sys}, {role: "user", content: $user}]}')
+
+  set +e
+  RESP=$(curl -sS --fail-with-body --max-time 90 \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H "Content-Type: application/json" \
+    -X POST "${OPENAI_BASE_URL%/}/chat/completions" \
+    -d "$REQ_BODY")
+  JUDGE_RC=$?
+  set -e
+
+  if [[ $JUDGE_RC -ne 0 ]]; then
+    fail "Could not reach the e2e_ui judge (gateway error, exit $JUDGE_RC). Re-run the check; if it keeps failing, a maintainer can apply 'skip-e2e-ui-test'."
+  fi
+  CONTENT=$(echo "$RESP" | jq -r '.choices[0].message.content // empty')
+else
+  COPILOT_BIN=${COPILOT_BIN:-copilot}
+  command -v "$COPILOT_BIN" >/dev/null 2>&1 \
+    || fail "Copilot CLI is not installed for the e2e_ui judge fallback."
+  : "${GITHUB_TOKEN:?GITHUB_TOKEN is required for the Copilot e2e_ui judge fallback}"
+
+  COPILOT_ROOT=${RUNNER_TEMP:-/tmp}/omnigent-e2e-ui-judge
+  COPILOT_WORKDIR="$COPILOT_ROOT/workdir"
+  COPILOT_STATE_DIR="$COPILOT_ROOT/state"
+  COPILOT_CACHE_DIR="$COPILOT_ROOT/cache"
+  mkdir -p "$COPILOT_WORKDIR" "$COPILOT_STATE_DIR" "$COPILOT_CACHE_DIR"
+  COPILOT_PROMPT="$SYSTEM_PROMPT"$'\n\n'"$USER_CONTENT"
+
+  # The prompt already contains all required input. Run away from the checkout,
+  # disable repository instructions/MCPs, and expose only a read-only tool over
+  # an empty directory. No shell, write, URL, or delegation tool is available.
+  set +e
+  CONTENT=$(COPILOT_HOME="$COPILOT_STATE_DIR" \
+    COPILOT_CACHE_HOME="$COPILOT_CACHE_DIR" \
+    COPILOT_MCP_TOOL_CACHE=false \
+    GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=false \
+    GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=false \
+    GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP=false \
+    "$COPILOT_BIN" \
+      -C "$COPILOT_WORKDIR" \
+      --prompt "$COPILOT_PROMPT" \
+      --silent \
+      --stream=off \
+      --model "${E2E_UI_COPILOT_MODEL:-auto}" \
+      --available-tools=view \
+      --disable-builtin-mcps \
+      --disallow-temp-dir \
+      --no-ask-user \
+      --no-auto-update \
+      --no-color \
+      --no-custom-instructions \
+      --no-remote \
+      --no-remote-export)
+  JUDGE_RC=$?
+  set -e
+
+  if [[ $JUDGE_RC -ne 0 ]]; then
+    fail "Could not reach the e2e_ui judge (Copilot error, exit $JUDGE_RC). Re-run the check; if it keeps failing, a maintainer can apply 'skip-e2e-ui-test'."
+  fi
+fi
+
 # Strip any accidental markdown fencing, then pull the JSON object out.
-VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1)
+VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1 || true)
 # NB: must not use `.needs_test // empty` -- the `//` operator treats the
 # boolean `false` as absent, which would silently turn a legitimate "no test
 # required" verdict into a fail-closed block. Map the boolean explicitly.
