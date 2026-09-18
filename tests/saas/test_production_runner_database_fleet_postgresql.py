@@ -143,7 +143,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     product_revision = _build_info.COMMIT_SHA
     assert len(product_revision) == 40
     image_digest = "sha256:" + "b" * 64
-    schema_revision = "p0s000000012"
+    schema_revision = "official-head-v1"
     capabilities = ("shell",)
     capabilities_sha256 = _capabilities_sha256(capabilities)
     suffix = uuid4().hex[:12]
@@ -516,7 +516,8 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 "OMNIGENT_SAAS_SOURCE_SHA": context.product_revision,
                 "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
                 "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
-                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": context.schema_revision,
+                "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
+                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000014",
                 RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
             }
         )
