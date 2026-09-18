@@ -13,6 +13,7 @@ from alembic import command
 
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -61,6 +62,26 @@ def production_replay(
         hashlib.sha256(platform_document.encode()).hexdigest(),
         platform_bindings,
     )
+    platform_graph = {**core_by_service, **platform_manifest.by_service}
+    platform_admin_bindings = tuple(
+        platform_graph[service]
+        if service in platform_graph
+        else ProductionServiceRoleBinding(
+            service=service,
+            login=f"replay_platform_admin_{service}",
+            base_role=role,
+        )
+        for service, role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
+    )
+    platform_admin_document = render_production_service_role_bindings(platform_admin_bindings)
+    platform_admin_path = tmp_path / "platform-admin-bindings.json"
+    platform_admin_path.write_text(platform_admin_document)
+    platform_admin_path.chmod(0o400)
+    platform_admin_manifest = ProductionServiceRoleBindings(
+        platform_admin_path,
+        hashlib.sha256(platform_admin_document.encode()).hexdigest(),
+        platform_admin_bindings,
+    )
     roles = {
         "principal_operator": "replay_principal",
         "database_owner": "replay_database",
@@ -83,7 +104,10 @@ def production_replay(
                 f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB INHERIT "
                 f"NOREPLICATION NOBYPASSRLS {flags} PASSWORD 'production-replay-test'"
             )
-        all_bindings = {binding.login: binding for binding in (*bindings, *platform_bindings)}
+        all_bindings = {
+            binding.login: binding
+            for binding in (*bindings, *platform_bindings, *platform_admin_bindings)
+        }
         for binding in all_bindings.values():
             connection.exec_driver_sql(
                 f"CREATE ROLE {binding.login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
@@ -110,6 +134,7 @@ def production_replay(
         saas_owner_url=authority_url("saas_owner"),
         service_role_bindings=manifest,
         platform_model_service_role_bindings=platform_manifest,
+        platform_admin_service_role_bindings=platform_admin_manifest,
         require_tls=False,
     )
     yield plan
@@ -124,7 +149,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     first = migration.run_production_postgresql_migration(plan)
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
-    assert len(plan.service_role_graph.bindings) == 17
+    assert len(plan.service_role_graph.bindings) == 18
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
@@ -145,7 +170,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         with monkeypatch.context() as context:
             context.setattr(
                 migration,
-                "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
                 {},
             )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:

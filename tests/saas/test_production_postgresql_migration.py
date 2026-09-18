@@ -491,6 +491,22 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         migration._PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256.items()
         >= platform_model_security.items()
     )
+    platform_admin_security = {
+        (
+            16,
+            "ge1b2c3d4e5f",
+            "p0s000000014",
+        ): "238747cc8731a8b0bbcf11b1c96df8bae6b3aeafbf9b2be211e7f6e4fde2bc4e",
+        (
+            18,
+            "ge1b2c3d4e5f",
+            "p0s000000014",
+        ): "37565bbc3ba91e9950a3689f803bafd55f3ff714bf25c9a9b51a3e63e297488e",
+    }
+    assert (
+        migration._PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.items()
+        >= platform_admin_security.items()
+    )
 
 
 @pytest.mark.parametrize("server_major", [16, 18])
@@ -503,6 +519,14 @@ def test_current_migration_heads_have_source_catalog_baselines(server_major: int
             _platform_bindings(),
         ),
     )
+    migration._require_source_catalog_baselines(
+        server_major,
+        bindings=migration.compose_production_service_role_graph(
+            _bindings(),
+            _platform_bindings(),
+            _platform_admin_bindings(),
+        ),
+    )
 
 
 def test_platform_model_profile_requires_its_own_source_catalog_baseline(
@@ -513,6 +537,23 @@ def test_platform_model_profile_requires_its_own_source_catalog_baseline(
         _platform_bindings(),
     )
     monkeypatch.setattr(migration, "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256", {})
+
+    with pytest.raises(migration.PostgreSqlMigrationError) as error:
+        migration._require_source_catalog_baselines(18, bindings=graph)
+
+    assert error.value.code == "source_catalog_baseline_missing"
+    assert error.value.phase == "preflight"
+
+
+def test_platform_admin_profile_requires_its_own_source_catalog_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = migration.compose_production_service_role_graph(
+        _bindings(),
+        _platform_bindings(),
+        _platform_admin_bindings(),
+    )
+    monkeypatch.setattr(migration, "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256", {})
 
     with pytest.raises(migration.PostgreSqlMigrationError) as error:
         migration._require_source_catalog_baselines(18, bindings=graph)
