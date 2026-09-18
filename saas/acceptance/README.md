@@ -1466,9 +1466,14 @@ main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
 OpenCode support while replaying patch 0007 against `9616bf97`. Reconciliation
 revision `75322493346efc4016a5d1878293e340837e8d92` then merges downstream main
 `be303951b048985edbc9a1adac4cfc8ce60b483a` from PR 68 and preserves its Kimi
-platform-provider delivery. The resulting seven-patch queue covers twenty
-official source paths without a content mismatch. Candidate implementation
-revision `2875716b40612a9df3bee0ada6cf726cc9f5d301` binds the Harness CLI
+platform-provider delivery. Final reconciliation revision
+`010f5672d3f1c247fc146445794a21337f207926` merges downstream main
+`9715325b0b9e4209f57c364c1889850c6f8db6b7` from PR 77 after the Staff
+catalog work from PR 75. It preserves the Preview and Runner release contracts
+and anchors the official `hh1b2c3d4e5f` security catalog for PostgreSQL 16 and
+18. The resulting seven-patch queue covers twenty official source paths without
+a content mismatch. Candidate implementation revision
+`010f5672d3f1c247fc146445794a21337f207926` binds the Harness CLI
 release-age exceptions to the sixteen exact, integrity-locked
 Qwen/OpenCode/Kimi artifacts accepted on downstream main, refreshes
 the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and
@@ -1481,14 +1486,17 @@ packages remain rejected by the supply-chain gate.
 
 Local validation passed all 65 newly affected upstream tests, the 1,356-test
 security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14
-and 18.4 clean/repeated/N-1 migration replays, the 38-test PostgreSQL catalog
+and 18.6 clean/repeated/N-1 migration replays, the 39-test PostgreSQL catalog
 contract with one URL-dependent skip, TypeScript, and every pre-commit hook. The
 frozen pnpm install and its 2,022-entry supply-chain policy verification also
 pass with the exact-version exception set. The hard-sandbox subset passes 42
 tests with 23 bubblewrap-dependent skips on macOS; nine focused Host model-source
 and safe-coordinate checks pass. The Kimi/main reconciliation suite passes 133
 tests with two platform skips, and the source budget passes at seven patches,
-63 official files, 2,489 net added lines and a 0.992 isolation ratio. The
+63 official files, 2,489 net added lines and a 0.992 isolation ratio. The final
+main composition adds 467 focused Preview, Runner, Host, Codex, Staff catalog,
+PostgreSQL, ADR, acceptance, supply-chain, N-1, and upstream-delta contract
+passes with 25 expected platform or external-environment skips. The
 three upstream commits change no Web source, so the preceding 8,475-assertion Web
 result remains the browser regression evidence while the exact candidate passed
 Web static validation. Exact-Head remote CI, merge inclusion, image publication,

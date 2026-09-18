@@ -60,12 +60,18 @@
     "postgresql_18_real_replay": {
       "passed": 1,
       "failed": 0,
-      "version": "18.4"
+      "version": "18.6"
     },
     "postgresql_catalog_contract": {
-      "passed": 38,
+      "passed": 39,
       "skipped_without_url": 1,
       "failed": 0
+    },
+    "final_main_composition": {
+      "passed": 467,
+      "skipped": 25,
+      "failed": 0,
+      "scope": "9616 upgrade, Staff catalog baselines, Preview and Runner contracts, Host image checks, PostgreSQL migration contracts, ADR and acceptance manifests, supply chain, N-1, and upstream delta policy"
     },
     "web_regression_from_preceding_candidate": {
       "passed": 8475,
@@ -94,7 +100,7 @@
   "remote_validation": {
     "exact_head_ci": "required",
     "branch_protection": "not_observed",
-    "deployment": "authorized_pending_pr_merge_and_existing_recovery_writer_handoff"
+    "deployment": "authorized_handoff_complete_pending_exact_head_pr_merge"
   },
   "release_decision": "NO-GO",
   "status": "resolved_local_candidate",
@@ -113,16 +119,18 @@
     }
   },
   "latest_main_reconciliation": {
-    "revision": "2875716b40612a9df3bee0ada6cf726cc9f5d301",
-    "main_parent_revision": "be303951b048985edbc9a1adac4cfc8ce60b483a",
-    "main_pull_request": 68,
-    "resolution": "preserved the merged Kimi platform-provider delivery, combined the Kimi and Qwen/OpenCode pnpm policy entries, retained the audited bubblewrap fail-closed diagnostic contract, and regenerated patch 0008 against 9616 after patches 0002-0007",
+    "revision": "010f5672d3f1c247fc146445794a21337f207926",
+    "main_parent_revision": "9715325b0b9e4209f57c364c1889850c6f8db6b7",
+    "main_pull_request": 77,
+    "resolution": "preserved the merged Kimi, Staff, Preview, and Runner release contracts; retained the audited Qwen/OpenCode/Kimi supply-chain and bubblewrap policies; anchored the official hh1 security catalog for PostgreSQL 16 and 18; and kept patch 0008 replayable after patches 0002-0007",
     "validation": {
-      "passed": 133,
-      "skipped": 2,
+      "passed": 467,
+      "skipped": 25,
       "failed": 0,
       "patch_replay": "passed",
-      "pnpm_frozen_lock_entries": 2022
+      "pnpm_frozen_lock_entries": 2022,
+      "postgresql_16_security_catalog_sha256": "60e8f83d0992ec64c74194504d45bf9fcb492f8df94d7e5be4b890020abdac1d",
+      "postgresql_18_security_catalog_sha256": "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1"
     }
   }
 }
