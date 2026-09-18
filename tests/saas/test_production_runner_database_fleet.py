@@ -83,6 +83,8 @@ _SECRET_B = UUID("bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb")
 _POOL = UUID("44444444-4444-4444-8444-444444444444")
 _PLACEMENT = UUID("55555555-5555-4555-8555-555555555555")
 _SERVICE = UUID("66666666-6666-4666-8666-666666666666")
+_OFFICIAL_SCHEMA_REVISION = "official-head-v1"
+_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000014"
 _CAPABILITIES = ("shell",)
 _CAPABILITIES_SHA256 = hashlib.sha256(b'["shell"]').hexdigest()
 
@@ -100,7 +102,7 @@ def _context(*, path: Path = Path("/context"), sha256: str = "c" * 64):
         sha256=sha256,
         product_revision="1" * 40,
         image_digest="sha256:" + "2" * 64,
-        schema_revision="p0s000000012",
+        schema_revision=_OFFICIAL_SCHEMA_REVISION,
         namespace="omnigent-next-beta",
         release_incarnation="3" * 32,
         admission_epoch=7,
@@ -131,7 +133,7 @@ def _context(*, path: Path = Path("/context"), sha256: str = "c" * 64):
                 failure_domain="cn-east-1a",
                 protocol_version=1,
                 source_revision="1" * 40,
-                schema_revision="p0s000000012",
+                schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 adapter_contract_version="0.2.0",
                 capabilities=_CAPABILITIES,
                 capabilities_sha256=_CAPABILITIES_SHA256,
@@ -154,7 +156,7 @@ def _context(*, path: Path = Path("/context"), sha256: str = "c" * 64):
                 failure_domain="cn-east-1a",
                 protocol_version=1,
                 source_revision="1" * 40,
-                schema_revision="p0s000000012",
+                schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 adapter_contract_version="0.2.0",
                 capabilities=_CAPABILITIES,
                 capabilities_sha256=_CAPABILITIES_SHA256,
@@ -271,7 +273,7 @@ def _projection() -> RunnerDatabaseFleetCatalogProjection:
             transaction_read_only=True,
             operator_is_superuser=True,
         ),
-        schema_revision="p0s000000012",
+        schema_revision=_CONTROL_PLANE_SCHEMA_REVISION,
         cluster_settings=(
             ("max_notify_queue_pages", "64", "postmaster", False, "configuration file"),
             ("max_prepared_transactions", "0", "postmaster", False, "configuration file"),
@@ -295,7 +297,7 @@ def _trust_pins() -> RunnerDatabaseFleetTrustPins:
         stage="admission",
         admission_epoch=7,
         product_revision="1" * 40,
-        schema_revision="p0s000000012",
+        schema_revision=_OFFICIAL_SCHEMA_REVISION,
         fleet_sha256="f" * 64,
         evidence_context_sha256="c" * 64,
         attestation_issuer="omnigent.gitops",
@@ -332,7 +334,7 @@ def _stage_specs() -> tuple[RunnerDatabaseFleetStageSpec, RunnerDatabaseFleetSta
             failure_domain="cn-east-1a",
             protocol_version=1,
             source_revision="1" * 40,
-            schema_revision="p0s000000012",
+            schema_revision=_OFFICIAL_SCHEMA_REVISION,
             adapter_contract_version="0.2.0",
             capabilities=_CAPABILITIES,
             max_concurrency=1,
@@ -345,7 +347,7 @@ def _stage_specs() -> tuple[RunnerDatabaseFleetStageSpec, RunnerDatabaseFleetSta
             failure_domain="cn-east-1a",
             protocol_version=1,
             source_revision="1" * 40,
-            schema_revision="p0s000000012",
+            schema_revision=_OFFICIAL_SCHEMA_REVISION,
             adapter_contract_version="0.2.0",
             capabilities=_CAPABILITIES,
             max_concurrency=1,
@@ -376,7 +378,7 @@ def _promotion_database(
                 database_cluster_ref="runner-db",
                 object_store_ref="runner-objects",
                 kms_key_ref="runner-kms",
-                official_schema_revision="p0s000000012",
+                official_schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 capacity_class="runner-dedicated",
                 status="active",
             )
@@ -393,7 +395,7 @@ def _promotion_database(
                 status="active",
                 protocol_version=1,
                 source_revision="1" * 40,
-                schema_revision="p0s000000012",
+                schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 adapter_contract_version="0.2.0",
             )
         )
@@ -435,7 +437,7 @@ def _promotion_database(
                     connection_token_hash="7" * 64,
                     protocol_version=1,
                     source_revision="1" * 40,
-                    schema_revision="p0s000000012",
+                    schema_revision=_OFFICIAL_SCHEMA_REVISION,
                     adapter_contract_version="0.2.0",
                     capabilities=["shell"],
                     capabilities_hash=_CAPABILITIES_SHA256,
@@ -501,7 +503,7 @@ def test_owner_stage_has_no_online_window_and_rolls_back_partial_or_third_runner
                 database_cluster_ref="runner-db",
                 object_store_ref="runner-objects",
                 kms_key_ref="runner-kms",
-                official_schema_revision="p0s000000012",
+                official_schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 capacity_class="runner-dedicated",
                 status="active",
             )
@@ -518,7 +520,7 @@ def test_owner_stage_has_no_online_window_and_rolls_back_partial_or_third_runner
                 status="active",
                 protocol_version=1,
                 source_revision="1" * 40,
-                schema_revision="p0s000000012",
+                schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 adapter_contract_version="0.2.0",
             )
         )
@@ -580,7 +582,7 @@ def test_owner_stage_has_no_online_window_and_rolls_back_partial_or_third_runner
                 connection_token_hash="7" * 64,
                 protocol_version=1,
                 source_revision="1" * 40,
-                schema_revision="p0s000000012",
+                schema_revision=_OFFICIAL_SCHEMA_REVISION,
                 adapter_contract_version="0.2.0",
                 capabilities=["shell"],
                 capabilities_hash=_CAPABILITIES_SHA256,
@@ -710,7 +712,8 @@ def test_release_facts_must_match_the_evidence_context() -> None:
         "OMNIGENT_SAAS_SOURCE_SHA": context.product_revision,
         "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
         "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
-        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": context.schema_revision,
+        "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
+        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": _CONTROL_PLANE_SCHEMA_REVISION,
         RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
     }
     verify_runner_database_fleet_release_facts(source, context)

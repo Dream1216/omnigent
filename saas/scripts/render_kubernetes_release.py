@@ -845,7 +845,10 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("runner_fleet"),
         mode=mode,
         product_revision=product_revision,
-        schema_revision=control_plane_schema_revision,
+        schema_revision=_revision(
+            _string(document, "official_schema_revision"),
+            name="official_schema_revision",
+        ),
     )
     ingress = _mapping(
         document.get("ingress"),

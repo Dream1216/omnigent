@@ -34,6 +34,7 @@ from saas.control_plane.execution_models import (
     RunRecord,
 )
 from saas.control_plane.isolation import PreviewRouteGrant
+from saas.control_plane.preview_hosts import new_preview_host
 from saas.control_plane.preview_models import (
     PreviewCommandRecord,
     PreviewExecutionRecord,
@@ -286,7 +287,7 @@ class PreviewExecutionControlPlane:
             child_run_id = uuid4()
             command_id = uuid4()
             opaque_key = f"pvr_{secrets.token_hex(24)}"
-            preview_host = f"{secrets.token_hex(24)}.{self._policy.preview_root_domain}"
+            preview_host = new_preview_host(self._policy.preview_root_domain)
             try:
                 child_input = server_owned_preview_run_input(
                     preview_execution_id=execution_id,

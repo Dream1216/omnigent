@@ -609,9 +609,9 @@ def test_preview_origin_is_cookie_isolated_exact_host_fenced_and_revocable(
         worktree_fixture.factory, scheduler=worktree_fixture.scheduling
     )
     origin = PreviewOriginConfig(
-        primary_origin="https://app.example.com",
-        primary_cookie_domain="example.com",
-        preview_root_domain="example-preview.net",
+        primary_origin="https://next.jxhh.com",
+        primary_cookie_domain="next.jxhh.com",
+        preview_root_domain="jxhh.com",
     )
     with pytest.raises(IsolationControlPlaneError) as shared_cookie_domain:
         PreviewOriginConfig(
@@ -641,6 +641,9 @@ def test_preview_origin_is_cookie_isolated_exact_host_fenced_and_revocable(
     assert preview.token not in preview.url
     assert preview.token not in repr(preview)
     assert preview.url == f"https://{preview.host}/"
+    assert preview.host.startswith("app-")
+    assert preview.host.endswith(".jxhh.com")
+    assert len(preview.host.removeprefix("app-").removesuffix(".jxhh.com")) == 24
 
     route = isolation.authorize_preview_request(
         host=preview.host,

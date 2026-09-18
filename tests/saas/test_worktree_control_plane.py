@@ -1488,7 +1488,7 @@ def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
     previews = PreviewExecutionControlPlane(
         fixture.factory,
         policy=PreviewExecutionPolicy(
-            preview_root_domain="preview.example.test",
+            preview_root_domain="jxhh.com",
             exchange_hmac_key=b"p" * 32,
         ),
     )
@@ -1509,6 +1509,9 @@ def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
         now=now + timedelta(seconds=8),
     )
     assert created.status == "queued" and created.replayed is False
+    assert created.preview_host.startswith("app-")
+    assert created.preview_host.endswith(".jxhh.com")
+    assert len(created.preview_host.removeprefix("app-").removesuffix(".jxhh.com")) == 24
     assert replayed.preview_execution_id == created.preview_execution_id
     assert replayed.child_run_id == created.child_run_id and replayed.replayed is True
     with fixture.factory() as db:

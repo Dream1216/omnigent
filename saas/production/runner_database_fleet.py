@@ -92,7 +92,8 @@ RUNNER_DATABASE_FLEET_RECEIPT_PRIVATE_KEY_FILE_ENV = (
     "OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_PRIVATE_KEY_FILE"
 )
 
-_SCHEMA_REVISION = "p0s000000012"
+_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000014"
+_SCHEMA_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RUNNER_BASE_ROLE = "saas_runner_agent"
 _RUNNER_ROLE_PATTERN = r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -751,7 +752,7 @@ def _validate_trust_pins(pins: RunnerDatabaseFleetTrustPins) -> None:
         raise RunnerDatabaseFleetError("Runner fleet trust-pin stage is invalid")
     _generation(pins.admission_epoch, field="admission_epoch")
     _nonzero_match(pins.product_revision, _FULL_GIT_SHA, field="product_revision")
-    if pins.schema_revision != _SCHEMA_REVISION:
+    if _SCHEMA_REVISION.fullmatch(pins.schema_revision) is None:
         raise RunnerDatabaseFleetError("Runner fleet trust-pin schema is invalid")
     for field, value in (
         ("fleet_sha256", pins.fleet_sha256),
@@ -981,7 +982,7 @@ def _validate_stage_specs(
         if type(spec.protocol_version) is not int or spec.protocol_version <= 0:
             raise RunnerDatabaseFleetError("Runner fleet stage protocol is invalid")
         _nonzero_match(spec.source_revision, _FULL_GIT_SHA, field="source_revision")
-        if spec.schema_revision != _SCHEMA_REVISION:
+        if _SCHEMA_REVISION.fullmatch(spec.schema_revision) is None:
             raise RunnerDatabaseFleetError("Runner fleet stage schema is invalid")
         if _ADAPTER_VERSION.fullmatch(spec.adapter_contract_version) is None:
             raise RunnerDatabaseFleetError("Runner fleet stage adapter contract is invalid")
@@ -1703,7 +1704,7 @@ def _validate_evidence_member(member: RunnerDatabaseFleetEvidenceMember) -> None
     if type(member.protocol_version) is not int or member.protocol_version <= 0:
         raise RunnerDatabaseFleetError("Runner protocol version is invalid")
     _nonzero_match(member.source_revision, _FULL_GIT_SHA, field="Runner source_revision")
-    if member.schema_revision != _SCHEMA_REVISION:
+    if _SCHEMA_REVISION.fullmatch(member.schema_revision) is None:
         raise RunnerDatabaseFleetError("Runner schema revision is invalid")
     if _ADAPTER_VERSION.fullmatch(member.adapter_contract_version) is None:
         raise RunnerDatabaseFleetError("Runner adapter contract version is invalid")
@@ -1752,8 +1753,8 @@ def _validate_evidence_member(member: RunnerDatabaseFleetEvidenceMember) -> None
 def _validate_evidence_context(context: RunnerDatabaseFleetEvidenceContext) -> None:
     _nonzero_match(context.product_revision, _FULL_GIT_SHA, field="product_revision")
     _nonzero_match(context.image_digest, _IMAGE_DIGEST, field="image_digest")
-    if context.schema_revision != _SCHEMA_REVISION:
-        raise RunnerDatabaseFleetError("schema_revision must be p0s000000012")
+    if _SCHEMA_REVISION.fullmatch(context.schema_revision) is None:
+        raise RunnerDatabaseFleetError("schema_revision is invalid")
     _dns_label(context.namespace, field="namespace")
     _nonzero_match(
         context.release_incarnation,
@@ -2006,7 +2007,8 @@ def verify_runner_database_fleet_release_facts(
         "OMNIGENT_SAAS_SOURCE_SHA": context.product_revision,
         "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
         "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
-        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": context.schema_revision,
+        "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
+        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": _CONTROL_PLANE_SCHEMA_REVISION,
         RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
     }
     if any(source.get(name) != value for name, value in expected.items()):
@@ -2619,9 +2621,7 @@ def validate_runner_database_fleet_projection(
         or not identity.transaction_read_only
     ):
         raise RunnerDatabaseFleetError("Runner fleet database identity is unsafe")
-    if projection.schema_revision != context.schema_revision or (
-        projection.schema_revision != _SCHEMA_REVISION
-    ):
+    if projection.schema_revision != _CONTROL_PLANE_SCHEMA_REVISION:
         raise RunnerDatabaseFleetError("Runner fleet schema revision is unsafe")
     expected_settings = (
         ("max_notify_queue_pages", "64", "postmaster", False, "configuration file"),
