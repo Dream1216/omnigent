@@ -3,9 +3,12 @@
   "audit_verified_at": "2026-09-10",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
+    ".github/scripts/e2e-ui-required/",
+    ".github/workflows/e2e-ui-required.yml",
     ".github/workflows/saas-",
     "saas/",
     "sdks/saas-",
+    "tests/ci/test_e2e_ui_required_gate.py",
     "tests/saas/"
   ],
   "forbidden_upstream_prefixes": [
