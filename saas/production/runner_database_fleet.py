@@ -275,7 +275,7 @@ class RunnerDatabaseFleetEvidenceMember:
 
 @dataclass(frozen=True, slots=True)
 class RunnerDatabaseFleetEvidenceContext:
-    """Canonical external facts that the database receipt must bind."""
+    """Canonical external facts, including the exact Kubernetes DB controller."""
 
     path: Path
     sha256: str
@@ -285,11 +285,13 @@ class RunnerDatabaseFleetEvidenceContext:
     namespace: str
     release_incarnation: str
     admission_epoch: int
-    cnpg_cluster_namespace: str
-    cnpg_cluster_name: str
-    cnpg_cluster_uid: UUID
-    cnpg_cluster_resource_version: str
-    cnpg_postgresql_major: int
+    database_cluster_api_version: str
+    database_cluster_kind: str
+    database_cluster_namespace: str
+    database_cluster_name: str
+    database_cluster_uid: UUID
+    database_cluster_resource_version: str
+    postgresql_major: int
     database: str
     database_oid: int
     database_system_identifier: str
@@ -1538,11 +1540,13 @@ def _evidence_context_document(
     context: RunnerDatabaseFleetEvidenceContext,
 ) -> dict[str, object]:
     return {
-        "cnpg_cluster_name": context.cnpg_cluster_name,
-        "cnpg_cluster_namespace": context.cnpg_cluster_namespace,
-        "cnpg_cluster_resource_version": context.cnpg_cluster_resource_version,
-        "cnpg_cluster_uid": str(context.cnpg_cluster_uid),
-        "cnpg_postgresql_major": context.cnpg_postgresql_major,
+        "database_cluster_api_version": context.database_cluster_api_version,
+        "database_cluster_kind": context.database_cluster_kind,
+        "database_cluster_name": context.database_cluster_name,
+        "database_cluster_namespace": context.database_cluster_namespace,
+        "database_cluster_resource_version": context.database_cluster_resource_version,
+        "database_cluster_uid": str(context.database_cluster_uid),
+        "postgresql_major": context.postgresql_major,
         "database": context.database,
         "database_endpoint_slices_sha256": context.database_endpoint_slices_sha256,
         "database_oid": context.database_oid,
@@ -1564,7 +1568,7 @@ def _evidence_context_document(
             for member in sorted(context.runners, key=lambda item: item.slot)
         ],
         "schema_revision": context.schema_revision,
-        "schema_version": 2,
+        "schema_version": 3,
     }
 
 
@@ -1762,14 +1766,19 @@ def _validate_evidence_context(context: RunnerDatabaseFleetEvidenceContext) -> N
         field="release_incarnation",
     )
     _generation(context.admission_epoch, field="admission_epoch")
-    _dns_label(context.cnpg_cluster_namespace, field="cnpg_cluster_namespace")
-    _dns_label(context.cnpg_cluster_name, field="cnpg_cluster_name")
-    if context.cnpg_cluster_uid.int == 0:
-        raise RunnerDatabaseFleetError("CNPG Cluster UID is invalid")
-    if _RESOURCE_VERSION.fullmatch(context.cnpg_cluster_resource_version) is None:
-        raise RunnerDatabaseFleetError("CNPG Cluster resourceVersion is invalid")
-    if context.cnpg_postgresql_major != 18:
-        raise RunnerDatabaseFleetError("CNPG PostgreSQL major must be 18")
+    if (context.database_cluster_api_version, context.database_cluster_kind) not in {
+        ("apps/v1", "Deployment"),
+        ("postgresql.cnpg.io/v1", "Cluster"),
+    }:
+        raise RunnerDatabaseFleetError("database cluster controller identity is invalid")
+    _dns_label(context.database_cluster_namespace, field="database_cluster_namespace")
+    _dns_label(context.database_cluster_name, field="database_cluster_name")
+    if context.database_cluster_uid.int == 0:
+        raise RunnerDatabaseFleetError("database cluster UID is invalid")
+    if _RESOURCE_VERSION.fullmatch(context.database_cluster_resource_version) is None:
+        raise RunnerDatabaseFleetError("database cluster resourceVersion is invalid")
+    if context.postgresql_major != 18:
+        raise RunnerDatabaseFleetError("PostgreSQL major must be 18")
     if _DATABASE_NAME.fullmatch(context.database) is None:
         raise RunnerDatabaseFleetError("database is invalid")
     if not 1 <= context.database_oid <= 2**32 - 1:
@@ -1785,7 +1794,9 @@ def _validate_evidence_context(context: RunnerDatabaseFleetEvidenceContext) -> N
         raise RunnerDatabaseFleetError("database Service UID is invalid")
     if _RESOURCE_VERSION.fullmatch(context.database_service_resource_version) is None:
         raise RunnerDatabaseFleetError("database Service resourceVersion is invalid")
-    expected_service_dns = f"{context.database_service_name}.{context.cnpg_cluster_namespace}.svc"
+    expected_service_dns = (
+        f"{context.database_service_name}.{context.database_cluster_namespace}.svc"
+    )
     if context.database_service_dns != expected_service_dns:
         raise RunnerDatabaseFleetError("database Service DNS is invalid")
     if context.database_service_port != 5432:
@@ -1901,7 +1912,7 @@ def load_runner_database_fleet_evidence_context(
     *,
     fleet: RunnerDatabaseFleet,
 ) -> RunnerDatabaseFleetEvidenceContext:
-    """Load the canonical Kubernetes/CNPG evidence context for one fleet."""
+    """Load the canonical Kubernetes database-authority context for one fleet."""
 
     path, sha256, document, raw = _read_canonical_document(
         source,
@@ -1916,11 +1927,13 @@ def load_runner_database_fleet_evidence_context(
         "schema_revision",
         "namespace",
         "release_incarnation",
-        "cnpg_cluster_namespace",
-        "cnpg_cluster_name",
-        "cnpg_cluster_uid",
-        "cnpg_cluster_resource_version",
-        "cnpg_postgresql_major",
+        "database_cluster_api_version",
+        "database_cluster_kind",
+        "database_cluster_namespace",
+        "database_cluster_name",
+        "database_cluster_uid",
+        "database_cluster_resource_version",
+        "postgresql_major",
         "database",
         "database_oid",
         "database_system_identifier",
@@ -1937,7 +1950,7 @@ def load_runner_database_fleet_evidence_context(
     if (
         set(document) != expected_fields
         or type(document.get("schema_version")) is not int
-        or (document.get("schema_version") != 2)
+        or (document.get("schema_version") != 3)
     ):
         raise RunnerDatabaseFleetError("Runner fleet evidence context shape is invalid")
     rows = document.get("runners")
@@ -1946,7 +1959,7 @@ def load_runner_database_fleet_evidence_context(
     top_level_strings = expected_fields - {
         "schema_version",
         "admission_epoch",
-        "cnpg_postgresql_major",
+        "postgresql_major",
         "database_oid",
         "database_service_port",
         "runners",
@@ -1962,13 +1975,15 @@ def load_runner_database_fleet_evidence_context(
         namespace=cast(str, document["namespace"]),
         release_incarnation=cast(str, document["release_incarnation"]),
         admission_epoch=_generation(document.get("admission_epoch"), field="admission_epoch"),
-        cnpg_cluster_namespace=cast(str, document["cnpg_cluster_namespace"]),
-        cnpg_cluster_name=cast(str, document["cnpg_cluster_name"]),
-        cnpg_cluster_uid=_canonical_uuid(
-            document.get("cnpg_cluster_uid"), field="cnpg_cluster_uid"
+        database_cluster_api_version=cast(str, document["database_cluster_api_version"]),
+        database_cluster_kind=cast(str, document["database_cluster_kind"]),
+        database_cluster_namespace=cast(str, document["database_cluster_namespace"]),
+        database_cluster_name=cast(str, document["database_cluster_name"]),
+        database_cluster_uid=_canonical_uuid(
+            document.get("database_cluster_uid"), field="database_cluster_uid"
         ),
-        cnpg_cluster_resource_version=cast(str, document["cnpg_cluster_resource_version"]),
-        cnpg_postgresql_major=cast(int, document["cnpg_postgresql_major"]),
+        database_cluster_resource_version=cast(str, document["database_cluster_resource_version"]),
+        postgresql_major=cast(int, document["postgresql_major"]),
         database=cast(str, document["database"]),
         database_oid=cast(int, document["database_oid"]),
         database_system_identifier=cast(str, document["database_system_identifier"]),
@@ -2941,7 +2956,7 @@ def load_and_verify_runner_database_fleet_admission_receipt(
     expected_database_identity = {
         "database": context.database,
         "database_oid": context.database_oid,
-        "server_version_num": context.cnpg_postgresql_major * 10_000,
+        "server_version_num": context.postgresql_major * 10_000,
         "system_identifier": context.database_system_identifier,
     }
     if not isinstance(database_identity, dict) or any(

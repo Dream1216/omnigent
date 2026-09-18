@@ -41,6 +41,18 @@ direct Runner connection being expected-deny are compatibility evidence, not
 Beta admission evidence. Never modify the live `omnigent-data` database ACLs to
 make a Beta rollout pass.
 
+Evidence-context schema 3 records the database controller API version and kind
+instead of implying that every admitted PostgreSQL 18 authority is CNPG. This
+lets the existing isolated `next` target truthfully bind its reviewed
+`apps/v1` PostgreSQL Deployment during the transition to the dedicated data
+application. Only `apps/v1 Deployment` and `postgresql.cnpg.io/v1 Cluster` are
+accepted, and both still require PostgreSQL 18, the exact controller UID and
+resourceVersion, Service/EndpointSlice identity, database OID/system identifier,
+the two postmaster settings, and zero prepared transactions. The source Beta
+profile and production admission described here still require the dedicated
+CNPG data application; accepting an exact Deployment identity does not make the
+legacy target production-admitted.
+
 This is **not Production-admitted**. Production remains blocked by the
 process-local singleton Preview Owner, missing observed backup/PITR and restore
 evidence for the release database, external Runner/Preview PKI issuance and
