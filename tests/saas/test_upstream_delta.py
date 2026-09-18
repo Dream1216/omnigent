@@ -170,3 +170,24 @@ def test_kimi_ci_closure_budget_revision_retains_a_hard_file_ceiling(
     assert report["violations"] == (
         ["direct upstream file budget exceeded"] if extra_files else []
     )
+
+
+def test_e2e_ui_governance_files_are_downstream_owned() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
+    report = evaluate_delta(
+        [
+            FileDelta(".github/scripts/e2e-ui-required/check.sh", 91, 35),
+            FileDelta(".github/workflows/e2e-ui-required.yml", 47, 7),
+            FileDelta("tests/ci/test_e2e_ui_required_gate.py", 138, 0),
+        ],
+        manifest,
+        active_patch_count=7,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+    )
+    assert report["status"] == "pass"
+    assert report["metrics"]["direct_upstream_file_count"] == 0
+    assert report["metrics"]["upstream_net_added_loc"] == 0
+    assert report["metrics"]["isolated_custom_code_ratio"] == 1.0
