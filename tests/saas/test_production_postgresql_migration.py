@@ -512,6 +512,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
             "ge1b2c3d4e5f",
             "p0s000000014",
         ): "37565bbc3ba91e9950a3689f803bafd55f3ff714bf25c9a9b51a3e63e297488e",
+        (
+            16,
+            "hh1b2c3d4e5f",
+            "p0s000000014",
+        ): "60e8f83d0992ec64c74194504d45bf9fcb492f8df94d7e5be4b890020abdac1d",
+        (
+            18,
+            "hh1b2c3d4e5f",
+            "p0s000000014",
+        ): "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1",
     }
     assert (
         migration._PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.items()
