@@ -22,13 +22,17 @@ def _run_gate(
     gateway: bool = False,
     partial_gateway: bool = False,
     verdict: str = '{"needs_test":false,"reason":"covered"}',
+    files_override: list[dict[str, str]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
+    verdict_file = tmp_path / "verdict"
+    verdict_file.write_text(verdict)
 
     files = json.dumps(
-        [
+        files_override
+        or [
             {
                 "status": "modified",
                 "filename": "web/example.tsx",
@@ -60,7 +64,7 @@ fi
         bin_dir / "curl",
         f"""
 printf 'curl %s\\n' "$*" >> {calls!s}
-jq -cn --arg content {json.dumps(verdict)} \
+    jq -cn --rawfile content {verdict_file!s} \
   '{{choices:[{{message:{{content:$content}}}}]}}'
 """,
     )
@@ -68,7 +72,7 @@ jq -cn --arg content {json.dumps(verdict)} \
         bin_dir / "copilot",
         f"""
 printf 'copilot %s\\n' "$*" >> {calls!s}
-printf '%s\\n' {json.dumps(verdict)}
+    cat {verdict_file!s}
 """,
     )
 
@@ -136,3 +140,66 @@ def test_unparseable_copilot_verdict_fails_closed(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "unparseable verdict" in result.stdout
+
+
+def test_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
+    result = _run_gate(
+        tmp_path,
+        verdict="""{
+  "needs_test": false,
+  "reason": "covered by the existing browser test"
+}""",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "no test required" in result.stdout
+
+
+def test_fenced_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
+    result = _run_gate(
+        tmp_path,
+        verdict="""```json
+{
+  "needs_test": false,
+  "reason": "covered by the existing browser test"
+}
+```""",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "no test required" in result.stdout
+
+
+def test_large_pr_index_keeps_late_test_declarations_visible(tmp_path: Path) -> None:
+    padding = "\n".join(f"+padding line {i}" for i in range(400))
+    files = [
+        {
+            "status": "modified",
+            "filename": "web/example.tsx",
+            "patch": "@@ -1 +1 @@\n-old\n+new",
+        },
+        *[
+            {
+                "status": "added",
+                "filename": f"tests/e2e_ui/agents/test_filler_{i:03}.py",
+                "patch": f"@@ -0,0 +1,400 @@\n{padding}",
+            }
+            for i in range(20)
+        ],
+        {
+            "status": "added",
+            "filename": "tests/e2e_ui/zzzz/test_login_recovery.py",
+            "patch": (
+                "@@ -0,0 +1,2 @@\n"
+                "+async def test_login_recovers_after_expired_session(page):\n"
+                "+    pass"
+            ),
+        },
+    ]
+
+    result = _run_gate(tmp_path, files_override=files)
+
+    assert result.returncode == 0, result.stderr
+    prompt = (tmp_path / "calls").read_text()
+    assert "tests/e2e_ui/zzzz/test_login_recovery.py" in prompt
+    assert "test_login_recovers_after_expired_session" in prompt
