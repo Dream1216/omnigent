@@ -213,8 +213,14 @@ else
   fi
 fi
 
-# Strip any accidental markdown fencing, then pull the JSON object out.
-VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1 || true)
+# Strip accidental markdown fence lines, then parse the complete response. The
+# Copilot CLI can pretty-print an otherwise valid verdict across several lines;
+# a line-oriented `{.*}` grep would discard that response and fail the gate.
+# Requiring the remaining payload to be exactly one JSON object keeps the gate
+# fail-closed when the judge adds prose or returns multiple values.
+VERDICT_JSON=$(printf '%s\n' "$CONTENT" \
+  | sed -E '/^[[:space:]]*```[a-zA-Z]*[[:space:]]*$/d; /^[[:space:]]*```[[:space:]]*$/d' \
+  | jq -c 'if type == "object" then . else empty end' 2>/dev/null || true)
 # NB: must not use `.needs_test // empty` -- the `//` operator treats the
 # boolean `false` as absent, which would silently turn a legitimate "no test
 # required" verdict into a fail-closed block. Map the boolean explicitly.

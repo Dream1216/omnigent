@@ -26,6 +26,8 @@ def _run_gate(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
+    verdict_file = tmp_path / "verdict"
+    verdict_file.write_text(verdict)
 
     files = json.dumps(
         [
@@ -60,7 +62,7 @@ fi
         bin_dir / "curl",
         f"""
 printf 'curl %s\\n' "$*" >> {calls!s}
-jq -cn --arg content {json.dumps(verdict)} \
+    jq -cn --rawfile content {verdict_file!s} \
   '{{choices:[{{message:{{content:$content}}}}]}}'
 """,
     )
@@ -68,7 +70,7 @@ jq -cn --arg content {json.dumps(verdict)} \
         bin_dir / "copilot",
         f"""
 printf 'copilot %s\\n' "$*" >> {calls!s}
-printf '%s\\n' {json.dumps(verdict)}
+    cat {verdict_file!s}
 """,
     )
 
@@ -136,3 +138,31 @@ def test_unparseable_copilot_verdict_fails_closed(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "unparseable verdict" in result.stdout
+
+
+def test_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
+    result = _run_gate(
+        tmp_path,
+        verdict='''{
+  "needs_test": false,
+  "reason": "covered by the existing browser test"
+}''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "no test required" in result.stdout
+
+
+def test_fenced_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
+    result = _run_gate(
+        tmp_path,
+        verdict='''```json
+{
+  "needs_test": false,
+  "reason": "covered by the existing browser test"
+}
+```''',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "no test required" in result.stdout
