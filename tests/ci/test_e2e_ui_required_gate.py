@@ -145,10 +145,10 @@ def test_unparseable_copilot_verdict_fails_closed(tmp_path: Path) -> None:
 def test_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
     result = _run_gate(
         tmp_path,
-        verdict='''{
+        verdict="""{
   "needs_test": false,
   "reason": "covered by the existing browser test"
-}''',
+}""",
     )
 
     assert result.returncode == 0, result.stderr
@@ -158,12 +158,12 @@ def test_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
 def test_fenced_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
     result = _run_gate(
         tmp_path,
-        verdict='''```json
+        verdict="""```json
 {
   "needs_test": false,
   "reason": "covered by the existing browser test"
 }
-```''',
+```""",
     )
 
     assert result.returncode == 0, result.stderr
