@@ -120,6 +120,7 @@ overrides:
   '@tiptap/react': 3.30.5
   '@tiptap/starter-kit': 3.30.5
   express-rate-limit>ip-address: 10.3.1
+  sharp: 0.35.4
 
 allowBuilds:
   '@anthropic-ai/claude-code': true

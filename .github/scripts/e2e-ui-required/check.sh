@@ -80,7 +80,14 @@ MAX_BLOB_BYTES=60000
 # coverage that was actually added and (correctly, given what it saw) answer
 # needs_test=true. Build the two categories separately and cap each so neither
 # can crowd the other out, listing the test patches first.
-E2E_UI_BUDGET=$((MAX_BLOB_BYTES / 2))
+# Keep a compact index of every changed browser test before the detailed
+# patches. Large upstream-sync PRs can change hundreds of e2e files; taking
+# only the first patches alphabetically hides later coverage (for example
+# sessions/start_session) from the judge even though those tests changed. The
+# index carries every path plus its added test declarations at low cost, while
+# the detailed slice still lets the judge inspect representative bodies.
+E2E_UI_INDEX_BUDGET=$((MAX_BLOB_BYTES / 2))
+E2E_UI_PATCH_BUDGET=$((MAX_BLOB_BYTES / 6))
 
 # `gh api --paginate` (no --jq) merges all pages into one JSON array; capture it
 # once and feed it to jq per category so --argjson reaches jq (gh api itself has
@@ -103,17 +110,22 @@ patch_blob() {  # $1 = path prefix
 E2E_BLOB=$(patch_blob "tests/e2e_ui/")
 AP_BLOB=$(patch_blob "web/")
 
-# Cap the e2e_ui patches to their reserved slice, then let web use whatever
-# of the overall budget the (usually small) e2e_ui blob left over. Apply the
-# byte caps in-shell, NOT via `... | head -c`: under `set -o pipefail`, head
-# closing the pipe early sends jq SIGPIPE, and that broken-pipe exit aborts the
-# whole gate on any large UI PR -- fail-closed before the judge or the
-# skip-label logic ever runs. Bash slicing truncates the captured string with
-# no pipe to break.
-E2E_BLOB=${E2E_BLOB:0:$E2E_UI_BUDGET}
-AP_BUDGET=$(( MAX_BLOB_BYTES - ${#E2E_BLOB} ))
+E2E_TEST_INDEX=$(jq -r '.[]
+  | select(.filename | startswith("tests/e2e_ui/"))
+  | (.patch // "") as $p
+  | ($p | split("\n")
+      | map(select(test("^\\+[^+].*((async[[:space:]]+)?def[[:space:]]+test_|class[[:space:]]+Test)")))) as $decls
+  | "\(.status)\t\(.filename)\t\($decls | join(" | "))"' <<< "$FILES_JSON")
+
+# Cap the compact index and detailed e2e_ui patches to their reserved slices,
+# then let web use the remaining budget. Apply byte caps in-shell, NOT via
+# `... | head -c`: under `set -o pipefail`, head closing the pipe early sends
+# jq SIGPIPE and aborts the gate before the judge or skip-label logic runs.
+E2E_TEST_INDEX=${E2E_TEST_INDEX:0:$E2E_UI_INDEX_BUDGET}
+E2E_BLOB=${E2E_BLOB:0:$E2E_UI_PATCH_BUDGET}
+AP_BUDGET=$(( MAX_BLOB_BYTES - ${#E2E_TEST_INDEX} - ${#E2E_BLOB} ))
 AP_BLOB=${AP_BLOB:0:$AP_BUDGET}
-DIFF_BLOB="${E2E_BLOB}"$'\n'"${AP_BLOB}"
+DIFF_BLOB="Changed tests/e2e_ui index (path plus added test declarations):"$'\n'"${E2E_TEST_INDEX}"$'\n\n'"Detailed tests/e2e_ui patches:"$'\n'"${E2E_BLOB}"$'\n\n'"Detailed web patches:"$'\n'"${AP_BLOB}"
 
 PR_TITLE=$(gh pr view "$PR" --repo "$REPO" --json title --jq '.title')
 
@@ -213,8 +225,14 @@ else
   fi
 fi
 
-# Strip any accidental markdown fencing, then pull the JSON object out.
-VERDICT_JSON=$(echo "$CONTENT" | sed -E 's/^```[a-zA-Z]*//; s/```$//' | grep -o '{.*}' | head -1 || true)
+# Strip accidental markdown fence lines, then parse the complete response. The
+# Copilot CLI can pretty-print an otherwise valid verdict across several lines;
+# a line-oriented `{.*}` grep would discard that response and fail the gate.
+# Requiring the remaining payload to be exactly one JSON object keeps the gate
+# fail-closed when the judge adds prose or returns multiple values.
+VERDICT_JSON=$(printf '%s\n' "$CONTENT" \
+  | sed -E '/^[[:space:]]*```[a-zA-Z]*[[:space:]]*$/d; /^[[:space:]]*```[[:space:]]*$/d' \
+  | jq -c 'if type == "object" then . else empty end' 2>/dev/null || true)
 # NB: must not use `.needs_test // empty` -- the `//` operator treats the
 # boolean `false` as absent, which would silently turn a legitimate "no test
 # required" verdict into a fail-closed block. Map the boolean explicitly.
