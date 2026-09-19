@@ -1466,14 +1466,19 @@ main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
 OpenCode support while replaying patch 0007 against `9616bf97`. Reconciliation
 revision `75322493346efc4016a5d1878293e340837e8d92` then merges downstream main
 `be303951b048985edbc9a1adac4cfc8ce60b483a` from PR 68 and preserves its Kimi
-platform-provider delivery. Final reconciliation revision
+platform-provider delivery. The PR 77 reconciliation revision
 `010f5672d3f1c247fc146445794a21337f207926` merges downstream main
-`9715325b0b9e4209f57c364c1889850c6f8db6b7` from PR 77 after the Staff
-catalog work from PR 75. It preserves the Preview and Runner release contracts
-and anchors the official `hh1b2c3d4e5f` security catalog for PostgreSQL 16 and
-18. The resulting seven-patch queue covers twenty official source paths without
-a content mismatch. Candidate implementation revision
-`010f5672d3f1c247fc146445794a21337f207926` binds the Harness CLI
+`9715325b0b9e4209f57c364c1889850c6f8db6b7` after the Staff catalog work from
+PR 75. Latest reconciliation revision
+`24c121d5f4a9e606d3edeebb60340dfe4de2246d` merges downstream main
+`3e8276b041763ccc6d09d4bd1716d9e004d45843` after PR 79 bound the Runner
+database controller identity and PR 80 added the trusted E2E UI judge fallback.
+It preserves the Preview and Runner release contracts, anchors the official
+`hh1b2c3d4e5f` security catalog for PostgreSQL 16 and 18, and keeps the E2E
+governance implementation downstream-owned without widening the upstream
+source-intrusion budget. The resulting seven-patch queue covers twenty official
+source paths without a content mismatch. Candidate implementation revision
+`24c121d5f4a9e606d3edeebb60340dfe4de2246d` binds the Harness CLI
 release-age exceptions to the sixteen exact, integrity-locked
 Qwen/OpenCode/Kimi artifacts accepted on downstream main, refreshes
 the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and

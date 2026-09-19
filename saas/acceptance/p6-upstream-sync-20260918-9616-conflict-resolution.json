@@ -119,10 +119,10 @@
     }
   },
   "latest_main_reconciliation": {
-    "revision": "010f5672d3f1c247fc146445794a21337f207926",
-    "main_parent_revision": "9715325b0b9e4209f57c364c1889850c6f8db6b7",
-    "main_pull_request": 77,
-    "resolution": "preserved the merged Kimi, Staff, Preview, and Runner release contracts; retained the audited Qwen/OpenCode/Kimi supply-chain and bubblewrap policies; anchored the official hh1 security catalog for PostgreSQL 16 and 18; and kept patch 0008 replayable after patches 0002-0007",
+    "revision": "24c121d5f4a9e606d3edeebb60340dfe4de2246d",
+    "main_parent_revision": "3e8276b041763ccc6d09d4bd1716d9e004d45843",
+    "main_pull_request": 80,
+    "resolution": "preserved the merged Kimi, Staff, Preview, Runner database-controller, and E2E UI governance contracts; retained the audited Qwen/OpenCode/Kimi supply-chain and bubblewrap policies; anchored the official hh1 security catalog for PostgreSQL 16 and 18; kept patch 0008 replayable after patches 0002-0007; and classified the trusted E2E judge implementation as downstream governance without widening the upstream source-intrusion budget",
     "validation": {
       "passed": 467,
       "skipped": 25,
