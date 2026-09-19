@@ -124,21 +124,30 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_e2e_apt_refresh_budget_revision_retains_a_hard_loc_ceiling(
+def test_dependency_security_budget_revision_retains_a_hard_loc_ceiling(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 64
+    assert budget["max_direct_upstream_files"] == 68
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "e2e-apt-index-refresh-v8"
-    assert revision["previous_max_direct_upstream_files"] == 63
-    assert revision["previous_max_upstream_net_added_loc"] == 2578
-    assert revision["scoped_ci_delta"] == {".github/actions/e2e-run/action.yml": 1}
+    assert revision["revision"] == "candidate-dependency-security-closure-v9"
+    assert revision["previous_max_direct_upstream_files"] == 64
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["scoped_dependency_delta"] == {
+        "editors/vscode/package.json": 0,
+        "pnpm-lock.yaml": -457,
+        "pnpm-workspace.yaml": 1,
+        "uv.lock": 0,
+        "web/ios/Gemfile.lock": 20,
+        "web/ios/RELEASE.md": 1,
+        "web/package.json": 0,
+    }
+    assert revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
             FileDelta("omnigent/stores/host_store.py", 2579 + extra_lines, 0),
@@ -157,7 +166,7 @@ def test_e2e_apt_refresh_budget_revision_retains_a_hard_loc_ceiling(
 
 
 @pytest.mark.parametrize("extra_files", [0, 1])
-def test_e2e_apt_refresh_budget_revision_retains_a_hard_file_ceiling(
+def test_dependency_security_budget_revision_retains_a_hard_file_ceiling(
     extra_files: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
