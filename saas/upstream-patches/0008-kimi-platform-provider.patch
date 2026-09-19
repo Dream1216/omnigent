@@ -1,24 +1,24 @@
 diff --git a/omnigent/cli_config.py b/omnigent/cli_config.py
-index b1c9ca4e05563112d5c325fae43f038fc352d60a..f3abb820a4ad21ca2d00c31e53fc9627c4bece8e 100644
+index 56efeee18..40704ec20 100644
 --- a/omnigent/cli_config.py
 +++ b/omnigent/cli_config.py
-@@ -2668,2 +2668,2 @@ def _print_kimi_auth_help() -> None:
+@@ -2741,2 +2741,2 @@ def _print_kimi_auth_help() -> None:
 -        "    • Omnigent stores no kimi credential and cannot thread one per "
 -        "spawn — configure it once in the kimi CLI\n"
 +        "    • Managed SaaS can also supply an Omnigent platform Provider "
 +        "per session; its short-lived token is never written to this config\n"
-@@ -2703 +2702,0 @@ def _manage_kimi_harness() -> None:
+@@ -2776 +2775,0 @@ def _manage_kimi_harness() -> None:
 -        harness_install_spec,
-@@ -2704,0 +2704 @@ def _manage_kimi_harness() -> None:
+@@ -2777,0 +2777 @@ def _manage_kimi_harness() -> None:
 +        install_harness_cli,
-@@ -2709,4 +2709,2 @@ def _manage_kimi_harness() -> None:
+@@ -2782,4 +2782,2 @@ def _manage_kimi_harness() -> None:
 -    # Gate on the CLI. Kimi ships a single binary via a curl installer (not
 -    # npm), so there's no in-process auto-install — name the command and let
 -    # the user run it, then re-open. Mirrors how ``harness_setup_hint`` treats
 -    # the other curl-installed CLI (cursor-agent).
 +    # Gate on the CLI. Kimi now publishes an official npm package, so setup can
 +    # install it directly instead of sending the user to a mutable curl script.
-@@ -2714,6 +2712,5 @@ def _manage_kimi_harness() -> None:
+@@ -2787,6 +2785,5 @@ def _manage_kimi_harness() -> None:
 -        spec = harness_install_spec(KIMI_KEY)
 -        hint = (spec.install_hint if spec else None) or "see Kimi Code docs"
 -        console.print(
@@ -30,7 +30,7 @@ index b1c9ca4e05563112d5c325fae43f038fc352d60a..f3abb820a4ad21ca2d00c31e53fc9627
 +            ["Yes — install official npm package", "No — back to harnesses"],
 +            default=0,
 +            clear_on_exit=True,
-@@ -2721 +2718,9 @@ def _manage_kimi_harness() -> None:
+@@ -2794 +2791,9 @@ def _manage_kimi_harness() -> None:
 -        return
 +        if choice != 0:
 +            return
@@ -42,7 +42,7 @@ index b1c9ca4e05563112d5c325fae43f038fc352d60a..f3abb820a4ad21ca2d00c31e53fc9627
 +            )
 +            return
 diff --git a/omnigent/harnesses/kimi_native/credentials.py b/omnigent/harnesses/kimi_native/credentials.py
-index 5d2d771c0345898a053b78a59e176028949999e7..86aba9cd1ad07d8e6c77a378496f49eadcb221bf 100644
+index 5d2d771c0..86aba9cd1 100644
 --- a/omnigent/harnesses/kimi_native/credentials.py
 +++ b/omnigent/harnesses/kimi_native/credentials.py
 @@ -122,2 +122,3 @@ def build_kimi_session_home(
@@ -77,7 +77,7 @@ index 5d2d771c0345898a053b78a59e176028949999e7..86aba9cd1ad07d8e6c77a378496f49ea
 +        )
 +    return env
 diff --git a/omnigent/inner/kimi_executor.py b/omnigent/inner/kimi_executor.py
-index 9ee8e8432565e5b9939167216b533d4408ea39fb..59b9ca343f5319cf1a8c91abd132a20e2c447f1c 100644
+index 9ee8e8432..59b9ca343 100644
 --- a/omnigent/inner/kimi_executor.py
 +++ b/omnigent/inner/kimi_executor.py
 @@ -4,2 +4,2 @@ Drives Moonshot AI's upstream ``kimi`` CLI from
@@ -183,7 +183,7 @@ index 9ee8e8432565e5b9939167216b533d4408ea39fb..59b9ca343f5319cf1a8c91abd132a20e
 +            yield ExecutorError(message=str(exc), retryable=True)
 +            return
 diff --git a/omnigent/inner/kimi_harness.py b/omnigent/inner/kimi_harness.py
-index fc45cd555920f01d59ba5e6eb67cef174f6a0c1d..21970f4ecc637879f91b25d1c590b48513500a30 100644
+index 5d8aae801..d855165f4 100644
 --- a/omnigent/inner/kimi_harness.py
 +++ b/omnigent/inner/kimi_harness.py
 @@ -33,4 +33,3 @@ Env vars read at startup (full contract in
@@ -194,14 +194,14 @@ index fc45cd555920f01d59ba5e6eb67cef174f6a0c1d..21970f4ecc637879f91b25d1c590b485
 +Provider routing uses Kimi Code's ``KIMI_MODEL_*`` temporary-provider
 +environment family. Omnigent resolves the configured gateway token at process
 +start and never persists it in ``~/.kimi-code/config.toml``.
-@@ -64,0 +64,2 @@ _ENV_OS_ENV = "HARNESS_KIMI_OS_ENV"
+@@ -65,0 +65,2 @@ _ENV_OS_ENV = "HARNESS_KIMI_OS_ENV"
 +_ENV_GATEWAY_BASE_URL = "HARNESS_KIMI_GATEWAY_BASE_URL"
 +_ENV_GATEWAY_AUTH_COMMAND = "HARNESS_KIMI_GATEWAY_AUTH_COMMAND"
-@@ -135,0 +137,2 @@ def _build_kimi_executor() -> Executor:
+@@ -136,0 +138,2 @@ def _build_kimi_executor() -> Executor:
 +        gateway_base_url=os.environ.get(_ENV_GATEWAY_BASE_URL, "").strip() or None,
 +        gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND, "").strip() or None,
 diff --git a/omnigent/onboarding/harness_install.py b/omnigent/onboarding/harness_install.py
-index 48dabacf7b1ea2e31acd771a4b78cdc27600285e..af1fed8c4850d4dc78b27a939ce079a1607b3faa 100644
+index c21ab9472..686a2f57d 100644
 --- a/omnigent/onboarding/harness_install.py
 +++ b/omnigent/onboarding/harness_install.py
 @@ -74,3 +74,2 @@ CURSOR_KEY = "cursor"
@@ -219,7 +219,7 @@ index 48dabacf7b1ea2e31acd771a4b78cdc27600285e..af1fed8c4850d4dc78b27a939ce079a1
 -_KIMI_MIN_VERSION = "0.7.0"
 +# KIMI_MODEL_* temporary Provider injection is the managed-SaaS auth boundary.
 +_KIMI_MIN_VERSION = "0.43.0"
-@@ -251,4 +251,4 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -260,4 +260,4 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
 -    # Kimi Code CLI ships a single-binary ``kimi`` via a curl installer (no
 -    # npm). ``kimi login`` is the interactive OAuth device flow (membership);
 -    # pay-per-use users instead set a Kimi API key in
@@ -228,16 +228,16 @@ index 48dabacf7b1ea2e31acd771a4b78cdc27600285e..af1fed8c4850d4dc78b27a939ce079a1
 +    # the optional interactive OAuth device flow. Managed SaaS sessions instead
 +    # receive an in-memory KIMI_MODEL_* Provider. ``status_args`` is
 +    # intentionally ``None``:
-@@ -266 +266 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -275 +275 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
 -        package=None,
 +        package="@moonshot-ai/kimi-code",
-@@ -268 +267,0 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -277 +276,0 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
 -        install_hint="curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
 diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
-index f0ba39b7c3f35c92fcb39e076aa60f3ab6847306..8638c9a1060af4421b694366b027fe9245580d88 100644
+index 3e139a827..99cb69ba9 100644
 --- a/omnigent/onboarding/harness_readiness.py
 +++ b/omnigent/onboarding/harness_readiness.py
-@@ -296,0 +297,6 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
+@@ -307,0 +308,6 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
 +    # Kimi can use either its own Moonshot login/config OR an Omnigent-managed
 +    # OpenAI-compatible provider injected per session through KIMI_MODEL_*.
 +    # The latter is the managed-SaaS path and must not remain yellow merely
@@ -245,7 +245,7 @@ index f0ba39b7c3f35c92fcb39e076aa60f3ab6847306..8638c9a1060af4421b694366b027fe92
 +    if install_key == KIMI_KEY and _family_provider_configured(KIMI_SURFACE):
 +        return True
 diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
-index 6f9f34c4edeafcc76ff8f3f66b27d486f3d1f89e..94153aa19707386b41c34f033111d8e8e8613879 100644
+index 6f9f34c4e..94153aa19 100644
 --- a/omnigent/onboarding/provider_config.py
 +++ b/omnigent/onboarding/provider_config.py
 @@ -191,4 +191,7 @@ _HARNESS_FAMILY: dict[str, str] = {

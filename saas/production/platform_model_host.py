@@ -42,10 +42,16 @@ class PlatformModelHostProcess(HostProcess):
         server_url: str,
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
+        interactive_shells: list[str] | None = None,
         token_authority: PlatformModelGatewayTokenAuthority,
         token_ttl_seconds: int,
     ) -> None:
-        super().__init__(identity, server_url, lifecycle_lock=lifecycle_lock)
+        super().__init__(
+            identity,
+            server_url,
+            lifecycle_lock=lifecycle_lock,
+            interactive_shells=interactive_shells,
+        )
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
 
@@ -126,11 +132,13 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
         resolved_server_url: str,
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
+        interactive_shells: list[str] | None = None,
     ) -> PlatformModelHostProcess:
         return PlatformModelHostProcess(
             identity,
             resolved_server_url,
             lifecycle_lock=lifecycle_lock,
+            interactive_shells=interactive_shells,
             token_authority=authority,
             token_ttl_seconds=token_ttl,
         )

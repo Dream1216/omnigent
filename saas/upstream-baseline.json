@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-09-10",
+  "audit_verified_at": "2026-09-18",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/scripts/e2e-ui-required/",
@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "ga1b2c3d4e5f"
+    "hh1b2c3d4e5f"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -183,6 +183,6 @@
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
-  "upstream_version": "0.13.0.dev0"
+  "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+  "upstream_version": "0.15.0.dev0"
 }

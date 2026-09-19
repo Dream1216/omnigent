@@ -661,9 +661,9 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "production Dockerfile must pin pnpm 11.15.1",
         ),
         (
-            "ARG CLAUDE_CODE_VERSION=2.1.236",
-            "ARG CLAUDE_CODE_VERSION=2.1.237",
-            "host image must pin @anthropic-ai/claude-code to 2.1.236",
+            "ARG CLAUDE_CODE_VERSION=2.1.266",
+            "ARG CLAUDE_CODE_VERSION=2.1.267",
+            "host image must pin @anthropic-ai/claude-code to 2.1.266",
         ),
         (
             "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",
@@ -884,6 +884,32 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
 
     assert (
         "host CLI install scripts must be explicitly allowed by pnpm policy"
+        in validate_image_material_lock(repo)
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "replacement"),
+    [
+        ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
+        ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
+        ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
+        ("'opencode-linux-x64@1.18.31'", "'unrelated-package@1.0.0'"),
+    ],
+)
+def test_image_material_lock_rejects_release_age_exclusion_drift(
+    tmp_path: Path,
+    target: str,
+    replacement: str,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    workspace = repo / "pnpm-workspace.yaml"
+    source = workspace.read_text(encoding="utf-8")
+    assert target in source
+    workspace.write_text(source.replace(target, replacement, 1), encoding="utf-8")
+
+    assert (
+        "pnpm minimumReleaseAgeExclude must match the approved exact Harness artifact versions"
         in validate_image_material_lock(repo)
     )
 

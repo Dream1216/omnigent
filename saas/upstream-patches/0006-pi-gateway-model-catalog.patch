@@ -1,8 +1,8 @@
 diff --git a/omnigent/harnesses/pi_native/credentials.py b/omnigent/harnesses/pi_native/credentials.py
-index d17011b26..aec2f965b 100644
+index 35d95e552..a5d8f771f 100644
 --- a/omnigent/harnesses/pi_native/credentials.py
 +++ b/omnigent/harnesses/pi_native/credentials.py
-@@ -1160,11 +1160,19 @@ def _inline_family_pi_provider(
+@@ -1414,11 +1414,19 @@ def _inline_family_pi_provider(
          # Strip bracket suffixes (e.g. "[1m]") — accepted by the direct
          # Anthropic API but rejected by the Databricks AI Gateway.
          resolved_model = re.sub(r"\[.*?\]$", "", resolved_model)
@@ -27,11 +27,12 @@ index d17011b26..aec2f965b 100644
          return PiProviderConfig(
              provider_id=_PI_PROVIDER_ID,
              base_url=family.base_url,
-@@ -1172,6 +1180,6 @@ def _inline_family_pi_provider(
-             model=resolved_model,
-             api_key=api_key,
-             auth_header=auth_header,
+@@ -1429,7 +1437,7 @@ def _inline_family_pi_provider(
+             # Advisory when the model landed on the other family's wire; a raw
+             # passthrough endpoint rejects it, and silence reads as a hang.
+             credential_warning=_cross_family_routing_warning(entry, family_name, resolved_model),
 -            extra_models=[model_entry],
 +            extra_models=model_entries,
-         )
-     return None
+             # Record the endpoint the pre-launch picker can enumerate live; no
+             # I/O happens here so session launch stays off the network.
+             listing_provider=model_catalog.ResolvedModelProvider(

@@ -44,7 +44,7 @@ def test_concurrent_cache_miss_never_exposes_partial_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second reader waits until the first extraction is atomically published.
+    """Concurrent readers publish or consume only complete directories.
 
     The previous implementation extracted directly into ``cache/<agent_id>``.
     This test pauses the first extraction after creating an empty config file:
@@ -94,21 +94,21 @@ def test_concurrent_cache_miss_never_exposes_partial_config(
             # the contract.  The fixed implementation exposes only a hidden
             # staging directory until parsing succeeds.
             assert not (cache_dir / "concurrent-agent").exists()
-            # The second call must be waiting on the per-agent lock.  On the
-            # old implementation it completes here with the empty-YAML error.
-            with pytest.raises(concurrent.futures.TimeoutError):
-                second.result(timeout=0.25)
+            # The official cache permits independent cold extraction.  The
+            # second loader can publish its complete staging directory while
+            # the first remains paused on private, unpublished state.
+            second_loaded = second.result(timeout=5)
         finally:
             release_first_extract.set()
 
         first_loaded = first.result(timeout=5)
         second_loaded = second.result(timeout=5)
 
-    assert extraction_calls == 1
-    assert first_loaded.spec is second_loaded.spec
+    assert extraction_calls == 2
+    assert first_loaded.spec.name == second_loaded.spec.name == "concurrent-agent"
     assert first_loaded.workdir == cache_dir / "concurrent-agent"
     assert (first_loaded.workdir / "config.yaml").read_text(encoding="utf-8")
-    assert list(cache_dir.glob(".concurrent-agent-extract-*")) == []
+    assert not any((cache_dir / ".staging").iterdir())
 
 
 def test_failed_cache_miss_does_not_publish_partial_directory(tmp_path: Path) -> None:
@@ -175,7 +175,11 @@ def test_cross_instance_publish_loser_consumes_complete_winner(
     real_rename = Path.rename
 
     def _publish_winner_then_lose(source: Path, target: Path) -> Path:
-        if source.name.startswith(".publish-race-extract-") and target == workdir:
+        if (
+            source.parent.name == ".staging"
+            and source.name.startswith("bundle-")
+            and target == workdir
+        ):
             workdir.mkdir()
             (workdir / "config.yaml").write_text(
                 yaml.dump(
@@ -200,7 +204,7 @@ def test_cross_instance_publish_loser_consumes_complete_winner(
 
     assert loaded.spec.name == "winner"
     assert loaded.workdir == workdir
-    assert list(cache_dir.glob(".publish-race-extract-*")) == []
+    assert not any((cache_dir / ".staging").iterdir())
 
 
 def test_replace_publish_failure_restores_previous_complete_cache(
@@ -220,7 +224,11 @@ def test_replace_publish_failure_restores_previous_complete_cache(
     workdir = cache_dir / "replace-agent"
 
     def _fail_staging_publish(source: Path, target: Path) -> Path:
-        if source.name.startswith(".replace-agent-staging-") and target == workdir:
+        if (
+            source.parent.name == ".staging"
+            and source.name.startswith("bundle-")
+            and target == workdir
+        ):
             raise OSError("simulated atomic publish failure")
         return real_rename(source, target)
 
@@ -240,8 +248,7 @@ def test_replace_publish_failure_restores_previous_complete_cache(
     assert yaml.safe_load((workdir / "config.yaml").read_text(encoding="utf-8"))["name"] == (
         "replace-agent-v1"
     )
-    assert list(cache_dir.glob(".replace-agent-staging-*")) == []
-    assert list(cache_dir.glob(".replace-agent-backup-*")) == []
+    assert not any((cache_dir / ".staging").iterdir())
 
 
 def test_replace_publish_and_rollback_failure_clears_memory_tier(
@@ -261,16 +268,13 @@ def test_replace_publish_and_rollback_failure_clears_memory_tier(
     workdir = cache_dir / "double-failure-agent"
 
     def _fail_publish_and_restore(source: Path, target: Path) -> Path:
-        if target == workdir and (
-            source.name.startswith(".double-failure-agent-staging-")
-            or source.name.startswith(".double-failure-agent-backup-")
-        ):
+        if target == workdir and (source.name.startswith("bundle-") or source.name == "previous"):
             raise OSError("simulated publish or rollback failure")
         return real_rename(source, target)
 
     monkeypatch.setattr(Path, "rename", _fail_publish_and_restore)
 
-    with pytest.raises(RuntimeError, match="publish and rollback both failed"):
+    with pytest.raises(OSError, match="simulated publish or rollback failure"):
         cache.replace(
             "double-failure-agent",
             "double-failure-agent/revision-2",
@@ -278,7 +282,7 @@ def test_replace_publish_and_rollback_failure_clears_memory_tier(
         )
 
     assert not workdir.exists()
-    assert len(list(cache_dir.glob(".double-failure-agent-backup-*"))) == 1
+    assert len(list((cache_dir / ".staging").glob("backup-*/previous"))) == 1
     artifact_store.delete(location)
     with pytest.raises(KeyError):
         cache.load("double-failure-agent", location)

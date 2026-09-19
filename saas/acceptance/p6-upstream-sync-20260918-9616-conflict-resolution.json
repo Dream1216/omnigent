@@ -1,0 +1,136 @@
+{
+  "schema_version": "omnigent.saas.upstream-conflict-resolution.v1",
+  "downstream_base_revision": "684cfa5a4f10ef07687031d680b2c3c0b39016ce",
+  "frozen_upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+  "merge_revision": "751095758b99c3a9561061b91c54c357b50e9040",
+  "merge_base_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
+  "upstream_commits": [
+    "a405cab63fa78653134ae437d2c6e5891965835a",
+    "c4adcb7c4e7104e6eabbfb4d4f3d1cb263579ca1",
+    "9616bf97cd38494db7164a1f6f350e853da4d8d3"
+  ],
+  "changed_in_both_file_count": 0,
+  "changed_in_both_files": [],
+  "security_and_contract_fixes": {
+    "environment_shell_session_owner_gate": "a405cab63fa78653134ae437d2c6e5891965835a",
+    "recovered_session_change_log_severity": "c4adcb7c4e7104e6eabbfb4d4f3d1cb263579ca1",
+    "runner_failure_event_stream_contract": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+    "status": "present_and_regressed"
+  },
+  "patch_replay": {
+    "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+    "patch_count": 7,
+    "official_source_path_count": 20,
+    "content_mismatch_count": 0,
+    "status": "passed"
+  },
+  "local_validation": {
+    "affected_upstream_regression": {
+      "passed": 65,
+      "failed": 0,
+      "note": "three E2E cases required NO_PROXY for the loopback mock LLM and then passed"
+    },
+    "security_harness_host_contract": {
+      "passed": 1356,
+      "skipped": 1,
+      "failed": 0
+    },
+    "bubblewrap_symlink_rejection_contract": {
+      "passed": 42,
+      "skipped_without_bubblewrap": 23,
+      "failed": 0,
+      "note": "requires a nonzero exit, the rejected symlink path, and either audited bubblewrap file-shape rejection diagnostic"
+    },
+    "host_model_source_isolation": {
+      "passed": 9,
+      "failed": 0,
+      "note": "model-option pass-through tests pin the configuration-source seam and no longer depend on a developer's local provider config"
+    },
+    "kimi_main_reconciliation": {
+      "passed": 133,
+      "skipped": 2,
+      "failed": 0,
+      "note": "preserves the merged Kimi platform-provider delivery while replaying patch 0008 from the 9616 baseline"
+    },
+    "postgresql_16_real_replay": {
+      "passed": 1,
+      "failed": 0,
+      "version": "16.14"
+    },
+    "postgresql_18_real_replay": {
+      "passed": 1,
+      "failed": 0,
+      "version": "18.6"
+    },
+    "postgresql_catalog_contract": {
+      "passed": 39,
+      "skipped_without_url": 1,
+      "failed": 0
+    },
+    "final_main_composition": {
+      "passed": 467,
+      "skipped": 25,
+      "failed": 0,
+      "scope": "9616 upgrade, Staff catalog baselines, Preview and Runner contracts, Host image checks, PostgreSQL migration contracts, ADR and acceptance manifests, supply chain, N-1, and upstream delta policy"
+    },
+    "web_regression_from_preceding_candidate": {
+      "passed": 8475,
+      "expected_fail": 3,
+      "skipped": 1,
+      "failed": 0,
+      "note": "the three-commit upstream advance changes no Web source; exact-candidate TypeScript and all-files hooks passed"
+    },
+    "web_typecheck": "passed",
+    "patch_queue": "passed",
+    "pre_commit_all_files": "passed",
+    "pnpm_frozen_web_install": {
+      "lock_entries_verified": 2022,
+      "minimum_release_age_exclusions": 16,
+      "scope": "exact_integrity_locked_harness_artifact_versions",
+      "status": "passed"
+    },
+    "source_intrusion_budget": {
+      "patch_count": 7,
+      "direct_upstream_file_count": 63,
+      "upstream_net_added_loc": 2489,
+      "isolated_custom_code_ratio": 0.992,
+      "status": "passed"
+    }
+  },
+  "remote_validation": {
+    "exact_head_ci": "required",
+    "branch_protection": "not_observed",
+    "deployment": "authorized_handoff_complete_pending_exact_head_pr_merge"
+  },
+  "release_decision": "NO-GO",
+  "status": "resolved_local_candidate",
+  "downstream_main_integration": {
+    "revision": "90ed64b98eaf16a65c1e1d75982c1f2265b4429f",
+    "main_parent_revision": "63f0c48b73a077043d9f3b005e4268488579e87d",
+    "resolved_files": [
+      "omnigent/harnesses/opencode_native/provider.py",
+      "saas/upstream-patches/README.md",
+      "tests/test_opencode_native_provider.py"
+    ],
+    "resolution": "preserved official 9616 gateway catalog behavior and downstream configured OpenAI provider fallback; replayed patch 0007 against 9616; aligned the Host image Claude Code pin to official 2.1.266",
+    "validation": {
+      "passed": 234,
+      "failed": 0
+    }
+  },
+  "latest_main_reconciliation": {
+    "revision": "24c121d5f4a9e606d3edeebb60340dfe4de2246d",
+    "main_parent_revision": "3e8276b041763ccc6d09d4bd1716d9e004d45843",
+    "main_pull_request": 80,
+    "resolution": "preserved the merged Kimi, Staff, Preview, Runner database-controller, and E2E UI governance contracts; retained the audited Qwen/OpenCode/Kimi supply-chain and bubblewrap policies; anchored the official hh1 security catalog for PostgreSQL 16 and 18; kept patch 0008 replayable after patches 0002-0007; and classified the trusted E2E judge implementation as downstream governance without widening the upstream source-intrusion budget",
+    "validation": {
+      "passed": 467,
+      "skipped": 25,
+      "failed": 0,
+      "patch_replay": "passed",
+      "pnpm_frozen_lock_entries": 2022,
+      "postgresql_16_security_catalog_sha256": "60e8f83d0992ec64c74194504d45bf9fcb492f8df94d7e5be4b890020abdac1d",
+      "postgresql_18_security_catalog_sha256": "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1"
+    }
+  }
+}
