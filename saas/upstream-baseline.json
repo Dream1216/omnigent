@@ -47,11 +47,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 63,
-    "max_upstream_net_added_loc": 2578,
+    "max_direct_upstream_files": 64,
+    "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-20",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 63,
+    "previous_max_upstream_net_added_loc": 2578,
+    "previous_measured_upstream_net_added_loc": 2578,
+    "previous_revision": {
     "approved_at": "2026-09-18",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 62,
@@ -180,6 +186,12 @@
       "tests/e2e/omnigent/snapshots/test_per_harness_qwen.json": 0,
       "tests/e2e/omnigent/test_per_harness_qwen.py": 0,
       "tests/inner/test_bwrap_symlink_mask_3265.py": 3
+    }
+    },
+    "reason": "Exact-SHA CI closure for the user-requested delivery candidate: GitHub's Ubuntu mirror can rotate the bubblewrap archive after the runner image is published, so the inherited apt index repeatedly returned HTTP 404 before any E2E test could start. Refresh the package index immediately before the existing tmux and bubblewrap install. This adds exactly one directly changed upstream action file and one measured net line, raising the hard ceilings only from 63 files / 2,578 lines to the exact measured 64 files / 2,579 lines. Preserve the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "e2e-apt-index-refresh-v8",
+    "scoped_ci_delta": {
+      ".github/actions/e2e-run/action.yml": 1
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
