@@ -428,6 +428,7 @@ jobs:
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
             CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
             ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+            OMNIGENT_EXTRAS=kubernetes
       - name: Build and publish host image by immutable revision
         id: build-host
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -462,6 +463,12 @@ jobs:
               'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"published runtime revision {actual!r} does not match {expected!r}"' \
               "$PRODUCT_REVISION"
           done
+          docker run --rm --pull always --platform linux/amd64 --network none \
+            --entrypoint /opt/venv/bin/python "$SERVER_IMAGE" -B -I -c \
+            'import kubernetes; import saas.production.platform_model_sandbox_host'
+          docker run --rm --pull always --platform linux/amd64 --network none \
+            --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
+            'import saas.production.platform_model_sandbox_host'
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0

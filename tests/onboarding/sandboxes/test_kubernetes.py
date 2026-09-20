@@ -99,6 +99,23 @@ def test_build_job_manifest_runs_host_under_reaper_as_container_command() -> Non
     assert "os.wait()" in script
 
 
+def test_build_job_manifest_runs_reviewed_custom_host_command_under_same_reaper() -> None:
+    """A downstream Host argv replaces only the reaper's child process."""
+    manifest = build_job_manifest(
+        **_MANIFEST_KW,
+        host_command=["python3", "-m", "saas.production.platform_model_sandbox_host"],
+    )
+    host = _pod_spec(manifest)["containers"][0]
+    script = host["command"][2]
+    assert "exec python3 -c" in script
+    assert "python3 -m saas.production.platform_model_sandbox_host" in script
+    assert "omnigent host --server" not in script
+    assert {
+        "name": k8s.MANAGED_SERVER_URL_ENV_VAR,
+        "value": "http://srv.example.com",
+    } in host["env"]
+
+
 def test_build_job_manifest_has_no_liveness_probe() -> None:
     """No liveness probe: the reaper propagates child exit, OnFailure handles restarts."""
     manifest = build_job_manifest(**_MANIFEST_KW)

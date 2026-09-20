@@ -309,12 +309,14 @@ def test_build_host_daemon_env_remote_preserves_host_identity(
     monkeypatch.setenv("OMNIGENT_HOST_ID", "d6d0ccebce7b4b706d21e23696bb462a")
     monkeypatch.setenv("OMNIGENT_HOST_NAME", "isolated-host")
     monkeypatch.setenv("OMNIGENT_HOST_TOKEN", "managed-token")
+    monkeypatch.setenv("OMNIGENT_HOST_WORKSPACE_ID", "260871827932501")
 
     env = _build_host_daemon_env(server_url="https://example.databricksapps.com")
 
     assert env["OMNIGENT_HOST_ID"] == "d6d0ccebce7b4b706d21e23696bb462a"
     assert env["OMNIGENT_HOST_NAME"] == "isolated-host"
     assert env["OMNIGENT_HOST_TOKEN"] == "managed-token"
+    assert env["OMNIGENT_HOST_WORKSPACE_ID"] == "260871827932501"
 
 
 def test_build_host_daemon_env_remote_keeps_runner_env_passthrough(

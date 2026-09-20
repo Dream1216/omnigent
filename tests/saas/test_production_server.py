@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import threading
@@ -13,6 +14,7 @@ from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
@@ -21,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from omnigent.db.db_models import current_workspace_id
 from omnigent.runtime import init as init_runtime
 from omnigent.server import app as official_server_app
+from omnigent.server.managed_hosts import parse_sandbox_config
 from saas.compatibility import OmnigentStoreAdapter
 from saas.control_plane.client_network import (
     TrustedClientNetworkConfig,
@@ -61,6 +64,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
 )
+from saas.runner_adapter.platform_models import render_platform_model_gateway_config
 
 
 def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
@@ -754,6 +758,133 @@ def test_official_config_is_nonsecret_integrity_protected_and_never_expands_env(
         server_module._load_official_config(malformed)
     assert captured.value.__cause__ is None
     assert leaked not in repr(captured.value)
+
+
+def _reviewed_production_sandbox_config() -> dict[str, object]:
+    host_config = json.loads(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-v4-pro",),
+            default_model="deepseek-v4-pro",
+        )
+    )
+    providers = cast(dict[str, object], host_config["providers"])
+    provider = cast(dict[str, object], providers["platform-deepseek"])
+    openai = cast(dict[str, object], provider["openai"])
+    openai.pop("api_key")
+    openai["api_key_ref"] = "env:OMNIGENT_PLATFORM_DEEPSEEK_KEY"
+    return {
+        "server_url": "http://omnigent-saas-server.omnigent-next-beta.svc.cluster.local",
+        "providers": [{"provider": "agent_sandbox"}, {"provider": "kubernetes"}],
+        "reaper": {
+            "enabled": True,
+            "sweep_interval_s": 3600,
+            "terminate_after_offline_days": 30,
+        },
+        "host_config": host_config,
+        "kubernetes": {
+            "image": "ghcr.io/dream1216/omnigent-saas-host@sha256:" + "a" * 64,
+            "env": [
+                "OMNIGENT_HOST_WORKSPACE_ID",
+                "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID",
+            ],
+            "namespace": "omnigent-sandboxes",
+            "service_account": "omnigent-runner",
+            "node_selector": {
+                "omnigent.io/runner": "true",
+                "omnigent.io/seccomp-profile": "105103c7809a1da4",
+            },
+            "tolerations": [
+                {
+                    "key": "omnigent.io/workload",
+                    "operator": "Equal",
+                    "value": "runner",
+                    "effect": "NoSchedule",
+                }
+            ],
+            "in_cluster": True,
+            "resources": {
+                "requests": {
+                    "cpu": "500m",
+                    "memory": "1Gi",
+                    "ephemeral-storage": "2Gi",
+                },
+                "limits": {
+                    "cpu": "4",
+                    "memory": "8Gi",
+                    "ephemeral-storage": "24Gi",
+                },
+            },
+            "secret_mounts": [
+                {
+                    "secret_name": "omnigent-sandbox-platform-model-token-key",
+                    "mount_path": "/credentials/omnigent-platform-model",
+                }
+            ],
+            "pod_ready_timeout_s": 180,
+            "home_size_limit": "20Gi",
+            "host_command": [
+                "python3",
+                "-m",
+                "saas.production.platform_model_sandbox_host",
+            ],
+        },
+    }
+
+
+def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: Path) -> None:
+    path = tmp_path / "official.yaml"
+    document = {"execution_timeout": 7200, "sandbox": _reviewed_production_sandbox_config()}
+    path.write_text(yaml.safe_dump(document, sort_keys=True), encoding="utf-8")
+    path.chmod(0o644)
+
+    loaded = server_module._load_official_config(path)
+
+    assert [entry["provider"] for entry in loaded["sandbox"]["providers"]] == [
+        "agent_sandbox",
+        "kubernetes",
+    ]
+    parsed = parse_sandbox_config(cast(dict[str, object], loaded["sandbox"]))
+    assert parsed is not None
+    assert parsed.launchable_providers() == ("agent_sandbox", "kubernetes")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("tagged_image", "reversed", "foreign_secret", "kubeconfig", "model_mismatch"),
+)
+def test_official_config_rejects_unreviewed_sandbox_authority(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    sandbox = _reviewed_production_sandbox_config()
+    kubernetes = cast(dict[str, object], sandbox["kubernetes"])
+    if mutation == "tagged_image":
+        kubernetes["image"] = "ghcr.io/dream1216/omnigent-saas-host:latest"
+    elif mutation == "reversed":
+        sandbox["providers"] = list(reversed(cast(list[object], sandbox["providers"])))
+    elif mutation == "foreign_secret":
+        kubernetes["secret_mounts"] = [
+            {
+                "secret_name": "foreign",
+                "mount_path": "/credentials/omnigent-platform-model",
+            }
+        ]
+    elif mutation == "model_mismatch":
+        providers = cast(
+            dict[str, object], cast(dict[str, object], sandbox["host_config"])["providers"]
+        )
+        provider = cast(dict[str, object], providers["platform-deepseek"])
+        openai = cast(dict[str, object], provider["openai"])
+        models = cast(dict[str, object], openai["models"])
+        models["allowed-1"] = "different-model"
+    else:
+        kubernetes["kubeconfig"] = "/tmp/admin.conf"
+    path = tmp_path / f"official-{mutation}.yaml"
+    path.write_text(yaml.safe_dump({"sandbox": sandbox}, sort_keys=True), encoding="utf-8")
+    path.chmod(0o644)
+
+    with pytest.raises(ProductionServerCompositionError, match="sandbox"):
+        server_module._load_official_config(path)
 
 
 @pytest.mark.parametrize(

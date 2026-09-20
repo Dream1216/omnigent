@@ -22,6 +22,7 @@ from saas.control_plane.isolation import (
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
 from saas.production import platform_model_runtime
 from saas.production.platform_model_host import PlatformModelHostProcess
+from saas.production.platform_model_sandbox_host import stage_platform_model_key
 from saas.production.runner_control import RunnerControlError
 from saas.production.runner_executor import _optional_platform_model_projection
 from saas.production.service_bindings import (
@@ -57,6 +58,25 @@ def _configuration() -> PlatformManagedModelRuntimeConfiguration:
         configuration_version=7,
         api_key="not-exported-provider-secret",
     )
+
+
+def test_managed_sandbox_stages_projected_model_key_owner_only(tmp_path: Path) -> None:
+    source = tmp_path / "projection" / "key"
+    source.parent.mkdir()
+    source.write_bytes(b"k" * 32 + b"\n")
+    home = tmp_path / "home"
+    environment = {
+        "HOME": str(home),
+        "OMNIGENT_MANAGED_SERVER_URL": "http://omnigent-saas-server.example.svc",
+    }
+
+    target = stage_platform_model_key(environment, source=source)
+
+    assert target.read_bytes() == b"k" * 32
+    assert stat.S_IMODE(target.stat().st_mode) == 0o400
+    assert environment["OMNIGENT_SAAS_SERVER_URL"] == ("http://omnigent-saas-server.example.svc")
+    assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"] == str(target)
+    assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"] == "3600"
 
 
 def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment(
