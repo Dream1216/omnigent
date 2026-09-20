@@ -124,29 +124,35 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_ui_preview_guard_budget_revision_retains_a_hard_loc_ceiling(
+def test_host_daemon_workspace_budget_revision_retains_a_hard_loc_ceiling(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 69
+    assert budget["max_direct_upstream_files"] == 70
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "ui-preview-unconfigured-mirror-guard-v10"
-    assert revision["previous_max_direct_upstream_files"] == 68
+    assert revision["revision"] == "host-daemon-workspace-selector-v11"
+    assert revision["previous_max_direct_upstream_files"] == 69
     assert revision["previous_max_upstream_net_added_loc"] == 2579
-    assert revision["previous_measured_upstream_net_added_loc"] == 2055
-    assert revision["scoped_ci_delta"] == {
+    assert revision["previous_measured_upstream_net_added_loc"] == 2099
+    assert revision["scoped_runtime_delta"] == {"omnigent/cli.py": 2}
+    previous = revision["previous_revision"]
+    assert previous["revision"] == "ui-preview-unconfigured-mirror-guard-v10"
+    assert previous["previous_max_direct_upstream_files"] == 68
+    assert previous["previous_max_upstream_net_added_loc"] == 2579
+    assert previous["previous_measured_upstream_net_added_loc"] == 2055
+    assert previous["scoped_ci_delta"] == {
         ".github/workflows/ui-preview.yml": 44,
     }
-    previous = revision["previous_revision"]
-    assert previous["revision"] == "candidate-dependency-security-closure-v9"
-    assert previous["previous_max_direct_upstream_files"] == 64
-    assert previous["previous_max_upstream_net_added_loc"] == 2579
-    assert previous["scoped_dependency_delta"] == {
+    dependency_revision = previous["previous_revision"]
+    assert dependency_revision["revision"] == "candidate-dependency-security-closure-v9"
+    assert dependency_revision["previous_max_direct_upstream_files"] == 64
+    assert dependency_revision["previous_max_upstream_net_added_loc"] == 2579
+    assert dependency_revision["scoped_dependency_delta"] == {
         "editors/vscode/package.json": 0,
         "pnpm-lock.yaml": -457,
         "pnpm-workspace.yaml": 1,
@@ -155,14 +161,14 @@ def test_ui_preview_guard_budget_revision_retains_a_hard_loc_ceiling(
         "web/ios/RELEASE.md": 1,
         "web/package.json": 0,
     }
-    assert previous["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
+    assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
             FileDelta("omnigent/stores/host_store.py", 2579 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 15000, 0),
         ],
         manifest,
-        active_patch_count=7,
+        active_patch_count=8,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,

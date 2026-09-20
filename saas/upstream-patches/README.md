@@ -115,11 +115,12 @@ The 2026-09-21 managed Host daemon correction carries the configured workspace
 selector through CLI backgrounding into the daemon and Runner process. Patch
 0009 owns the two-line `omnigent/cli.py` delta and the focused CLI-to-daemon
 regression verifies propagation while retaining the existing Provider-secret
-exclusion. This raises the active patch count from seven to the existing hard
-ceiling of eight; source-file and net-line ceilings, the isolation floor,
-forbidden paths and reverse-dependency checks remain unchanged. This is a
-Single-Owner Beta corrective record, not production admission or a merge
-waiver.
+exclusion. The executable regression remains isolated under `tests/saas/`.
+This raises the active patch count from seven to the existing hard ceiling of
+eight and the direct-file ceiling from 69 to the exact measured 70; the 2,579
+net-line ceiling, isolation floor, forbidden paths and reverse-dependency
+checks remain unchanged. This is a Single-Owner Beta corrective record, not
+production admission or a merge waiver.
 
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
