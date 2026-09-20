@@ -155,6 +155,16 @@ def test_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
     assert "no test required" in result.stdout
 
 
+def test_hard_wrapped_json_string_is_accepted(tmp_path: Path) -> None:
+    result = _run_gate(
+        tmp_path,
+        verdict='{"needs_test":false,"reason":"covered by the existing\nbrowser test"}',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "covered by the existing browser test" in result.stdout
+
+
 def test_fenced_multiline_copilot_verdict_is_accepted(tmp_path: Path) -> None:
     result = _run_gate(
         tmp_path,
@@ -203,3 +213,30 @@ def test_large_pr_index_keeps_late_test_declarations_visible(tmp_path: Path) -> 
     prompt = (tmp_path / "calls").read_text()
     assert "tests/e2e_ui/zzzz/test_login_recovery.py" in prompt
     assert "test_login_recovers_after_expired_session" in prompt
+
+
+def test_native_platform_test_index_reaches_judge(tmp_path: Path) -> None:
+    files = [
+        {
+            "status": "modified",
+            "filename": "web/electron/src/session-expiry.js",
+            "patch": "@@ -1 +1 @@\n-old\n+new",
+        },
+        {
+            "status": "added",
+            "filename": "web/electron/e2e/desktop_session_expiry.e2e.js",
+            "patch": (
+                "@@ -0,0 +1,2 @@\n"
+                "+test('expired desktop session returns to login', async () => {\n"
+                "+});"
+            ),
+        },
+    ]
+
+    result = _run_gate(tmp_path, files_override=files)
+
+    assert result.returncode == 0, result.stderr
+    prompt = (tmp_path / "calls").read_text()
+    assert "web/electron/e2e/desktop_session_expiry.e2e.js" in prompt
+    assert "expired desktop session returns to login" in prompt
+    assert "Native-shell tests do not cover SPA/browser behavior" in prompt
