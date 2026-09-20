@@ -143,7 +143,7 @@ def test_ui_repl_regression_budget_revision_retains_hard_source_ceilings(
         "tests/e2e/test_repl_sessions_approval_e2e.py": 14,
         "tests/e2e_ui/approvals/test_inbox_approval.py": 16,
         "tests/e2e_ui/chat/test_codex_effort_terminal_composer_mirror.py": 21,
-        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 7,
+        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 28,
         "tests/e2e_ui/messages/test_native_claude_render_parity.py": 5,
     }
     previous = revision["previous_revision"]
