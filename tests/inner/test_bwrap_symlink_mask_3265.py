@@ -1,9 +1,10 @@
 """Escaping-symlink masks must not emit a mount onto the symlink path.
 
 bwrap resolves a mount destination *through* a final symlink, so masking a
-symlink aborts the whole namespace (``Can't create file at <link>`` for the
-file shape, ``Can't mount tmpfs on <link>`` for the dir shape) and kills the
-launcher at spawn. Skipping symlink entries is safe: the mount namespace
+symlink aborts the whole namespace (``Can't create file at <link>`` or
+``Can't mount on symlink destination <link>`` for the file shape,
+``Can't mount tmpfs on <link>`` for the dir shape) and kills the launcher at
+spawn. Skipping symlink entries is safe: the mount namespace
 already confines symlink resolution, so the link is followed inside the
 sandbox view where an escaping target is unmounted or separately masked.
 """

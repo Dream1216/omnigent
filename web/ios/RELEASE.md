@@ -9,7 +9,8 @@ follow-up).
 
 1. **Xcode 16+** with the command-line tools selected
    (`xcode-select -p` should point at your Xcode).
-2. **Install fastlane** (pinned via `Gemfile`):
+2. **Install Ruby 3.1+ and Bundler 2.6.2**, then install the fastlane version
+   pinned in `Gemfile.lock`:
    ```sh
    cd web/ios
    bundle install

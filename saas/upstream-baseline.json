@@ -1,6 +1,6 @@
 {
   "adapter_contract_version": "0.2.0",
-  "audit_verified_at": "2026-09-10",
+  "audit_verified_at": "2026-09-18",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/scripts/e2e-ui-required/",
@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "ga1b2c3d4e5f"
+    "hh1b2c3d4e5f"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -47,11 +47,17 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 64,
+    "max_direct_upstream_files": 68,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-20",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 64,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2579,
+    "previous_revision": {
     "approved_at": "2026-09-20",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 63,
@@ -193,8 +199,20 @@
     "scoped_ci_delta": {
       ".github/actions/e2e-run/action.yml": 1
     }
+    },
+    "reason": "Exact-SHA security closure for the user-requested delivery candidate: Trivy identified vulnerable anyio, sharp, rubyzip and vitest versions in the candidate dependency graph. Upgrade the direct manifests and lockfiles to anyio 4.14.2, sharp 0.35.4, rubyzip 3.7.0 through fastlane 2.240.1, and vitest 4.1.11. Four dependency manifest or release files become newly divergent while the lock refresh reduces this branch's measured upstream net-added LOC from 2,489 to 2,055. Raise only the direct-file ceiling from the post-apt 64 files to the exact measured 68; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "candidate-dependency-security-closure-v9",
+    "scoped_dependency_delta": {
+      "editors/vscode/package.json": 0,
+      "pnpm-lock.yaml": -457,
+      "pnpm-workspace.yaml": 1,
+      "uv.lock": 0,
+      "web/ios/Gemfile.lock": 20,
+      "web/ios/RELEASE.md": 1,
+      "web/package.json": 0
+    }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
-  "upstream_version": "0.13.0.dev0"
+  "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+  "upstream_version": "0.15.0.dev0"
 }

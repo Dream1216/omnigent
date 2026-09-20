@@ -84,11 +84,14 @@ _SERVER_SERVICE_ROLES = {
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_RECEIPT_BYTES = 16 * 1024
 _PG_TRGM_VERSION = "1.6"
-_PG_TRGM_INDEXES = {
+_PG_TRGM_PREDECESSOR_INDEXES = {
     "ix_conversation_items_search_text_trgm": (
         "conversation_items",
         "lower(search_text)",
     ),
+    "ix_conversations_title_trgm": ("conversations", "lower((title)::text)"),
+}
+_PG_TRGM_INDEXES = {
     "ix_conversations_title_trgm": ("conversations", "lower((title)::text)"),
 }
 _PG_TRGM_MEMBER_IDENTITIES = (
@@ -261,6 +264,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000014",
     ): "f62f0d5cef73fae51870adeae0ce1553878eab3b59e3155eabb4ba063ed2c536",
+    (
+        16,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "fae976ecc3e6d7cc37461f6e35dbb08df50cb7fd82bf255a6f14b79d9123eb67",
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -313,6 +326,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000014",
     ): "7d0c59e271b9bd2c602dfadf99430598d9c952ac60f8f085d4ebb33e02872dfc",
+    (
+        16,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "586ea4cd62657c609919fa2c9d72ea83ae72a4c2efa675f9f2a0a8dab28ad569",
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -335,6 +358,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000014",
     ): "7859924fdfb48d4a95c28b564b760248cf4e393f227bb9b17b45f16d2b0805b2",
+    (
+        16,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "41e7dab760216847c11d921e7e61cbda2cc82c3b27febaf6c0e235891aac180a",
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -347,6 +380,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         "ge1b2c3d4e5f",
         "p0s000000014",
     ): "37565bbc3ba91e9950a3689f803bafd55f3ff714bf25c9a9b51a3e63e297488e",
+    (
+        16,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "60e8f83d0992ec64c74194504d45bf9fcb492f8df94d7e5be4b890020abdac1d",
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1",
 }
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
@@ -2316,6 +2359,7 @@ def _pg_trgm_security_catalog(
     connection: Connection,
     *,
     official_owner: str,
+    expected_indexes: Mapping[str, tuple[str, str]] = _PG_TRGM_INDEXES,
 ) -> dict[str, object]:
     server_major = (
         int(
@@ -2654,7 +2698,7 @@ def _pg_trgm_security_catalog(
         and row[7:11] == [True, True, True, 1]
         and row[12] is None
     }
-    if observed_indexes != _PG_TRGM_INDEXES or len(indexes) != len(_PG_TRGM_INDEXES):
+    if observed_indexes != expected_indexes or len(indexes) != len(expected_indexes):
         raise PostgreSqlMigrationError("pg_trgm_index_contract_drifted", "verification")
     return {
         "extension": [str(value) for value in extension],
@@ -2701,9 +2745,20 @@ def _preflight_pg_trgm_extension(connection: Connection, *, official_owner: str)
         )
         // 10000
     )
-    if len(revisions) != 1 or not _source_pinned_pg_trgm_predecessor(revisions[0], server_major):
+    if len(revisions) != 1:
         raise PostgreSqlMigrationError("pg_trgm_preexisting_before_head", "official_alembic")
-    _pg_trgm_security_catalog(connection, official_owner=official_owner)
+    revision = revisions[0]
+    if revision == _expected_head("official"):
+        expected_indexes = _PG_TRGM_INDEXES
+    elif _source_pinned_pg_trgm_predecessor(revision, server_major):
+        expected_indexes = _PG_TRGM_PREDECESSOR_INDEXES
+    else:
+        raise PostgreSqlMigrationError("pg_trgm_preexisting_before_head", "official_alembic")
+    _pg_trgm_security_catalog(
+        connection,
+        official_owner=official_owner,
+        expected_indexes=expected_indexes,
+    )
 
 
 def _source_pinned_pg_trgm_predecessor(revision: str, server_major: int) -> bool:

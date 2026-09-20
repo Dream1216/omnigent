@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
+import logging
 import os
 import shutil
 import tempfile
-import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 from yaml import YAMLError
@@ -16,6 +18,17 @@ from omnigent.errors import OmnigentError
 from omnigent.spec import AgentSpec
 from omnigent.spec import load as load_spec
 from omnigent.stores.artifact_store import ArtifactStore
+
+_logger = logging.getLogger(__name__)
+
+
+def _cleanup_staging_dir(path: Path) -> None:
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass  # Successful publication moved this staging directory into the cache.
+    except OSError as exc:
+        _logger.warning("Could not clean agent cache staging directory %s: %s", path, exc)
 
 
 class AgentCache:
@@ -37,15 +50,7 @@ class AgentCache:
     Authoring/upload validation stays strict elsewhere
     (:func:`omnigent.server.bundles.validate_agent_bundle`). See
     :func:`omnigent.spec.load`.
-
-    ``cache_dir`` is a process-local derived cache, not a shared durable
-    artifact store.  One application process owns one ``AgentCache`` instance;
-    independent processes may race only on first-load publication, which is
-    handled defensively by the atomic staging rename below.  Cross-process
-    replace/evict coordination belongs at the durable agent-store boundary.
     """
-
-    _LOCK_STRIPES = 64
 
     def __init__(self, artifact_store: ArtifactStore, cache_dir: Path) -> None:
         """
@@ -60,32 +65,21 @@ class AgentCache:
         self._artifact_store = artifact_store
         self._cache_dir = cache_dir
         self._specs: dict[str, AgentSpec] = {}
-        # Loading is commonly offloaded with ``asyncio.to_thread``.  Without a
-        # per-agent lock, two first readers can both miss Tier 1/Tier 2 while
-        # one is extracting directly into the final directory.  The loser then
-        # parses a half-published ``config.yaml``.  Fixed lock striping bounds
-        # memory in long-lived multi-tenant processes while still serializing
-        # every operation for the same immutable agent id.
-        self._agent_locks = tuple(threading.Lock() for _ in range(self._LOCK_STRIPES))
 
-    def _lock_for(self, agent_id: str) -> threading.Lock:
-        """Return the stable process-local lock for one agent cache key."""
-
-        return self._agent_locks[hash(agent_id) % len(self._agent_locks)]
-
-    def _cache_path(self, agent_id: str, *, suffix: str = "") -> Path:
+    def _cache_path(self, agent_id: str) -> Path:
         """Return a direct child of the cache root for an agent id."""
         component = os.path.basename(agent_id)
         if (
             not component
             or component in {".", ".."}
+            or component.casefold() == ".staging"
             or component != agent_id
             or "\\" in component
             or "\x00" in component
         ):
             raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
         cache_root = self._cache_dir.resolve(strict=False)
-        normalized_path = os.path.normpath(cache_root / f"{component}{suffix}")
+        normalized_path = os.path.normpath(cache_root / component)
         if not normalized_path.startswith(os.path.join(cache_root, "")):
             raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
         path = Path(normalized_path)
@@ -125,41 +119,35 @@ class AgentCache:
             on-disk working directory.
         """
         workdir = self._cache_path(agent_id)
-        with self._lock_for(agent_id):
-            # Tier 1: in-memory spec. The cached spec was parsed with the
-            # *expand_env* value of whichever caller populated it first.
-            # That is consistent across callers because *expand_env* is
-            # derived from the agent's immutable ``session_id`` provenance,
-            # which never changes for a given ``agent_id``.
-            if agent_id in self._specs:
-                return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
-            # Tier 2: disk cache (directory already atomically published)
-            if workdir.is_dir():
-                try:
-                    spec = load_spec(
-                        workdir,
-                        expand_env=expand_env,
-                        prune_invalid_sub_agents=True,
-                    )
-                except (FileNotFoundError, UnicodeDecodeError, YAMLError, OmnigentError):
-                    # Versions before atomic publication extracted directly
-                    # into the public path.  A crash could therefore leave an
-                    # empty or partial config that survives an upgrade.  Tier
-                    # 2 is derived data, so quarantine it by deletion and
-                    # rebuild from the ArtifactStore source of truth below.
-                    shutil.rmtree(workdir)
-                else:
-                    self._specs[agent_id] = spec
-                    return LoadedAgent(spec=spec, workdir=workdir)
 
-            # Cache miss — download bundle, extract privately, then publish.
-            bundle_bytes = self._artifact_store.get(bundle_location)
-            return self._extract_and_cache(
-                agent_id,
-                bundle_bytes,
-                workdir,
-                expand_env=expand_env,
-            )
+        # Tier 1: in-memory spec. The cached spec was parsed with the
+        # *expand_env* value of whichever caller populated it first.
+        # That is consistent across callers because *expand_env* is
+        # derived from the agent's immutable ``session_id`` provenance,
+        # which never changes for a given ``agent_id``.
+        if agent_id in self._specs:
+            return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
+
+        # Tier 2: disk cache (directory already extracted)
+        if workdir.is_dir():
+            try:
+                spec = load_spec(
+                    workdir,
+                    expand_env=expand_env,
+                    prune_invalid_sub_agents=True,
+                )
+            except (FileNotFoundError, UnicodeDecodeError, YAMLError, OmnigentError):
+                # Older releases extracted directly into the public cache
+                # path, so a crash could leave partial derived data behind.
+                # Rebuild it from the ArtifactStore source of truth.
+                shutil.rmtree(workdir)
+            else:
+                self._specs[agent_id] = spec
+                return LoadedAgent(spec=spec, workdir=workdir)
+
+        # Cache miss — validate privately before publishing the disk entry.
+        bundle_bytes = self._artifact_store.get(bundle_location)
+        return self._extract_and_cache(agent_id, bundle_bytes, expand_env=expand_env)
 
     def replace(
         self,
@@ -172,10 +160,12 @@ class AgentCache:
         """
         Warm-swap an agent's cached spec and disk directory.
 
-        Extracts the new bundle to a temp directory, swaps the
-        in-memory spec entry, renames into the cache location, and
-        cleans up the old directory. Concurrent readers see either
-        the old spec or the new spec, never an empty cache.
+        Validates the new bundle in a temporary directory before
+        replacing the disk directory and updating the in-memory spec.
+        Restores the previous directory if publication fails; if rollback
+        also fails, retains the backup path in the error's notes.
+        Callers must coordinate replacement with concurrent use of
+        this agent; the disk swap and memory update are not atomic.
 
         :param agent_id: Unique agent identifier,
             e.g. ``"ag_abc123"``.
@@ -193,68 +183,44 @@ class AgentCache:
             directory.
         """
         workdir = self._cache_path(agent_id)
-        with self._lock_for(agent_id):
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            # Preserve upstream's reserved staging-path validation even though
-            # publication uses a collision-resistant private directory.
-            self._cache_path(agent_id, suffix="_staging")
-            staging_dir = Path(
-                tempfile.mkdtemp(prefix=f".{agent_id}-staging-", dir=self._cache_dir)
+        with self._staging_dir() as staging_dir:
+            spec = load_spec(
+                bundle_bytes,
+                dest=staging_dir,
+                expand_env=expand_env,
+                prune_invalid_sub_agents=True,
             )
+            workdir = self._cache_path(agent_id)
             backup_dir: Path | None = None
             published = False
-            tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
-            os.close(tmp_fd)
-            tmp_path = Path(tmp_name)
             try:
-                tmp_path.write_bytes(bundle_bytes)
-                spec = load_spec(
-                    tmp_path,
-                    dest=staging_dir,
-                    expand_env=expand_env,
-                    prune_invalid_sub_agents=True,
-                )
-
-                # The same-agent lock keeps readers on the old complete
-                # directory until the replacement is ready.  Move the old
-                # directory aside rather than deleting it so a failed publish
-                # can restore both cache tiers to the previous complete state.
                 if workdir.is_dir():
-                    backup_dir = Path(
-                        tempfile.mkdtemp(
-                            prefix=f".{agent_id}-backup-",
-                            dir=self._cache_dir,
-                        )
-                    )
-                    backup_dir.rmdir()
-                    workdir.rename(backup_dir)
+                    backup_dir = Path(tempfile.mkdtemp(prefix="backup-", dir=staging_dir.parent))
+                    workdir.rename(backup_dir / "previous")
                 try:
                     staging_dir.rename(workdir)
-                except Exception as publish_error:
-                    if backup_dir is not None and backup_dir.exists():
+                except OSError as publish_error:
+                    if backup_dir is not None:
                         try:
-                            backup_dir.rename(workdir)
-                        except Exception as restore_error:
-                            # Never retain a Tier 1 object whose workdir no
-                            # longer exists.  Preserve the hidden backup for
-                            # operator recovery and force the next load to use
-                            # the ArtifactStore rather than returning stale
-                            # memory state.
+                            (backup_dir / "previous").rename(workdir)
+                        except OSError as restore_error:
                             self._specs.pop(agent_id, None)
-                            raise RuntimeError(
-                                "agent cache publish and rollback both failed; "
-                                f"previous cache retained at {backup_dir}"
-                            ) from restore_error
-                    assert publish_error is not None
+                            restore_error.add_note(
+                                f"Previous cached bundle retained at {backup_dir / 'previous'}"
+                            )
+                            # Surface failed recovery, preserving the publish error as its cause.
+                            raise restore_error from publish_error
                     raise
                 published = True
-                self._specs[agent_id] = spec
-                return LoadedAgent(spec=spec, workdir=workdir)
             finally:
-                tmp_path.unlink(missing_ok=True)
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                if published and backup_dir is not None:
-                    shutil.rmtree(backup_dir, ignore_errors=True)
+                # A failed rollback retains its backup for manual recovery/cleanup.
+                # Crash remnants also need manual cleanup; no automatic reaper runs.
+                if backup_dir is not None and (
+                    published or not (backup_dir / "previous").exists()
+                ):
+                    _cleanup_staging_dir(backup_dir)
+        self._specs[agent_id] = spec
+        return LoadedAgent(spec=spec, workdir=workdir)
 
     def evict(self, agent_id: str) -> None:
         """
@@ -264,17 +230,30 @@ class AgentCache:
         :param agent_id: Unique agent identifier,
             e.g. ``"ag_abc123"``.
         """
-        with self._lock_for(agent_id):
-            workdir = self._cache_path(agent_id)
-            self._specs.pop(agent_id, None)
-            if workdir.is_dir():
-                shutil.rmtree(workdir)
+        workdir = self._cache_path(agent_id)
+        self._specs.pop(agent_id, None)
+        if workdir.is_dir():
+            shutil.rmtree(workdir)
+
+    @contextlib.contextmanager
+    def _staging_dir(self) -> Iterator[Path]:
+        """Stage on the cache filesystem in a reserved, symlink-checked namespace."""
+        cache_root = self._cache_dir.resolve(strict=False)
+        cache_root.mkdir(parents=True, exist_ok=True)
+        staging_root = cache_root / ".staging"
+        if staging_root.resolve(strict=False) != staging_root:
+            raise ValueError(f"unsafe staging root: {staging_root}")
+        staging_root.mkdir(mode=0o700, exist_ok=True)
+        staging_dir = Path(tempfile.mkdtemp(prefix="bundle-", dir=staging_root))
+        try:
+            yield staging_dir
+        finally:
+            _cleanup_staging_dir(staging_dir)
 
     def _extract_and_cache(
         self,
         agent_id: str,
         bundle_bytes: bytes,
-        workdir: Path,
         *,
         expand_env: bool = False,
     ) -> LoadedAgent:
@@ -283,42 +262,33 @@ class AgentCache:
 
         :param agent_id: Unique agent identifier.
         :param bundle_bytes: Raw bytes of the ``.tar.gz`` bundle.
-        :param workdir: Target directory for extraction.
         :param expand_env: Whether to expand ``${VAR}`` references
             against the server process environment. Forwarded from
             :meth:`load`; defaults to ``False`` (fail-safe). See
             :meth:`load` for the rationale.
         :returns: A LoadedAgent with the parsed spec and workdir.
         """
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir = Path(tempfile.mkdtemp(prefix=f".{agent_id}-extract-", dir=self._cache_dir))
-        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
-        os.close(tmp_fd)
-        tmp_path = Path(tmp_name)
-        try:
-            tmp_path.write_bytes(bundle_bytes)
+        with self._staging_dir() as staging_dir:
             spec = load_spec(
-                tmp_path,
+                bundle_bytes,
                 dest=staging_dir,
                 expand_env=expand_env,
                 prune_invalid_sub_agents=True,
             )
+            workdir = self._cache_path(agent_id)
             try:
                 staging_dir.rename(workdir)
             except OSError as exc:
-                # A separate AgentCache instance may share the same local
-                # cache root.  Its atomic publish won; consume that complete
-                # directory instead of exposing or parsing our staging path.
-                if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY} or not workdir.is_dir():
+                if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                    raise
+                # Another cold loader published first; use its complete bundle.
+                workdir = self._cache_path(agent_id)
+                if not workdir.is_dir():
                     raise
                 spec = load_spec(
                     workdir,
                     expand_env=expand_env,
                     prune_invalid_sub_agents=True,
                 )
-        finally:
-            tmp_path.unlink(missing_ok=True)
-            shutil.rmtree(staging_dir, ignore_errors=True)
-
         self._specs[agent_id] = spec
         return LoadedAgent(spec=spec, workdir=workdir)

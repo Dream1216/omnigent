@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "plan": "docs/omnigent-multitenant-multiorg-saas-iteration-plan-2026-08-01.md",
-  "reviewed_at": "2026-09-10",
+  "reviewed_at": "2026-09-18",
   "release_decision": "NO-GO",
   "phases": [
     {
@@ -22,7 +22,11 @@
             "saas/acceptance/p2-upstream-sync-ci-30883850613.json",
             "saas/acceptance/p2-upstream-sync-ci-30884588165.json",
             "saas/acceptance/p3-upstream-sync-ci-30897083447.json",
-            "saas/acceptance/p4-upstream-sync-ci-30932712224.json"
+            "saas/acceptance/p4-upstream-sync-ci-30932712224.json",
+            "saas/acceptance/p6-upstream-sync-20260918-freeze.json",
+            "saas/acceptance/p6-upstream-sync-20260918-conflict-resolution.json",
+            "saas/acceptance/p6-upstream-sync-20260918-9616-freeze.json",
+            "saas/acceptance/p6-upstream-sync-20260918-9616-conflict-resolution.json"
           ]
         },
         {

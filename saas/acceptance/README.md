@@ -1432,3 +1432,78 @@ historical: the ADR gate is again `pending`, the ledger has eleven pending gates
 and release remains `NO-GO`. No signed production image, deployment, one-hour
 Canary, 900-second rollback, Multi-AZ/PITR recovery receipt, or independent
 production approval is claimed.
+
+## 2026-09-18 official-main upstream baseline candidate
+
+The frozen official revision is
+`6aef59afe6877943bb0c261df7d5fee30e733f7d` (`0.15.0.dev0`), with
+`f31ef3267a22248ef5a71efb2147574af4dad425` as the local merge revision. The
+five-patch downstream queue replays across twelve official source paths with no
+content mismatch. The candidate includes the upstream AgentSpec tool-grant and
+sidecar MCP allow-list security fixes, preserves the external Host credential
+and workspace-routing contract, and rebases the official migration head to
+`hh1b2c3d4e5f`.
+
+Local acceptance passed the 1,356-test security/Harness/Host regression, real
+clean migration replay on PostgreSQL 16 and 18, the PostgreSQL catalog contract,
+TypeScript checks, all pre-commit hooks, and all 8,479 Web assertions under a
+10-second local timeout. With the upstream default 5-second timeout, one
+Sidebar timing test exceeded the limit while passing independently; that timing
+fact remains recorded in the conflict-resolution evidence. Exact-Head remote
+CI, branch protection, signed images, deployment, Canary, rollback and fresh
+production approval remain unobserved or unauthorized, so release stays
+`NO-GO`.
+
+## 2026-09-18 official-main `9616bf97` advance
+
+The official baseline advances by three commits from
+`6aef59afe6877943bb0c261df7d5fee30e733f7d` to
+`9616bf97cd38494db7164a1f6f350e853da4d8d3` (`0.15.0.dev0`). Merge revision
+`751095758b99c3a9561061b91c54c357b50e9040` has the prior downstream candidate
+and the exact official revision as its two parents. Integration revision
+`90ed64b98eaf16a65c1e1d75982c1f2265b4429f` then merges current downstream
+main `63f0c48b73a077043d9f3b005e4268488579e87d`, retaining its Qwen Code and
+OpenCode support while replaying patch 0007 against `9616bf97`. Reconciliation
+revision `75322493346efc4016a5d1878293e340837e8d92` then merges downstream main
+`be303951b048985edbc9a1adac4cfc8ce60b483a` from PR 68 and preserves its Kimi
+platform-provider delivery. The PR 77 reconciliation revision
+`010f5672d3f1c247fc146445794a21337f207926` merges downstream main
+`9715325b0b9e4209f57c364c1889850c6f8db6b7` after the Staff catalog work from
+PR 75. Latest reconciliation revision
+`24c121d5f4a9e606d3edeebb60340dfe4de2246d` merges downstream main
+`3e8276b041763ccc6d09d4bd1716d9e004d45843` after PR 79 bound the Runner
+database controller identity and PR 80 added the trusted E2E UI judge fallback.
+It preserves the Preview and Runner release contracts, anchors the official
+`hh1b2c3d4e5f` security catalog for PostgreSQL 16 and 18, and keeps the E2E
+governance implementation downstream-owned without widening the upstream
+source-intrusion budget. The resulting seven-patch queue covers twenty official
+source paths without a content mismatch. Candidate implementation revision
+`24c121d5f4a9e606d3edeebb60340dfe4de2246d` binds the Harness CLI
+release-age exceptions to the sixteen exact, integrity-locked
+Qwen/OpenCode/Kimi artifacts accepted on downstream main, refreshes
+the PostgreSQL N-1 trusted-input digests, and advances the Runtime Provider and
+RLS migration assertions to the reviewed 0.15 runtime and `hh1b2c3d4e5f` head.
+It also accepts both audited bubblewrap file-shape diagnostics while still
+requiring a nonzero exit and the exact rejected symlink path, and restores the
+Host model-option tests' clean-config isolation so local provider settings
+cannot change their expected wire rows. Wildcards, version drift, and unrelated
+packages remain rejected by the supply-chain gate.
+
+Local validation passed all 65 newly affected upstream tests, the 1,356-test
+security/Harness/Host regression with one expected skip, fresh PostgreSQL 16.14
+and 18.6 clean/repeated/N-1 migration replays, the 39-test PostgreSQL catalog
+contract with one URL-dependent skip, TypeScript, and every pre-commit hook. The
+frozen pnpm install and its 2,022-entry supply-chain policy verification also
+pass with the exact-version exception set. The hard-sandbox subset passes 42
+tests with 23 bubblewrap-dependent skips on macOS; nine focused Host model-source
+and safe-coordinate checks pass. The Kimi/main reconciliation suite passes 133
+tests with two platform skips, and the source budget passes at seven patches,
+63 official files, 2,489 net added lines and a 0.992 isolation ratio. The final
+main composition adds 467 focused Preview, Runner, Host, Codex, Staff catalog,
+PostgreSQL, ADR, acceptance, supply-chain, N-1, and upstream-delta contract
+passes with 25 expected platform or external-environment skips. The
+three upstream commits change no Web source, so the preceding 8,475-assertion Web
+result remains the browser regression evidence while the exact candidate passed
+Web static validation. Exact-Head remote CI, merge inclusion, image publication,
+deployment, Canary, rollback, recovery, and fresh production approval remain
+separate gates at this local-candidate stage.
