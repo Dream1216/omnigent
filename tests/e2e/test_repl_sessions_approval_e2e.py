@@ -34,6 +34,10 @@ _ASK_DEMO_YAML = _REPO_ROOT / "tests" / "resources" / "agents" / "ask-demo" / "a
 _FIXTURES_DIR = _REPO_ROOT / "tests" / "_fixtures" / "agents"
 _TOOL_GATE_DIR = _FIXTURES_DIR / "e2e-tool-gate"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# A turn must traverse the local server and runner before the REPL can render
+# its gate. Thirty seconds is below the observed cold-start budget on loaded CI
+# workers; keep this bounded but aligned with the prompt-ready budget.
+_APPROVAL_PROMPT_TIMEOUT_S = 60.0
 
 
 def _strip_ansi(text: str) -> str:
@@ -80,8 +84,18 @@ def _build_repl_env(mock_llm_server_url: str, tmp_home: Path) -> dict[str, str]:
         "COLUMNS": "120",
         "PROMPT_TOOLKIT_NO_CPR": "1",
     }
-    for k in ("ANTHROPIC_API_KEY", "CLAUDE_CODE", "CLAUDECODE", "CODEX", "DATABRICKS_TOKEN"):
-        env.pop(k, None)
+    # The mock OpenAI endpoint is the only provider this suite may reach. CI
+    # and developer shells can carry a complete Anthropic-compatible provider
+    # configuration; scrub the whole family so a fixture change cannot leak a
+    # real credential or route this e2e outside the in-process mock.
+    for k in tuple(env):
+        if k.startswith("ANTHROPIC_") or k in {
+            "CLAUDE_CODE",
+            "CLAUDECODE",
+            "CODEX",
+            "DATABRICKS_TOKEN",
+        }:
+            env.pop(k, None)
     return ensure_repl_test_theme_env(env)
 
 
@@ -213,7 +227,7 @@ def test_sessions_single_approval_allows_llm_response(
     try:
         _wait_for_prompt_ready(child)
         child.send("Hello\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("y\r")
         child.expect("approved", timeout=10)
 
@@ -246,7 +260,7 @@ def test_sessions_refusal_shows_deny_sentinel(
     try:
         _wait_for_prompt_ready(child)
         child.send("Hello\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("n\r")
         child.expect("refused", timeout=10)
 
@@ -277,14 +291,14 @@ def test_sessions_two_turns_fires_one_approval_per_turn(
 
         # Turn 1.
         child.send("First message\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("y\r")
         child.expect("approved", timeout=10)
         _read_pending(child, seconds=5.0)
 
         # Turn 2.
         child.send("Second message\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("y\r")
         child.expect("approved", timeout=10)
         buffered = _read_pending(child, seconds=5.0)
@@ -314,7 +328,7 @@ def test_sessions_approve_always_caches_for_later_turns(
 
         # Turn 1: approve always.
         child.send("First\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("a\r")
         child.expect("approved always", timeout=10)
         _read_pending(child, seconds=5.0)
@@ -373,7 +387,7 @@ def test_sessions_tool_call_approval_allows_tool(
     try:
         _wait_for_prompt_ready(child, timeout=60)
         child.send("Use the tool\r")
-        child.expect("approval required", timeout=30)
+        child.expect("approval required", timeout=_APPROVAL_PROMPT_TIMEOUT_S)
         child.send("y\r")
         child.expect("approved", timeout=10)
         buffered = _read_pending(child, seconds=8.0)

@@ -81,9 +81,26 @@ from tests.e2e_ui.messages.test_native_codex_render_parity import (
 
 _log = logging.getLogger(__name__)
 
-_EFFORT_GEAR = '[data-testid="composer-config-effort"]'
+_EFFORT_GEAR = '[data-testid="composer-agent-effort-select"]'
 _CONFIG_GEAR = '[data-testid="composer-config-gear"]'
-_CONFIG_MODAL = '[data-testid="composer-config-modal"]'
+_CONFIG_MENU = '[data-testid="composer-agent-menu"]'
+
+
+def _expect_effort(page: Page, expected: str, *, timeout_ms: int = 30_000) -> None:
+    """Assert the composer's accessible effort label matches *expected*.
+
+    The menu row renders separate ``Effort`` and title-cased value spans, so
+    its flattened text is ``EffortMedium`` rather than the lowercase wire
+    value stored in ``config.toml``.  The row's accessible label is the stable
+    UI contract and preserves the separator.
+
+    :param page: The Playwright page, with the composer menu open.
+    :param expected: Lowercase effort value from the session contract.
+    :param timeout_ms: Maximum wait for the mirrored value.
+    """
+    expect(page.locator(_EFFORT_GEAR)).to_have_attribute(
+        "aria-label", f"Effort: {expected.title()}", timeout=timeout_ms
+    )
 
 
 def _read_config_effort(session_id: str) -> str | None:
@@ -197,7 +214,7 @@ def test_codex_terminal_effort_change_reaches_composer(
     gear = page.locator(_CONFIG_GEAR)
     expect(gear).to_be_visible(timeout=_TERMINAL_READY_TIMEOUT_MS)
     gear.click()
-    expect(page.locator(_CONFIG_MODAL)).to_be_visible(timeout=15_000)
+    expect(page.locator(_CONFIG_MENU)).to_be_visible(timeout=15_000)
     effort_control = page.locator(_EFFORT_GEAR)
     # The effort row is catalog-gated: a launch model the codex catalog does
     # not list (this fixture pins a mock-provider model) renders no effort
@@ -246,14 +263,14 @@ def test_codex_terminal_effort_change_reaches_composer(
     gear = page.locator(_CONFIG_GEAR)
     expect(gear).to_be_visible(timeout=30_000)
     gear.click()
-    expect(page.locator(_CONFIG_MODAL)).to_be_visible(timeout=15_000)
+    expect(page.locator(_CONFIG_MENU)).to_be_visible(timeout=15_000)
     effort_control = page.locator(_EFFORT_GEAR)
     expect(effort_control).to_be_visible(timeout=15_000)
 
     # The composer must reflect the effort the user set in the
     # terminal. While the bug is live it stays on the launch effort, so this
     # times out; after the fix it shows the terminal's new effort.
-    expect(effort_control).to_contain_text(new_config_effort, timeout=30_000)
+    _expect_effort(page, new_config_effort)
     assert new_config_effort != baseline_composer_effort, (
         "test setup: the terminal effort change must move off the composer's "
         f"baseline effort ({baseline_composer_effort!r}) to prove the mirror"
@@ -317,15 +334,15 @@ def _wait_for_config_effort(session_id: str, expected: str, *, timeout_s: float 
     )
 
 
-def _open_config_modal(page: Page) -> None:
-    """Open the composer configuration gear modal (idempotent per call).
+def _open_config_menu(page: Page) -> None:
+    """Open the composer configuration gear menu (idempotent per call).
 
     :param page: The Playwright page, on the Chat view.
     """
     gear = page.locator(_CONFIG_GEAR)
     expect(gear).to_be_visible(timeout=30_000)
     gear.click()
-    expect(page.locator(_CONFIG_MODAL)).to_be_visible(timeout=15_000)
+    expect(page.locator(_CONFIG_MENU)).to_be_visible(timeout=15_000)
 
 
 @pytest.mark.nightly
@@ -357,8 +374,9 @@ def test_composer_effort_pick_survives_terminal_turns(
     1. Change the effort in the embedded terminal first (same driving as the
        mirror journey) and run a turn — this lands the session on a known
        terminal effort and makes the composer's effort row render.
-    2. Pick a DIFFERENT effort in the composer gear and Save; the gear must
-       show the pick (the "works" half of the requirement).
+    2. Pick a DIFFERENT effort in the composer gear's Effort submenu; the
+       immediate-apply picker must show the pick (the "works" half of the
+       requirement).
     3. Run a turn so the executor applies the pick; the terminal's
        ``config.toml`` must adopt it (fails while the mirror write is absent).
     4. Run one more turn (another ``turn/started`` config re-read) and verify
@@ -379,14 +397,14 @@ def test_composer_effort_pick_survives_terminal_turns(
     _run_mock_turn(page, mock_llm_server_url, 1)
 
     # The composer mirrors the terminal effort (the already-guarded direction).
-    _open_config_modal(page)
+    _open_config_menu(page)
     effort_control = page.locator(_EFFORT_GEAR)
     expect(effort_control).to_be_visible(timeout=15_000)
-    expect(effort_control).to_contain_text(terminal_effort, timeout=30_000)
+    _expect_effort(page, terminal_effort)
 
-    # --- 2. Pick a DIFFERENT effort in the composer gear and Save. -----------
+    # --- 2. Pick a DIFFERENT effort in the composer gear. --------------------
     effort_control.click()
-    options = page.locator('[role="option"][data-effort-level]')
+    options = page.locator('[data-testid^="composer-agent-effort-"][data-effort-level]')
     expect(options.first).to_be_visible(timeout=15_000)
     picked = ""
     for i in range(options.count()):
@@ -406,15 +424,18 @@ def test_composer_effort_pick_survives_terminal_turns(
         "cannot exercise a composer-initiated change"
     )
     _log.info("picking composer effort: %r (was %r)", picked, terminal_effort)
-    page.locator(f'[role="option"][data-effort-level="{picked}"]').click()
-    page.get_by_test_id("composer-config-save").click()
-    expect(page.locator(_CONFIG_MODAL)).to_be_hidden(timeout=15_000)
+    page.locator(f'[data-testid="composer-agent-effort-{picked}"]').click()
+    # The current picker applies immediately (there is no modal Save step).
+    # Escape the effort submenu and then the root session menu.
+    page.keyboard.press("Escape")
+    page.keyboard.press("Escape")
+    expect(page.locator(_CONFIG_MENU)).to_be_hidden(timeout=15_000)
 
     # The pick works: reopening the gear shows the composer-picked effort.
-    _open_config_modal(page)
-    expect(page.locator(_EFFORT_GEAR)).to_contain_text(picked, timeout=30_000)
+    _open_config_menu(page)
+    _expect_effort(page, picked)
     page.keyboard.press("Escape")
-    expect(page.locator(_CONFIG_MODAL)).to_be_hidden(timeout=15_000)
+    expect(page.locator(_CONFIG_MENU)).to_be_hidden(timeout=15_000)
 
     # --- 3. A turn applies the pick; config.toml must adopt it. --------------
     _run_mock_turn(page, mock_llm_server_url, 2)
@@ -423,9 +444,9 @@ def test_composer_effort_pick_survives_terminal_turns(
 
     # --- 4. Another terminal turn must not revert the composer's pick. -------
     _run_mock_turn(page, mock_llm_server_url, 3)
-    _open_config_modal(page)
+    _open_config_menu(page)
     effort_control = page.locator(_EFFORT_GEAR)
     expect(effort_control).to_be_visible(timeout=15_000)
-    expect(effort_control).to_contain_text(picked, timeout=30_000)
+    _expect_effort(page, picked)
     # And the terminal's own source of truth still agrees with the composer.
     assert _read_config_effort(session_id) == picked

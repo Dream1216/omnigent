@@ -469,6 +469,11 @@ def test_native_claude_composer_delivers_into_an_occupied_tui(
     _log.info("occupied-composer journey: base_url=%s session_id=%s", base_url, session_id)
 
     page.goto(f"{base_url}/c/{session_id}")
+    # This journey exercises the bridge's live injection into an occupied TUI,
+    # not the default client-side follow-up queue. Keep every send on the
+    # immediate-steer path even when the session's idle/running signal lags a
+    # just-rendered assistant response on a loaded CI worker.
+    page.evaluate("() => localStorage.setItem('omnigent:always-steer', 'true')")
     _open_terminal_view(page)
     _wait_terminal_connected(page)
     _ensure_chat_view(page)
