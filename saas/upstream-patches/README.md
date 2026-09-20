@@ -111,6 +111,16 @@ count from six to seven. The 8-patch ceiling,
 Single-Owner Beta scope record, not production admission, vendor-account
 authentication or a merge waiver.
 
+The 2026-09-21 managed Host daemon correction carries the configured workspace
+selector through CLI backgrounding into the daemon and Runner process. Patch
+0009 owns the two-line `omnigent/cli.py` delta and the focused CLI-to-daemon
+regression verifies propagation while retaining the existing Provider-secret
+exclusion. This raises the active patch count from seven to the existing hard
+ceiling of eight; source-file and net-line ceilings, the isolation floor,
+forbidden paths and reverse-dependency checks remain unchanged. This is a
+Single-Owner Beta corrective record, not production admission or a merge
+waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
@@ -120,3 +130,4 @@ authentication or a merge waiver.
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/credentials.py` | multi-model Platform gateway projection; secret-free Pi config; allowed-catalog picker regression | Generic upstream gateway-catalog proposal pending | `9616bf97` | Remove when upstream publishes all configured inline gateway models to Pi |
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official OpenCode gateway resolution; configured-provider readiness; platform runtime synthetic-token routing; no native Runner edit | Generic upstream OpenCode provider-fallback proposal pending | `9616bf97` | Remove when upstream can route OpenCode through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official package install; headless/native temporary Provider routing; no persisted token; vendor-login fallback; no workflow/native Runner edit | Generic upstream Kimi temporary-provider proposal pending | `9616bf97` after patches 0002-0007 | Remove when upstream can install Kimi and route it through an OpenAI-compatible configured Provider without persisting its upstream credential |
+| `0009-host-daemon-workspace-selector.patch` | SaaS Runtime | `omnigent/cli.py` | managed workspace selector CLI-to-daemon-to-Runner regression; Provider-secret exclusion | Generic upstream Host daemon workspace-selector propagation proposal pending | `9616bf97` after patches 0002-0008 | Remove when upstream preserves the managed Host workspace selector across background daemon startup |
