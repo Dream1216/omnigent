@@ -47,11 +47,27 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 70,
+    "max_direct_upstream_files": 76,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-21",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 70,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2101,
+    "reason": "User-authorized dual managed runtime delivery for the current next SaaS Beta: support both the Kubernetes Agent Sandbox CRD and ordinary Kubernetes Job launchers on the isolated exec-a/exec-b runner pool, preserve the server-owned short-lived platform-model credential, and build Kubernetes support into both signed Server and Host images. The existing patch 0009 slot is expanded from the Host workspace-selector correction to the three official Python seams; the remaining workflow, image, production adapter, and contract changes stay in downstream-owned saas paths. From the Host daemon correction mainline this adds exactly six direct upstream files and 128 measured net lines, moving the measured totals from 70 files / 2,101 lines to 76 files / 2,229 lines. Raise only the direct-file ceiling to 76; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope record is not production admission, a reviewer signature, or a merge waiver.",
+    "revision": "dual-managed-kubernetes-runtimes-v12",
+    "scoped_runtime_delta": {
+      "omnigent/onboarding/sandboxes/kubernetes.py": 32,
+      "omnigent/server/managed_hosts.py": 40,
+      "tests/cli/test_backend.py": 2,
+      "tests/onboarding/sandboxes/test_kubernetes.py": 17,
+      "tests/server/helpers.py": 3,
+      "tests/server/test_managed_hosts.py": 34
+    },
+    "previous_revision": {
     "approved_at": "2026-09-21",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 69,
@@ -232,6 +248,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }

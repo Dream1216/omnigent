@@ -122,6 +122,18 @@ net-line ceiling, isolation floor, forbidden paths and reverse-dependency
 checks remain unchanged. This is a Single-Owner Beta corrective record, not
 production admission or a merge waiver.
 
+The `dual-managed-kubernetes-runtimes-v12` revision expands that same final
+patch slot with the bounded
+operator-owned `host_command` seam needed to launch the managed Host inside
+either a Kubernetes Agent Sandbox CR or an ordinary Kubernetes Job. Patch
+0009 carries the three official Python paths while platform-model credential
+projection, production configuration, image construction and admission tests
+remain isolated under `saas/`. The exact measured source delta is 76 direct
+files / 2,229 net lines, retaining the eighth and final active patch slot while
+retaining the 2,579-line ceiling, 0.85 isolation floor, forbidden paths and
+reverse-dependency checks. This is an authorized Single-Owner Beta scope
+record, not production admission, reviewer approval or a merge waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
@@ -131,4 +143,4 @@ production admission or a merge waiver.
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/credentials.py` | multi-model Platform gateway projection; secret-free Pi config; allowed-catalog picker regression | Generic upstream gateway-catalog proposal pending | `9616bf97` | Remove when upstream publishes all configured inline gateway models to Pi |
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official OpenCode gateway resolution; configured-provider readiness; platform runtime synthetic-token routing; no native Runner edit | Generic upstream OpenCode provider-fallback proposal pending | `9616bf97` | Remove when upstream can route OpenCode through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official package install; headless/native temporary Provider routing; no persisted token; vendor-login fallback; no workflow/native Runner edit | Generic upstream Kimi temporary-provider proposal pending | `9616bf97` after patches 0002-0007 | Remove when upstream can install Kimi and route it through an OpenAI-compatible configured Provider without persisting its upstream credential |
-| `0009-host-daemon-workspace-selector.patch` | SaaS Runtime | `omnigent/cli.py` | managed workspace selector CLI-to-daemon-to-Runner regression; Provider-secret exclusion | Generic upstream Host daemon workspace-selector propagation proposal pending | `9616bf97` after patches 0002-0008 | Remove when upstream preserves the managed Host workspace selector across background daemon startup |
+| `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/onboarding/sandboxes/kubernetes.py`; `omnigent/server/managed_hosts.py` | Kubernetes SDK image material; bounded Host command and reserved server URL; workspace propagation; Agent Sandbox and Job provider parsing; dual-provider production contracts | Generic upstream managed Kubernetes Host-command and multi-provider proposal pending | `9616bf97` after patches 0002-0008 | Remove when upstream exposes equivalent bounded managed-Host commands, reserved server/workspace propagation, and composable Agent Sandbox plus Kubernetes Job providers |

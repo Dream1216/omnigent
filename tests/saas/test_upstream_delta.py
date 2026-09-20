@@ -124,23 +124,36 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_host_daemon_workspace_budget_revision_retains_a_hard_loc_ceiling(
+def test_dual_runtime_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 70
+    assert budget["max_direct_upstream_files"] == 76
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "host-daemon-workspace-selector-v11"
-    assert revision["previous_max_direct_upstream_files"] == 69
+    assert revision["revision"] == "dual-managed-kubernetes-runtimes-v12"
+    assert revision["previous_max_direct_upstream_files"] == 70
     assert revision["previous_max_upstream_net_added_loc"] == 2579
-    assert revision["previous_measured_upstream_net_added_loc"] == 2099
-    assert revision["scoped_runtime_delta"] == {"omnigent/cli.py": 2}
+    assert revision["previous_measured_upstream_net_added_loc"] == 2101
+    assert revision["scoped_runtime_delta"] == {
+        "omnigent/onboarding/sandboxes/kubernetes.py": 32,
+        "omnigent/server/managed_hosts.py": 40,
+        "tests/cli/test_backend.py": 2,
+        "tests/onboarding/sandboxes/test_kubernetes.py": 17,
+        "tests/server/helpers.py": 3,
+        "tests/server/test_managed_hosts.py": 34,
+    }
     previous = revision["previous_revision"]
+    assert previous["revision"] == "host-daemon-workspace-selector-v11"
+    assert previous["previous_max_direct_upstream_files"] == 69
+    assert previous["previous_max_upstream_net_added_loc"] == 2579
+    assert previous["previous_measured_upstream_net_added_loc"] == 2099
+    assert previous["scoped_runtime_delta"] == {"omnigent/cli.py": 2}
+    previous = previous["previous_revision"]
     assert previous["revision"] == "ui-preview-unconfigured-mirror-guard-v10"
     assert previous["previous_max_direct_upstream_files"] == 68
     assert previous["previous_max_upstream_net_added_loc"] == 2579

@@ -1,0 +1,266 @@
+diff --git a/omnigent/cli.py b/omnigent/cli.py
+index 348ab30bd4b9456b1cdcc46c0861fbbb7f639a6f..4587756dc6d83d467d4d5a7edce06dc39a35b4be 100644
+--- a/omnigent/cli.py
++++ b/omnigent/cli.py
+@@ -3558,6 +3558,7 @@ def _build_host_daemon_env(
+         HOST_ID_ENV_VAR,
+         HOST_NAME_ENV_VAR,
+         HOST_TOKEN_ENV_VAR,
++        HOST_WORKSPACE_ID_ENV_VAR,
+     )
+ 
+     identity_env_vars = frozenset(
+@@ -3565,6 +3566,7 @@ def _build_host_daemon_env(
+             HOST_ID_ENV_VAR,
+             HOST_NAME_ENV_VAR,
+             HOST_TOKEN_ENV_VAR,
++            HOST_WORKSPACE_ID_ENV_VAR,
+         }
+     )
+ 
+diff --git a/omnigent/onboarding/sandboxes/kubernetes.py b/omnigent/onboarding/sandboxes/kubernetes.py
+index 28aa68f09f7db1dc980364f8cd41d0d065d22e4d..3b26abf92abb19d5c3e1f2902c4ae5c83e33f240 100644
+--- a/omnigent/onboarding/sandboxes/kubernetes.py
++++ b/omnigent/onboarding/sandboxes/kubernetes.py
+@@ -55,7 +55,7 @@ import shlex
+ import time
+ import uuid
+ from collections.abc import Mapping, Sequence
+-from typing import TYPE_CHECKING, ClassVar, Literal
++from typing import TYPE_CHECKING, ClassVar, Literal, cast
+ 
+ import click
+ 
+@@ -106,6 +106,13 @@ variables whose values are injected as literal ``env`` into every sandbox Pod.
+ Prefer :data:`SANDBOX_SECRET_ENV_VAR` for credentials. The
+ ``sandbox.kubernetes.env`` config takes precedence."""
+ 
++MANAGED_SERVER_URL_ENV_VAR: str = "OMNIGENT_MANAGED_SERVER_URL"
++"""Server URL injected by the launcher for reviewed custom Host commands.
++
++The default ``omnigent host`` child receives the URL as argv; downstream Host
++compositions can read the same authority from this reserved environment name.
++"""
++
+ SERVICE_ACCOUNT_ENV_VAR: str = "OMNIGENT_KUBERNETES_SERVICE_ACCOUNT"
+ """Environment variable naming the (deliberately powerless) ServiceAccount
+ sandbox Pods run as. Defaults to :data:`_DEFAULT_SERVICE_ACCOUNT`. The
+@@ -254,7 +261,14 @@ _SENSITIVE_KEY_SEGMENTS: frozenset[str] = frozenset(
+ # Reserved env names the Pod sets itself — an env passthrough naming one is an
+ # operator error (a duplicate entry could shadow the writable-HOME emptyDir).
+ _RESERVED_ENV_NAMES: frozenset[str] = frozenset(
+-    {"HOME", "IS_SANDBOX", HOST_ID_ENV_VAR, HOST_NAME_ENV_VAR, HOST_TOKEN_ENV_VAR}
++    {
++        "HOME",
++        "IS_SANDBOX",
++        HOST_ID_ENV_VAR,
++        HOST_NAME_ENV_VAR,
++        HOST_TOKEN_ENV_VAR,
++        MANAGED_SERVER_URL_ENV_VAR,
++    }
+ )
+ 
+ # PID-1 reaper, run as the host container's entrypoint. It spawns its argv
+@@ -641,23 +655,31 @@ def _render_workspace_prep_command(
+     return ["bash", "-lc", script]
+ 
+ 
+-def _render_host_command(server_url: str) -> list[str]:
++def _render_host_command(
++    server_url: str,
++    host_command: Sequence[str] | None = None,
++) -> list[str]:
+     """
+     Render the main container command that runs ``omnigent host`` under the
+     PID-1 reaper.
+ 
+     ``exec`` replaces the login shell with the reaper (so it becomes PID 1, with
+     the venv on PATH from the image's profile), and the reaper spawns its argv —
+-    ``omnigent host --server <url>`` — as its child. Identity + token reach the
++    ``omnigent host --server <url>`` — as its child. A deployment may instead
++    supply a reviewed *host_command* for a downstream Host composition; it is
++    still run beneath the same reaper. Identity + token reach the
+     host through the Pod environment (literal env + the token ``secretKeyRef``),
+     not this command.
+ 
+     :param server_url: URL of this server the host dials back to.
++    :param host_command: Optional replacement child argv. This is operator
++        configuration, not user input; the server config parser validates its
++        bounded string-list shape before a launcher is constructed.
+     :returns: The ``["bash", "-lc", script]`` command.
+     """
+-    script = (
+-        f"exec python3 -c {shlex.quote(_REAPER_SRC)} "
+-        f"omnigent host --server {shlex.quote(server_url)}"
++    child = list(host_command or ("omnigent", "host", "--server", server_url))
++    script = f"exec python3 -c {shlex.quote(_REAPER_SRC)} " + " ".join(
++        shlex.quote(argument) for argument in child
+     )
+     return ["bash", "-lc", script]
+ 
+@@ -720,6 +742,7 @@ def build_job_manifest(
+     ttl_seconds_after_finished: int = _JOB_TTL_SECONDS_AFTER_FINISHED,
+     runtime_class: str | None = None,
+     home_size_limit: str | None = _HOME_SIZE_LIMIT_DEFAULT,
++    host_command: Sequence[str] | None = None,
+ ) -> dict[str, object]:
+     """
+     Build the sandbox Job manifest as a plain dict.
+@@ -961,6 +984,7 @@ def build_job_manifest(
+         {"name": "IS_SANDBOX", "value": "1"},
+         {"name": HOST_ID_ENV_VAR, "value": host_id},
+         {"name": HOST_NAME_ENV_VAR, "value": host_name},
++        {"name": MANAGED_SERVER_URL_ENV_VAR, "value": server_url},
+         {
+             "name": HOST_TOKEN_ENV_VAR,
+             "valueFrom": {"secretKeyRef": {"name": token_secret_name, "key": HOST_TOKEN_ENV_VAR}},
+@@ -972,7 +996,7 @@ def build_job_manifest(
+         "name": _CONTAINER_NAME,
+         "image": image,
+         "workingDir": _HOME_DIR,
+-        "command": _render_host_command(server_url),
++        "command": _render_host_command(server_url, host_command),
+         "env": host_env,
+         "resources": pod_resources,
+         "securityContext": container_security,
+@@ -1275,6 +1299,7 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
+         pod_ready_timeout_s: int | None = None,
+         runtime_class: str | None = None,
+         home_size_limit: str | None = _HOME_SIZE_LIMIT_DEFAULT,
++        host_command: Sequence[str] | None = None,
+     ) -> None:
+         """
+         Store provider config for lazy use by :meth:`start_host` / :meth:`terminate`.
+@@ -1288,6 +1313,8 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
+         :param home_size_limit: ``sizeLimit`` for the writable-HOME emptyDir
+             of every Pod, or ``None`` for an unbounded emptyDir (the caller
+             decides; ``sandbox.kubernetes.home_size_limit: null`` maps here).
++        :param host_command: Optional reviewed child argv to run beneath the
++            PID-1 reaper instead of the default ``omnigent host`` command.
+         """
+         self._image_ref = image
+         self._namespace = namespace
+@@ -1304,6 +1331,7 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
+         self._pod_ready_timeout_s = pod_ready_timeout_s
+         self._runtime_class = runtime_class
+         self._home_size_limit = home_size_limit
++        self._host_command = tuple(host_command) if host_command is not None else None
+         self._core: k8s_client.CoreV1Api | None = None
+         self._batch: k8s_client.BatchV1Api | None = None
+         self._api_client: k8s_client.ApiClient | None = None
+@@ -1594,6 +1622,7 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
+                     agent_name=agent_name,
+                     runtime_class=self._runtime_class,
+                     home_size_limit=self._home_size_limit,
++                    host_command=self._host_command,
+                 )
+                 # Secret before Job so the Pod's secretKeyRef resolves
+                 # immediately.
+@@ -1882,12 +1911,15 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
+         from urllib3.exceptions import HTTPError
+ 
+         try:
+-            log: str = self._load_core().read_namespaced_pod_log(
+-                pod_name,
+-                namespace,
+-                container=container,
+-                tail_lines=_LOG_TAIL_LINES,
+-                _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
++            log = cast(
++                str,
++                self._load_core().read_namespaced_pod_log(
++                    pod_name,
++                    namespace,
++                    container=container,
++                    tail_lines=_LOG_TAIL_LINES,
++                    _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
++                ),
+             )
+         except (ApiException, HTTPError):
+             return ""
+diff --git a/omnigent/server/managed_hosts.py b/omnigent/server/managed_hosts.py
+index e1633709d73cd8cf47f269b576e89b1e6494c7e8..fc0c814f54ef2488150ce9cc622399c39cc1c31c 100644
+--- a/omnigent/server/managed_hosts.py
++++ b/omnigent/server/managed_hosts.py
+@@ -1506,6 +1506,7 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
+                     "pod_ready_timeout_s",
+                     "runtime_class",
+                     "home_size_limit",
++                    "host_command",
+                 },
+                 "sandbox.kubernetes",
+             )
+@@ -1531,6 +1532,7 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
+             ),
+             runtime_class=_parse_provider_string(raw, "kubernetes", "runtime_class"),
+             home_size_limit=_parse_kubernetes_home_size_limit(raw),
++            host_command=_parse_kubernetes_host_command(raw),
+         )
+         token_ttl_s = KUBERNETES_MANAGED_TOKEN_TTL_S
+     elif provider == "microsandbox":
+@@ -3135,6 +3137,40 @@ def _parse_kubernetes_secret_mounts(raw: dict[str, object]) -> list[dict[str, ob
+     return normalized or None
+ 
+ 
++def _parse_kubernetes_host_command(raw: dict[str, object]) -> list[str] | None:
++    """Parse a bounded operator-supplied Host child argv.
++
++    The launcher always places this argv beneath its PID-1 reaper.  A custom
++    command is useful to start a downstream Host composition (for example one
++    that mints per-session model credentials) without building a second image.
++    The value is deployment authority, like ``image``; it is never accepted
++    from a session request.
++    """
++
++    section = _parse_provider_section(raw, "kubernetes")
++    if section is None or "host_command" not in section:
++        return None
++    value = section["host_command"]
++    if (
++        not isinstance(value, list)
++        or not 1 <= len(value) <= 16
++        or not all(
++            isinstance(argument, str)
++            and argument
++            and argument == argument.strip()
++            and "\x00" not in argument
++            and len(argument) <= 4096
++            for argument in value
++        )
++        or sum(len(argument) for argument in value) > 16 * 1024
++    ):
++        raise ValueError(
++            "server config 'sandbox.kubernetes.host_command' must be a list of "
++            "1-16 non-empty argv strings with bounded length"
++        )
++    return list(value)
++
++
+ def _reject_overlapping_kubernetes_mounts(
+     pvc_mounts: list[dict[str, object]] | None,
+     secret_mounts: list[dict[str, object]] | None,
+@@ -3188,6 +3224,7 @@ def _kubernetes_launcher_factory(
+     pod_ready_timeout_s: int | None,
+     runtime_class: str | None,
+     home_size_limit: str | None,
++    host_command: list[str] | None,
+ ) -> Callable[[], SandboxHostLauncher]:
+     """
+     Build the launcher factory for the YAML ``provider: kubernetes`` path.
+@@ -3227,6 +3264,8 @@ def _kubernetes_launcher_factory(
+         isolation), or ``None`` for the cluster's default runtime.
+     :param home_size_limit: Resolved ``sizeLimit`` for every runner Pod's
+         writable-HOME emptyDir, or ``None`` for an unbounded emptyDir.
++    :param host_command: Optional reviewed child argv to run beneath the
++        launcher's PID-1 reaper instead of ``omnigent host``.
+     :returns: A factory producing parameterized Kubernetes launchers.
+     :raises ValueError: When a name or node-selector label is malformed.
+     """
+@@ -3259,6 +3298,7 @@ def _kubernetes_launcher_factory(
+             pod_ready_timeout_s=pod_ready_timeout_s,
+             runtime_class=runtime_class,
+             home_size_limit=home_size_limit,
++            host_command=host_command,
+         )
+ 
+     return _build
