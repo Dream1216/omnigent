@@ -3558,6 +3558,7 @@ def _build_host_daemon_env(
         HOST_ID_ENV_VAR,
         HOST_NAME_ENV_VAR,
         HOST_TOKEN_ENV_VAR,
+        HOST_WORKSPACE_ID_ENV_VAR,
     )
 
     identity_env_vars = frozenset(
@@ -3565,6 +3566,7 @@ def _build_host_daemon_env(
             HOST_ID_ENV_VAR,
             HOST_NAME_ENV_VAR,
             HOST_TOKEN_ENV_VAR,
+            HOST_WORKSPACE_ID_ENV_VAR,
         }
     )
 
