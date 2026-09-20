@@ -87,13 +87,14 @@ def test_concurrent_cache_miss_never_exposes_partial_config(
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(cache.load, "concurrent-agent", location)
         assert first_extract_started.wait(timeout=5)
+        # The old implementation extracts straight into the public path,
+        # so this assertion fails deterministically before another loader is
+        # allowed to publish a complete directory.  The fixed implementation
+        # exposes only a hidden staging directory until parsing succeeds.
+        assert not (cache_dir / "concurrent-agent").exists()
+
         second = pool.submit(cache.load, "concurrent-agent", location)
         try:
-            # The old implementation extracts straight into the public path,
-            # so this assertion fails deterministically before timing enters
-            # the contract.  The fixed implementation exposes only a hidden
-            # staging directory until parsing succeeds.
-            assert not (cache_dir / "concurrent-agent").exists()
             # The official cache permits independent cold extraction.  The
             # second loader can publish its complete staging directory while
             # the first remains paused on private, unpublished state.
