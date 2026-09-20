@@ -1,0 +1,20 @@
+diff --git a/omnigent/cli.py b/omnigent/cli.py
+index 348ab30bd..4587756dc 100644
+--- a/omnigent/cli.py
++++ b/omnigent/cli.py
+@@ -3558,6 +3558,7 @@ def _build_host_daemon_env(
+         HOST_ID_ENV_VAR,
+         HOST_NAME_ENV_VAR,
+         HOST_TOKEN_ENV_VAR,
++        HOST_WORKSPACE_ID_ENV_VAR,
+     )
+ 
+     identity_env_vars = frozenset(
+@@ -3565,6 +3566,7 @@ def _build_host_daemon_env(
+             HOST_ID_ENV_VAR,
+             HOST_NAME_ENV_VAR,
+             HOST_TOKEN_ENV_VAR,
++            HOST_WORKSPACE_ID_ENV_VAR,
+         }
+     )
+ 
