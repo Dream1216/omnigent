@@ -47,11 +47,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 68,
+    "max_direct_upstream_files": 69,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-20",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 68,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2055,
+    "reason": "The unconfigured mirror's UI Preview workflow failed every main push after a successful product build because all three Databricks OAuth-M2M secrets were absent. Add one no-checkout configuration job that exposes only a boolean, safely skips preview work when all credentials are absent, fails closed when only part of the trio is configured, and preserves the protected deployment path when all three are present. The executable contract tests remain isolated under tests/saas/. This adds exactly one directly changed workflow file and 44 measured net lines, raising only the direct-file ceiling from 68 to the exact measured 69 while retaining the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission, credential authorization, or a merge waiver.",
+    "revision": "ui-preview-unconfigured-mirror-guard-v10",
+    "scoped_ci_delta": {
+      ".github/workflows/ui-preview.yml": 44
+    },
+    "previous_revision": {
     "approved_at": "2026-09-20",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 64,
@@ -210,6 +221,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

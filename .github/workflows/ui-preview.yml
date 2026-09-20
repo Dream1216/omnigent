@@ -91,12 +91,57 @@ env:
 permissions: {}
 
 jobs:
+  preview_config:
+    name: Check preview deployment configuration
+    if: >-
+      github.event_name == 'push'
+      || (
+        github.event.action != 'closed'
+        && contains(github.event.pull_request.labels.*.name, 'ui-preview')
+        && github.event.pull_request.draft == false
+      )
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      # This job runs no repository code. It only exposes a boolean so an
+      # unconfigured mirror can skip preview deployment without turning every
+      # push to main red. A partially configured credential set remains an
+      # error because silently skipping it would hide a broken deployment.
+      - name: Check Databricks OAuth-M2M configuration
+        id: check
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          present=0
+          for name in DATABRICKS_HOST DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET; do
+            value="${!name-}"
+            if [[ -n "$value" ]]; then
+              present=$((present + 1))
+            fi
+          done
+          if [[ "$present" -eq 0 ]]; then
+            echo "::notice::Databricks UI Preview is not configured; skipping deployment"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$present" -eq 3 ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Databricks UI Preview configuration is incomplete; set all three OAuth-M2M secrets"
+            exit 1
+          fi
+
   notify:
     if: >-
-      github.event_name != 'push'
+      needs.preview_config.outputs.configured == 'true'
+      && github.event_name != 'push'
       && github.event.action != 'closed'
       && contains(github.event.pull_request.labels.*.name, 'ui-preview')
       && github.event.pull_request.draft == false
+    needs: preview_config
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -131,12 +176,8 @@ jobs:
 
   build:
     if: >-
-      github.event_name == 'push'
-      || (
-        github.event.action != 'closed'
-        && contains(github.event.pull_request.labels.*.name, 'ui-preview')
-        && github.event.pull_request.draft == false
-      )
+      needs.preview_config.outputs.configured == 'true'
+    needs: preview_config
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -292,7 +333,10 @@ jobs:
           if-no-files-found: error
 
   deploy:
-    needs: build
+    if: needs.preview_config.outputs.configured == 'true'
+    needs:
+      - preview_config
+      - build
     # Gate the secret-bearing deploy behind a protected Environment for
     # UNTRUSTED fork PRs only: a labelled outside-contributor fork PR that gets a
     # new commit must wait for a human reviewer to approve this run before it can
