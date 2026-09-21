@@ -62,10 +62,15 @@ from saas.production.server_config import (
     load_production_server_config,
 )
 from saas.public_api_contract import FilterBoundCursorCodec
+from saas.runner_adapter.platform_models import (
+    PLATFORM_MODEL_CREDENTIAL_ENV,
+    PLATFORM_MODEL_GATEWAY_BASE_URL,
+    PLATFORM_MODEL_PROVIDER_NAME,
+)
 
 logger = logging.getLogger("omnigent-saas-server")
 
-_PRODUCTION_OFFICIAL_CONFIG_KEYS = frozenset({"execution_timeout", "llm", "policies"})
+_PRODUCTION_OFFICIAL_CONFIG_KEYS = frozenset({"execution_timeout", "llm", "policies", "sandbox"})
 _PRODUCTION_LLM_KEYS = frozenset(
     {
         "fallback_models",
@@ -111,6 +116,50 @@ _SECRET_CONFIG_KEY_SUFFIXES = (
     "_secret",
     "_token",
 )
+_PRODUCTION_SANDBOX_SERVER_URL = "http://omnigent-saas-server.omnigent-next-beta.svc.cluster.local"
+_PRODUCTION_SANDBOX_HOST_COMMAND = [
+    "python3",
+    "-m",
+    "saas.production.platform_model_sandbox_host",
+]
+_PRODUCTION_SANDBOX_NODE_SELECTOR = {
+    "omnigent.io/runner": "true",
+    "omnigent.io/seccomp-profile": "105103c7809a1da4",
+}
+_PRODUCTION_SANDBOX_SECRET_MOUNTS = [
+    {
+        "secret_name": "omnigent-sandbox-platform-model-token-key",
+        "mount_path": "/credentials/omnigent-platform-model",
+    }
+]
+_PRODUCTION_SANDBOX_TOLERATIONS = [
+    {
+        "key": "omnigent.io/workload",
+        "operator": "Equal",
+        "value": "runner",
+        "effect": "NoSchedule",
+    }
+]
+_PRODUCTION_SANDBOX_KUBERNETES_KEYS = frozenset(
+    {
+        "env",
+        "home_size_limit",
+        "host_command",
+        "image",
+        "in_cluster",
+        "namespace",
+        "node_selector",
+        "pod_ready_timeout_s",
+        "resources",
+        "secret_mounts",
+        "service_account",
+        "tolerations",
+    }
+)
+_PRODUCTION_HOST_IMAGE_RE = re.compile(
+    r"^ghcr\.io/dream1216/omnigent-saas-host@sha256:[0-9a-f]{64}$"
+)
+_PRODUCTION_SANDBOX_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
 _AMBIENT_CLOUD_FILE_PROVIDER_LOCKS = MappingProxyType(
     {
         "AWS_CONFIG_FILE": os.devnull,
@@ -601,9 +650,121 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
         raise ProductionServerCompositionError(
             "official server LLM config contains an unsupported production field"
         )
-    _reject_secret_official_config(document)
+    _validate_production_sandbox_config(document.get("sandbox"))
+    # ``sandbox`` is checked against a closed production profile above.  It
+    # deliberately contains Secret *references* and provider authority; the
+    # generic recursive guard is for the remaining secret-free official config.
+    _reject_secret_official_config(
+        {key: value for key, value in document.items() if key != "sandbox"}
+    )
     _reject_ambient_official_models(document)
     return cast(dict[str, Any], document)
+
+
+def _validate_production_sandbox_config(value: object) -> None:
+    """Admit only the reviewed dual Kubernetes runtime profile.
+
+    The OSS parser intentionally supports many providers and operator knobs.
+    The hosted production entrypoint is narrower: both supported runtimes share
+    one pinned Host image, one powerless runner ServiceAccount, one execution
+    namespace, and one file-mounted model signing authority.  A typo or an
+    attempted expansion therefore stops startup instead of silently widening
+    the deployment's authority.
+    """
+
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != {
+        "host_config",
+        "kubernetes",
+        "providers",
+        "reaper",
+        "server_url",
+    }:
+        raise ProductionServerCompositionError(
+            "official server sandbox config is not the reviewed production profile"
+        )
+    providers = value.get("providers")
+    if providers != [{"provider": "agent_sandbox"}, {"provider": "kubernetes"}]:
+        raise ProductionServerCompositionError(
+            "official server sandbox providers are not the reviewed production profile"
+        )
+    if value.get("server_url") != _PRODUCTION_SANDBOX_SERVER_URL:
+        raise ProductionServerCompositionError(
+            "official server sandbox callback is not the reviewed production service"
+        )
+    if value.get("reaper") != {
+        "enabled": True,
+        "sweep_interval_s": 3600,
+        "terminate_after_offline_days": 30,
+    }:
+        raise ProductionServerCompositionError(
+            "official server sandbox reaper is not the reviewed production profile"
+        )
+
+    host_config = value.get("host_config")
+    providers_config = host_config.get("providers") if isinstance(host_config, dict) else None
+    provider_config = (
+        providers_config.get(PLATFORM_MODEL_PROVIDER_NAME)
+        if isinstance(providers_config, dict)
+        else None
+    )
+    openai_config = provider_config.get("openai") if isinstance(provider_config, dict) else None
+    models = openai_config.get("models") if isinstance(openai_config, dict) else None
+    default_model = models.get("default") if isinstance(models, dict) else None
+    if (
+        not isinstance(host_config, dict)
+        or set(host_config) != {"providers"}
+        or not isinstance(providers_config, dict)
+        or set(providers_config) != {PLATFORM_MODEL_PROVIDER_NAME}
+        or not isinstance(provider_config, dict)
+        or provider_config.get("kind") != "gateway"
+        or provider_config.get("default") != ["openai", "pi"]
+        or set(provider_config) != {"default", "kind", "openai"}
+        or not isinstance(openai_config, dict)
+        or set(openai_config) != {"api_key_ref", "base_url", "models", "wire_api"}
+        or openai_config.get("api_key_ref") != f"env:{PLATFORM_MODEL_CREDENTIAL_ENV}"
+        or openai_config.get("base_url") != PLATFORM_MODEL_GATEWAY_BASE_URL
+        or openai_config.get("wire_api") != "responses"
+        or not isinstance(models, dict)
+        or set(models) != {"allowed-1", "default"}
+        or not isinstance(default_model, str)
+        or _PRODUCTION_SANDBOX_MODEL_RE.fullmatch(default_model) is None
+        or models.get("allowed-1") != default_model
+    ):
+        raise ProductionServerCompositionError(
+            "official server sandbox Host config is not the reviewed production profile"
+        )
+
+    kubernetes = value.get("kubernetes")
+    if (
+        not isinstance(kubernetes, dict)
+        or set(kubernetes) != _PRODUCTION_SANDBOX_KUBERNETES_KEYS
+        or not isinstance(kubernetes.get("image"), str)
+        or _PRODUCTION_HOST_IMAGE_RE.fullmatch(kubernetes["image"]) is None
+        or kubernetes.get("namespace") != "omnigent-sandboxes"
+        or kubernetes.get("service_account") != "omnigent-runner"
+        or kubernetes.get("in_cluster") is not True
+        or kubernetes.get("env")
+        != [
+            "OMNIGENT_HOST_WORKSPACE_ID",
+            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID",
+        ]
+        or kubernetes.get("node_selector") != _PRODUCTION_SANDBOX_NODE_SELECTOR
+        or kubernetes.get("tolerations") != _PRODUCTION_SANDBOX_TOLERATIONS
+        or kubernetes.get("secret_mounts") != _PRODUCTION_SANDBOX_SECRET_MOUNTS
+        or kubernetes.get("host_command") != _PRODUCTION_SANDBOX_HOST_COMMAND
+        or kubernetes.get("pod_ready_timeout_s") != 180
+        or kubernetes.get("home_size_limit") != "20Gi"
+        or kubernetes.get("resources")
+        != {
+            "limits": {"cpu": "4", "ephemeral-storage": "24Gi", "memory": "8Gi"},
+            "requests": {"cpu": "500m", "ephemeral-storage": "2Gi", "memory": "1Gi"},
+        }
+    ):
+        raise ProductionServerCompositionError(
+            "official server Kubernetes sandbox is not the reviewed production profile"
+        )
 
 
 def _reject_secret_official_config(value: object) -> None:

@@ -58,3 +58,4 @@ runs:
           UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
           CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
           ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+          OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && 'kubernetes' || '' }}

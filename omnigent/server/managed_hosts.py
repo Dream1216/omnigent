@@ -1506,6 +1506,7 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
                     "pod_ready_timeout_s",
                     "runtime_class",
                     "home_size_limit",
+                    "host_command",
                 },
                 "sandbox.kubernetes",
             )
@@ -1531,6 +1532,7 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
             ),
             runtime_class=_parse_provider_string(raw, "kubernetes", "runtime_class"),
             home_size_limit=_parse_kubernetes_home_size_limit(raw),
+            host_command=_parse_kubernetes_host_command(raw),
         )
         token_ttl_s = KUBERNETES_MANAGED_TOKEN_TTL_S
     elif provider == "microsandbox":
@@ -3135,6 +3137,40 @@ def _parse_kubernetes_secret_mounts(raw: dict[str, object]) -> list[dict[str, ob
     return normalized or None
 
 
+def _parse_kubernetes_host_command(raw: dict[str, object]) -> list[str] | None:
+    """Parse a bounded operator-supplied Host child argv.
+
+    The launcher always places this argv beneath its PID-1 reaper.  A custom
+    command is useful to start a downstream Host composition (for example one
+    that mints per-session model credentials) without building a second image.
+    The value is deployment authority, like ``image``; it is never accepted
+    from a session request.
+    """
+
+    section = _parse_provider_section(raw, "kubernetes")
+    if section is None or "host_command" not in section:
+        return None
+    value = section["host_command"]
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 16
+        or not all(
+            isinstance(argument, str)
+            and argument
+            and argument == argument.strip()
+            and "\x00" not in argument
+            and len(argument) <= 4096
+            for argument in value
+        )
+        or sum(len(argument) for argument in value) > 16 * 1024
+    ):
+        raise ValueError(
+            "server config 'sandbox.kubernetes.host_command' must be a list of "
+            "1-16 non-empty argv strings with bounded length"
+        )
+    return list(value)
+
+
 def _reject_overlapping_kubernetes_mounts(
     pvc_mounts: list[dict[str, object]] | None,
     secret_mounts: list[dict[str, object]] | None,
@@ -3188,6 +3224,7 @@ def _kubernetes_launcher_factory(
     pod_ready_timeout_s: int | None,
     runtime_class: str | None,
     home_size_limit: str | None,
+    host_command: list[str] | None,
 ) -> Callable[[], SandboxHostLauncher]:
     """
     Build the launcher factory for the YAML ``provider: kubernetes`` path.
@@ -3227,6 +3264,8 @@ def _kubernetes_launcher_factory(
         isolation), or ``None`` for the cluster's default runtime.
     :param home_size_limit: Resolved ``sizeLimit`` for every runner Pod's
         writable-HOME emptyDir, or ``None`` for an unbounded emptyDir.
+    :param host_command: Optional reviewed child argv to run beneath the
+        launcher's PID-1 reaper instead of ``omnigent host``.
     :returns: A factory producing parameterized Kubernetes launchers.
     :raises ValueError: When a name or node-selector label is malformed.
     """
@@ -3259,6 +3298,7 @@ def _kubernetes_launcher_factory(
             pod_ready_timeout_s=pod_ready_timeout_s,
             runtime_class=runtime_class,
             home_size_limit=home_size_limit,
+            host_command=host_command,
         )
 
     return _build

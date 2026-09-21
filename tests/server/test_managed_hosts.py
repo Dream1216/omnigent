@@ -1383,6 +1383,40 @@ def test_parse_kubernetes_without_secret_mounts_is_none(monkeypatch: pytest.Monk
     assert fake.secret_mounts is None
 
 
+def test_parse_kubernetes_host_command_reaches_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded operator argv is wired to both Kubernetes launcher kinds."""
+    command = ["python3", "-m", "saas.production.platform_model_sandbox_host"]
+    cfg = parse_sandbox_config(
+        {
+            "provider": "kubernetes",
+            "server_url": "http://s.svc.cluster.local",
+            "kubernetes": {"host_command": command},
+        }
+    )
+    assert cfg is not None
+    fake = FakeSandboxLauncher()
+    install_fake_kubernetes_launcher(monkeypatch, fake)
+    assert cfg.default.launcher_factory() is fake
+    assert fake.host_command == command
+
+
+@pytest.mark.parametrize(
+    "host_command",
+    ([], [""], [" python3"], ["python3\x00oops"], ["x"] * 17),
+)
+def test_parse_kubernetes_host_command_rejects_unsafe_shape(host_command: object) -> None:
+    with pytest.raises(ValueError, match="host_command"):
+        parse_sandbox_config(
+            {
+                "provider": "kubernetes",
+                "server_url": "http://s.svc.cluster.local",
+                "kubernetes": {"host_command": host_command},
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("secret_mounts", "expected_fragment"),
     [
