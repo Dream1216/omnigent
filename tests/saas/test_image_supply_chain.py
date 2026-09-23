@@ -676,6 +676,13 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "host CLI wrappers must execute from their pnpm installation directory",
         ),
         (
+            "RUN echo 'export PATH=\"/opt/omnigent-host-cli/.github/ci-deps/"
+            "node_modules/.bin:/opt/venv/bin:${PATH}\"' > "
+            "/etc/profile.d/omnigent-venv.sh",
+            "RUN echo 'export PATH=\"/opt/venv/bin:${PATH}\"' > /etc/profile.d/omnigent-venv.sh",
+            "host login shells must preserve the pinned Harness CLI path",
+        ),
+        (
             "UV_NO_INSTALLER_METADATA=1",
             "UV_NO_INSTALLER_METADATA=0",
             "production Python installs must disable nondeterministic uv installer metadata",

@@ -1085,6 +1085,9 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         dockerfile,
     ):
         violations.append("host CLI wrappers must execute from their pnpm installation directory")
+    login_shell_path = f'export PATH="{cli_bin_path}:/opt/venv/bin:${{PATH}}"'
+    if f"RUN echo '{login_shell_path}' > /etc/profile.d/omnigent-venv.sh" not in dockerfile:
+        violations.append("host login shells must preserve the pinned Harness CLI path")
 
     try:
         cli_dependencies = json.loads(cli_manifest).get("dependencies", {})
