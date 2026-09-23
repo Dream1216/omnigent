@@ -585,10 +585,12 @@ RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
 
 # Sandbox launchers exec commands through `bash -lc`, and Debian's
 # /etc/profile unconditionally resets PATH for login shells — the ENV
-# PATH above would silently drop off and `omnigent` / `pip` would
-# resolve to the system Python instead of the venv. profile.d snippets
-# are sourced after that reset, so this puts the venv back in front.
-RUN echo 'export PATH="/opt/venv/bin:${PATH}"' > /etc/profile.d/omnigent-venv.sh
+# PATH above would silently drop off.  Both the Python venv and the pinned
+# harness CLI directory must be restored: managed sandbox launchers use a
+# login shell, and without the second path the image contains `codex` /
+# `claude` / `pi` but Host readiness reports every one as missing.
+# profile.d snippets are sourced after Debian's reset.
+RUN echo 'export PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"' > /etc/profile.d/omnigent-venv.sh
 
 # Optional extra harness CLIs, off by default: space-separated harness names
 # with optional @version pins, or npm:<pkg-spec> — see install-harness-cli.sh

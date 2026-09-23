@@ -78,3 +78,20 @@ def test_extra_cli_rows_match_harness_install_table() -> None:
 
     # goose's default pin mirrors the runtime's minimum supported goose.
     assert f"${{1:-{hi._GOOSE_MIN_VERSION}}}" in script
+
+
+def test_debian_host_login_shell_restores_pinned_harness_cli_path() -> None:
+    """Managed launch login shells must retain the prebaked harness CLIs.
+
+    Debian's ``/etc/profile`` replaces the image ``ENV PATH``.  The managed
+    AgentSandbox and Kubernetes launchers execute their Host through a login
+    shell, so restoring only the Python venv makes the resident ``codex``,
+    ``claude`` and ``pi`` binaries invisible to Host readiness.
+    """
+
+    dockerfile = (_ROOT / "deploy/docker/Dockerfile").read_text()
+    profile_path = (
+        'export PATH="/opt/venv/bin:'
+        '/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"'
+    )
+    assert f"RUN echo '{profile_path}' > /etc/profile.d/omnigent-venv.sh" in dockerfile
