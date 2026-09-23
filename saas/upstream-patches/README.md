@@ -147,6 +147,16 @@ paths and reverse-dependency checks remain unchanged.  This is a Single-Owner
 Beta corrective record, not vendor-account authentication or production
 admission.
 
+The `kiro-readiness-regression-contract-v15` revision aligns the pre-existing
+official Kiro readiness regression with that structured picker contract:
+missing Kiro now asserts `binary-missing` instead of the legacy boolean value.
+This changes one additional direct test file but adds no measured net lines,
+moving the exact source delta from 81 files / 2,364 lines to 82 files / 2,364
+lines.  Only the direct-file ceiling rises to the exact measured 82; the 2,579
+LOC ceiling, 8-patch ceiling, isolation floor, forbidden paths and
+reverse-dependency checks remain unchanged.  This is a Single-Owner Beta
+corrective record, not production admission or a technical-gate waiver.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |

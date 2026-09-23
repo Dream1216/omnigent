@@ -47,11 +47,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 81,
+    "max_direct_upstream_files": 82,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-23",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 81,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2364,
+    "reason": "Exact-SHA Compatibility closure for the user-authorized Harness readiness release: the auth-aware Kiro map now reports the structured `binary-missing` reason, and the pre-existing official regression contract is aligned with that public readiness shape. This touches exactly one additional direct upstream test file without changing measured net-added LOC, moving the exact total from 81 files / 2,364 lines to 82 files / 2,364 lines. Raise only the direct-file ceiling to the exact measured 82; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission, vendor-account authentication, or permission to bypass technical CI.",
+    "revision": "kiro-readiness-regression-contract-v15",
+    "scoped_test_delta": {
+      "tests/test_harness_readiness.py": 0
+    },
+    "previous_revision": {
     "approved_at": "2026-09-23",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 81,
@@ -277,6 +288,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
