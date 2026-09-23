@@ -454,7 +454,7 @@ def test_configured_harness_map_gates_only_cli_harnesses(
         *sorted(ACP_CLI_HARNESSES),
     ):
         assert result[cli] is not True, f"{cli} should be gated on its CLI binary"
-    # Auth-aware harnesses (codex, claude, opencode, cursor, pi) carry a
+    # Auth-aware harnesses (codex, claude, opencode, cursor, Kiro, pi) carry a
     # two-step signal in the picker map, so a missing binary is the structured
     # ``"binary-missing"`` (step 1 to-do), not a bare ``False``. Cursor joined
     # this group — it is now auth-aware like the other native CLI harnesses, so
@@ -469,6 +469,8 @@ def test_configured_harness_map_gates_only_cli_harnesses(
         "opencode-native",
         "cursor-native",
         "native-cursor",
+        "kiro-native",
+        "native-kiro",
         "pi",
         "pi-native",
     ):
@@ -654,6 +656,26 @@ def test_native_cursor_keys_off_binary_not_api_key(
     monkeypatch.delenv("CURSOR_API_KEY", raising=False)
     assert harness_is_configured("cursor-native") is True
     assert harness_is_configured("native-cursor") is True
+
+
+def test_kiro_picker_readiness_distinguishes_install_from_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Installed Kiro stays yellow until ``kiro-cli whoami`` succeeds.
+
+    The launch gate remains binary-only, but picker readiness must not advertise
+    a host as ready when Kiro is parked on its own sign-in screen.
+    """
+    _all_clis_installed(monkeypatch)
+    monkeypatch.setattr(hi, "harness_cli_logged_in", lambda _key, **_kw: False)
+    result = configured_harness_map()
+    assert result["kiro-native"] == "needs-auth"
+    assert result["native-kiro"] == "needs-auth"
+
+    monkeypatch.setattr(hi, "harness_cli_logged_in", lambda _key, **_kw: True)
+    result = configured_harness_map()
+    assert result["kiro-native"] is True
+    assert result["native-kiro"] is True
 
 
 def test_configured_harness_map_reports_version_too_low_for_outdated_clis(

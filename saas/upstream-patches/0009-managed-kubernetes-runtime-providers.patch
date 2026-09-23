@@ -264,3 +264,17 @@ index e1633709d73cd8cf47f269b576e89b1e6494c7e8..fc0c814f54ef2488150ce9cc622399c3
          )
  
      return _build
+diff --git a/omnigent/onboarding/harness_install.py b/omnigent/onboarding/harness_install.py
+index 686a2f57..c4e15257 100644
+--- a/omnigent/onboarding/harness_install.py
++++ b/omnigent/onboarding/harness_install.py
+@@ -284,0 +285,2 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
++        login_args=("login", "--use-device-flow"),
++        status_args=("whoami",),
+diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
+index 99cb69ba..19cda973 100644
+--- a/omnigent/onboarding/harness_readiness.py
++++ b/omnigent/onboarding/harness_readiness.py
+@@ -339,0 +340,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
++    "kiro-native": KIRO_KEY,
++    "native-kiro": KIRO_KEY,

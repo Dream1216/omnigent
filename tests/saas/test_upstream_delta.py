@@ -124,7 +124,7 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_ui_repl_regression_budget_revision_retains_hard_source_ceilings(
+def test_harness_readiness_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
@@ -135,6 +135,17 @@ def test_ui_repl_regression_budget_revision_retains_hard_source_ceilings(
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "harness-readiness-release-verification-v14"
+    assert revision["previous_max_direct_upstream_files"] == 81
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2313
+    assert revision["scoped_harness_delta"] == {
+        "omnigent/onboarding/harness_install.py": 2,
+        "omnigent/onboarding/harness_readiness.py": 2,
+        "tests/onboarding/test_harness_install.py": 25,
+        "tests/onboarding/test_harness_readiness.py": 22,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "ui-repl-regression-contract-closure-v13"
     assert revision["previous_max_direct_upstream_files"] == 76
     assert revision["previous_max_upstream_net_added_loc"] == 2579

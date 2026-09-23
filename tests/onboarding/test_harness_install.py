@@ -341,13 +341,38 @@ def test_cursor_install_spec_is_login_only_no_npm() -> None:
 
 
 def test_kiro_install_spec_is_manual_installer_no_npm() -> None:
-    """Kiro ships as a standalone native installer, not an npm package."""
+    """Kiro ships separately and exposes device-flow login plus ``whoami``."""
     spec = hi.harness_install_spec(hi.KIRO_KEY)
     assert spec is not None
     assert spec.display == "Kiro"
     assert spec.binary == "kiro-cli"
     assert spec.package is None
     assert spec.install_hint == "curl -fsSL https://cli.kiro.dev/install | bash"
+    assert spec.login_args == ("login", "--use-device-flow")
+    assert spec.status_args == ("whoami",)
+
+
+@pytest.mark.parametrize(
+    "stdout,returncode,expected",
+    [
+        ("Logged in as beta@example.com", 0, True),
+        ("Not logged in", 1, False),
+    ],
+)
+def test_harness_cli_logged_in_kiro_uses_whoami_exit_code(
+    monkeypatch: pytest.MonkeyPatch, stdout: str, returncode: int, expected: bool
+) -> None:
+    """Kiro's ``whoami`` exit code is its revocation-aware login verdict."""
+    monkeypatch.setattr(hi.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def _run(argv: list[str], **k: object):
+        assert argv == ["kiro-cli", "whoami"]
+        return subprocess.CompletedProcess(
+            args=argv, returncode=returncode, stdout=stdout, stderr=""
+        )
+
+    monkeypatch.setattr(hi.subprocess, "run", _run)
+    assert hi.harness_cli_logged_in(hi.KIRO_KEY) is expected
 
 
 def test_hermes_install_spec_has_actionable_vendor_installer() -> None:

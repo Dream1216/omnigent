@@ -587,6 +587,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "--pull always --platform linux/amd64 --network none",
         "--entrypoint /opt/venv/bin/python",
         "actual=_build_info.COMMIT_SHA",
+        "from omnigent.onboarding.harness_install import harness_cli_installed",
+        'keys=("anthropic", "openai", "pi", "kiro", "kimi", "qwen", "opencode", "gemini")',
         '"$PRODUCT_REVISION"',
     }
     if (

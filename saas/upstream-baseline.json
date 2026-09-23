@@ -54,6 +54,20 @@
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-23",
     "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 81,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2313,
+    "reason": "User-authorized Harness readiness and release closure for the current Beta: Kiro 2.10.0 now uses its supported device-flow login and revocation-aware `whoami` status so an installed but unauthenticated CLI is reported as `needs-auth`, while the protected image release rechecks every default Host Harness binary against its supported version contract after pulling the exact published digest and before signing. The existing eighth patch slot is expanded by four official-source lines; focused official tests add 47 net lines. This moves the exact measured total from 81 files / 2,313 lines to 81 files / 2,364 lines without raising any ceiling. Retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta record is not vendor-account authentication, production admission, or permission to bypass technical CI.",
+    "revision": "harness-readiness-release-verification-v14",
+    "scoped_harness_delta": {
+      "omnigent/onboarding/harness_install.py": 2,
+      "omnigent/onboarding/harness_readiness.py": 2,
+      "tests/onboarding/test_harness_install.py": 25,
+      "tests/onboarding/test_harness_readiness.py": 22
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-23",
+    "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 76,
     "previous_max_upstream_net_added_loc": 2579,
     "previous_measured_upstream_net_added_loc": 2229,
@@ -263,6 +277,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
