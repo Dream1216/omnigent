@@ -1035,9 +1035,13 @@ async def test_codex_reprobed_launch_catalog_cancels_timed_out_probe_and_preserv
     assert await codex_native_app_server.codex_launch_catalog(launch=_catalog_launch) == stale
     shared_probe = model_catalog_store._inflight[("codex-native", fingerprint)]
     try:
+        # This outer deadline is only a deadlock watchdog.  The 10 ms inner
+        # probe deadline is the behaviour under test, but a saturated xdist
+        # runner can pause the event loop long enough for a 2 second watchdog
+        # to race that inner timer and cancel the waiter first.
         result = await asyncio.wait_for(
             codex_native_app_server.codex_reprobed_launch_catalog(launch=_catalog_launch),
-            timeout=2,
+            timeout=30,
         )
     finally:
         release.set()
