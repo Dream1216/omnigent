@@ -124,22 +124,34 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_dual_runtime_budget_revision_retains_hard_source_ceilings(
+def test_ui_repl_regression_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 76
+    assert budget["max_direct_upstream_files"] == 81
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "dual-managed-kubernetes-runtimes-v12"
-    assert revision["previous_max_direct_upstream_files"] == 70
+    assert revision["revision"] == "ui-repl-regression-contract-closure-v13"
+    assert revision["previous_max_direct_upstream_files"] == 76
     assert revision["previous_max_upstream_net_added_loc"] == 2579
-    assert revision["previous_measured_upstream_net_added_loc"] == 2101
-    assert revision["scoped_runtime_delta"] == {
+    assert revision["previous_measured_upstream_net_added_loc"] == 2229
+    assert revision["scoped_test_delta"] == {
+        "tests/e2e/test_repl_sessions_approval_e2e.py": 14,
+        "tests/e2e_ui/approvals/test_inbox_approval.py": 16,
+        "tests/e2e_ui/chat/test_codex_effort_terminal_composer_mirror.py": 21,
+        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 28,
+        "tests/e2e_ui/messages/test_native_claude_render_parity.py": 5,
+    }
+    previous = revision["previous_revision"]
+    assert previous["revision"] == "dual-managed-kubernetes-runtimes-v12"
+    assert previous["previous_max_direct_upstream_files"] == 70
+    assert previous["previous_max_upstream_net_added_loc"] == 2579
+    assert previous["previous_measured_upstream_net_added_loc"] == 2101
+    assert previous["scoped_runtime_delta"] == {
         "omnigent/onboarding/sandboxes/kubernetes.py": 32,
         "omnigent/server/managed_hosts.py": 40,
         "tests/cli/test_backend.py": 2,
@@ -147,7 +159,7 @@ def test_dual_runtime_budget_revision_retains_hard_source_ceilings(
         "tests/server/helpers.py": 3,
         "tests/server/test_managed_hosts.py": 34,
     }
-    previous = revision["previous_revision"]
+    previous = previous["previous_revision"]
     assert previous["revision"] == "host-daemon-workspace-selector-v11"
     assert previous["previous_max_direct_upstream_files"] == 69
     assert previous["previous_max_upstream_net_added_loc"] == 2579

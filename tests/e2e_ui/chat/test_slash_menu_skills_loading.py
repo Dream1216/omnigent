@@ -241,9 +241,15 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
             }
         ),
     )
-    page.route(
-        "**/v1/agents",
-        lambda route: route.fulfill(
+
+    def agents(route: Route) -> None:
+        # Match the catalog with or without query parameters, but do not shadow
+        # per-agent endpoints such as model availability/configuration.  Those
+        # endpoints are exercised when the real harness CLI is present in CI.
+        if urlparse(route.request.url).path != "/v1/agents":
+            route.fallback()
+            return
+        route.fulfill(
             json={
                 "data": [
                     {
@@ -255,11 +261,22 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
                 ],
                 "has_more": False,
             }
-        ),
-    )
+        )
+
+    page.route("**/v1/agents*", agents)
     page.route(
         "**/v1/hosts/preview-host/harnesses/*/model-options*",
-        lambda route: route.fulfill(json={"models": []}),
+        lambda route: route.fulfill(
+            json={
+                "models": [
+                    {
+                        "id": "preview-model",
+                        "displayName": "Preview Model",
+                        "isDefault": True,
+                    }
+                ]
+            }
+        ),
     )
     page.route(
         "**/v1/hosts/preview-host/worktrees?*",
@@ -279,6 +296,17 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
         'omnigent:recent-workspaces', JSON.stringify({'preview-host': ['/tmp']})
     )""")
     page.get_by_test_id("new-chat-button").click()
+    # The new-chat dialog initially inherits the current conversation's agent,
+    # then reconciles it with the fetched catalog. Wait for that reconciliation
+    # before opening the slash menu; otherwise the discovery request can race
+    # out with the seeded session's agent and harness.
+    # Native Codex surfaces its resolved model in the compact trigger; the SDK
+    # row surfaces the selected agent name.  Either value is only available
+    # after the preview-agent catalog reconciliation has completed.
+    expected_trigger = "Preview Model" if harness == "codex-native" else "Preview-agent"
+    expect(page.get_by_test_id("new-chat-landing-agent-select")).to_contain_text(
+        expected_trigger, timeout=15_000
+    )
     composer = page.get_by_test_id("new-chat-landing-input")
     composer.fill("Hello")
     expect(page.get_by_test_id("new-chat-landing-submit")).to_be_enabled()

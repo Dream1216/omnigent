@@ -47,11 +47,26 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 76,
+    "max_direct_upstream_files": 81,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-23",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 76,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2229,
+    "reason": "Exact-main rebase closure for the user-authorized current Beta UI and REPL acceptance: five official test contracts had drifted behind the already-shipped composer effort menu, inbox verdict tombstone, slash-agent reconciliation, occupied native-Claude steering, and cold-start approval behavior. The reviewed test-only correction changes exactly five directly tracked upstream test files and adds 84 measured net lines, moving the exact totals from 76 files / 2,229 lines to 81 files / 2,313 lines. The final 21-line increase narrows the slash-menu catalog stub to the exact collection path and supplies a deterministic native-model catalog after installed-Codex CI proved that the broader stub shadowed per-agent endpoints. Raise only the direct-file ceiling to the exact measured 81 while retaining the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission, a runtime behavior waiver, or permission to bypass technical CI.",
+    "revision": "ui-repl-regression-contract-closure-v13",
+    "scoped_test_delta": {
+      "tests/e2e/test_repl_sessions_approval_e2e.py": 14,
+      "tests/e2e_ui/approvals/test_inbox_approval.py": 16,
+      "tests/e2e_ui/chat/test_codex_effort_terminal_composer_mirror.py": 21,
+      "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 28,
+      "tests/e2e_ui/messages/test_native_claude_render_parity.py": 5
+    },
+    "previous_revision": {
     "approved_at": "2026-09-21",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 70,
@@ -248,6 +263,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
