@@ -337,6 +337,8 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
     "opencode-native": OPENCODE_KEY,
     "cursor-native": CURSOR_KEY,
     "native-cursor": CURSOR_KEY,
+    "kiro-native": KIRO_KEY,
+    "native-kiro": KIRO_KEY,
 }
 
 

@@ -469,6 +469,9 @@ jobs:
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'import saas.production.platform_model_sandbox_host'
+          docker run --rm --pull always --platform linux/amd64 --network none \
+            --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
+            'from omnigent.onboarding.harness_install import harness_cli_installed; keys=("anthropic", "openai", "pi", "kiro", "kimi", "qwen", "opencode", "gemini"); failed=[key for key in keys if not harness_cli_installed(key)]; assert not failed, f"published Host image has missing or unsupported harness CLIs: {failed}"'
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0

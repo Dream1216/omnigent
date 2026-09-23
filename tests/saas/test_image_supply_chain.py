@@ -1157,6 +1157,24 @@ def test_candidate_contract_rejects_missing_published_runtime_revision_check(
     )
 
 
+def test_candidate_contract_rejects_missing_published_host_harness_check(
+    tmp_path: Path,
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text(encoding="utf-8")
+    target = "from omnigent.onboarding.harness_install import harness_cli_installed"
+    assert target in source
+    workflow.write_text(source.replace(target, "import shutil", 1), encoding="utf-8")
+
+    violations = validate_candidate_build_contract(repo)
+
+    assert (
+        "protected release must verify both published runtime revisions before signing"
+        in violations
+    )
+
+
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
     tmp_path: Path,
 ) -> None:
