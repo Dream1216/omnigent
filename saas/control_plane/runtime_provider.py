@@ -544,7 +544,7 @@ class ProductionRuntimePartitionAdapter:
         )
         if response.receipt.outcome is RuntimeProviderOutcome.ALREADY_ABSENT:
             raise _failure(RuntimeProviderFailureDisposition.RECEIPT_INVALID)
-        allocation = RuntimePartitionAllocation(
+        return RuntimePartitionAllocation(
             runtime_version=_attribute_text(response, "runtime_version", 64),
             physical_partition_key=_attribute_text(response, "physical_partition_key", 128),
             placement_generation=_attribute_positive_int(response, "placement_generation"),
@@ -553,9 +553,6 @@ class ProductionRuntimePartitionAdapter:
             runtime_user_key=_attribute_text(response, "runtime_user_key", 128),
             receipt_hash=response.receipt.receipt_hash,
         )
-        if response.receipt.provider_resource_id != allocation.physical_partition_key:
-            raise _failure(RuntimeProviderFailureDisposition.RECEIPT_INVALID)
-        return allocation
 
     def provision_default_project(
         self, *, target: RuntimeProjectTarget, idempotency_key: str
@@ -1029,7 +1026,7 @@ def _validate_response_shape(
         }
         if set(response.attributes) != expected:
             raise _failure(RuntimeProviderFailureDisposition.RECEIPT_INVALID)
-        physical_partition_key = _attribute_text(
+        _attribute_text(
             response,
             "physical_partition_key",
             128,
@@ -1039,7 +1036,8 @@ def _validate_response_shape(
         _attribute_text(response, "source_revision", 64)
         _attribute_text(response, "adapter_contract_version", 32)
         _attribute_text(response, "runtime_user_key", 128)
-        if response.receipt.provider_resource_id != physical_partition_key:
+        # Provider locators and official workspace keys are distinct identities.
+        if response.receipt.provider_resource_id is None:
             raise _failure(RuntimeProviderFailureDisposition.RECEIPT_INVALID)
         return
     if kind is RuntimeProviderOperationKind.PROVISION_DEFAULT_PROJECT:
