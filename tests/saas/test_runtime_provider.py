@@ -250,6 +250,7 @@ class _ConformanceClient:
     unknown_once: bool = False
     invalid_receipt: str | None = None
     compensation_absent: bool = False
+    partition_resource_locator: str | None = None
     executions: list[RuntimeProviderOperation] = field(default_factory=list)
     reconciliations: list[RuntimeProviderOperation] = field(default_factory=list)
     requests: dict[
@@ -338,7 +339,9 @@ class _ConformanceClient:
             attributes = {"runtime_resource_id": "runtime-project-42"}
         if provider_resource_id is None and outcome is not RuntimeProviderOutcome.ALREADY_ABSENT:
             provider_resource_id = {
-                RuntimeProviderOperationKind.ALLOCATE_PARTITION: "physical-partition-42",
+                RuntimeProviderOperationKind.ALLOCATE_PARTITION: (
+                    self.partition_resource_locator or "physical-partition-42"
+                ),
                 RuntimeProviderOperationKind.PROVISION_DEFAULT_PROJECT: "runtime-project-42",
                 RuntimeProviderOperationKind.COMPENSATE_DEFAULT_PROJECT: "runtime-project-42",
                 RuntimeProviderOperationKind.COMPENSATE_PARTITION: "physical-partition-42",
@@ -526,6 +529,24 @@ def test_all_four_operations_require_verified_receipts_and_sink_compensation() -
         assert len(receipt.target_hash) == 64
         assert len(receipt.idempotency_hash) == 64
         assert receipt.receipt_hash == sha256(receipt.unsigned_payload()).hexdigest()
+
+
+def test_partition_resource_locator_is_distinct_from_official_workspace_key() -> None:
+    placement_id = uuid4()
+    binding = _binding(placement_id)
+    client = _ConformanceClient(partition_resource_locator="k8s://runtime/configmaps/partition-42")
+    adapter, _client, _credentials, _verifier, sink = _adapter(
+        binding=binding,
+        client=client,
+    )
+
+    allocation = adapter.allocate_partition(
+        target=_partition_target(placement_id),
+        idempotency_key="onboarding:42:runtime:separate-identities",
+    )
+
+    assert allocation.physical_partition_key == "physical-partition-42"
+    assert sink.receipts[-1].provider_resource_id == ("k8s://runtime/configmaps/partition-42")
 
 
 def test_provider_replay_keeps_same_target_request_and_resource_identity() -> None:
