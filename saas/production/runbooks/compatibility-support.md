@@ -15,9 +15,11 @@ containment, and a real model turn.
 Preserve the exact evidence digests. The N-1 images remain unselected until
 these checks pass for the same pair of Server and Host images.
 
-The historical `Backwards-Compat` workflow exercises upstream tags as a
-diagnostic. Its failures remain visible. It does not certify commercial SaaS
-support, nor can its latest-tag smoke result authorize a production rollback.
+The historical `Backwards-Compat` workflow exercises upstream tags. Its
+failures remain visible and any repository-level required check remains in
+force until changed through separate governance. Its result does not certify
+commercial SaaS support, nor can its latest-tag smoke result authorize a
+production rollback.
 Upstream tags `v0.2.0` through `v0.13.0` are outside the production support
 matrix; the observed `v0.13.0` server permits an edit collaborator to execute
 an owner Host shell under the current test contract. The pinned `p0s3` N-1
