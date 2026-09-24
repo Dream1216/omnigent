@@ -47,11 +47,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 82,
+    "max_direct_upstream_files": 83,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-24",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 82,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2365,
+    "reason": "Real four-cell Beta acceptance proved that Pi completed the model turn but every extension callback was rejected with runner_machine_workspace_required because the generated config omitted the managed Runner Workspace selector. Move the correction out of the forbidden native orchestration path and into the independently replayable Pi bridge seam in existing patch 0006; keep the executable regression isolated under tests/saas/. An exact remeasurement of the live 4bd41f8999c29411095494af6538e0f61bd651e0 base records 2,365 lines; this change adds exactly one direct official file and 14 measured net lines, moving the exact total from 82 files / 2,365 lines to 83 files / 2,379 lines. Raise only the direct-file ceiling to 83; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This corrective Single-Owner Beta record is not production admission or permission to bypass technical CI.",
+    "revision": "pi-native-workspace-callback-route-v16",
+    "scoped_runtime_delta": {
+      "omnigent/harnesses/pi_native/bridge.py": 14
+    },
+    "previous_revision": {
     "approved_at": "2026-09-23",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 81,
@@ -288,6 +299,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }

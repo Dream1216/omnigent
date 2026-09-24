@@ -316,13 +316,27 @@ def write_extension_files(
     :returns: ``(extension_path, config_path)``.
     """
     bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    resolved_auth_headers = dict(auth_headers or {})
+    # Delegated Runner callbacks are routed through a physical workspace
+    # partition in multi-tenant deployments.  The Pi extension runs outside
+    # the runner's httpx client, so it must carry the same selector explicitly;
+    # otherwise the server rejects every callback with
+    # ``runner_machine_workspace_required`` before session authorization.
+    from omnigent.runner.identity import (
+        RUNNER_TUNNEL_WORKSPACE_HEADER,
+        load_runner_tunnel_workspace_id,
+    )
+
+    workspace_id = load_runner_tunnel_workspace_id()
+    if workspace_id is not None:
+        resolved_auth_headers.setdefault(RUNNER_TUNNEL_WORKSPACE_HEADER, str(workspace_id))
     payload: _JsonObject = {
         "sessionId": session_id,
         "serverUrl": server_url.rstrip("/"),
         "conversationUrl": conversation_url,
         "bridgeDir": str(bridge_dir),
         "inboxDir": str(bridge_dir / _INBOX_DIR),
-        "authHeaders": auth_headers or {},
+        "authHeaders": resolved_auth_headers,
         "tools": tools or [],
     }
     _atomic_json(config_path(bridge_dir), payload)

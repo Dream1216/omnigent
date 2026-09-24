@@ -2396,18 +2396,11 @@ async def _auto_create_pi_terminal(
     # refresh runs env-scrubbed and can only preserve this header, so bake it in
     # here at launch (harmless additive header on bearer-authenticated servers).
     from omnigent.runner._entry import _runner_tunnel_binding_token_from_env
-    from omnigent.runner.identity import (
-        RUNNER_TUNNEL_TOKEN_HEADER,
-        RUNNER_TUNNEL_WORKSPACE_HEADER,
-        load_runner_tunnel_workspace_id,
-    )
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER
 
     binding_token = _runner_tunnel_binding_token_from_env()
     if binding_token:
         auth_headers[RUNNER_TUNNEL_TOKEN_HEADER] = binding_token
-    workspace_id = load_runner_tunnel_workspace_id()
-    if workspace_id is not None:
-        auth_headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
     # Build the Omnigent tool surface (sys_* tools) the Pi extension registers
     # via pi.registerTool. Reuses the same schema set the claude-native /
     # codex-native relay advertises, gated by the session's spec. Each tool's

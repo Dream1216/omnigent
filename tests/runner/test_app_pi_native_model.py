@@ -306,26 +306,22 @@ async def test_auto_create_pi_terminal_no_spec_model_uses_provider_default(
 
 
 @pytest.mark.asyncio
-async def test_auto_create_pi_terminal_bakes_runner_route_into_config(
+async def test_auto_create_pi_terminal_bakes_tunnel_token_into_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Launch bakes the runner tunnel token and workspace route into config.
+    """Launch bakes the runner tunnel token into the extension config.
 
     On a guest-on-shared-host runner there is no Databricks bearer, so the
     extension authenticates its out-of-process posts with the tunnel binding
-    token. Multi-tenant deployments also require the runner's physical
-    workspace selector on every delegated request. Both headers must land in
-    ``config.json`` at launch — the per-turn refresh runs env-scrubbed and can
-    only preserve them, never reconstruct them.
+    token. It must land in ``config.json``'s ``authHeaders`` at launch — the
+    per-turn refresh runs env-scrubbed and can only preserve it, never mint it.
     """
     import omnigent.harnesses.pi_native.bridge as pi_bridge
     import omnigent.harnesses.pi_native.credentials as creds
     from omnigent.runner.identity import (
         RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
         RUNNER_TUNNEL_TOKEN_HEADER,
-        RUNNER_TUNNEL_WORKSPACE_HEADER,
-        RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
     )
 
     session_id = "conv_pi_tunnel_token"
@@ -337,7 +333,6 @@ async def test_auto_create_pi_terminal_bakes_runner_route_into_config(
     # No Databricks bearer (guest-on-shared-host), but a tunnel binding token.
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     monkeypatch.setenv(RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR, "tok-abc")
-    monkeypatch.setenv(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR, "41")
     monkeypatch.setattr(
         "omnigent.harnesses.pi_native.main.resolve_pi_executable", lambda: "/usr/bin/pi"
     )
@@ -403,4 +398,3 @@ async def test_auto_create_pi_terminal_bakes_runner_route_into_config(
         )
     )
     assert config["authHeaders"][RUNNER_TUNNEL_TOKEN_HEADER] == "tok-abc"
-    assert config["authHeaders"][RUNNER_TUNNEL_WORKSPACE_HEADER] == "41"

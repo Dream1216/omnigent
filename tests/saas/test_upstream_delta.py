@@ -131,10 +131,18 @@ def test_kiro_readiness_regression_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 82
+    assert budget["max_direct_upstream_files"] == 83
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "pi-native-workspace-callback-route-v16"
+    assert revision["previous_max_direct_upstream_files"] == 82
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2365
+    assert revision["scoped_runtime_delta"] == {
+        "omnigent/harnesses/pi_native/bridge.py": 14
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "kiro-readiness-regression-contract-v15"
     assert revision["previous_max_direct_upstream_files"] == 81
     assert revision["previous_max_upstream_net_added_loc"] == 2579
