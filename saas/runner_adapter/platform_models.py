@@ -19,6 +19,8 @@ PLATFORM_MODEL_CREDENTIAL_ENV = "OMNIGENT_PLATFORM_DEEPSEEK_KEY"
 PLATFORM_MODEL_CREDENTIAL_REFERENCE = f"${PLATFORM_MODEL_CREDENTIAL_ENV}"
 PLATFORM_MODEL_VAULT_PROVIDER = "filesystem"
 PLATFORM_MODEL_VAULT_REF = "platform-deepseek"
+PLATFORM_MODEL_CONTEXT_WINDOW = 1_000_000
+PLATFORM_MODEL_MAX_OUTPUT_TOKENS = 65_536
 _MAX_PROJECTION_BYTES = 64 * 1024
 PLATFORM_MODEL_GATEWAY_BASE_URL = "http://omnigent-platform-model-gateway:8090/v1"
 
@@ -202,6 +204,8 @@ def render_platform_model_gateway_config(
                     "base_url": PLATFORM_MODEL_GATEWAY_BASE_URL,
                     "api_key": PLATFORM_MODEL_CREDENTIAL_REFERENCE,
                     "wire_api": "responses",
+                    "context_window": PLATFORM_MODEL_CONTEXT_WINDOW,
+                    "max_output_tokens": PLATFORM_MODEL_MAX_OUTPUT_TOKENS,
                     "models": {
                         "default": default_model,
                         **{f"allowed-{index + 1}": model for index, model in enumerate(models)},
