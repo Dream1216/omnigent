@@ -63,8 +63,10 @@ from saas.production.server_config import (
 )
 from saas.public_api_contract import FilterBoundCursorCodec
 from saas.runner_adapter.platform_models import (
+    PLATFORM_MODEL_CONTEXT_WINDOW,
     PLATFORM_MODEL_CREDENTIAL_ENV,
     PLATFORM_MODEL_GATEWAY_BASE_URL,
+    PLATFORM_MODEL_MAX_OUTPUT_TOKENS,
     PLATFORM_MODEL_PROVIDER_NAME,
 )
 
@@ -722,9 +724,19 @@ def _validate_production_sandbox_config(value: object) -> None:
         or provider_config.get("default") != ["openai", "pi"]
         or set(provider_config) != {"default", "kind", "openai"}
         or not isinstance(openai_config, dict)
-        or set(openai_config) != {"api_key_ref", "base_url", "models", "wire_api"}
+        or set(openai_config)
+        != {
+            "api_key_ref",
+            "base_url",
+            "context_window",
+            "max_output_tokens",
+            "models",
+            "wire_api",
+        }
         or openai_config.get("api_key_ref") != f"env:{PLATFORM_MODEL_CREDENTIAL_ENV}"
         or openai_config.get("base_url") != PLATFORM_MODEL_GATEWAY_BASE_URL
+        or openai_config.get("context_window") != PLATFORM_MODEL_CONTEXT_WINDOW
+        or openai_config.get("max_output_tokens") != PLATFORM_MODEL_MAX_OUTPUT_TOKENS
         or openai_config.get("wire_api") != "responses"
         or not isinstance(models, dict)
         or set(models) != {"allowed-1", "default"}

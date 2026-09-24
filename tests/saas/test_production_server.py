@@ -850,7 +850,16 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
 
 @pytest.mark.parametrize(
     "mutation",
-    ("tagged_image", "reversed", "foreign_secret", "kubeconfig", "model_mismatch"),
+    (
+        "tagged_image",
+        "reversed",
+        "foreign_secret",
+        "kubeconfig",
+        "model_mismatch",
+        "missing_output_limit",
+        "output_limit_mismatch",
+        "context_window_mismatch",
+    ),
 )
 def test_official_config_rejects_unreviewed_sandbox_authority(
     tmp_path: Path,
@@ -877,6 +886,22 @@ def test_official_config_rejects_unreviewed_sandbox_authority(
         openai = cast(dict[str, object], provider["openai"])
         models = cast(dict[str, object], openai["models"])
         models["allowed-1"] = "different-model"
+    elif mutation in {
+        "missing_output_limit",
+        "output_limit_mismatch",
+        "context_window_mismatch",
+    }:
+        providers = cast(
+            dict[str, object], cast(dict[str, object], sandbox["host_config"])["providers"]
+        )
+        provider = cast(dict[str, object], providers["platform-deepseek"])
+        openai = cast(dict[str, object], provider["openai"])
+        if mutation == "missing_output_limit":
+            openai.pop("max_output_tokens")
+        elif mutation == "output_limit_mismatch":
+            openai["max_output_tokens"] = 393_216
+        else:
+            openai["context_window"] = 128_000
     else:
         kubernetes["kubeconfig"] = "/tmp/admin.conf"
     path = tmp_path / f"official-{mutation}.yaml"

@@ -52,10 +52,10 @@ from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayTokenAuthority,
     PlatformModelGatewayTokenError,
 )
+from saas.runner_adapter.platform_models import PLATFORM_MODEL_MAX_OUTPUT_TOKENS
 
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024
 _MAX_SSE_LINE_BYTES = 256 * 1024
-_MAX_OUTPUT_TOKENS = 65_536
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _TOKEN_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
@@ -749,7 +749,7 @@ def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> i
         return 4096
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError("Platform model output limit is invalid")
-    if not 1 <= value <= _MAX_OUTPUT_TOKENS:
+    if not 1 <= value <= PLATFORM_MODEL_MAX_OUTPUT_TOKENS:
         raise ValueError("Platform model output limit is invalid")
     return value
 

@@ -483,6 +483,8 @@ def test_host_gateway_config_contains_only_synthetic_bearer_name() -> None:
     assert provider["base_url"] == "http://omnigent-platform-model-gateway:8090/v1"
     assert provider["api_key"] == PLATFORM_MODEL_CREDENTIAL_REFERENCE
     assert provider["wire_api"] == "responses"
+    assert provider["context_window"] == 1_000_000
+    assert provider["max_output_tokens"] == 65_536
     assert "sk-" not in rendered
 
 
