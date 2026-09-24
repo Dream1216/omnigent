@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
-  "policy_id": "omnigent-saas-production-image-v2",
-  "reviewed_at": "2026-08-05",
+  "schema_version": 3,
+  "policy_id": "omnigent-saas-production-image-v3",
+  "reviewed_at": "2026-09-24",
   "candidate_workflow": ".github/workflows/saas-image-candidate.yml",
   "release_runbook": "saas/production/runbooks/image-release.md",
   "dockerfile": "deploy/docker/Dockerfile",
@@ -96,6 +96,15 @@
     "canary_environment": "production-canary",
     "minimum_canary_observation_seconds": 3600,
     "maximum_n_minus_one_rollback_seconds": 900,
+    "n_minus_one_source": {
+      "kind": "signed-downstream-main",
+      "repository": "Dream1216/omnigent",
+      "source_ref": "refs/heads/main",
+      "workflow_identity": "https://github.com/Dream1216/omnigent/.github/workflows/saas-image-candidate.yml@refs/heads/main",
+      "same_control_plane_schema_required": true,
+      "same_adapter_contract_required": true,
+      "security_contract_receipt_required": true
+    },
     "required_approval_roles": [
       "release-engineering",
       "security",

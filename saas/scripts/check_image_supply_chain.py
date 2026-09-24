@@ -225,6 +225,17 @@ _ROLLBACK_FIELDS = {
     "from_digest",
     "to_digest",
     "to_registry_ref",
+    "to_product_revision",
+    "to_source_repository",
+    "to_source_ref",
+    "to_workflow_identity",
+    "to_control_plane_schema_revision",
+    "to_adapter_contract_version",
+    "to_security_contract_verified",
+    "to_security_contract_suite_revision",
+    "to_security_contract_completed_at",
+    "to_security_contract_receipt_sha256",
+    "to_image_identity_receipt_sha256",
     "previous_release_signature_verified",
     "previous_release_provenance_verified",
     "started_at",
@@ -290,6 +301,7 @@ _PROMOTION_POLICY_FIELDS = {
     "canary_environment",
     "minimum_canary_observation_seconds",
     "maximum_n_minus_one_rollback_seconds",
+    "n_minus_one_source",
     "required_approval_roles",
     "maximum_evidence_age_days",
 }
@@ -1152,11 +1164,11 @@ def validate_image_material_lock(repo: Path) -> list[str]:
 def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if set(policy) != _POLICY_FIELDS:
-        violations.append("release policy fields do not match schema version 2")
-    if not _exact_integer(policy.get("schema_version"), 2):
-        violations.append("release policy schema_version must be 2")
-    if policy.get("policy_id") != "omnigent-saas-production-image-v2":
-        violations.append("release policy_id must match the approved v2 contract")
+        violations.append("release policy fields do not match schema version 3")
+    if not _exact_integer(policy.get("schema_version"), 3):
+        violations.append("release policy schema_version must be 3")
+    if policy.get("policy_id") != "omnigent-saas-production-image-v3":
+        violations.append("release policy_id must match the approved v3 contract")
     if _parse_time(f"{policy.get('reviewed_at')}T00:00:00Z") is None:
         violations.append("release policy reviewed_at must be an ISO date")
     for field in ("candidate_workflow", "release_runbook", "dockerfile", "upstream_manifest"):
@@ -1182,7 +1194,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
                 violations.append("image policy entries must be objects")
                 continue
             if set(image) != _POLICY_IMAGE_FIELDS:
-                violations.append("image policy fields do not match schema version 2")
+                violations.append("image policy fields do not match schema version 3")
             name = image.get("name", "unknown")
             approved_image = _REQUIRED_IMAGES.get(str(name))
             if approved_image is None or image.get("target") != approved_image["target"]:
@@ -1199,7 +1211,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("release policy reproducibility must be an object")
     else:
         if set(reproducibility) != _REPRODUCIBILITY_POLICY_FIELDS:
-            violations.append("reproducibility policy fields do not match schema version 2")
+            violations.append("reproducibility policy fields do not match schema version 3")
         if reproducibility.get("source_date_epoch") != "product-commit-timestamp":
             violations.append("SOURCE_DATE_EPOCH must come from the product commit")
         for field in (
@@ -1245,7 +1257,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("attestations policy must be an object")
     else:
         if set(attestations) != _ATTESTATION_POLICY_FIELDS:
-            violations.append("attestation policy fields do not match schema version 2")
+            violations.append("attestation policy fields do not match schema version 3")
         if attestations.get("provenance_predicate") != "https://slsa.dev/provenance/v1":
             violations.append("SLSA provenance v1 is required")
         if attestations.get("provenance_mode") != "max":
@@ -1284,7 +1296,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("regression policy must be an object")
     else:
         if set(regression) != _REGRESSION_POLICY_FIELDS:
-            violations.append("regression policy fields do not match schema version 2")
+            violations.append("regression policy fields do not match schema version 3")
         suites = regression.get("official_suites")
         if _string_set(suites) != _REQUIRED_OFFICIAL_SUITES or any(
             not (repo / path).is_file() for path in _REQUIRED_OFFICIAL_SUITES
@@ -1307,7 +1319,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("vulnerability_policy must be an object")
     else:
         if set(vulnerabilities) != _VULNERABILITY_POLICY_FIELDS:
-            violations.append("vulnerability policy fields do not match schema version 2")
+            violations.append("vulnerability policy fields do not match schema version 3")
         if not _exact_integer(vulnerabilities.get("critical_allowed"), 0) or not (
             _exact_integer(vulnerabilities.get("high_allowed"), 0)
         ):
@@ -1325,7 +1337,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("license_policy must be an object")
     else:
         if set(licenses) != _LICENSE_POLICY_FIELDS:
-            violations.append("license policy fields do not match schema version 2")
+            violations.append("license policy fields do not match schema version 3")
         if licenses.get("policy_id") != "omnigent-saas-license-admission-v1":
             violations.append("license policy_id must match the approved contract")
         if not _exact_integer(
@@ -1340,7 +1352,7 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
         violations.append("promotion policy must be an object")
     else:
         if set(promotion) != _PROMOTION_POLICY_FIELDS:
-            violations.append("promotion policy fields do not match schema version 2")
+            violations.append("promotion policy fields do not match schema version 3")
         for field in ("digest_only_deployment", "n_minus_one_digest_required", "canary_required"):
             if promotion.get(field) is not True:
                 violations.append(f"promotion.{field} must be true")
@@ -1354,6 +1366,26 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
             violations.append("production canary observation must be at least one hour")
         if not _exact_integer(promotion.get("maximum_n_minus_one_rollback_seconds"), 900):
             violations.append("N-1 rollback must complete within 900 seconds")
+        support = promotion.get("n_minus_one_source")
+        expected_support = {
+            "kind": "signed-downstream-main",
+            "repository": attestations.get("trusted_repository")
+            if isinstance(attestations, dict)
+            else None,
+            "source_ref": "refs/heads/main",
+            "workflow_identity": (
+                attestations.get("trusted_workflow_identity")
+                if isinstance(attestations, dict)
+                else None
+            ),
+            "same_control_plane_schema_required": True,
+            "same_adapter_contract_required": True,
+            "security_contract_receipt_required": True,
+        }
+        if support != expected_support:
+            violations.append(
+                "N-1 source policy must bind signed downstream main and security contract"
+            )
         roles = promotion.get("required_approval_roles")
         role_set = _string_set(roles)
         if (
@@ -1377,7 +1409,7 @@ def _validate_workflow(policy: dict[str, Any], workflow: object) -> list[str]:
         return ["image evidence workflow must be an object"]
     violations: list[str] = []
     if set(workflow) != _WORKFLOW_FIELDS:
-        violations.append("image evidence workflow fields do not match schema version 2")
+        violations.append("image evidence workflow fields do not match schema version 3")
     trust = policy["attestations"]
     expected = {
         "repository": trust["trusted_repository"],
@@ -1411,7 +1443,7 @@ def _validate_image(
     violations: list[str] = []
     name = str(image.get("name", "unknown"))
     if set(image) != _IMAGE_FIELDS:
-        violations.append(f"{name} image fields do not match schema version 2")
+        violations.append(f"{name} image fields do not match schema version 3")
     if image.get("target") != expected.get("target"):
         violations.append(f"{name} target does not match policy")
     manifest_digest = image.get("manifest_digest")
@@ -1572,6 +1604,9 @@ def _validate_promotion(
     image_digests: dict[str, str],
     image_admission_times: dict[str, datetime],
     evidence_completed_at: datetime | None,
+    product_revision: object,
+    control_plane_schema_revision: object,
+    adapter_contract_version: object,
 ) -> tuple[list[str], datetime | None]:
     if not isinstance(promotion, dict) or set(promotion) != _PROMOTION_FIELDS:
         return ["image promotion evidence is incomplete"], None
@@ -1585,13 +1620,17 @@ def _validate_promotion(
     violations: list[str] = []
     latest_completion: datetime | None = None
     contract = policy["promotion"]
+    supported_n1 = contract.get("n_minus_one_source")
+    if not isinstance(supported_n1, dict):
+        supported_n1 = {}
+    previous_revisions: set[str] = set()
     for raw in values:
         if not isinstance(raw, dict):
             violations.append("image promotion entries must be objects")
             continue
         name = str(raw.get("name", "unknown"))
         if set(raw) != _IMAGE_PROMOTION_FIELDS:
-            violations.append(f"{name} promotion fields do not match schema version 2")
+            violations.append(f"{name} promotion fields do not match schema version 3")
         digest = image_digests.get(name)
         registry_ref = raw.get("registry_ref")
         if not isinstance(registry_ref, str) or not _PINNED_IMAGE.fullmatch(registry_ref):
@@ -1679,6 +1718,35 @@ def _validate_promotion(
                 latest_completion = completed
             if rollback.get("from_digest") != digest:
                 violations.append(f"{name} N-1 rollback source is not the candidate")
+            previous_revision = rollback.get("to_product_revision")
+            if (
+                not isinstance(previous_revision, str)
+                or not _GIT_SHA.fullmatch(previous_revision)
+                or previous_revision == product_revision
+            ):
+                violations.append(f"{name} N-1 product revision is invalid")
+            else:
+                previous_revisions.add(previous_revision)
+            for field, expected in (
+                ("to_source_repository", supported_n1.get("repository")),
+                ("to_source_ref", supported_n1.get("source_ref")),
+                ("to_workflow_identity", supported_n1.get("workflow_identity")),
+                ("to_control_plane_schema_revision", control_plane_schema_revision),
+                ("to_adapter_contract_version", adapter_contract_version),
+            ):
+                if rollback.get(field) != expected:
+                    violations.append(f"{name} N-1 {field} is unsupported")
+            if rollback.get("to_security_contract_verified") is not True:
+                violations.append(f"{name} N-1 current security contract is not verified")
+            if rollback.get("to_security_contract_suite_revision") != product_revision:
+                violations.append(f"{name} N-1 security suite is not current")
+            security_completed = _parse_time(rollback.get("to_security_contract_completed_at"))
+            if security_completed is None or started is None or security_completed > started:
+                violations.append(f"{name} N-1 security acceptance did not precede rollback")
+            if not _hex_sha256(rollback.get("to_security_contract_receipt_sha256")):
+                violations.append(f"{name} N-1 security contract receipt is invalid")
+            if not _hex_sha256(rollback.get("to_image_identity_receipt_sha256")):
+                violations.append(f"{name} N-1 image identity receipt is invalid")
             target = rollback.get("to_digest")
             if not isinstance(target, str) or not _SHA256.fullmatch(target) or target == digest:
                 violations.append(f"{name} N-1 rollback target is invalid")
@@ -1699,6 +1767,8 @@ def _validate_promotion(
                 violations.append(f"{name} N-1 rollback did not pass")
             if not _hex_sha256(rollback.get("evidence_sha256")):
                 violations.append(f"{name} N-1 rollback evidence SHA-256 is invalid")
+    if len(previous_revisions) > 1:
+        violations.append("N-1 Server and Host must use the same prior product revision")
     return violations, latest_completion
 
 
@@ -1720,7 +1790,7 @@ def _validate_release_attestations(
             violations.append("release attestation entries must be objects")
             continue
         if set(raw) != _ATTESTATION_FIELDS:
-            violations.append("release attestation fields do not match schema version 2")
+            violations.append("release attestation fields do not match schema version 3")
         role = raw.get("role")
         actor = raw.get("actor_id_hash")
         if not isinstance(role, str) or role in roles:
@@ -1757,9 +1827,9 @@ def _validate_evidence(
 ) -> list[str]:
     violations: list[str] = []
     if set(evidence) != _EVIDENCE_FIELDS:
-        violations.append("image evidence fields do not match schema version 2")
-    if not _exact_integer(evidence.get("evidence_version"), 2):
-        violations.append("image evidence version must be 2")
+        violations.append("image evidence fields do not match schema version 3")
+    if not _exact_integer(evidence.get("evidence_version"), 3):
+        violations.append("image evidence version must be 3")
     completed_at = _parse_time(evidence.get("completed_at"))
     maximum_age = policy["promotion"]["maximum_evidence_age_days"]
     if completed_at is None or completed_at > now:
@@ -1878,6 +1948,9 @@ def _validate_evidence(
         image_digests=image_digests,
         image_admission_times=image_admission_times,
         evidence_completed_at=completed_at,
+        product_revision=product_revision,
+        control_plane_schema_revision=schema_revision,
+        adapter_contract_version=evidence.get("adapter_contract_version"),
     )
     violations.extend(promotion_violations)
     violations.extend(
