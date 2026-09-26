@@ -407,7 +407,7 @@ def _login(client: TestClient) -> str:
     return token
 
 
-def test_saas_logout_requires_browser_guards_and_revokes_the_server_session() -> None:
+def test_saas_logout_requires_trusted_origin_and_revokes_with_stale_csrf() -> None:
     client, _scope = _build_app()
     csrf = _login(client)
     session_cookie = client.cookies.get("saas_session")
@@ -417,23 +417,17 @@ def test_saas_logout_requires_browser_guards_and_revokes_the_server_session() ->
     assert legacy_get.status_code == 404
     assert client.get("/saas/auth/status").json()["authenticated"] is True
 
-    missing_csrf = client.post(
-        "/saas/auth/logout",
-        headers={"Origin": "http://testserver"},
-    )
-    assert missing_csrf.status_code == 401
-    assert missing_csrf.json()["error"]["code"] == "csrf_invalid"
-
     wrong_origin = client.post(
         "/saas/auth/logout",
         headers={"Origin": "https://attacker.example", "X-CSRF-Token": csrf},
     )
     assert wrong_origin.status_code == 403
     assert wrong_origin.json()["error"]["code"] == "origin_forbidden"
+    assert client.get("/saas/auth/status").json()["authenticated"] is True
 
     logged_out = client.post(
         "/saas/auth/logout",
-        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": "stale-tab-token"},
     )
     assert logged_out.status_code == 204
     assert "Max-Age=0" in logged_out.headers["set-cookie"]
@@ -449,6 +443,15 @@ def test_saas_logout_requires_browser_guards_and_revokes_the_server_session() ->
     )
     assert revoked.status_code == 401
     assert replay.post("/saas/auth/logout").status_code == 204
+
+    missing_csrf = TestClient(client.app)
+    _login(missing_csrf)
+    signed_out_without_companion = missing_csrf.post(
+        "/saas/auth/logout",
+        headers={"Origin": "http://testserver"},
+    )
+    assert signed_out_without_companion.status_code == 204
+    assert missing_csrf.get("/saas/auth/status").json()["authenticated"] is False
 
 
 def test_tenant_cookie_support_access_can_approve_and_immediately_revoke() -> None:
