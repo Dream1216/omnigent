@@ -181,8 +181,8 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
     )
 
 
-def _sessions() -> RoleSessionFactories:
-    engines = tuple(sa.create_engine("sqlite://") for _ in range(5))
+def _sessions(*, billing: bool = False) -> RoleSessionFactories:
+    engines = tuple(sa.create_engine("sqlite://") for _ in range(6 if billing else 5))
     return RoleSessionFactories(
         runtime_engine=engines[0],
         authenticator=sessionmaker(engines[1], expire_on_commit=False),
@@ -190,6 +190,7 @@ def _sessions() -> RoleSessionFactories:
         governance=sessionmaker(engines[3], expire_on_commit=False),
         public_api=sessionmaker(engines[4], expire_on_commit=False),
         _engines=engines,
+        billing=(sessionmaker(engines[5], expire_on_commit=False) if billing else None),
     )
 
 
@@ -536,6 +537,46 @@ def test_runtime_database_is_a_mandatory_readiness_dependency(tmp_path: Path) ->
         sessions.close()
 
 
+def test_enterprise_and_billing_capabilities_mount_reviewed_services_only(
+    tmp_path: Path,
+) -> None:
+    sessions = _sessions(billing=True)
+    config = _config(
+        tmp_path,
+        capabilities=frozenset({"tenant", "run", "enterprise", "billing"}),
+    )
+    try:
+        services = build_production_saas_services(config, sessions)
+        paths = {getattr(route, "path", None) for route in services.integration.router.routes}
+        assert "/tenants/{tenant_id}/groups" in paths
+        assert "/tenants/{tenant_id}/enterprise/scim-directories" in paths
+        assert "/tenants/{tenant_id}/billing" in paths
+        assert "billing" in sessions.engines
+        services.close()
+    finally:
+        sessions.close()
+
+    missing_billing = _sessions()
+    try:
+        with pytest.raises(
+            ProductionServerCompositionError,
+            match="dedicated service login",
+        ):
+            build_production_saas_services(config, missing_billing)
+    finally:
+        missing_billing.close()
+
+    unexpected_billing = _sessions(billing=True)
+    try:
+        with pytest.raises(
+            ProductionServerCompositionError,
+            match="requires the billing capability",
+        ):
+            build_production_saas_services(_config(tmp_path / "disabled"), unexpected_billing)
+    finally:
+        unexpected_billing.close()
+
+
 class _ReadyAdapter:
     def __init__(self, *, ready: bool = True) -> None:
         self.ready = ready
@@ -672,6 +713,51 @@ def test_role_factory_verifies_once_and_never_runs_migration(tmp_path: Path) -> 
         sessions.close()
 
 
+def test_role_factory_opens_a_distinct_billing_engine_when_configured(tmp_path: Path) -> None:
+    base = _config(tmp_path)
+    config = replace(
+        base,
+        capabilities=frozenset({"tenant", "run", "billing"}),
+        secrets=replace(
+            base.secrets,
+            database_urls=replace(
+                base.secrets.database_urls,
+                billing="postgresql+psycopg://billing_login:secret@db/omnigent"
+                "?sslmode=verify-full",
+            ),
+        ),
+    )
+    created: list[Engine] = []
+
+    def engine_factory(_url: str) -> Engine:
+        engine = sa.create_engine("sqlite://")
+        engine.dialect.name = "postgresql"
+        created.append(engine)
+        return engine
+
+    def verify(engines, _config) -> None:
+        assert "billing" in engines
+
+    sessions = create_role_session_factories(
+        config,
+        verify_state=verify,
+        engine_factory=engine_factory,
+    )
+    try:
+        assert sessions.billing is not None
+        assert set(sessions.engines) == {
+            "runtime",
+            "authenticator",
+            "app",
+            "governance",
+            "public_api",
+            "billing",
+        }
+        assert len(created) == 12
+    finally:
+        sessions.close()
+
+
 def test_role_session_factories_reject_reused_engine() -> None:
     runtime = sa.create_engine("sqlite://")
     shared = sa.create_engine("sqlite://")
@@ -698,7 +784,7 @@ def test_role_session_factories_reject_incomplete_or_reused_readiness_engines() 
         "_engines": business,
     }
     probe = sa.create_engine("sqlite://")
-    with pytest.raises(ProductionServerCompositionError, match="exact five"):
+    with pytest.raises(ProductionServerCompositionError, match="every configured"):
         RoleSessionFactories(
             **factories,
             _readiness_engines={"runtime": probe},
