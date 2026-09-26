@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
+import types
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 
 from saas.control_plane.outbox import DispatchResult
+from saas.production.server import ProductionAdapterConfig
 from saas.production.service_bindings import (
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -21,6 +24,7 @@ from saas.production.worker import (
     ProductionSchedulerWorker,
     ProductionWorkerAdapters,
     ProductionWorkerConfigError,
+    load_production_worker_adapters,
     load_production_worker_config,
 )
 
@@ -77,10 +81,16 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     return {
         "OMNIGENT_SAAS_SOURCE_SHA": _SOURCE_SHA,
         "OMNIGENT_SAAS_PRODUCT_REVISION": _SOURCE_SHA,
+        "OMNIGENT_SAAS_UPSTREAM_REVISION": "c" * 40,
         "OMNIGENT_SAAS_IMAGE_DIGEST": _IMAGE_DIGEST,
+        "OMNIGENT_SAAS_RUNTIME_VERSION": "0.15.0.dev0",
         "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "official-head",
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000008",
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": "1.0",
+        "OMNIGENT_SAAS_PUBLIC_ORIGIN": "https://next.example.test",
+        "OMNIGENT_SAAS_CAPABILITIES": "tenant,run,delivery,runner,preview",
+        "OMNIGENT_SAAS_PREVIEW_ROOT_DOMAIN": "example.test",
+        "OMNIGENT_SAAS_PREVIEW_LEASE_SECONDS": "300",
         "OMNIGENT_SAAS_DISPATCHER_DATABASE_URL_FILE": _secret(
             tmp_path / "dispatcher",
             "postgresql+psycopg://dispatcher_login:secret@db.example/omnigent"
@@ -108,6 +118,7 @@ def test_worker_config_binds_exact_release_receipt_and_distinct_authorities(
     config = load_production_worker_config(_environment(tmp_path))
 
     assert config.product_revision == _SOURCE_SHA
+    assert config.upstream_revision == "c" * 40
     assert config.image_digest == _IMAGE_DIGEST
     assert config.migration_receipt.product_revision == _SOURCE_SHA
     assert config.runner_adapter_factory == "deployment.runner:readiness"
@@ -115,12 +126,30 @@ def test_worker_config_binds_exact_release_receipt_and_distinct_authorities(
     assert "secret" not in repr(config)
     assert set(config.version_document) == {
         "product_revision",
+        "upstream_revision",
         "image_digest",
+        "runtime_version",
         "official_schema_revision",
         "control_plane_schema_revision",
         "adapter_contract_version",
+        "public_origin",
+        "capabilities",
+        "preview_root_domain",
+        "preview_lease_seconds",
         "service_role_bindings_sha256",
     }
+    assert ProductionAdapterConfig.from_server_config(config) == ProductionAdapterConfig(
+        product_revision=_SOURCE_SHA,
+        upstream_revision="c" * 40,
+        image_digest=_IMAGE_DIGEST,
+        runtime_version="0.15.0.dev0",
+        official_schema_revision="official-head",
+        adapter_contract_version="1.0",
+        public_origin="https://next.example.test",
+        capabilities=frozenset({"tenant", "run", "delivery", "runner", "preview"}),
+        preview_root_domain="example.test",
+        preview_lease_seconds=300,
+    )
 
 
 @pytest.mark.parametrize(
@@ -287,6 +316,45 @@ def test_worker_database_urls_are_secret_redacted_from_repr(tmp_path: Path) -> N
     assert "dispatcher_login" not in repr(config)
     assert "executor_login" not in repr(config)
     assert "secret@" not in repr(config)
+
+
+def test_worker_adapters_receive_only_required_release_and_executor_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_production_worker_config(_environment(tmp_path))
+    runner_module = types.ModuleType("deployment.runner")
+    preview_module = types.ModuleType("deployment.preview")
+
+    class Ready:
+        def assert_production_ready(self) -> None:
+            return None
+
+    def runner_factory(*, config):
+        assert config.product_revision == _SOURCE_SHA
+        assert config.official_schema_revision == "official-head"
+        assert config.adapter_contract_version == "1.0"
+        assert config.executor_database_url.startswith("postgresql+psycopg://")
+        assert not hasattr(config, "dispatcher_database_url")
+        assert config.upstream_revision == "c" * 40
+        assert "secret@" not in repr(config)
+        return Ready()
+
+    def preview_factory(*, config):
+        assert config.product_revision == _SOURCE_SHA
+        assert not hasattr(config, "dispatcher_database_url")
+        assert "secret@" not in repr(config)
+        return Ready()
+
+    runner_module.readiness = runner_factory  # type: ignore[attr-defined]
+    preview_module.readiness = preview_factory  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "deployment.runner", runner_module)
+    monkeypatch.setitem(sys.modules, "deployment.preview", preview_module)
+
+    adapters = load_production_worker_adapters(config)
+
+    assert isinstance(adapters.runner, Ready)
+    assert isinstance(adapters.preview, Ready)
 
 
 def test_secret_file_helper_uses_current_process_owner(tmp_path: Path) -> None:

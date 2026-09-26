@@ -431,6 +431,7 @@ _CAPABILITY_ROLES = (
     "saas_runtime_provider_journal",
     _RUNTIME_ROLE,
 )
+_RUNNER_AGENT_LOGIN = re.compile(r"^runner_([0-9a-f]{32})_g([1-9][0-9]{0,18})$")
 _RoleGraphEdge = tuple[str, str, str, bool, bool, bool, int]
 
 
@@ -1142,11 +1143,38 @@ def _verify_service_principal_graph(
     ).scalar_one_or_none()
     if not bootstrap_name:
         raise PostgreSqlMigrationError("bootstrap_principal_missing", "principals")
+    bootstrap_name = str(bootstrap_name)
+    runtime_runner_edges = {
+        edge
+        for edge in observed
+        if _runtime_runner_membership_is_safe(edge, bootstrap_name=bootstrap_name)
+    }
+    runtime_runner_logins = sorted({edge[1] for edge in runtime_runner_edges})
+    if runtime_runner_logins:
+        runtime_runner_rows = tuple(
+            connection.execute(
+                sa.text(
+                    "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                    "rolreplication, rolbypassrls, rolinherit, rolconnlimit, rolconfig "
+                    "FROM pg_roles WHERE rolname = ANY(:logins) ORDER BY rolname"
+                ),
+                {"logins": runtime_runner_logins},
+            ).all()
+        )
+        if (
+            len(runtime_runner_rows) != len(runtime_runner_logins)
+            or [str(row[0]) for row in runtime_runner_rows] != runtime_runner_logins
+            or any(
+                not _runtime_runner_login_flags_are_safe(tuple(row)) for row in runtime_runner_rows
+            )
+        ):
+            raise PostgreSqlMigrationError("service_role_graph_drifted", "principals")
+        observed.difference_update(runtime_runner_edges)
     expected_complete = _expected_service_principal_graph(
         bindings=bindings,
         principal_operator=principal_operator,
         principal_operator_oid=principal_operator_oid,
-        bootstrap_name=str(bootstrap_name),
+        bootstrap_name=bootstrap_name,
     )
     if not _role_graph_projection_is_safe(
         observed,
@@ -1221,6 +1249,40 @@ def _role_graph_projection_is_safe(
     """Allow a clean/bootstrap subset preflight, but require exact terminal state."""
 
     return observed.issubset(expected) and (not require_complete or observed == expected)
+
+
+def _runtime_runner_membership_is_safe(
+    edge: _RoleGraphEdge,
+    *,
+    bootstrap_name: str,
+) -> bool:
+    granted, member, grantor, admin, inherit, can_set, grantor_oid = edge
+    match = _RUNNER_AGENT_LOGIN.fullmatch(member)
+    return bool(
+        granted == "saas_runner_agent"
+        and match is not None
+        and int(match.group(1), 16) != 0
+        and int(match.group(2)) <= (1 << 63) - 1
+        and grantor == bootstrap_name
+        and not admin
+        and inherit
+        and not can_set
+        and grantor_oid == 10
+    )
+
+
+def _runtime_runner_login_flags_are_safe(row: tuple[object, ...]) -> bool:
+    if len(row) != 10:
+        return False
+    login = str(row[0])
+    match = _RUNNER_AGENT_LOGIN.fullmatch(login)
+    return bool(
+        match is not None
+        and int(match.group(1), 16) != 0
+        and int(match.group(2)) <= (1 << 63) - 1
+        and tuple(row[1:9]) == (True, False, False, False, False, False, True, 8)
+        and row[9] is None
+    )
 
 
 def _service_login_flags_are_safe(

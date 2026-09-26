@@ -1156,6 +1156,8 @@ def test_external_factory_loader_accepts_config_factory_and_rejects_incomplete(
 
     def factory(*, config):
         assert config.product_revision == "1" * 40
+        assert config.official_schema_revision == "e5d9bc8ac650"
+        assert config.executor_database_url is None
         assert not hasattr(config, "secrets")
         assert not hasattr(config, "artifact_store_uri")
         assert "password" not in repr(config)
