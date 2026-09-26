@@ -407,8 +407,8 @@ def verify_preview_database_authority(
             sa.text(
                 "SELECT current_user, current_role, "
                 "pg_has_role(current_user, :base_role, 'member'), "
-                "usesuper, usecreatedb, usecreaterole, userepl, usebypassrls "
-                "FROM pg_user WHERE usename = current_user"
+                "rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls "
+                "FROM pg_roles WHERE rolname = current_user"
             ),
             {"base_role": expected_base_role},
         ).one()

@@ -6,11 +6,41 @@ from saas.production import preview_edge
 from saas.production.preview_edge import (
     ProductionPreviewEdgeError,
     load_production_preview_edge_config,
+    verify_preview_database_authority,
 )
 
 
 class _ReachedBindings(RuntimeError):
     pass
+
+
+class _AuthorityResult:
+    def one(self) -> tuple[str, str, bool, bool, bool, bool, bool, bool]:
+        return ("preview_login", "preview_login", True, False, False, False, False, False)
+
+
+class _AuthorityConnection:
+    def __init__(self) -> None:
+        self.statement = ""
+
+    def __enter__(self) -> _AuthorityConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, statement: object, parameters: object) -> _AuthorityResult:
+        self.statement = str(statement)
+        assert parameters == {"base_role": "saas_preview_edge"}
+        return _AuthorityResult()
+
+
+class _AuthorityEngine:
+    def __init__(self) -> None:
+        self.connection = _AuthorityConnection()
+
+    def connect(self) -> _AuthorityConnection:
+        return self.connection
 
 
 def _release(source: str, product: str) -> dict[str, str]:
@@ -21,6 +51,16 @@ def _release(source: str, product: str) -> dict[str, str]:
         "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "official0001",
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000011",
     }
+
+
+def test_preview_database_authority_uses_postgresql_role_catalog() -> None:
+    engine = _AuthorityEngine()
+
+    verify_preview_database_authority(engine, expected_login="preview_login")  # type: ignore[arg-type]
+
+    assert "FROM pg_roles" in engine.connection.statement
+    assert "rolcreaterole" in engine.connection.statement
+    assert "pg_user" not in engine.connection.statement
 
 
 def test_preview_edge_rejects_product_revision_drift_before_loading_credentials(
