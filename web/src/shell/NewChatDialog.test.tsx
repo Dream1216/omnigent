@@ -4658,6 +4658,42 @@ describe("NewChatLandingScreen", () => {
     expect(useHostModelOptionsMock).toHaveBeenCalledWith("host_1", "codex-native", true);
   });
 
+  it("never submits a remembered GPT model when the Codex host now exposes only DeepSeek", async () => {
+    localStorage.setItem(
+      HARNESS_OPTIONS_KEY,
+      JSON.stringify({ "codex-native": { model: "gpt-5.6-sol", effort: "high" } }),
+    );
+    mockModelQueries((harness) =>
+      harness === "codex-native"
+        ? {
+            ...SUCCESS_QUERY_STATE,
+            data: [
+              { id: "deepseek-flash", displayName: "deepseek-flash", isDefault: true },
+              { id: "deepseek-v4-pro", displayName: "deepseek-v4-pro" },
+            ],
+          }
+        : CLAUDE_MODEL_OPTIONS_RESULT,
+    );
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    openAgentModels("a2");
+    expect(screen.queryByRole("menuitemcheckbox", { name: "GPT-5.6 Sol" })).toBeNull();
+    expect(screen.getByRole("menuitemcheckbox", { name: "deepseek-flash" })).toBeTruthy();
+    closePrimaryPicker();
+
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "report progress" },
+    });
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    expect(body.model_override).toBeUndefined();
+  });
+
   it("keeps legacy Mod+Enter as a default-mode send alias", async () => {
     authenticatedFetchMock.mockResolvedValue({
       ok: true,

@@ -5711,10 +5711,17 @@ def create_runner_app(
     async def _codex_native_model_options(conv_id: str) -> list[_JsonObject]:
         from omnigent.harnesses.codex_native.app_server import (
             client_for_transport,
+            declared_codex_model_options,
+            declared_codex_models_for_provider,
             list_codex_model_options,
             mark_launch_default,
+            resolve_native_codex_launch,
         )
         from omnigent.harnesses.codex_native.bridge import read_codex_home_config_model
+        from omnigent.onboarding.provider_config import (
+            default_provider_for_harness,
+            load_config,
+        )
 
         state = await _codex_native_bridge_state_for_session(
             conv_id,
@@ -5723,6 +5730,30 @@ def create_runner_app(
         )
         if state is None:
             raise _CodexNativeModelOptionsNotReady("Codex-native model options are not ready yet.")
+
+        spec = await _resolve_session_agent_spec(conv_id)
+        # Only a machine-default provider can be inferred from the Host's
+        # pre-launch catalog. An explicit session auth/profile owns its own
+        # route and must keep the existing Codex model/list behavior.
+        spec_has_route = spec is not None and (
+            spec.executor.auth is not None
+            or spec.executor.profile
+            or spec.executor.config.get("profile")
+        )
+        if not spec_has_route:
+            provider = default_provider_for_harness(load_config(), "codex")
+            if provider is not None and declared_codex_models_for_provider(provider):
+                launch = await asyncio.to_thread(
+                    resolve_native_codex_launch, model=None, spec=spec
+                )
+                declared = declared_codex_model_options(launch)
+                if declared is None:
+                    raise RuntimeError("Configured Codex gateway model catalog is unavailable")
+                active_model = await asyncio.to_thread(
+                    read_codex_home_config_model,
+                    Path(state.codex_home),
+                )
+                return mark_launch_default(declared, active_model)
 
         codex_client = client_for_transport(
             state.socket_path,
