@@ -1285,6 +1285,23 @@ def _runtime_runner_login_flags_are_safe(row: tuple[object, ...]) -> bool:
     )
 
 
+def _stable_control_plane_memberships(
+    rows: list[list[object]],
+    *,
+    bootstrap_name: str,
+) -> list[list[object]]:
+    """Exclude validated dynamic Runner edges from the static catalog anchor."""
+
+    return [
+        row[:6]
+        for row in rows
+        if not _runtime_runner_membership_is_safe(
+            tuple(row),
+            bootstrap_name=bootstrap_name,
+        )
+    ]
+
+
 def _service_login_flags_are_safe(
     row: tuple[object, ...],
     *,
@@ -2971,6 +2988,9 @@ def _control_plane_security_catalog(
         ]
 
     roles = list(_CAPABILITY_ROLES)
+    bootstrap_name = str(
+        connection.execute(sa.text("SELECT rolname FROM pg_roles WHERE oid = 10")).scalar_one()
+    )
     role_name = "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END"
     grantor_name = "CASE WHEN acl.grantor = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantor) END"
     parameters = {"owner": saas_owner}
@@ -2982,18 +3002,22 @@ def _control_plane_security_catalog(
             "WHERE rolname = ANY(:roles) ORDER BY rolname",
             {"roles": roles},
         ),
-        "memberships": rows(
-            "SELECT granted.rolname, member.rolname, grantor.rolname, "
-            "membership.admin_option, "
-            "COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true), "
-            "COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true) "
-            "FROM pg_auth_members AS membership "
-            "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
-            "JOIN pg_roles AS member ON member.oid = membership.member "
-            "JOIN pg_roles AS grantor ON grantor.oid = membership.grantor "
-            "WHERE granted.rolname = ANY(:roles) OR member.rolname = ANY(:roles) "
-            "ORDER BY granted.rolname, member.rolname, grantor.rolname",
-            {"roles": roles},
+        "memberships": _stable_control_plane_memberships(
+            rows(
+                "SELECT granted.rolname, member.rolname, grantor.rolname, "
+                "membership.admin_option, "
+                "COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true), "
+                "COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true), "
+                "membership.grantor "
+                "FROM pg_auth_members AS membership "
+                "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
+                "JOIN pg_roles AS member ON member.oid = membership.member "
+                "JOIN pg_roles AS grantor ON grantor.oid = membership.grantor "
+                "WHERE granted.rolname = ANY(:roles) OR member.rolname = ANY(:roles) "
+                "ORDER BY granted.rolname, member.rolname, grantor.rolname",
+                {"roles": roles},
+            ),
+            bootstrap_name=bootstrap_name,
         ),
         "database_acls": rows(
             f"SELECT {role_name}, {grantor_name}, acl.privilege_type, acl.is_grantable "

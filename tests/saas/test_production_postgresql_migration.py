@@ -340,6 +340,34 @@ def test_runtime_runner_memberships_allow_only_exact_least_privilege_shape() -> 
     )
 
 
+def test_static_security_catalog_excludes_only_safe_dynamic_runner_edges() -> None:
+    runner_login = "runner_23dbe8e9d95a442abc841c356800ecfc_g9"
+    management = [
+        "saas_runner_agent",
+        "principal_operator",
+        "postgres",
+        True,
+        False,
+        False,
+        10,
+    ]
+    runner = [
+        "saas_runner_agent",
+        runner_login,
+        "postgres",
+        False,
+        True,
+        False,
+        10,
+    ]
+    unsafe_runner = [*runner[:3], True, *runner[4:]]
+
+    assert migration._stable_control_plane_memberships(
+        [management, runner, unsafe_runner],
+        bootstrap_name="postgres",
+    ) == [management[:6], unsafe_runner[:6]]
+
+
 def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
     common = (True, False, False, False, False, False, True, -1)
     journal = "runtime_provider_journal_login"
