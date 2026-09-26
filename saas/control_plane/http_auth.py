@@ -743,7 +743,10 @@ class SaasAuthContextMiddleware:
                 not self._cookie.trusted_origins or origin not in self._cookie.trusted_origins
             ):
                 raise LifecycleError("origin_forbidden", "browser request Origin is forbidden")
-        if scope["type"] == "http" and method in _UNSAFE_METHODS:
+        # Logout remains available when tab-local CSRF state is missing or stale;
+        # the trusted-Origin guard above still blocks cross-site requests.
+        csrf_exempt_logout = method == "POST" and connection.url.path == "/saas/auth/logout"
+        if scope["type"] == "http" and method in _UNSAFE_METHODS and not csrf_exempt_logout:
             csrf_token = connection.headers.get("x-csrf-token", "")
             self._auth.validate_csrf(token, csrf_token)
 
