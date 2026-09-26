@@ -3463,7 +3463,7 @@ def verify_production_postgresql_state(
     engines: Mapping[str, Engine],
     config: Any,
 ) -> None:
-    """Verify an immutable migration receipt against five live service logins.
+    """Verify an immutable migration receipt against every enabled service login.
 
     This startup path performs catalog reads only.  It never opens an owner
     authority, runs Alembic, changes a role, or grants a privilege.
@@ -3471,17 +3471,20 @@ def verify_production_postgresql_state(
 
     try:
         receipt = _load_runtime_receipt(config)
-        if set(engines) != set(_SERVER_SERVICE_ROLES):
+        expected_service_roles = dict(_SERVER_SERVICE_ROLES)
+        if "billing" in config.capabilities:
+            expected_service_roles["billing"] = "saas_billing"
+        if set(engines) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_engine_set_invalid", "runtime_verification")
         configured_urls = config.secrets.database_urls.as_mapping()
-        if set(configured_urls) != set(_SERVER_SERVICE_ROLES):
+        if set(configured_urls) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_url_set_invalid", "runtime_verification")
         facts: list[_ServiceSessionFacts] = []
-        for service, expected_role in _SERVER_SERVICE_ROLES.items():
+        for service, expected_role in expected_service_roles.items():
             parsed = make_url(configured_urls[service])
             if parsed.username is None:
                 raise PostgreSqlMigrationError("service_url_login_missing", "runtime_verification")
-            if parsed.username != config.service_role_bindings.login_for(service):
+            if parsed.username != config.service_role_graph.login_for(service):
                 raise PostgreSqlMigrationError(
                     "service_url_binding_mismatch", "runtime_verification"
                 )
@@ -3492,7 +3495,7 @@ def verify_production_postgresql_state(
                     expected_role=expected_role,
                 )
             )
-        if len({fact.login for fact in facts}) != len(_SERVER_SERVICE_ROLES):
+        if len({fact.login for fact in facts}) != len(expected_service_roles):
             raise PostgreSqlMigrationError("service_login_not_distinct", "runtime_verification")
         database_facts = {_database_identity_sha256(fact) for fact in facts}
         if len(database_facts) != 1:
