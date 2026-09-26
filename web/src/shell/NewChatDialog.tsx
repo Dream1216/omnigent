@@ -4378,13 +4378,20 @@ export function NewChatLandingScreen() {
               ? "Choose a harness to discover host skills."
               : undefined;
   const canDiscoverHostSkills = skillsUnavailableMessage === undefined;
+  // Cached picker rows and catalog-only placeholder rows are display previews,
+  // not an authoritative agent binding. Starting discovery from either can
+  // send one request with the previous session's agent/harness before the live
+  // catalog reconciles, leaving the slash menu scoped to the wrong agent even
+  // after the picker visibly updates. Keep the preview interactive, but defer
+  // the host-backed request until the merged agent query is authoritative.
+  const skillsAgentBindingReady = !agentsLoading && !agentsArePlaceholder;
   const {
     skills: hostSkills,
     skillsStatus,
     refetch: refreshSkills,
   } = useSkills({
     target:
-      selectedHostId && skillsHarness && workspaceTrimmed
+      skillsAgentBindingReady && selectedHostId && skillsHarness && workspaceTrimmed
         ? {
             hostId: selectedHostId,
             harness: skillsHarness,
@@ -4393,7 +4400,7 @@ export function NewChatLandingScreen() {
           }
         : null,
     enabled: canDiscoverHostSkills,
-    starting: !sandboxSelected && (hostsLoading || agentsLoading),
+    starting: !sandboxSelected && (hostsLoading || agentsLoading || agentsArePlaceholder),
   });
   const availableSkills = useMemo(
     () => (skillsStatus === "ready" ? hostSkills : (selectedAgent?.skills ?? [])),

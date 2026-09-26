@@ -217,6 +217,7 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
     """The host request includes the agent, and its result replaces cached suggestions."""
     base_url, session_id = seeded_session
     pending: list[Route] = []
+    pending_agents: list[Route] = []
 
     def session_agents(route: Route) -> None:
         # Session-scoped agents must not replace the fixture's selected agent.
@@ -249,19 +250,7 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
         if urlparse(route.request.url).path != "/v1/agents":
             route.fallback()
             return
-        route.fulfill(
-            json={
-                "data": [
-                    {
-                        "id": "preview-agent",
-                        "name": "preview-agent",
-                        "harness": harness,
-                        "skills": [{"name": "obsolete", "description": "Old bundled suggestion"}],
-                    }
-                ],
-                "has_more": False,
-            }
-        )
+        pending_agents.append(route)
 
     page.route("**/v1/agents*", agents)
     page.route(
@@ -296,23 +285,37 @@ def test_new_session_menu_uses_the_selected_agents_effective_catalog(
         'omnigent:recent-workspaces', JSON.stringify({'preview-host': ['/tmp']})
     )""")
     page.get_by_test_id("new-chat-button").click()
-    # The new-chat dialog initially inherits the current conversation's agent,
-    # then reconciles it with the fetched catalog. Wait for that reconciliation
-    # before opening the slash menu; otherwise the discovery request can race
-    # out with the seeded session's agent and harness.
+    composer = page.get_by_test_id("new-chat-landing-input")
+    composer.fill("/allow")
+    expect(page.get_by_text("Loading skills…", exact=True)).to_be_visible()
+    expect(page.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
+    assert len(pending_agents) == 1
+    # The inherited/cached picker row is only a display preview. It must not
+    # launch discovery with the previous session's agent while the live catalog
+    # is still pending.
+    assert pending == []
+
+    pending_agents[0].fulfill(
+        json={
+            "data": [
+                {
+                    "id": "preview-agent",
+                    "name": "preview-agent",
+                    "harness": harness,
+                    "skills": [{"name": "obsolete", "description": "Old bundled suggestion"}],
+                }
+            ],
+            "has_more": False,
+        }
+    )
     # Native Codex surfaces its resolved model in the compact trigger; the SDK
-    # row surfaces the selected agent name.  Either value is only available
-    # after the preview-agent catalog reconciliation has completed.
+    # row surfaces the selected agent name. Either value proves the authoritative
+    # preview-agent binding has replaced the inherited display preview.
     expected_trigger = "Preview Model" if harness == "codex-native" else "Preview-agent"
     expect(page.get_by_test_id("new-chat-landing-agent-select")).to_contain_text(
         expected_trigger, timeout=15_000
     )
-    composer = page.get_by_test_id("new-chat-landing-input")
-    composer.fill("Hello")
-    expect(page.get_by_test_id("new-chat-landing-submit")).to_be_enabled()
-    composer.fill("/allow")
     expect(page.get_by_text("Loading skills…", exact=True)).to_be_visible()
-    expect(page.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
     composer.press("Tab")
     expect(composer).to_have_value("/allow")
     assert len(pending) == 1

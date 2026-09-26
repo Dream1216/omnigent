@@ -102,11 +102,16 @@ _TRACK_ROWS = """
 () => {
   const el = document.querySelector('[data-pw-scroller]');
   window.__rowSamples = [];
+  window.__historyIndicatorFrames = 0;
   const sample = () => {
     const rows = {};
     for (const r of el.querySelectorAll('[data-index]')) {
       rows[r.getAttribute('data-bubble-key')] = Math.round(r.getBoundingClientRect().top);
     }
+    const historyIndicator = [...el.querySelectorAll('[role="status"]')].some((node) =>
+      (node.textContent || '').includes('Loading earlier messages')
+    );
+    if (historyIndicator) window.__historyIndicatorFrames += 1;
     window.__rowSamples.push([Math.round(performance.now()), Math.round(el.scrollTop), rows]);
   };
   const tick = () => { setTimeout(sample, 0); requestAnimationFrame(tick); };
@@ -120,6 +125,7 @@ _READING = """
   return {
   writes: window.__writes,
   rowSamples: window.__rowSamples,
+  historyIndicatorFrames: window.__historyIndicatorFrames,
   thumbHeights: window.__thumbHeights,
   trackHeight: document.querySelector('[data-testid="transcript-scrollbar"]')
     .getBoundingClientRect().height,
@@ -256,6 +262,10 @@ def test_scrolling_back_through_history_never_moves_the_offset(
     # The scroll must actually have pulled in older history, or the rest of
     # this proves nothing.
     assert len(page_fetches) >= 2, page_fetches
+    # The regression was the 53px loading row appearing and disappearing
+    # without a synchronous list-offset hold. Prove this run painted that row;
+    # otherwise a stable transcript would not exercise the fixed transition.
+    assert reading["historyIndicatorFrames"] > 0, reading
 
     # The point of the change: whatever holds the read position across a
     # prepend, nothing the reader sees moves except by the reader's own

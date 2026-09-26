@@ -47,18 +47,18 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 102,
-    "max_upstream_net_added_loc": 2937,
+    "max_direct_upstream_files": 106,
+    "max_upstream_net_added_loc": 3032,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 97,
-    "previous_max_upstream_net_added_loc": 2937,
-    "previous_measured_upstream_net_added_loc": 2937,
-    "reason": "The protected visual-baseline workflow regenerated exactly five reviewed authenticated-shell PNG snapshots after adding the language switcher. Binary snapshots add five directly tracked upstream files but zero measured net-added LOC, moving the exact totals from 97 files / 2,937 lines to 102 files / 2,937 lines. Raise only the direct-file ceiling to the measured 102; retain the 2,937 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The workflow's second full comparison passed all 175 visual scenarios. This Single-Owner Beta record is not production admission or a merge waiver.",
-    "revision": "bilingual-visual-baselines-v19",
+    "previous_max_direct_upstream_files": 101,
+    "previous_max_upstream_net_added_loc": 3032,
+    "previous_measured_upstream_net_added_loc": 3032,
+    "reason": "The protected visual-baseline workflow regenerated exactly five reviewed authenticated-shell PNG snapshots after adding the language switcher. Binary snapshots add five directly tracked upstream files but zero measured net-added LOC, moving the exact totals from 101 files / 3,032 lines to 106 files / 3,032 lines. Raise only the direct-file ceiling to the measured 106; retain the 3,032 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The workflow's second full comparison passed all 175 visual scenarios. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "bilingual-visual-baselines-v20",
     "scoped_visual_delta": {
       "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png": 0,
       "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png": 0,
@@ -69,11 +69,11 @@
     "previous_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
-    "previous_max_direct_upstream_files": 84,
+    "previous_max_direct_upstream_files": 88,
     "previous_max_upstream_net_added_loc": 2579,
-    "previous_measured_upstream_net_added_loc": 2382,
-    "reason": "User-requested Chinese and English interface support for the current next SaaS Beta: share one persisted locale across the isolated login application and the authenticated web shell, expose switching in the sidebar and Appearance settings, preserve tenant branding, and cover the signed-in journey in a real browser. The login implementation and its browser coverage remain under downstream-owned saas/ and tests/saas/ paths. The authenticated shell changes add exactly thirteen newly divergent official files and 555 measured net lines across fifteen reviewed frontend and E2E files, moving the exact totals from 84 files / 2,382 lines to 97 files / 2,937 lines. Raise the hard ceilings only to those measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope record is not production admission or a merge waiver.",
-    "revision": "bilingual-authenticated-interface-v18",
+    "previous_measured_upstream_net_added_loc": 2477,
+    "reason": "User-requested Chinese and English interface support for the current next SaaS Beta: share one persisted locale across the isolated login application and the authenticated web shell, expose switching in the sidebar and Appearance settings, preserve tenant branding, and cover the signed-in journey in a real browser. The login implementation and its browser coverage remain under downstream-owned saas/ and tests/saas/ paths. On the exact new-session stability mainline, the authenticated shell changes add exactly thirteen newly divergent official files and 555 measured net lines across fifteen reviewed frontend and E2E files, moving the exact totals from 88 files / 2,477 lines to 101 files / 3,032 lines. Raise the hard ceilings only to those measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope record is not production admission or a merge waiver.",
+    "revision": "bilingual-authenticated-interface-v19",
     "scoped_frontend_delta": {
       "tests/e2e_ui/i18n/__init__.py": 0,
       "tests/e2e_ui/i18n/test_language_switching.py": 43,
@@ -90,6 +90,23 @@
       "web/src/shell/Sidebar.tsx": 3,
       "web/src/shell/SidebarHeaderActions.tsx": 6,
       "web/src/shell/settingsNav.tsx": 25
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 84,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2382,
+    "reason": "User-authorized sequential UI E2E closure on the exact 67e6ffc3b5562b967a72897fa5403be830888761 mainline: defer the new-session skill catalog until agent discovery settles, and synchronously hold the virtual transcript while the 53px older-history indicator mounts and unmounts. The seven reviewed UI and browser-test files add 95 measured net lines; four become newly divergent from official upstream, moving the exact totals from 84 files / 2,382 lines to 88 files / 2,477 lines. Raise only the direct-file ceiling to the exact measured 88; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The browser contract explicitly proves that the loading indicator painted while the reader position remained stable. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "new-session-catalog-scroll-stability-v18",
+    "scoped_ui_delta": {
+      "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+      "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+      "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+      "web/src/components/chat/Transcript.tsx": 8,
+      "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+      "web/src/shell/NewChatDialog.test.tsx": 43,
+      "web/src/shell/NewChatDialog.tsx": 7
     },
     "previous_revision": {
     "approved_at": "2026-09-26",
@@ -350,6 +367,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }

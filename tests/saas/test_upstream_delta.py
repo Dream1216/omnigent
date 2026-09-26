@@ -130,15 +130,15 @@ def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 2937
-    assert budget["max_direct_upstream_files"] == 102
+    assert budget["max_upstream_net_added_loc"] == 3032
+    assert budget["max_direct_upstream_files"] == 106
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "bilingual-visual-baselines-v19"
-    assert revision["previous_max_direct_upstream_files"] == 97
-    assert revision["previous_max_upstream_net_added_loc"] == 2937
-    assert revision["previous_measured_upstream_net_added_loc"] == 2937
+    assert revision["revision"] == "bilingual-visual-baselines-v20"
+    assert revision["previous_max_direct_upstream_files"] == 101
+    assert revision["previous_max_upstream_net_added_loc"] == 3032
+    assert revision["previous_measured_upstream_net_added_loc"] == 3032
     assert revision["scoped_visual_delta"] == {
         (
             "tests/e2e_ui/visual/snapshots/test_chat_snapshot/"
@@ -167,10 +167,10 @@ def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
         ): 0,
     }
     revision = revision["previous_revision"]
-    assert revision["revision"] == "bilingual-authenticated-interface-v18"
-    assert revision["previous_max_direct_upstream_files"] == 84
+    assert revision["revision"] == "bilingual-authenticated-interface-v19"
+    assert revision["previous_max_direct_upstream_files"] == 88
     assert revision["previous_max_upstream_net_added_loc"] == 2579
-    assert revision["previous_measured_upstream_net_added_loc"] == 2382
+    assert revision["previous_measured_upstream_net_added_loc"] == 2477
     assert revision["scoped_frontend_delta"] == {
         "tests/e2e_ui/i18n/__init__.py": 0,
         "tests/e2e_ui/i18n/test_language_switching.py": 43,
@@ -187,6 +187,20 @@ def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
         "web/src/shell/Sidebar.tsx": 3,
         "web/src/shell/SidebarHeaderActions.tsx": 6,
         "web/src/shell/settingsNav.tsx": 25,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "new-session-catalog-scroll-stability-v18"
+    assert revision["previous_max_direct_upstream_files"] == 84
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2382
+    assert revision["scoped_ui_delta"] == {
+        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+        "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+        "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+        "web/src/components/chat/Transcript.tsx": 8,
+        "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+        "web/src/shell/NewChatDialog.test.tsx": 43,
+        "web/src/shell/NewChatDialog.tsx": 7,
     }
     revision = revision["previous_revision"]
     assert revision["revision"] == "repository-owner-maintainer-governance-v17"
@@ -272,7 +286,7 @@ def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 2937 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 3032 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 20000, 0),
         ],
         manifest,
