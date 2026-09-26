@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from saas.control_plane.outbox import DispatchResult
+from saas.production.server import ProductionAdapterConfig
 from saas.production.service_bindings import (
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -77,10 +78,16 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     return {
         "OMNIGENT_SAAS_SOURCE_SHA": _SOURCE_SHA,
         "OMNIGENT_SAAS_PRODUCT_REVISION": _SOURCE_SHA,
+        "OMNIGENT_SAAS_UPSTREAM_REVISION": "c" * 40,
         "OMNIGENT_SAAS_IMAGE_DIGEST": _IMAGE_DIGEST,
+        "OMNIGENT_SAAS_RUNTIME_VERSION": "0.15.0.dev0",
         "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "official-head",
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000008",
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": "1.0",
+        "OMNIGENT_SAAS_PUBLIC_ORIGIN": "https://next.example.test",
+        "OMNIGENT_SAAS_CAPABILITIES": "tenant,run,delivery,runner,preview",
+        "OMNIGENT_SAAS_PREVIEW_ROOT_DOMAIN": "example.test",
+        "OMNIGENT_SAAS_PREVIEW_LEASE_SECONDS": "300",
         "OMNIGENT_SAAS_DISPATCHER_DATABASE_URL_FILE": _secret(
             tmp_path / "dispatcher",
             "postgresql+psycopg://dispatcher_login:secret@db.example/omnigent"
@@ -108,6 +115,7 @@ def test_worker_config_binds_exact_release_receipt_and_distinct_authorities(
     config = load_production_worker_config(_environment(tmp_path))
 
     assert config.product_revision == _SOURCE_SHA
+    assert config.upstream_revision == "c" * 40
     assert config.image_digest == _IMAGE_DIGEST
     assert config.migration_receipt.product_revision == _SOURCE_SHA
     assert config.runner_adapter_factory == "deployment.runner:readiness"
@@ -115,12 +123,29 @@ def test_worker_config_binds_exact_release_receipt_and_distinct_authorities(
     assert "secret" not in repr(config)
     assert set(config.version_document) == {
         "product_revision",
+        "upstream_revision",
         "image_digest",
+        "runtime_version",
         "official_schema_revision",
         "control_plane_schema_revision",
         "adapter_contract_version",
+        "public_origin",
+        "capabilities",
+        "preview_root_domain",
+        "preview_lease_seconds",
         "service_role_bindings_sha256",
     }
+    assert ProductionAdapterConfig.from_server_config(config) == ProductionAdapterConfig(
+        product_revision=_SOURCE_SHA,
+        upstream_revision="c" * 40,
+        image_digest=_IMAGE_DIGEST,
+        runtime_version="0.15.0.dev0",
+        adapter_contract_version="1.0",
+        public_origin="https://next.example.test",
+        capabilities=frozenset({"tenant", "run", "delivery", "runner", "preview"}),
+        preview_root_domain="example.test",
+        preview_lease_seconds=300,
+    )
 
 
 @pytest.mark.parametrize(

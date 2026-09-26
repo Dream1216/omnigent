@@ -184,6 +184,20 @@ class ProductionExternalAdapter(Protocol):
     def assert_production_ready(self) -> None: ...
 
 
+class ProductionAdapterConfigSource(Protocol):
+    """Shared public facts required by server and worker adapter factories."""
+
+    product_revision: str
+    upstream_revision: str
+    image_digest: str
+    runtime_version: str
+    adapter_contract_version: str
+    public_origin: str
+    capabilities: frozenset[str]
+    preview_root_domain: str | None
+    preview_lease_seconds: int
+
+
 @dataclass(frozen=True, slots=True)
 class ProductionAdapterConfig:
     """Secret-free release facts exposed to trusted adapter factories."""
@@ -199,7 +213,7 @@ class ProductionAdapterConfig:
     preview_lease_seconds: int
 
     @classmethod
-    def from_server_config(cls, config: ProductionServerConfig) -> ProductionAdapterConfig:
+    def from_server_config(cls, config: ProductionAdapterConfigSource) -> ProductionAdapterConfig:
         return cls(
             product_revision=config.product_revision,
             upstream_revision=config.upstream_revision,

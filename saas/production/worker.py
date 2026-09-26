@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -59,6 +60,11 @@ _LOGGER = logging.getLogger("omnigent-saas-production-worker")
 _FULL_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\."
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+_CAPABILITIES = frozenset({"tenant", "run", "runner", "preview", "delivery"})
 _FACTORY_REFERENCE = re.compile(
     r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*:[A-Za-z][A-Za-z0-9_]*$"
 )
@@ -410,10 +416,16 @@ class ProductionWorkerConfig:
     """Validated non-secret facts and two narrow worker service DSNs."""
 
     product_revision: str
+    upstream_revision: str
     image_digest: str
+    runtime_version: str
     official_schema_revision: str
     control_plane_schema_revision: str
     adapter_contract_version: str
+    public_origin: str
+    capabilities: frozenset[str]
+    preview_root_domain: str
+    preview_lease_seconds: int
     dispatcher_database_url: str = field(repr=False)
     executor_database_url: str = field(repr=False)
     runner_adapter_factory: str
@@ -440,10 +452,16 @@ class ProductionWorkerConfig:
         return MappingProxyType(
             {
                 "product_revision": self.product_revision,
+                "upstream_revision": self.upstream_revision,
                 "image_digest": self.image_digest,
+                "runtime_version": self.runtime_version,
                 "official_schema_revision": self.official_schema_revision,
                 "control_plane_schema_revision": self.control_plane_schema_revision,
                 "adapter_contract_version": self.adapter_contract_version,
+                "public_origin": self.public_origin,
+                "capabilities": ",".join(sorted(self.capabilities)),
+                "preview_root_domain": self.preview_root_domain,
+                "preview_lease_seconds": str(self.preview_lease_seconds),
                 "service_role_bindings_sha256": self.service_role_bindings.sha256,
             }
         )
@@ -789,6 +807,49 @@ def _revision(source: Mapping[str, str], name: str) -> str:
     return value
 
 
+def _https_origin(source: Mapping[str, str]) -> str:
+    value = _required(source, "OMNIGENT_SAAS_PUBLIC_ORIGIN")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or value != f"https://{parsed.netloc}"
+    ):
+        raise ProductionWorkerConfigError(
+            "OMNIGENT_SAAS_PUBLIC_ORIGIN must be one exact HTTPS origin without a path"
+        )
+    return value
+
+
+def _adapter_capabilities(source: Mapping[str, str]) -> frozenset[str]:
+    parts = _required(source, "OMNIGENT_SAAS_CAPABILITIES").split(",")
+    selected = frozenset(parts)
+    if (
+        any(not part or part != part.strip() for part in parts)
+        or len(parts) != len(selected)
+        or not selected.issubset(_CAPABILITIES)
+        or not {"tenant", "run", "runner", "preview"}.issubset(selected)
+    ):
+        raise ProductionWorkerConfigError(
+            "OMNIGENT_SAAS_CAPABILITIES must enable the worker adapter profile"
+        )
+    return selected
+
+
+def _preview_root_domain(source: Mapping[str, str]) -> str:
+    value = _required(source, "OMNIGENT_SAAS_PREVIEW_ROOT_DOMAIN")
+    if value != value.lower() or _HOSTNAME.fullmatch(value) is None:
+        raise ProductionWorkerConfigError(
+            "OMNIGENT_SAAS_PREVIEW_ROOT_DOMAIN must be one canonical DNS root"
+        )
+    return value
+
+
 def _factory(source: Mapping[str, str], name: str) -> str:
     value = _required(source, name)
     if _FACTORY_REFERENCE.fullmatch(value) is None:
@@ -897,6 +958,9 @@ def load_production_worker_config(
         raise ProductionWorkerConfigError(
             "OMNIGENT_SAAS_PRODUCT_REVISION and OMNIGENT_SAAS_SOURCE_SHA must match exactly"
         )
+    upstream_revision = _required(source, "OMNIGENT_SAAS_UPSTREAM_REVISION")
+    if _FULL_GIT_SHA.fullmatch(upstream_revision) is None:
+        raise ProductionWorkerConfigError("OMNIGENT_SAAS_UPSTREAM_REVISION must be a full Git SHA")
     image_digest = _required(source, "OMNIGENT_SAAS_IMAGE_DIGEST")
     if _IMAGE_DIGEST.fullmatch(image_digest) is None:
         raise ProductionWorkerConfigError("OMNIGENT_SAAS_IMAGE_DIGEST must be a sha256 digest")
@@ -970,10 +1034,22 @@ def load_production_worker_config(
         )
     return ProductionWorkerConfig(
         product_revision=product_revision,
+        upstream_revision=upstream_revision,
         image_digest=image_digest,
+        runtime_version=_revision(source, "OMNIGENT_SAAS_RUNTIME_VERSION"),
         official_schema_revision=official_head,
         control_plane_schema_revision=saas_head,
         adapter_contract_version=adapter_contract,
+        public_origin=_https_origin(source),
+        capabilities=_adapter_capabilities(source),
+        preview_root_domain=_preview_root_domain(source),
+        preview_lease_seconds=_bounded_integer(
+            source,
+            "OMNIGENT_SAAS_PREVIEW_LEASE_SECONDS",
+            default=300,
+            minimum=30,
+            maximum=3600,
+        ),
         dispatcher_database_url=dispatcher_url,
         executor_database_url=executor_url,
         runner_adapter_factory=_factory(source, "OMNIGENT_SAAS_WORKER_RUNNER_READINESS_FACTORY"),
