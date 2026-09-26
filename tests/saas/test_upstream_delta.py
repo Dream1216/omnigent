@@ -124,17 +124,39 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_maintainer_governance_budget_revision_retains_hard_source_ceilings(
+def test_bilingual_ui_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 84
+    assert budget["max_upstream_net_added_loc"] == 2937
+    assert budget["max_direct_upstream_files"] == 97
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "bilingual-authenticated-interface-v18"
+    assert revision["previous_max_direct_upstream_files"] == 84
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2382
+    assert revision["scoped_frontend_delta"] == {
+        "tests/e2e_ui/i18n/__init__.py": 0,
+        "tests/e2e_ui/i18n/test_language_switching.py": 43,
+        "web/src/components/LanguageSwitcher.test.tsx": 47,
+        "web/src/components/LanguageSwitcher.tsx": 101,
+        "web/src/embed.tsx": 3,
+        "web/src/lib/branding.ts": 2,
+        "web/src/lib/i18n.test.tsx": 76,
+        "web/src/lib/i18n.tsx": 212,
+        "web/src/main.tsx": 3,
+        "web/src/pages/SettingsPage.tsx": 5,
+        "web/src/shell/NewChatDialog.tsx": 25,
+        "web/src/shell/Sidebar.test.tsx": 4,
+        "web/src/shell/Sidebar.tsx": 3,
+        "web/src/shell/SidebarHeaderActions.tsx": 6,
+        "web/src/shell/settingsNav.tsx": 25,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "repository-owner-maintainer-governance-v17"
     assert revision["previous_max_direct_upstream_files"] == 83
     assert revision["previous_max_upstream_net_added_loc"] == 2579
@@ -218,8 +240,8 @@ def test_maintainer_governance_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 2579 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 15000, 0),
+            FileDelta("omnigent/stores/host_store.py", 2937 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 20000, 0),
         ],
         manifest,
         active_patch_count=8,
