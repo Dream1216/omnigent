@@ -312,6 +312,48 @@ def test_loads_platform_extensions_and_binds_them_to_migration_receipt(tmp_path:
         load_production_server_config(environment)
 
 
+def test_billing_capability_requires_and_loads_its_dedicated_graph_login(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_CAPABILITIES"] = "tenant,run,billing"
+    environment["OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE"] = _platform_bindings(
+        tmp_path / "platform-model-service-bindings.json"
+    )
+    production = load_production_service_role_bindings(environment)
+    platform = load_platform_model_service_role_bindings(environment)
+    graph = compose_production_service_role_graph(production, platform, None)
+    Path(environment["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"]).chmod(0o600)
+    _receipt(
+        Path(environment["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"]),
+        service_role_bindings_sha256=production.sha256,
+        service_role_graph_sha256=graph.sha256,
+    )
+    environment["OMNIGENT_SAAS_BILLING_DATABASE_URL_FILE"] = _secret(
+        tmp_path / "billing-database-url",
+        "postgresql+psycopg://platform_model_billing_login:password-billing"
+        "@postgres.internal:5432/omnigent?sslmode=verify-full"
+        "&sslrootcert=/runtime/postgresql-ca.crt",
+    )
+
+    config = load_production_server_config(environment)
+
+    assert set(config.secrets.database_urls.as_mapping()) == {
+        "runtime",
+        "authenticator",
+        "app",
+        "governance",
+        "public_api",
+        "billing",
+    }
+    assert "password-billing" not in repr(config)
+
+    missing_profile = _environment(tmp_path / "missing-profile")
+    missing_profile["OMNIGENT_SAAS_CAPABILITIES"] = "tenant,run,billing"
+    with pytest.raises(ProductionServerConfigError, match="platform-model"):
+        load_production_server_config(missing_profile)
+
+
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     (
@@ -556,19 +598,29 @@ def test_rejects_owner_shaped_service_login(tmp_path: Path) -> None:
         load_production_server_config(environment)
 
 
-def test_allows_receipt_bound_preview_owner_service_login(tmp_path: Path) -> None:
-    preview_owner_url = _secret(
-        tmp_path / "preview-owner-url",
-        "postgresql+psycopg://next_beta_preview_owner:password@postgres.internal/omnigent"
-        "?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt",
-    )
-    environment = {"OMNIGENT_SAAS_PREVIEW_OWNER_DATABASE_URL_FILE": preview_owner_url}
+def test_allows_only_the_exact_role_scoped_preview_owner_login(tmp_path: Path) -> None:
+    environment = {
+        "OMNIGENT_SAAS_PREVIEW_OWNER_DATABASE_URL_FILE": _secret(
+            tmp_path / "preview-owner-url",
+            "postgresql+psycopg://next_beta_preview_owner:password"
+            "@postgres.internal/omnigent?sslmode=verify-full"
+            "&sslrootcert=/runtime/postgresql-ca.crt",
+        )
+    }
 
-    raw, parsed, path = load_production_database_url_file(environment, "preview_owner")
+    raw, parsed, _path = load_production_database_url_file(environment, "preview_owner")
 
-    assert raw.startswith("postgresql+psycopg://next_beta_preview_owner:")
     assert parsed.username == "next_beta_preview_owner"
-    assert path == Path(preview_owner_url)
+    assert "password" in raw
+
+    environment["OMNIGENT_SAAS_PREVIEW_OWNER_DATABASE_URL_FILE"] = _secret(
+        tmp_path / "root-preview-owner-url",
+        "postgresql+psycopg://root_preview_owner:password"
+        "@postgres.internal/omnigent?sslmode=verify-full"
+        "&sslrootcert=/runtime/postgresql-ca.crt",
+    )
+    with pytest.raises(ProductionServerConfigError, match="owner/admin"):
+        load_production_database_url_file(environment, "preview_owner")
 
 
 def test_requires_tls_verify_full_on_every_service_login(tmp_path: Path) -> None:

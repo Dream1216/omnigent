@@ -48,7 +48,9 @@ _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\."
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
-_CAPABILITIES = frozenset({"tenant", "run", "runner", "preview", "delivery"})
+_CAPABILITIES = frozenset(
+    {"tenant", "run", "runner", "preview", "delivery", "enterprise", "billing"}
+)
 _CORE_CAPABILITIES = frozenset({"tenant", "run"})
 _DATABASE_ROLES = ("runtime", "authenticator", "app", "governance", "public_api")
 _MAX_SECRET_FILE_BYTES = 16 * 1024
@@ -103,19 +105,21 @@ class ProductionDatabaseUrls:
     app: str = field(repr=False)
     governance: str = field(repr=False)
     public_api: str = field(repr=False)
+    billing: str | None = field(default=None, repr=False)
 
     def as_mapping(self) -> Mapping[str, str]:
         """Return a read-only role-to-URL mapping."""
 
-        return MappingProxyType(
-            {
-                "runtime": self.runtime,
-                "authenticator": self.authenticator,
-                "app": self.app,
-                "governance": self.governance,
-                "public_api": self.public_api,
-            }
-        )
+        urls = {
+            "runtime": self.runtime,
+            "authenticator": self.authenticator,
+            "app": self.app,
+            "governance": self.governance,
+            "public_api": self.public_api,
+        }
+        if self.billing is not None:
+            urls["billing"] = self.billing
+        return MappingProxyType(urls)
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,13 +348,16 @@ def _database_url(environ: Mapping[str, str], role: str) -> tuple[str, URL, Path
             f"{env_name} must contain a complete postgresql+psycopg service-login URL"
         )
     login = parsed.username.lower()
-    forbidden_login_fragments = _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS
-    if role == "preview_owner":
-        forbidden_login_fragments = tuple(
-            fragment for fragment in _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS if fragment != "owner"
+    for fragment in _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS:
+        if fragment not in login:
+            continue
+        role_scoped_owner = (
+            fragment == "owner"
+            and "owner" in role
+            and (login == role or login.endswith(f"_{role}"))
         )
-    if any(fragment in login for fragment in forbidden_login_fragments):
-        raise ProductionServerConfigError(f"{env_name} must not contain an owner/admin login")
+        if not role_scoped_owner:
+            raise ProductionServerConfigError(f"{env_name} must not contain an owner/admin login")
     query_names = {str(key).lower() for key in parsed.query}
     if "role" in query_names or "options" in query_names:
         raise ProductionServerConfigError(f"{env_name} must not request SET ROLE or libpq options")
@@ -378,7 +385,10 @@ def load_production_database_url_file(
     return _database_url(environ, role)
 
 
-def _load_database_urls(environ: Mapping[str, str]) -> ProductionDatabaseUrls:
+def _load_database_urls(
+    environ: Mapping[str, str],
+    capabilities: frozenset[str],
+) -> ProductionDatabaseUrls:
     if any(
         name in environ and environ[name].strip()
         for name in (
@@ -391,7 +401,8 @@ def _load_database_urls(environ: Mapping[str, str]) -> ProductionDatabaseUrls:
         raise ProductionServerConfigError(
             "production server process must not receive ambient, owner, or migration database URLs"
         )
-    loaded = {role: _database_url(environ, role) for role in _DATABASE_ROLES}
+    roles = (*_DATABASE_ROLES, *(("billing",) if "billing" in capabilities else ()))
+    loaded = {role: _database_url(environ, role) for role in roles}
     urls = [value[0] for value in loaded.values()]
     paths = [value[2] for value in loaded.values()]
     logins = [value[1].username for value in loaded.values()]
@@ -410,7 +421,7 @@ def _load_database_urls(environ: Mapping[str, str]) -> ProductionDatabaseUrls:
         raise ProductionServerConfigError(
             "database service roles must target one reviewed database"
         )
-    return ProductionDatabaseUrls(**{role: loaded[role][0] for role in _DATABASE_ROLES})
+    return ProductionDatabaseUrls(**{role: loaded[role][0] for role in roles})
 
 
 def _https_origin(value: str) -> str:
@@ -965,6 +976,7 @@ def load_production_server_config(
     active_key_id = source.get("OMNIGENT_SAAS_ACTIVE_KEY_ID", "v1")
     if _REVISION.fullmatch(active_key_id) is None or len(active_key_id) > 16:
         raise ProductionServerConfigError("OMNIGENT_SAAS_ACTIVE_KEY_ID is invalid")
+    capabilities = _capabilities(_required(source, "OMNIGENT_SAAS_CAPABILITIES"))
 
     try:
         service_role_bindings = load_production_service_role_bindings(source)
@@ -985,13 +997,16 @@ def load_production_server_config(
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
-    database_urls = _load_database_urls(source)
+    if "billing" in capabilities and platform_model_service_role_bindings is None:
+        raise ProductionServerConfigError(
+            "billing capability requires platform-model service-role bindings"
+        )
+    database_urls = _load_database_urls(source, capabilities)
     for service, database_url in database_urls.as_mapping().items():
-        if make_url(database_url).username != service_role_bindings.login_for(service):
+        if make_url(database_url).username != service_role_graph.login_for(service):
             raise ProductionServerConfigError(
                 f"{service} database URL login does not match service-role bindings"
             )
-    capabilities = _capabilities(_required(source, "OMNIGENT_SAAS_CAPABILITIES"))
     secrets = ProductionServerSecrets(
         database_urls=database_urls,
         api_credential_pepper=_secret_bytes(source, "OMNIGENT_SAAS_API_CREDENTIAL_PEPPER_FILE"),
