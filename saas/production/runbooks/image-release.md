@@ -42,9 +42,11 @@ environment is rejected.
    immutability receipt. Promote the exact digest to `production-canary`, observe
    it for at least 3600 seconds, and require both SLO and security gates.
 5. Exercise N-1 rollback from the candidate to a different, digest-pinned prior
-   image whose signature and provenance were verified. Recovery must complete
-   within 900 seconds. Only then may release-engineering, security, and
-   site-reliability provide distinct, post-operation approvals.
+   downstream image whose signature, provenance, source identity, current schema,
+   adapter, and security contract were verified under the
+   [commercial compatibility support policy](compatibility-support.md).
+   Recovery must complete within 900 seconds. Only then may release-engineering,
+   security, and site-reliability provide distinct, post-operation approvals.
 6. Write the canonical release evidence object last. Keep it inside the
    repository evidence path as a regular non-symlink file and bind it to the
    exact product revision. A tag may aid discovery but cannot authorize

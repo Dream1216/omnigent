@@ -134,7 +134,7 @@ def _valid_evidence() -> dict[str, object]:
         for path in policy["reproducibility"]["dependency_locks"]  # type: ignore[index]
     }
     evidence: dict[str, object] = {
-        "evidence_version": 2,
+        "evidence_version": 3,
         "completed_at": "2026-08-05T10:30:00Z",
         "product_revision": product_revision,
         "upstream_revision": upstream["upstream_revision"],
@@ -198,6 +198,21 @@ def _valid_evidence() -> dict[str, object]:
                         "from_digest": image["manifest_digest"],
                         "to_digest": (target := _digest("f" if index == 0 else "e")),
                         "to_registry_ref": (f"ghcr.io/dream1216/{image['name']}@{target}"),
+                        "to_product_revision": "b" * 40,
+                        "to_source_repository": policy["promotion"]["n_minus_one_source"][
+                            "repository"
+                        ],
+                        "to_source_ref": policy["promotion"]["n_minus_one_source"]["source_ref"],
+                        "to_workflow_identity": policy["promotion"]["n_minus_one_source"][
+                            "workflow_identity"
+                        ],
+                        "to_control_plane_schema_revision": schema_revision,
+                        "to_adapter_contract_version": upstream["adapter_contract_version"],
+                        "to_security_contract_verified": True,
+                        "to_security_contract_suite_revision": product_revision,
+                        "to_security_contract_completed_at": "2026-08-05T08:30:00Z",
+                        "to_security_contract_receipt_sha256": "c" * 64,
+                        "to_image_identity_receipt_sha256": "d" * 64,
                         "previous_release_signature_verified": True,
                         "previous_release_provenance_verified": True,
                         "started_at": "2026-08-05T09:05:00Z",
@@ -1288,6 +1303,58 @@ def test_canary_rollback_and_registry_claims_are_mandatory() -> None:
     assert any("N-1 target signature is not verified" in item for item in report["blockers"])
 
 
+def test_n1_must_be_a_distinct_signed_downstream_release_with_current_security_contract() -> None:
+    evidence = _valid_evidence()
+    rollback = evidence["promotion"]["images"][0]["n_minus_one_rollback"]  # type: ignore[index]
+    rollback["to_product_revision"] = evidence["product_revision"]
+    rollback["to_source_repository"] = "omnigent-ai/omnigent"
+    rollback["to_source_ref"] = "refs/tags/v0.13.0"
+    rollback["to_workflow_identity"] = "https://github.com/omnigent-ai/omnigent"
+    rollback["to_control_plane_schema_revision"] = "p0s000000003"
+    rollback["to_adapter_contract_version"] = "0.1.0"
+    rollback["to_security_contract_verified"] = False
+    rollback["to_security_contract_suite_revision"] = "b" * 40
+    rollback["to_security_contract_completed_at"] = "2026-08-05T09:06:00Z"
+    rollback["to_security_contract_receipt_sha256"] = "invalid"
+    rollback["to_image_identity_receipt_sha256"] = "invalid"
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert report["production_readiness"] == "blocked"
+    assert any("N-1 product revision is invalid" in item for item in report["blockers"])
+    for field in (
+        "to_source_repository",
+        "to_source_ref",
+        "to_workflow_identity",
+        "to_control_plane_schema_revision",
+        "to_adapter_contract_version",
+    ):
+        assert any(f"N-1 {field} is unsupported" in item for item in report["blockers"])
+    assert any(
+        "N-1 current security contract is not verified" in item for item in report["blockers"]
+    )
+    assert any("N-1 security suite is not current" in item for item in report["blockers"])
+    assert any(
+        "N-1 security acceptance did not precede rollback" in item for item in report["blockers"]
+    )
+    assert any("N-1 security contract receipt is invalid" in item for item in report["blockers"])
+    assert any("N-1 image identity receipt is invalid" in item for item in report["blockers"])
+
+
+def test_n1_server_and_host_must_share_one_prior_product_revision() -> None:
+    evidence = _valid_evidence()
+    evidence["promotion"]["images"][1]["n_minus_one_rollback"]["to_product_revision"] = (  # type: ignore[index]
+        "c" * 40
+    )
+    _resign(evidence)
+
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+
+    assert report["production_readiness"] == "blocked"
+    assert "N-1 Server and Host must use the same prior product revision" in report["blockers"]
+
+
 def test_admission_canary_and_rollback_must_run_in_order() -> None:
     evidence = _valid_evidence()
     image = evidence["images"][0]  # type: ignore[index]
@@ -1396,7 +1463,7 @@ def test_policy_drift_and_reused_release_attestor_fail_closed() -> None:
 
     invalid_policy = validate_release(_repo(), policy, _valid_evidence(), now=_NOW)
     assert invalid_policy["status"] == "fail"
-    assert "promotion policy fields do not match schema version 2" in invalid_policy["violations"]
+    assert "promotion policy fields do not match schema version 3" in invalid_policy["violations"]
     assert invalid_policy["blockers"] == [
         "release policy must be valid before evidence can qualify"
     ]
@@ -1411,6 +1478,23 @@ def test_policy_drift_and_reused_release_attestor_fail_closed() -> None:
 
     reused_actor = validate_release(_repo(), _policy(), evidence, now=_NOW)
     assert any("actors must be distinct" in item for item in reused_actor["blockers"])
+
+
+def test_n1_support_policy_cannot_be_weakened_to_upstream_tags() -> None:
+    policy = copy.deepcopy(_policy())
+    source = policy["promotion"]["n_minus_one_source"]  # type: ignore[index]
+    source["repository"] = "omnigent-ai/omnigent"
+    source["source_ref"] = "refs/tags/v0.13.0"
+    source["security_contract_receipt_required"] = False
+
+    report = validate_release(_repo(), policy, _valid_evidence(), now=_NOW)
+
+    assert report["status"] == "fail"
+    assert any(
+        "N-1 source policy must bind signed downstream main" in item
+        for item in report["violations"]
+    )
+    assert report["blockers"] == ["release policy must be valid before evidence can qualify"]
 
 
 def test_policy_weakening_and_malformed_nested_lists_fail_without_crashing() -> None:
