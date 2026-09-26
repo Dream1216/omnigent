@@ -59,6 +59,31 @@ def platform_control_plane() -> tuple[
     )
 
 
+@pytest.fixture
+def foreign_key_platform_control_plane() -> tuple[
+    sessionmaker[Session],
+    PlatformAuthorizationService,
+    PlatformSessionService,
+]:
+    engine = sa.create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @sa.event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _record) -> None:
+        connection.execute("PRAGMA foreign_keys=ON")
+
+    SaasBase.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    return (
+        factory,
+        PlatformAuthorizationService(factory),
+        PlatformSessionService(factory, origin=ORIGIN, audience=AUDIENCE),
+    )
+
+
 def _provision(
     authorization: PlatformAuthorizationService,
     name: str,
@@ -234,6 +259,60 @@ def test_local_operator_transition_requires_existing_operator_and_is_idempotent(
             now=NOW,
         )
     assert unauthorized.value.code == "platform_transition_authority_invalid"
+
+
+@pytest.mark.parametrize("mode", ["provision", "bootstrap", "transition"])
+def test_local_password_account_writes_parent_before_foreign_keys(
+    foreign_key_platform_control_plane,
+    mode: str,
+) -> None:
+    factory, authorization, sessions = foreign_key_platform_control_plane
+    passwords = PlatformPasswordAuthenticationService(factory, sessions)
+    if mode == "provision":
+        principal_id = passwords.provision_account(
+            username="staff-foreign-key",
+            password="staff-foreign-key-password",
+            now=NOW,
+        )
+    elif mode == "bootstrap":
+        principal_id = passwords.bootstrap_initial_operator(
+            username="staff-foreign-key",
+            password="staff-foreign-key-password",
+            now=NOW,
+        )
+    else:
+        legacy_operator = authorization.provision_staff_principal(
+            identity_connection_ref="foreign-key-legacy-operator",
+            issuer="urn:omnigent:single-owner-beta",
+            subject="foreign-key-legacy-operator",
+            now=NOW,
+        )
+        _seed_role(
+            factory,
+            principal_id=legacy_operator,
+            assigned_by=legacy_operator,
+            role="platform_operator",
+        )
+        principal_id = passwords.transition_local_operator(
+            username="staff-foreign-key",
+            password="staff-foreign-key-password",
+            authorized_by_principal_id=legacy_operator,
+            approval_ref="foreign-key-transition-test",
+            reason="verify ordered local Staff writes",
+            now=NOW,
+        )
+    with factory.begin() as db:
+        assert db.get(PlatformStaffPrincipalRecord, principal_id) is not None
+        assert db.get(PlatformPasswordCredentialRecord, principal_id) is not None
+        if mode != "provision":
+            assert (
+                db.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(PlatformRoleAssignmentRecord)
+                    .where(PlatformRoleAssignmentRecord.principal_id == principal_id)
+                )
+                == 1
+            )
 
 
 def test_local_staff_password_authentication_is_generic_and_locks_failures(
