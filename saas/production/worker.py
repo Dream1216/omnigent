@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol, cast
+from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -43,7 +43,7 @@ from saas.onboarding_composition import (
     verify_onboarding_database_authority,
 )
 from saas.outbox_worker import verify_dispatcher_database_role
-from saas.production.server import load_external_adapter
+from saas.production.server import ProductionAdapterConfig, load_external_adapter
 from saas.production.server_config import (
     ProductionMigrationReceipt,
     ProductionServerConfigError,
@@ -1143,8 +1143,21 @@ def load_production_worker_adapters(
 ) -> ProductionWorkerAdapters:
     """Load readiness contracts without claiming they implement external transports."""
 
-    runner = load_external_adapter(config.runner_adapter_factory, cast(Any, config))
-    preview = load_external_adapter(config.preview_adapter_factory, cast(Any, config))
+    adapter_config = ProductionAdapterConfig(
+        product_revision=config.product_revision,
+        upstream_revision=config.upstream_revision,
+        image_digest=config.image_digest,
+        runtime_version=config.runtime_version,
+        official_schema_revision=config.official_schema_revision,
+        adapter_contract_version=config.adapter_contract_version,
+        public_origin=config.public_origin,
+        capabilities=config.capabilities,
+        preview_root_domain=config.preview_root_domain,
+        preview_lease_seconds=config.preview_lease_seconds,
+        executor_database_url=config.executor_database_url,
+    )
+    runner = load_external_adapter(config.runner_adapter_factory, adapter_config)
+    preview = load_external_adapter(config.preview_adapter_factory, adapter_config)
     adapters = ProductionWorkerAdapters(runner=runner, preview=preview)
     adapters.assert_ready()
     return adapters

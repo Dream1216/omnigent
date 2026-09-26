@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
+import types
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -22,6 +24,7 @@ from saas.production.worker import (
     ProductionSchedulerWorker,
     ProductionWorkerAdapters,
     ProductionWorkerConfigError,
+    load_production_worker_adapters,
     load_production_worker_config,
 )
 
@@ -140,6 +143,7 @@ def test_worker_config_binds_exact_release_receipt_and_distinct_authorities(
         upstream_revision="c" * 40,
         image_digest=_IMAGE_DIGEST,
         runtime_version="0.15.0.dev0",
+        official_schema_revision="official-head",
         adapter_contract_version="1.0",
         public_origin="https://next.example.test",
         capabilities=frozenset({"tenant", "run", "delivery", "runner", "preview"}),
@@ -312,6 +316,45 @@ def test_worker_database_urls_are_secret_redacted_from_repr(tmp_path: Path) -> N
     assert "dispatcher_login" not in repr(config)
     assert "executor_login" not in repr(config)
     assert "secret@" not in repr(config)
+
+
+def test_worker_adapters_receive_only_required_release_and_executor_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_production_worker_config(_environment(tmp_path))
+    runner_module = types.ModuleType("deployment.runner")
+    preview_module = types.ModuleType("deployment.preview")
+
+    class Ready:
+        def assert_production_ready(self) -> None:
+            return None
+
+    def runner_factory(*, config):
+        assert config.product_revision == _SOURCE_SHA
+        assert config.official_schema_revision == "official-head"
+        assert config.adapter_contract_version == "1.0"
+        assert config.executor_database_url.startswith("postgresql+psycopg://")
+        assert not hasattr(config, "dispatcher_database_url")
+        assert config.upstream_revision == "c" * 40
+        assert "secret@" not in repr(config)
+        return Ready()
+
+    def preview_factory(*, config):
+        assert config.product_revision == _SOURCE_SHA
+        assert not hasattr(config, "dispatcher_database_url")
+        assert "secret@" not in repr(config)
+        return Ready()
+
+    runner_module.readiness = runner_factory  # type: ignore[attr-defined]
+    preview_module.readiness = preview_factory  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "deployment.runner", runner_module)
+    monkeypatch.setitem(sys.modules, "deployment.preview", preview_module)
+
+    adapters = load_production_worker_adapters(config)
+
+    assert isinstance(adapters.runner, Ready)
+    assert isinstance(adapters.preview, Ready)
 
 
 def test_secret_file_helper_uses_current_process_owner(tmp_path: Path) -> None:

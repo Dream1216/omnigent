@@ -187,15 +187,35 @@ class ProductionExternalAdapter(Protocol):
 class ProductionAdapterConfigSource(Protocol):
     """Shared public facts required by server and worker adapter factories."""
 
-    product_revision: str
-    upstream_revision: str
-    image_digest: str
-    runtime_version: str
-    adapter_contract_version: str
-    public_origin: str
-    capabilities: frozenset[str]
-    preview_root_domain: str | None
-    preview_lease_seconds: int
+    @property
+    def product_revision(self) -> str: ...
+
+    @property
+    def upstream_revision(self) -> str: ...
+
+    @property
+    def image_digest(self) -> str: ...
+
+    @property
+    def runtime_version(self) -> str: ...
+
+    @property
+    def official_schema_revision(self) -> str: ...
+
+    @property
+    def adapter_contract_version(self) -> str: ...
+
+    @property
+    def public_origin(self) -> str: ...
+
+    @property
+    def capabilities(self) -> frozenset[str]: ...
+
+    @property
+    def preview_root_domain(self) -> str | None: ...
+
+    @property
+    def preview_lease_seconds(self) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,11 +226,13 @@ class ProductionAdapterConfig:
     upstream_revision: str
     image_digest: str
     runtime_version: str
+    official_schema_revision: str
     adapter_contract_version: str
     public_origin: str
     capabilities: frozenset[str]
     preview_root_domain: str | None
     preview_lease_seconds: int
+    executor_database_url: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_server_config(cls, config: ProductionAdapterConfigSource) -> ProductionAdapterConfig:
@@ -219,6 +241,7 @@ class ProductionAdapterConfig:
             upstream_revision=config.upstream_revision,
             image_digest=config.image_digest,
             runtime_version=config.runtime_version,
+            official_schema_revision=config.official_schema_revision,
             adapter_contract_version=config.adapter_contract_version,
             public_origin=config.public_origin,
             capabilities=config.capabilities,
@@ -571,24 +594,23 @@ def _call_factory(factory: Callable[..., Any], config: ProductionAdapterConfig) 
 
 def load_external_adapter(
     reference: str,
-    config: ProductionServerConfig,
+    config: ProductionAdapterConfig,
 ) -> ProductionExternalAdapter:
-    """Load one deployment-trusted ``module:attribute`` adapter factory."""
+    """Load one deployment-trusted factory with an explicitly narrow config."""
 
     module_name, separator, attribute_name = reference.partition(":")
     if not separator or not module_name or not attribute_name:
         raise ProductionServerCompositionError("external adapter factory reference is invalid")
-    adapter_config = ProductionAdapterConfig.from_server_config(config)
     try:
         candidate = getattr(importlib.import_module(module_name), attribute_name)
         if isinstance(candidate, type):
-            candidate = _call_factory(candidate, adapter_config)
+            candidate = _call_factory(candidate, config)
         if callable(getattr(candidate, "assert_production_ready", None)):
             adapter = candidate
         elif callable(getattr(candidate, "build", None)):
-            adapter = _call_factory(candidate.build, adapter_config)
+            adapter = _call_factory(candidate.build, config)
         elif callable(candidate):
-            adapter = _call_factory(candidate, adapter_config)
+            adapter = _call_factory(candidate, config)
         else:
             adapter = candidate
     except ProductionServerCompositionError:
@@ -607,14 +629,15 @@ def load_external_adapter(
 def load_external_adapters(config: ProductionServerConfig) -> ProductionExternalAdapters:
     """Load only adapters enabled by the immutable capability profile."""
 
+    adapter_config = ProductionAdapterConfig.from_server_config(config)
     return ProductionExternalAdapters(
         runner=(
-            load_external_adapter(config.runner_adapter_factory, config)
+            load_external_adapter(config.runner_adapter_factory, adapter_config)
             if config.runner_adapter_factory is not None
             else None
         ),
         preview=(
-            load_external_adapter(config.preview_adapter_factory, config)
+            load_external_adapter(config.preview_adapter_factory, adapter_config)
             if config.preview_adapter_factory is not None
             else None
         ),
