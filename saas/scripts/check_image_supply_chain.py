@@ -891,6 +891,13 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         runtime_stage = dockerfile.split(runtime_marker, 1)[1]
     if "COPY --from=builder /build /build" in host_stage:
         violations.append("host image must not retain the non-runtime build tree")
+    if (
+        "git curl ca-certificates" not in runtime_stage
+        or "test -x /usr/bin/git" not in runtime_stage
+    ):
+        violations.append(
+            "server image must include the trusted Git runtime used by Runner mirrors"
+        )
     apt_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
         "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",

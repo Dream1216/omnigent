@@ -661,6 +661,11 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "production Dockerfile must pin pnpm 11.15.1",
         ),
         (
+            "git curl ca-certificates",
+            "curl ca-certificates",
+            "server image must include the trusted Git runtime used by Runner mirrors",
+        ),
+        (
             "ARG CLAUDE_CODE_VERSION=2.1.266",
             "ARG CLAUDE_CODE_VERSION=2.1.267",
             "host image must pin @anthropic-ai/claude-code to 2.1.266",
