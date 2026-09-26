@@ -309,6 +309,36 @@ def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> No
     )
 
 
+def test_runtime_runner_memberships_allow_only_exact_least_privilege_shape() -> None:
+    runner_login = "runner_23dbe8e9d95a442abc841c356800ecfc_g2"
+    edge: migration._RoleGraphEdge = (
+        "saas_runner_agent",
+        runner_login,
+        "postgres",
+        False,
+        True,
+        False,
+        10,
+    )
+
+    assert migration._runtime_runner_membership_is_safe(edge, bootstrap_name="postgres")
+    assert migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, False, False, False, False, False, True, 8, None)
+    )
+    assert not migration._runtime_runner_membership_is_safe(
+        (*edge[:3], True, *edge[4:]), bootstrap_name="postgres"
+    )
+    assert not migration._runtime_runner_membership_is_safe(
+        (*edge[:2], "other", *edge[3:]), bootstrap_name="postgres"
+    )
+    assert not migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, True, False, False, False, False, True, 8, None)
+    )
+    assert not migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, False, False, False, False, False, True, -1, None)
+    )
+
+
 def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
     common = (True, False, False, False, False, False, True, -1)
     journal = "runtime_provider_journal_login"
