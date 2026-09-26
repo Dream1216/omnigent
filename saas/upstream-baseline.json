@@ -47,11 +47,28 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 84,
+    "max_direct_upstream_files": 88,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 84,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2382,
+    "reason": "User-authorized sequential UI E2E closure on the exact 67e6ffc3b5562b967a72897fa5403be830888761 mainline: defer the new-session skill catalog until agent discovery settles, and synchronously hold the virtual transcript while the 53px older-history indicator mounts and unmounts. The seven reviewed UI and browser-test files add 95 measured net lines; four become newly divergent from official upstream, moving the exact totals from 84 files / 2,382 lines to 88 files / 2,477 lines. Raise only the direct-file ceiling to the exact measured 88; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The browser contract explicitly proves that the loading indicator painted while the reader position remained stable. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "new-session-catalog-scroll-stability-v18",
+    "scoped_ui_delta": {
+      "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+      "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+      "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+      "web/src/components/chat/Transcript.tsx": 8,
+      "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+      "web/src/shell/NewChatDialog.test.tsx": 43,
+      "web/src/shell/NewChatDialog.tsx": 7
+    },
+    "previous_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 83,
@@ -310,6 +327,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }

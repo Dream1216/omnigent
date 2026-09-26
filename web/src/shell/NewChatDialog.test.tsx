@@ -6154,6 +6154,49 @@ describe("NewChatLandingScreen skills menu", () => {
     expect(authenticatedFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("defers skills discovery until the live agent binding replaces a cached preview", () => {
+    const cachedAgent: AvailableAgent = {
+      id: "cached-claude",
+      name: "cached-claude",
+      display_name: "Cached Claude",
+      description: null,
+      harness: "claude-native",
+      skills: [],
+    };
+    const liveAgent: AvailableAgent = {
+      id: "live-codex",
+      name: "live-codex",
+      display_name: "Live Codex",
+      description: null,
+      harness: "codex-native",
+      skills: [],
+    };
+    mockAgents([cachedAgent], {
+      ...PENDING_QUERY_STATE,
+      data: [cachedAgent],
+    } as unknown as Partial<ReturnType<typeof useAvailableAgents>>);
+    renderLanding();
+
+    expect(vi.mocked(useSkills).mock.lastCall?.[0]).toMatchObject({
+      target: null,
+      starting: true,
+    });
+
+    mockAgents([liveAgent]);
+    typeMessage("/review");
+
+    const resolvedOptions = vi.mocked(useSkills).mock.lastCall?.[0];
+    expect(resolvedOptions).toMatchObject({
+      target: {
+        hostId: "host_1",
+        harness: "codex-native",
+        path: "/Users/corey/repo",
+        agentId: "live-codex",
+      },
+    });
+    expect(resolvedOptions?.starting).toBeFalsy();
+  });
+
   it("shows bundled skills while loading, then uses the server's effective catalog", () => {
     mockAgents([skilledAgent()]);
     mockSkills({ skillsStatus: "loading" });

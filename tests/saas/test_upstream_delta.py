@@ -124,17 +124,31 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_maintainer_governance_budget_revision_retains_hard_source_ceilings(
+def test_ui_e2e_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 84
+    assert budget["max_direct_upstream_files"] == 88
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "new-session-catalog-scroll-stability-v18"
+    assert revision["previous_max_direct_upstream_files"] == 84
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2382
+    assert revision["scoped_ui_delta"] == {
+        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+        "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+        "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+        "web/src/components/chat/Transcript.tsx": 8,
+        "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+        "web/src/shell/NewChatDialog.test.tsx": 43,
+        "web/src/shell/NewChatDialog.tsx": 7,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "repository-owner-maintainer-governance-v17"
     assert revision["previous_max_direct_upstream_files"] == 83
     assert revision["previous_max_upstream_net_added_loc"] == 2579
