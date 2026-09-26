@@ -14,8 +14,36 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { safeReturnTarget, signIn } from "@/lib/auth";
+import { useI18n, type TranslationFunction } from "@/lib/i18n";
+
+const localizedErrors = new Map<string, Parameters<TranslationFunction>[0]>([
+  ["The request timed out. Please try again.", "error.timeout"],
+  [
+    "Could not reach the server. Check your connection and try again.",
+    "error.network",
+  ],
+  [
+    "The service is temporarily unavailable. Try again shortly.",
+    "error.unavailable",
+  ],
+  ["Check your email and password and try again.", "error.credentials"],
+  [
+    "The server returned an invalid response. Please try again.",
+    "error.invalidResponse",
+  ],
+]);
+
+function translatedError(message: string, t: TranslationFunction): string {
+  const directKey = localizedErrors.get(message);
+  if (directKey) return t(directKey);
+  const retry = message.match(/^(.*) Try again in (\d+) seconds\.$/);
+  return retry
+    ? `${retry[1]} ${t("error.retryAfter", { seconds: retry[2] })}`
+    : message;
+}
 
 export function LoginForm() {
+  const { t } = useI18n();
   const emailRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const pending = useRef(false);
@@ -66,11 +94,7 @@ export function LoginForm() {
     } catch (cause) {
       pending.current = false;
       setBusy(false);
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Unable to sign in. Please try again.",
-      );
+      setError(cause instanceof Error ? cause.message : t("error.generic"));
     } finally {
       window.clearTimeout(timeout);
     }
@@ -90,11 +114,9 @@ export function LoginForm() {
           disabled={!ready || busy}
           className="m-0 grid min-w-0 gap-6 border-0 p-0"
         >
-          <legend className="sr-only">
-            Sign in with your Omnigent account
-          </legend>
+          <legend className="sr-only">{t("form.legend")}</legend>
           <div className="grid gap-2.5">
-            <Label htmlFor="email">Work email</Label>
+            <Label htmlFor="email">{t("form.email")}</Label>
             <div className="relative">
               <Mail
                 className="input-leading-icon"
@@ -110,14 +132,14 @@ export function LoginForm() {
                 inputMode="email"
                 autoCapitalize="none"
                 spellCheck={false}
-                placeholder="you@company.com"
+                placeholder={t("form.emailPlaceholder")}
                 required
                 className="pl-11"
               />
             </div>
           </div>
           <div className="grid gap-2.5">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">{t("form.password")}</Label>
             <div className="relative">
               <LockKeyhole
                 className="input-leading-icon"
@@ -129,7 +151,7 @@ export function LoginForm() {
                 name="password"
                 type={visible ? "text" : "password"}
                 autoComplete="current-password"
-                placeholder="Enter your password"
+                placeholder={t("form.passwordPlaceholder")}
                 required
                 className="pr-14 pl-11"
                 onKeyDown={(event) =>
@@ -146,7 +168,9 @@ export function LoginForm() {
                 variant="ghost"
                 size="icon"
                 className="absolute top-1 right-1 rounded-lg"
-                aria-label={visible ? "Hide password" : "Show password"}
+                aria-label={
+                  visible ? t("form.hidePassword") : t("form.showPassword")
+                }
                 aria-controls="password"
                 aria-pressed={visible}
                 onClick={() => setVisible((value) => !value)}
@@ -164,7 +188,7 @@ export function LoginForm() {
               hidden={!capsLock}
               className="text-xs text-amber-700"
             >
-              Caps Lock is on.
+              {t("form.capsLock")}
             </p>
           </div>
           <Button
@@ -179,7 +203,7 @@ export function LoginForm() {
                 aria-hidden="true"
               />
             ) : null}
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? t("form.submitting") : t("form.submit")}
             {!busy ? <ArrowRight size={18} aria-hidden="true" /> : null}
           </Button>
         </fieldset>
@@ -191,24 +215,23 @@ export function LoginForm() {
           hidden={!error}
           className="login-error"
         >
-          {error}
+          {translatedError(error, t)}
         </p>
       </form>
       <noscript>
-        <p className="login-error">
-          Enable JavaScript in your browser to sign in securely.
-        </p>
+        <p className="login-error">{t("form.noScript")}</p>
       </noscript>
       <p
         id="return-context"
         hidden={destination.split(/[?#]/)[0] !== "/settings/account"}
         className="return-context"
       >
-        After sign-in <span aria-hidden="true">→</span> Account settings
+        {t("form.afterSignIn")} <span aria-hidden="true">→</span>{" "}
+        {t("form.accountSettings")}
       </p>
       <div className="form-note">
         <ShieldCheck size={16} aria-hidden="true" />
-        <span>Your workspace. Your account.</span>
+        <span>{t("form.note")}</span>
       </div>
     </>
   );

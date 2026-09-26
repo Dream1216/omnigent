@@ -209,6 +209,7 @@ import {
 } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import { useOmnigentAnalytics } from "@/lib/analytics";
+import { useI18n } from "@/lib/i18n";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
 import {
   isNativeCodingAgent,
@@ -1455,6 +1456,7 @@ export function AgentHarnessPicker({
   const appliedOpenNonce = useRef(0);
   const queryClient = useQueryClient();
   const info = useServerInfo();
+  const { t } = useI18n();
   // Feature ON → single "needs setup" badge; OFF → per-reason original text.
   const collapsedBadge = isFeatureEnabled(info, "harness_install");
   const triggerModel = triggerDetails.find((detail) => detail.label === "Model");
@@ -1463,17 +1465,23 @@ export function AgentHarnessPicker({
   );
   const triggerModelText = triggerModel ? compactModelTriggerLabel(triggerModel.value) : "";
   const triggerEffortText = triggerEffort ? compactModelTriggerLabel(triggerEffort.value) : "";
-  const visibleModelText = triggerModelText === "Default" ? "Models unavailable" : triggerModelText;
+  const modelsUnavailableText = t("landing.modelsUnavailable");
+  const visibleModelText =
+    triggerModelText === "Default" ? modelsUnavailableText : triggerModelText;
   const visibleEffortText =
     triggerEffortText === "Default" || triggerEffortText === "—" ? "" : triggerEffortText;
   const triggerAccessibleDetails = triggerDetails
     .map((detail) => `${detail.label} ${compactModelTriggerLabel(detail.value)}`)
     .join(", ");
-  const triggerAccessibleName = [hasAgents ? agentLabel : "No agents", triggerAccessibleDetails]
+  const triggerAccessibleName = [
+    hasAgents ? agentLabel : t("landing.noAgents"),
+    triggerAccessibleDetails,
+  ]
     .filter(Boolean)
     .join(", ");
   const triggerText =
-    visibleModelText || (triggerModel === undefined ? (hasAgents ? agentLabel : "No agents") : "");
+    visibleModelText ||
+    (triggerModel === undefined ? (hasAgents ? agentLabel : t("landing.noAgents")) : "");
   const selectedEntry = [...harnessEntries, ...agentEntries].find(
     (agent) => agent.id === effectiveAgentId,
   );
@@ -1481,7 +1489,7 @@ export function AgentHarnessPicker({
   const cachedPreview = previewOnly ? readNewChatPickerCache(cacheKey) : null;
   const resolvedPreview = useMemo<NewChatPickerPreview | null>(
     () =>
-      selectedEntry && hasAgents && visibleModelText !== "Models unavailable"
+      selectedEntry && hasAgents && visibleModelText !== modelsUnavailableText
         ? {
             agent: { name: selectedEntry.name, harness: selectedEntry.harness },
             label: triggerAccessibleName,
@@ -1493,6 +1501,7 @@ export function AgentHarnessPicker({
     [
       selectedEntry,
       hasAgents,
+      modelsUnavailableText,
       visibleModelText,
       triggerAccessibleName,
       triggerText,
@@ -2123,6 +2132,7 @@ export function resetLandingDraft(): void {
 
 export function NewChatLandingScreen() {
   const navigate = useNavigate();
+  const { locale, t } = useI18n();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const isMobileViewport = useIsMobileViewport();
@@ -3762,6 +3772,13 @@ export function NewChatLandingScreen() {
             : supportsDevinPermission
               ? DEVIN_NATIVE_PERMISSION_MODES
               : [];
+  const localizedDirectModeOptions =
+    locale === "en-US"
+      ? directModeOptions
+      : directModeOptions.map((option) => ({
+          ...option,
+          label: option.label === "Default" ? t("landing.default") : option.label,
+        }));
   const selectDirectMode = (mode: string) => {
     if (!selectedNativeHarness) return;
     if (supportsPermissionMode) setPermissionMode(mode);
@@ -4700,7 +4717,7 @@ export function NewChatLandingScreen() {
   // clone-dir rule), a count when several, or a placeholder when none.
   const sandboxRepoLabel =
     sandboxRepoSelections.length === 0
-      ? "Repository"
+      ? t("landing.repository")
       : sandboxRepoSelections.length === 1
         ? ((only) => {
             const name = deriveRepoName(only.url) ?? "repository";
@@ -5491,8 +5508,8 @@ export function NewChatLandingScreen() {
   }
 
   const placeholderText = selectedProject
-    ? `Start a new session in ${selectedProject}`
-    : "Describe a task to start a new session…";
+    ? t("landing.projectPlaceholder", { project: selectedProject })
+    : t("landing.placeholder");
 
   const isCloudHostEntry = (host: Host) =>
     host.host_id === arcaHostId ||
@@ -6266,10 +6283,10 @@ export function NewChatLandingScreen() {
 
                     {noExecutionTargetSelected ? (
                       <ComposerPermissionPicker
-                        label="Permission mode"
-                        value="No host selected"
+                        label={t("landing.permissionMode")}
+                        value={t("landing.noHost")}
                         disabled
-                        options={directModeOptions}
+                        options={localizedDirectModeOptions}
                         onSelect={selectDirectMode}
                         testIdPrefix="new-chat-landing"
                       />
@@ -6280,11 +6297,19 @@ export function NewChatLandingScreen() {
                       />
                     ) : visiblePermissionRow ? (
                       <ComposerPermissionPicker
-                        label={visiblePermissionRow.label}
-                        value={visiblePermissionRow.value}
+                        label={
+                          visiblePermissionRow.label === "Permission mode"
+                            ? t("landing.permissionMode")
+                            : visiblePermissionRow.label
+                        }
+                        value={
+                          visiblePermissionRow.value === "Default"
+                            ? t("landing.default")
+                            : visiblePermissionRow.value
+                        }
                         loading={pickerLoading}
                         interactiveWhileLoading={interactiveWhileLoading}
-                        options={directModeOptions}
+                        options={localizedDirectModeOptions}
                         onSelect={selectDirectMode}
                         testIdPrefix="new-chat-landing"
                       />
@@ -6521,7 +6546,7 @@ export function NewChatLandingScreen() {
                         interactiveWhileLoading={interactiveWhileLoading}
                         disabledLabel={
                           noExecutionTargetSelected && agentList.length > 0
-                            ? "No host selected"
+                            ? t("landing.noHost")
                             : undefined
                         }
                         cacheKey={pickerCacheKey}
@@ -6594,7 +6619,7 @@ export function NewChatLandingScreen() {
                           <span className="inline-flex shrink-0">
                             <ComposerSendButton
                               disabled={!canSubmit}
-                              label={creating ? "Starting session" : "Start session"}
+                              label={creating ? t("landing.starting") : t("landing.start")}
                               busy={creating}
                               data-testid="new-chat-landing-submit"
                             />
@@ -6604,7 +6629,7 @@ export function NewChatLandingScreen() {
                           <TooltipContent>{submitDisabledReason}</TooltipContent>
                         ) : !creating && !preventsKeyboardSubmit ? (
                           <KeyboardShortcutTooltipContent
-                            label="Start session"
+                            label={t("landing.start")}
                             keys={composerSendShortcutKeys(submitWithModEnter)}
                           />
                         ) : null}
@@ -6757,7 +6782,7 @@ export function NewChatLandingScreen() {
               onClick={() => navigate("/settings/import")}
               data-testid="landing-import-sessions"
             >
-              Import your recent sessions
+              {t("landing.importSessions")}
             </Button>
           </div>
         ) : null}

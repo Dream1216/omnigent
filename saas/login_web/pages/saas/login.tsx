@@ -1,53 +1,58 @@
 import { ArrowUpRight, LogIn } from "lucide-react";
 import Head from "next/head";
 import { BrandMark, BrandPanel } from "@/components/brand-panel";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { LoginForm } from "@/components/login-form";
+import { useI18n } from "@/lib/i18n";
 
 export default function LoginPage() {
+  const { t } = useI18n();
+
   return (
     <>
       <Head>
-        <title>Sign in · Omnigent</title>
-        <meta
-          name="description"
-          content="Sign in to Omnigent. One focused workspace for your agents, projects, and team."
-        />
+        <title>{t("meta.title")}</title>
+        <meta name="description" content={t("meta.description")} />
         <meta name="robots" content="noindex, nofollow" />
       </Head>
       <a className="skip-link" href="#email">
-        Skip to sign in
+        {t("page.skip")}
       </a>
       <main className="login-shell">
         <BrandPanel />
         <section className="login-stage" aria-labelledby="login-title">
           <header className="stage-header">
             <BrandMark compact />
-            <p className="signup-link">
-              New to Omnigent?{" "}
-              <a href="/signup">
-                Create a workspace <ArrowUpRight size={14} aria-hidden="true" />
-              </a>
-            </p>
+            <div className="stage-header-actions">
+              <LanguageSwitcher />
+              <p className="signup-link">
+                {t("page.newUser")}{" "}
+                <a href="/signup">
+                  {t("page.createWorkspace")}{" "}
+                  <ArrowUpRight size={14} aria-hidden="true" />
+                </a>
+              </p>
+            </div>
           </header>
           <div className="login-content">
             <div className="welcome-mark" aria-hidden="true">
               <LogIn size={23} />
             </div>
-            <p className="eyebrow">WELCOME BACK</p>
+            <p className="eyebrow">{t("page.eyebrow")}</p>
             <h1 id="login-title">
-              Sign in to your
+              {t("page.headingLead")}
               <br />
-              workspace<span>.</span>
+              {t("page.headingFocus")}
+              <span>{t("page.headingPunctuation")}</span>
             </h1>
-            <p className="login-description">
-              Good to see you. Let’s pick up where you left off.
-            </p>
+            <p className="login-description">{t("page.description")}</p>
             <LoginForm />
           </div>
           <footer className="stage-footer">
-            <span>© Omnigent. Built for what’s next.</span>
+            <span>{t("page.copyright")}</span>
             <a href="/saas/delivery">
-              交付工作台 <ArrowUpRight size={13} aria-hidden="true" />
+              {t("page.deliveryWorkspace")}{" "}
+              <ArrowUpRight size={13} aria-hidden="true" />
             </a>
           </footer>
         </section>
