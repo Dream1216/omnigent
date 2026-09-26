@@ -8,6 +8,7 @@ import pytest
 
 from saas.production.server_config import (
     ProductionServerConfigError,
+    load_production_database_url_file,
     load_production_server_config,
 )
 from saas.production.service_bindings import (
@@ -553,6 +554,21 @@ def test_rejects_owner_shaped_service_login(tmp_path: Path) -> None:
     )
     with pytest.raises(ProductionServerConfigError, match="owner/admin"):
         load_production_server_config(environment)
+
+
+def test_allows_receipt_bound_preview_owner_service_login(tmp_path: Path) -> None:
+    preview_owner_url = _secret(
+        tmp_path / "preview-owner-url",
+        "postgresql+psycopg://next_beta_preview_owner:password@postgres.internal/omnigent"
+        "?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt",
+    )
+    environment = {"OMNIGENT_SAAS_PREVIEW_OWNER_DATABASE_URL_FILE": preview_owner_url}
+
+    raw, parsed, path = load_production_database_url_file(environment, "preview_owner")
+
+    assert raw.startswith("postgresql+psycopg://next_beta_preview_owner:")
+    assert parsed.username == "next_beta_preview_owner"
+    assert path == Path(preview_owner_url)
 
 
 def test_requires_tls_verify_full_on_every_service_login(tmp_path: Path) -> None:

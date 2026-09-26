@@ -344,7 +344,12 @@ def _database_url(environ: Mapping[str, str], role: str) -> tuple[str, URL, Path
             f"{env_name} must contain a complete postgresql+psycopg service-login URL"
         )
     login = parsed.username.lower()
-    if any(fragment in login for fragment in _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS):
+    forbidden_login_fragments = _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS
+    if role == "preview_owner":
+        forbidden_login_fragments = tuple(
+            fragment for fragment in _FORBIDDEN_DATABASE_LOGIN_FRAGMENTS if fragment != "owner"
+        )
+    if any(fragment in login for fragment in forbidden_login_fragments):
         raise ProductionServerConfigError(f"{env_name} must not contain an owner/admin login")
     query_names = {str(key).lower() for key in parsed.query}
     if "role" in query_names or "options" in query_names:
