@@ -881,12 +881,13 @@ describe("Sidebar session list", () => {
     );
   });
 
-  it("renders Search, Settings, and Collapse as compact header actions", () => {
+  it("renders Search, Language, Settings, and Collapse as compact header actions", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar();
 
     const headerActions = screen.getByTestId("sidebar-header-actions");
     const search = within(headerActions).getByTestId("sidebar-search-button");
+    const language = within(headerActions).getByTestId("language-menu-button");
     const settings = screen.getByTestId("settings-button");
 
     expect(search).toHaveAttribute("aria-label", "Search");
@@ -894,6 +895,9 @@ describe("Sidebar session list", () => {
     expect(search).toHaveClass("size-6", "rounded-[var(--radius-md)]");
     expect(search).not.toHaveClass("rounded-sm");
     expect(search.querySelector("svg")).toHaveClass("ui-icon");
+    expect(language).toHaveAttribute("aria-label", "Change language");
+    expect(language).toHaveAttribute("data-size", "icon-xs");
+    expect(language).toHaveClass("size-6", "rounded-[var(--radius-md)]");
     expect(settings).toHaveAttribute("aria-label", "Settings");
     expect(settings).toHaveAttribute("data-size", "icon-xs");
     expect(settings).toHaveClass("size-6", "rounded-[var(--radius-md)]");

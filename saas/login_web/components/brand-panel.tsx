@@ -7,13 +7,16 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export function BrandMark({ compact = false }: { compact?: boolean }) {
+  const { t } = useI18n();
+
   return (
     <a
       href="/"
       className={compact ? "wordmark mobile-wordmark" : "wordmark"}
-      aria-label="Omnigent home"
+      aria-label={t("brand.home")}
     >
       <span className="brand-icon">
         <Blocks size={22} strokeWidth={2} aria-hidden="true" />
@@ -26,22 +29,24 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
 }
 
 export function BrandPanel() {
+  const { t } = useI18n();
+
   return (
-    <aside className="brand-panel" aria-label="About Omnigent">
+    <aside className="brand-panel" aria-label={t("brand.about")}>
       <BrandMark />
       <div className="brand-story">
         <p className="brand-eyebrow">
-          <span /> YOUR NEXT IDEA STARTS HERE
+          <span /> {t("brand.eyebrow")}
         </p>
         <h2>
-          One workspace.
+          {t("brand.headingLead")}
           <br />
-          <span>More possibilities.</span>
+          <span>{t("brand.headingFocus")}</span>
         </h2>
         <p className="brand-description">
-          Bring your agents, projects, and team together.
+          {t("brand.descriptionLead")}
           <br />
-          Make room for your best work.
+          {t("brand.descriptionFocus")}
         </p>
         <div className="workspace-illustration" aria-hidden="true">
           <div className="diagram-grid" />
@@ -64,8 +69,8 @@ export function BrandPanel() {
               <Sparkles size={18} />
             </span>
             <div>
-              <strong>AI agents</strong>
-              <small>Ideas into action</small>
+              <strong>{t("brand.agentTitle")}</strong>
+              <small>{t("brand.agentCaption")}</small>
             </div>
           </div>
           <div className="diagram-node node-projects">
@@ -73,8 +78,8 @@ export function BrandPanel() {
               <FolderKanban size={18} />
             </span>
             <div>
-              <strong>Projects</strong>
-              <small>A space to build</small>
+              <strong>{t("brand.projectTitle")}</strong>
+              <small>{t("brand.projectCaption")}</small>
             </div>
           </div>
           <div className="diagram-node node-code">
@@ -82,8 +87,8 @@ export function BrandPanel() {
               <Code2 size={18} />
             </span>
             <div>
-              <strong>Your workflow</strong>
-              <small>Keep moving forward</small>
+              <strong>{t("brand.workflowTitle")}</strong>
+              <small>{t("brand.workflowCaption")}</small>
             </div>
           </div>
           <div className="diagram-node node-team">
@@ -91,8 +96,8 @@ export function BrandPanel() {
               <Users size={18} />
             </span>
             <div>
-              <strong>Your team</strong>
-              <small>Better, together</small>
+              <strong>{t("brand.teamTitle")}</strong>
+              <small>{t("brand.teamCaption")}</small>
             </div>
           </div>
           <span className="diagram-spark spark-one">+</span>
@@ -100,15 +105,15 @@ export function BrandPanel() {
         </div>
         <div className="brand-benefits">
           <span>
-            <Check size={14} /> A focused workspace
+            <Check size={14} /> {t("brand.benefitFocus")}
           </span>
           <span>
-            <Check size={14} /> Connected by design
+            <Check size={14} /> {t("brand.benefitConnected")}
           </span>
         </div>
       </div>
       <div className="brand-footer">
-        <span>A little inspiration. A lot of possibility.</span>
+        <span>{t("brand.footer")}</span>
         <ArrowUpRight size={18} />
       </div>
     </aside>

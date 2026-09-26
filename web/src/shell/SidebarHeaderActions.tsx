@@ -2,6 +2,8 @@ import { PanelLeftOpenIcon, PanelRightOpenIcon, SearchIcon, SettingsIcon } from 
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { LanguageMenuButton } from "@/components/LanguageSwitcher";
+import { useI18n } from "@/lib/i18n";
 import { Link } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 
@@ -54,9 +56,11 @@ export function SidebarHeaderActions({
   onTogglePointerDown?: () => void;
   onTogglePointerLeave?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-1" data-testid="sidebar-header-actions">
       <SidebarSearchButton onOpenSearch={onOpenSearch} />
+      <LanguageMenuButton className="max-md:hidden" />
       <SidebarSettingsButton onSettingsClick={onSettingsClick} className="max-md:hidden" />
       <Tooltip>
         <TooltipTrigger asChild>
@@ -64,7 +68,7 @@ export function SidebarHeaderActions({
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={expanded ? "Close sidebar" : "Open sidebar"}
+            aria-label={expanded ? t("sidebar.close") : t("sidebar.open")}
             onClick={onToggle}
             onPointerEnter={onTogglePointerEnter}
             onPointerDown={onTogglePointerDown}
@@ -86,7 +90,7 @@ export function SidebarHeaderActions({
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          {expanded ? "Collapse sidebar" : "Open sidebar"}
+          {expanded ? t("sidebar.collapse") : t("sidebar.open")}
         </TooltipContent>
       </Tooltip>
     </div>
@@ -124,6 +128,7 @@ export function SidebarSearchButton({
   onOpenSearch?: () => void;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -131,7 +136,7 @@ export function SidebarSearchButton({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Search"
+          aria-label={t("sidebar.search")}
           onClick={() => onOpenSearch?.()}
           className={cn(SIDEBAR_FLOAT_BUTTON, className)}
           data-testid="sidebar-search-button"
@@ -141,7 +146,7 @@ export function SidebarSearchButton({
       </TooltipTrigger>
       {/* Bottom placement keeps the tooltip clear of the macOS Electron
       shell's traffic lights at the window's top edge. */}
-      <TooltipContent side="bottom">Search</TooltipContent>
+      <TooltipContent side="bottom">{t("sidebar.search")}</TooltipContent>
     </Tooltip>
   );
 }
@@ -164,6 +169,7 @@ export function SidebarSettingsButton({
   /** Distinguishes the header-row copy from the mobile floating copy. */
   testId?: string;
 }) {
+  const { t } = useI18n();
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -171,7 +177,7 @@ export function SidebarSettingsButton({
           asChild
           variant="ghost"
           size="icon-xs"
-          aria-label="Settings"
+          aria-label={t("sidebar.settings")}
           className={cn(SIDEBAR_FLOAT_BUTTON, className)}
         >
           <Link to="/settings" onClick={onSettingsClick} data-testid={testId}>
@@ -179,7 +185,7 @@ export function SidebarSettingsButton({
           </Link>
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">Settings</TooltipContent>
+      <TooltipContent side="bottom">{t("sidebar.settings")}</TooltipContent>
     </Tooltip>
   );
 }

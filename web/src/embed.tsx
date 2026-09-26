@@ -64,6 +64,7 @@ import "./index.css";
 import { QueueFlushProvider } from "./hooks/QueueFlushProvider";
 import { ExtensionProvider } from "./extensions/ExtensionProvider";
 import { SessionUpdatesProvider } from "./hooks/SessionUpdatesProvider";
+import { I18nProvider } from "./lib/i18n";
 
 export type { OmnigentHostConfig } from "./lib/host";
 export type { RoutingApi } from "./lib/routing";
@@ -213,37 +214,39 @@ function OmnigentProviders({
         className={isDarkMode ? "dark" : undefined}
         style={{ height: "100%", width: "100%" }}
       >
-        <EmbeddedProvider>
-          {/* next-themes is kept as the JS source of truth for `resolvedTheme`
+        <I18nProvider>
+          <EmbeddedProvider>
+            {/* next-themes is kept as the JS source of truth for `resolvedTheme`
               (Monaco + the xterm terminal read it via `useTheme()`); the host
               drives the value via `forcedTheme`. A private attribute +
               `enableColorScheme={false}` keep it from mutating the host's
               `<html>` class or `color-scheme`. */}
-          <NextThemesProvider
-            attribute="data-omnigent-theme"
-            forcedTheme={isDarkMode ? "dark" : "light"}
-            enableColorScheme={false}
-            disableTransitionOnChange
-          >
-            <TooltipProvider>
-              <ImageLightboxProvider>
-                <RoutingProvider value={routing}>
-                  <EmbedCapabilitiesProvider>
-                    <SidebarDataProvider config={{ ...appConfig.sidebar, ...sidebarOverrides }}>
-                      <SessionUpdatesProvider>
-                        <RunnerHealthProvider>
-                          <QueueFlushProvider>
-                            <App basename={basename} />
-                          </QueueFlushProvider>
-                        </RunnerHealthProvider>
-                      </SessionUpdatesProvider>
-                    </SidebarDataProvider>
-                  </EmbedCapabilitiesProvider>
-                </RoutingProvider>
-              </ImageLightboxProvider>
-            </TooltipProvider>
-          </NextThemesProvider>
-        </EmbeddedProvider>
+            <NextThemesProvider
+              attribute="data-omnigent-theme"
+              forcedTheme={isDarkMode ? "dark" : "light"}
+              enableColorScheme={false}
+              disableTransitionOnChange
+            >
+              <TooltipProvider>
+                <ImageLightboxProvider>
+                  <RoutingProvider value={routing}>
+                    <EmbedCapabilitiesProvider>
+                      <SidebarDataProvider config={{ ...appConfig.sidebar, ...sidebarOverrides }}>
+                        <SessionUpdatesProvider>
+                          <RunnerHealthProvider>
+                            <QueueFlushProvider>
+                              <App basename={basename} />
+                            </QueueFlushProvider>
+                          </RunnerHealthProvider>
+                        </SessionUpdatesProvider>
+                      </SidebarDataProvider>
+                    </EmbedCapabilitiesProvider>
+                  </RoutingProvider>
+                </ImageLightboxProvider>
+              </TooltipProvider>
+            </NextThemesProvider>
+          </EmbeddedProvider>
+        </I18nProvider>
       </div>
     </div>
   );

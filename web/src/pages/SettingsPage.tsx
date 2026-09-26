@@ -135,6 +135,8 @@ import {
 import { conversationDisplayLabel } from "@/shell/sidebarNav";
 import { absoluteTime } from "@/lib/relativeTime";
 import { useNavigate } from "@/lib/routing";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSettingControl } from "@/components/LanguageSwitcher";
 import { useSettingsRoute } from "@/shell/settingsNav";
 import { ImportSessionsPanel } from "@/shell/ImportSessionsPanel";
 import { isThemeMode, normalizeThemeMode, type ThemeMode } from "@/components/theme/themeMode";
@@ -799,6 +801,7 @@ function AppearanceSection() {
   // one is provided). The color palette, terminal theme, and font controls are
   // per-device prefs that don't conflict with host light/dark, so they stay.
   const isEmbedded = useIsEmbedded();
+  const { t } = useI18n();
   const themeSettingsUrl = getOmnigentThemeSettingsUrl();
   const { setTheme } = useTheme();
   const [resetKey, setResetKey] = useState(0);
@@ -899,11 +902,13 @@ function AppearanceSection() {
 
   return (
     <Section
-      title="Appearance"
-      description="Choose how Omnigent looks on this device."
+      title={t("settings.appearance")}
+      description={t("settings.appearanceDescription")}
       descriptionClassName="text-sm"
     >
       <div key={resetKey} className="flex flex-col gap-8">
+        <LanguageSettingControl />
+
         {isEmbedded ? (
           <div className="flex flex-col gap-3">
             <span className="text-ui font-medium">Theme</span>

@@ -47,11 +47,51 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 88,
-    "max_upstream_net_added_loc": 2579,
+    "max_direct_upstream_files": 106,
+    "max_upstream_net_added_loc": 3032,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 101,
+    "previous_max_upstream_net_added_loc": 3032,
+    "previous_measured_upstream_net_added_loc": 3032,
+    "reason": "The protected visual-baseline workflow regenerated exactly five reviewed authenticated-shell PNG snapshots after adding the language switcher. Binary snapshots add five directly tracked upstream files but zero measured net-added LOC, moving the exact totals from 101 files / 3,032 lines to 106 files / 3,032 lines. Raise only the direct-file ceiling to the measured 106; retain the 3,032 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The workflow's second full comparison passed all 175 visual scenarios. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "bilingual-visual-baselines-v20",
+    "scoped_visual_delta": {
+      "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png": 0
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 88,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2477,
+    "reason": "User-requested Chinese and English interface support for the current next SaaS Beta: share one persisted locale across the isolated login application and the authenticated web shell, expose switching in the sidebar and Appearance settings, preserve tenant branding, and cover the signed-in journey in a real browser. The login implementation and its browser coverage remain under downstream-owned saas/ and tests/saas/ paths. On the exact new-session stability mainline, the authenticated shell changes add exactly thirteen newly divergent official files and 555 measured net lines across fifteen reviewed frontend and E2E files, moving the exact totals from 88 files / 2,477 lines to 101 files / 3,032 lines. Raise the hard ceilings only to those measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope record is not production admission or a merge waiver.",
+    "revision": "bilingual-authenticated-interface-v19",
+    "scoped_frontend_delta": {
+      "tests/e2e_ui/i18n/__init__.py": 0,
+      "tests/e2e_ui/i18n/test_language_switching.py": 43,
+      "web/src/components/LanguageSwitcher.test.tsx": 47,
+      "web/src/components/LanguageSwitcher.tsx": 101,
+      "web/src/embed.tsx": 3,
+      "web/src/lib/branding.ts": 2,
+      "web/src/lib/i18n.test.tsx": 76,
+      "web/src/lib/i18n.tsx": 212,
+      "web/src/main.tsx": 3,
+      "web/src/pages/SettingsPage.tsx": 5,
+      "web/src/shell/NewChatDialog.tsx": 25,
+      "web/src/shell/Sidebar.test.tsx": 4,
+      "web/src/shell/Sidebar.tsx": 3,
+      "web/src/shell/SidebarHeaderActions.tsx": 6,
+      "web/src/shell/settingsNav.tsx": 25
+    },
+    "previous_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 84,
@@ -327,6 +367,8 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
+    }
     }
     }
     }

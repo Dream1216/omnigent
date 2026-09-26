@@ -32,6 +32,15 @@ connects to production or authenticates an account. Use dummy credentials only.
 Reload after a new build. `npm run dev` supports styling hot reload on port
 18764, but does not proxy production APIs or validate the production CSP.
 
+## Language behavior
+
+The login surface supports English (`en-US`) and Simplified Chinese (`zh-CN`).
+It uses the saved `omnigent.locale` browser preference first, then follows the
+browser language, and otherwise falls back to English. The header switcher
+updates all login copy, accessible labels, document metadata, and `<html lang>`
+without reloading the page. The preference is same-origin and contains no
+account data or credentials.
+
 ## Acceptance
 
 ```sh
@@ -51,7 +60,9 @@ Manual checks:
 2. Tab through the email field, password, visibility toggle, and submit button.
 3. Enter `founder@example.test` and a dummy password; toggle visibility twice.
 4. Submit in the preview: observe a readable error and an enabled retry button.
-5. After a separately authorized deployment, use a test account to confirm that
+5. Switch to 中文, reload the page, and confirm that the Chinese selection and
+   localized form labels persist; switch back to EN and repeat.
+6. After a separately authorized deployment, use a test account to confirm that
    the real login reaches `/settings/account` and signup still works.
 
 ## Authentication and delivery boundaries

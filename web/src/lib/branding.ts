@@ -1,5 +1,6 @@
 import type { Branding } from "./capabilities";
 import { useServerInfo } from "./CapabilitiesContext";
+import { useI18n } from "./i18n";
 
 export const DEFAULT_APP_NAME = "Omnigent";
 export const DEFAULT_HEADING = "What should we build?";
@@ -24,7 +25,8 @@ export function useAppName(): string {
 
 /** Operator hero heading; an explicit `""` is kept (hides it), default only when unset. */
 export function useHeading(): string {
-  return useBranding().heading ?? DEFAULT_HEADING;
+  const { t } = useI18n();
+  return useBranding().heading ?? t("landing.heading");
 }
 
 /** Logo URL for a variant, or null to fall back to the mascot; `loading` falls back to `main`. */

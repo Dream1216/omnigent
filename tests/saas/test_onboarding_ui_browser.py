@@ -432,6 +432,46 @@ def test_login_layout_is_responsive_and_has_no_registration_steps(
     _screenshot(page, f"saas-login-{width}.png")
 
 
+def test_login_language_switches_immediately_and_persists(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
+
+    page.get_by_role("button", name="Chinese").click()
+    expect(page).to_have_title("登录 · Omnigent")
+    expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
+    expect(page.get_by_label("工作邮箱")).to_be_enabled()
+    expect(page.get_by_role("button", name="登录", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="创建工作空间")).to_be_visible()
+    expect(page.locator("#return-context")).to_have_text("登录后前往 → 账户设置")
+    assert page.evaluate("document.documentElement.lang") == "zh-CN"
+    assert page.evaluate("localStorage.getItem('omnigent.locale')") == "zh-CN"
+
+    page.reload()
+    expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
+    page.get_by_role("button", name="英文").click()
+    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page.get_by_role("heading", name="Sign in to your workspace.")).to_be_visible()
+    assert page.evaluate("document.documentElement.lang") == "en-US"
+    assert page.evaluate("localStorage.getItem('omnigent.locale')") == "en-US"
+
+
+def test_login_localizes_client_side_errors_in_chinese(
+    onboarding_ui_page: tuple[Page, str],
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.route("**/saas/auth/login", lambda route: route.abort("failed"))
+    page.goto(f"{live_server}/saas/login")
+    page.get_by_role("button", name="Chinese").click()
+    page.get_by_label("工作邮箱").fill(_EMAIL)
+    page.get_by_label("密码", exact=True).fill("correct-horse-battery")
+    page.get_by_role("button", name="登录", exact=True).click()
+
+    expect(page.locator("#login-error")).to_have_text("无法连接服务器，请检查网络后重试。")
+    expect(page.get_by_role("button", name="登录", exact=True)).to_be_enabled()
+
+
 def test_login_password_toggle_and_account_return_after_retry(
     onboarding_ui_page: tuple[Page, str],
 ) -> None:
