@@ -47,11 +47,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 83,
+    "max_direct_upstream_files": 84,
     "max_upstream_net_added_loc": 2579,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 83,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2379,
+    "reason": "User-authorized repository governance bootstrap: add the repository owner and administrator Dream1216 to the existing fail-closed maintainer allowlist without changing the approval evaluator or branch protection. The authoritative allowlist is an official upstream-tracked file, so this adds exactly one directly changed file and one measured net line, moving the exact totals from 83 files / 2,379 lines to 84 files / 2,380 lines. Raise only the direct-file ceiling to the exact measured 84; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This record is not production admission or a general CI bypass.",
+    "revision": "repository-owner-maintainer-governance-v17",
+    "scoped_governance_delta": {
+      ".github/MAINTAINER": 1
+    },
+    "previous_revision": {
     "approved_at": "2026-09-24",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 82,
@@ -299,6 +310,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
