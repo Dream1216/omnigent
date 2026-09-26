@@ -6,8 +6,9 @@
 # NOT execute agent harnesses — runners run on the user's local machine
 # and dial in via WS /v1/runner/tunnel.
 #
-# As a consequence: no tmux, no git, no harness SDK runtime
-# requirements in the final image. The omnigent package is still
+# The image also supplies the SaaS worker and Runner control-plane processes.
+# Git is required there for sealed repository mirror provisioning, while tmux
+# and harness SDK runtime requirements remain host-only. The omnigent package is
 # installed in full (its pyproject pulls claude-agent-sdk +
 # openai-agents transitively), so the bits are on disk; they are
 # simply never imported because HarnessProcessManager is never
@@ -630,15 +631,16 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:${PATH}"
 
-# curl + ca-certificates only — for the HEALTHCHECK and for outbound
-# HTTPS to LLM gateways / external services.
+# Git provisions the sealed repository mirrors used by Runner agents. Curl and
+# ca-certificates serve the health check and outbound HTTPS integrations.
 RUN export DEBIAN_FRONTEND=noninteractive; \
     case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
  && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
  && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
  && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      curl ca-certificates \
+      git curl ca-certificates \
+ && test -x /usr/bin/git \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
  && rm -f /var/cache/ldconfig/aux-cache \
