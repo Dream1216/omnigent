@@ -16,6 +16,7 @@ from saas.production.service_bindings import (
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
+    compose_production_service_role_graph,
 )
 from saas.scripts.run_postgresql_migration import _write_exclusive
 
@@ -1133,9 +1134,14 @@ def test_receipt_write_is_exclusive_and_owner_only(tmp_path: Path) -> None:
     assert output.read_text(encoding="utf-8") == "{}\n"
 
 
-def test_runtime_verify_only_binds_receipt_and_five_service_logins(
+@pytest.mark.parametrize("billing", [False, True])
+def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
     monkeypatch: pytest.MonkeyPatch,
+    billing: bool,
 ) -> None:
+    service_role_graph = compose_production_service_role_graph(
+        _bindings(), _platform_bindings() if billing else None, None
+    )
     contracts = migration.load_runtime_rls_contract()
     catalog = {
         "official_head": "official-head",
@@ -1169,7 +1175,7 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
             database_identity_sha256=identity_digest,
             catalog_sha256=catalog_digest,
             service_role_bindings_sha256=_bindings().sha256,
-            service_role_graph_sha256=_bindings().sha256,
+            service_role_graph_sha256=service_role_graph.sha256,
             runtime_rls_table_count=len(contracts),
             official_owner="official_owner",
             saas_owner="saas_owner",
@@ -1227,20 +1233,31 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
                 )
             )
 
+    expected_service_roles = dict(migration._SERVER_SERVICE_ROLES)
+    if billing:
+        expected_service_roles["billing"] = "saas_billing"
     urls = {
-        service: f"postgresql+psycopg://{service}_login:secret@db/omnigent"
-        for service in migration._SERVER_SERVICE_ROLES
+        service: (
+            "postgresql+psycopg://platform_model_billing_login:secret@db/omnigent"
+            if service == "billing"
+            else f"postgresql+psycopg://{service}_login:secret@db/omnigent"
+        )
+        for service in expected_service_roles
     }
     config = SimpleNamespace(
+        capabilities=frozenset({"billing"} if billing else ()),
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         service_role_bindings=_bindings(),
-        service_role_graph=_bindings(),
+        service_role_graph=service_role_graph,
     )
-    engines = {service: FakeEngine() for service in migration._SERVER_SERVICE_ROLES}
+    engines = {service: FakeEngine() for service in expected_service_roles}
 
     migration.verify_production_postgresql_state(engines=engines, config=config)
 
     assert observed == [
-        (f"{service}_login", base_role)
-        for service, base_role in migration._SERVER_SERVICE_ROLES.items()
+        (
+            "platform_model_billing_login" if service == "billing" else f"{service}_login",
+            base_role,
+        )
+        for service, base_role in expected_service_roles.items()
     ]
