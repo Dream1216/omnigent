@@ -124,17 +124,49 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_bilingual_ui_budget_revision_retains_hard_source_ceilings(
+def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 2937
-    assert budget["max_direct_upstream_files"] == 97
+    assert budget["max_direct_upstream_files"] == 102
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "bilingual-visual-baselines-v19"
+    assert revision["previous_max_direct_upstream_files"] == 97
+    assert revision["previous_max_upstream_net_added_loc"] == 2937
+    assert revision["previous_measured_upstream_net_added_loc"] == 2937
+    assert revision["scoped_visual_delta"] == {
+        (
+            "tests/e2e_ui/visual/snapshots/test_chat_snapshot/"
+            "test_chat_conversation_matches_baseline/"
+            "test_chat_conversation_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/"
+            "test_chat_turn_rail_matches_baseline/"
+            "test_chat_turn_rail_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_landing_snapshot/"
+            "test_empty_landing_matches_baseline/"
+            "test_empty_landing_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/"
+            "test_pinned_project_flyout_matches_baseline/"
+            "test_pinned_project_flyout_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/"
+            "test_populated_sidebar_matches_baseline/"
+            "test_populated_sidebar_matches_baseline[chromium][linux].png"
+        ): 0,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "bilingual-authenticated-interface-v18"
     assert revision["previous_max_direct_upstream_files"] == 84
     assert revision["previous_max_upstream_net_added_loc"] == 2579

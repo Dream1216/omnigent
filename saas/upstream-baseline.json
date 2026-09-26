@@ -47,11 +47,26 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 97,
+    "max_direct_upstream_files": 102,
     "max_upstream_net_added_loc": 2937,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 97,
+    "previous_max_upstream_net_added_loc": 2937,
+    "previous_measured_upstream_net_added_loc": 2937,
+    "reason": "The protected visual-baseline workflow regenerated exactly five reviewed authenticated-shell PNG snapshots after adding the language switcher. Binary snapshots add five directly tracked upstream files but zero measured net-added LOC, moving the exact totals from 97 files / 2,937 lines to 102 files / 2,937 lines. Raise only the direct-file ceiling to the measured 102; retain the 2,937 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The workflow's second full comparison passed all 175 visual scenarios. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "bilingual-visual-baselines-v19",
+    "scoped_visual_delta": {
+      "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png": 0
+    },
+    "previous_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 84,
@@ -335,6 +350,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
