@@ -89,8 +89,11 @@ class LinuxCgroupV2ContainmentVerifier:
     This class does not create cgroups. The deployment unit must create a
     dedicated cgroup/container for the Runner, set a read-only root filesystem,
     drop capabilities, enable ``no_new_privs`` and a seccomp filter, and pass
-    the exact observed cgroup path as trusted configuration. The verifier then
-    rejects drift or looser limits before any Secret is redeemed.
+    the exact observed cgroup path as trusted configuration. A private cgroup
+    namespace presents that dedicated boundary as ``/``; it is accepted only
+    because the same boundary must still prove finite CPU, memory and PID
+    limits below. The verifier rejects drift or looser limits before any Secret
+    is redeemed.
     """
 
     runner_id: UUID
@@ -104,9 +107,8 @@ class LinuxCgroupV2ContainmentVerifier:
         path = self.expected_cgroup_path
         if (
             not path.startswith("/")
-            or path == "/"
             or "\x00" in path
-            or any(part in {"", ".", ".."} for part in path.split("/")[1:])
+            or (path != "/" and any(part in {"", ".", ".."} for part in path.split("/")[1:]))
             or len(path) > 4096
         ):
             raise RunnerIsolationAdapterError(

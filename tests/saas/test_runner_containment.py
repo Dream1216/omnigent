@@ -33,14 +33,15 @@ def _contract() -> SandboxLaunchContract:
 
 
 def _verifier(
-    tmp_path: Path, runner_id: UUID
+    tmp_path: Path, runner_id: UUID, *, private_namespace_root: bool = False
 ) -> tuple[LinuxCgroupV2ContainmentVerifier, Path, Path]:
     proc = tmp_path / "proc"
     cgroup_root = tmp_path / "cgroup"
-    cgroup = cgroup_root / "kubepods" / "runner-a"
+    expected_cgroup_path = "/" if private_namespace_root else "/kubepods/runner-a"
+    cgroup = cgroup_root if private_namespace_root else cgroup_root / "kubepods" / "runner-a"
     (proc / "self").mkdir(parents=True)
     cgroup.mkdir(parents=True)
-    (proc / "self" / "cgroup").write_text("0::/kubepods/runner-a\n", encoding="utf-8")
+    (proc / "self" / "cgroup").write_text(f"0::{expected_cgroup_path}\n", encoding="utf-8")
     (proc / "self" / "status").write_text(
         "Name:\trunner\nNoNewPrivs:\t1\nSeccomp:\t2\nCapEff:\t0000000000000000\n",
         encoding="utf-8",
@@ -62,7 +63,7 @@ def _verifier(
         (cgroup / name).write_text(value, encoding="utf-8")
     verifier = LinuxCgroupV2ContainmentVerifier(
         runner_id=runner_id,
-        expected_cgroup_path="/kubepods/runner-a",
+        expected_cgroup_path=expected_cgroup_path,
         proc_root=proc,
         cgroup_root=cgroup_root,
         effective_uid=lambda: 65532,
@@ -76,6 +77,14 @@ def test_linux_cgroup_v2_verifier_accepts_exact_hardened_runner_boundary(
 ) -> None:
     runner_id = uuid4()
     verifier, _, _ = _verifier(tmp_path, runner_id)
+    verifier.require_enforced(runner_id=runner_id, contract=_contract())
+
+
+def test_linux_cgroup_v2_verifier_accepts_finite_private_namespace_root(
+    tmp_path: Path,
+) -> None:
+    runner_id = uuid4()
+    verifier, _, _ = _verifier(tmp_path, runner_id, private_namespace_root=True)
     verifier.require_enforced(runner_id=runner_id, contract=_contract())
 
 
