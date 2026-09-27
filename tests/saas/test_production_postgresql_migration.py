@@ -332,12 +332,44 @@ def test_runtime_runner_memberships_allow_only_exact_least_privilege_shape() -> 
     assert not migration._runtime_runner_membership_is_safe(
         (*edge[:2], "other", *edge[3:]), bootstrap_name="postgres"
     )
+    assert not migration._runtime_runner_membership_is_safe(edge[:-1], bootstrap_name="postgres")
+    assert not migration._runtime_runner_membership_is_safe(
+        (edge[0], None, *edge[2:]), bootstrap_name="postgres"
+    )
     assert not migration._runtime_runner_login_flags_are_safe(
         (runner_login, True, True, False, False, False, False, True, 8, None)
     )
     assert not migration._runtime_runner_login_flags_are_safe(
         (runner_login, True, False, False, False, False, False, True, -1, None)
     )
+
+
+def test_static_security_catalog_excludes_only_safe_dynamic_runner_edges() -> None:
+    runner_login = "runner_23dbe8e9d95a442abc841c356800ecfc_g9"
+    management = [
+        "saas_runner_agent",
+        "principal_operator",
+        "postgres",
+        True,
+        False,
+        False,
+        10,
+    ]
+    runner = [
+        "saas_runner_agent",
+        runner_login,
+        "postgres",
+        False,
+        True,
+        False,
+        10,
+    ]
+    unsafe_runner = [*runner[:3], True, *runner[4:]]
+
+    assert migration._stable_control_plane_memberships(
+        [management, runner, unsafe_runner],
+        bootstrap_name="postgres",
+    ) == [management[:6], unsafe_runner[:6]]
 
 
 def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
