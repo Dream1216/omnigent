@@ -1252,11 +1252,15 @@ def _role_graph_projection_is_safe(
 
 
 def _runtime_runner_membership_is_safe(
-    edge: _RoleGraphEdge,
+    edge: tuple[object, ...],
     *,
     bootstrap_name: str,
 ) -> bool:
+    if len(edge) != 7:
+        return False
     granted, member, grantor, admin, inherit, can_set, grantor_oid = edge
+    if not isinstance(member, str):
+        return False
     match = _RUNNER_AGENT_LOGIN.fullmatch(member)
     return bool(
         granted == "saas_runner_agent"
