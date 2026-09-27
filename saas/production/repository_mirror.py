@@ -707,6 +707,7 @@ def _repository_https_proxy() -> str | None:
         parsed.scheme != "http"
         or hostname is None
         or port is None
+        or not 1 <= port <= 65535
         or parsed.netloc != f"{hostname}:{port}"
         or parsed.username is not None
         or parsed.password is not None

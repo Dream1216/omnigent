@@ -431,6 +431,7 @@ def test_sealed_fetcher_keeps_secret_values_out_of_argv_environment_and_output(
         "https://repository-proxy.runtime.svc.cluster.local:3128",
         "http://user:secret@repository-proxy.runtime.svc.cluster.local:3128",
         "http://repository-proxy.runtime.svc.cluster.local",
+        "http://repository-proxy.runtime.svc.cluster.local:0",
         "http://repository-proxy.example.test:3128",
         "http://127.0.0.1:3128",
     ),
