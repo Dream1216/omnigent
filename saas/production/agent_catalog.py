@@ -28,10 +28,10 @@ class TenantAgentCatalogInitializer:
     """Initialize packaged Agents once per Runtime Partition and release.
 
     The caller must already have bound the reviewed :class:`RuntimeContext`.
-    A PostgreSQL transaction advisory lock serializes the content-aware official
-    seed across server replicas; an in-process lock collapses concurrent first
-    requests on one replica.  Failed attempts are never cached and may be
-    retried by the next request.
+    A PostgreSQL transaction advisory lock on the SaaS app-role connection
+    serializes the content-aware official seed across server replicas. The
+    runtime login cannot acquire advisory locks. An in-process lock collapses
+    concurrent first requests on one replica. Failed attempts are never cached.
     """
 
     _ROUTE_PREFIXES = ("/v1/agents", "/v1/sessions", "/v1/execution-readyz")
@@ -39,13 +39,13 @@ class TenantAgentCatalogInitializer:
     def __init__(
         self,
         *,
-        runtime_engine: Engine,
+        coordination_engine: Engine,
         agent_store: Any,
         artifact_store: Any,
         agent_cache: Any,
         seed: Callable[[Any, Any, Any], None] = _ensure_default_agents,
     ) -> None:
-        self._runtime_engine = runtime_engine
+        self._coordination_engine = coordination_engine
         self._agent_store = agent_store
         self._artifact_store = artifact_store
         self._agent_cache = agent_cache
@@ -90,14 +90,14 @@ class TenantAgentCatalogInitializer:
             logger.info("tenant Agent catalog initialized workspace_id=%s", workspace_id)
 
     def _seed_with_replica_lock(self, workspace_id: int) -> None:
-        if self._runtime_engine.dialect.name != "postgresql":
+        if self._coordination_engine.dialect.name != "postgresql":
             self._seed(self._agent_store, self._artifact_store, self._agent_cache)
             return
         key_bytes = hashlib.sha256(
             f"omnigent-agent-catalog:{workspace_id}".encode("ascii")
         ).digest()[:8]
         advisory_key = int.from_bytes(key_bytes, byteorder="big", signed=True)
-        with self._runtime_engine.begin() as connection:
+        with self._coordination_engine.begin() as connection:
             connection.execute(
                 sa.text("SELECT pg_advisory_xact_lock(:advisory_key)"),
                 {"advisory_key": advisory_key},

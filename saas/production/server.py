@@ -1449,7 +1449,7 @@ def build_production_server(
     )
 
     agent_catalog = TenantAgentCatalogInitializer(
-        runtime_engine=sessions.runtime_engine,
+        coordination_engine=sessions.engines["app"],
         agent_store=official_dependencies.agent_store,
         artifact_store=official_dependencies.artifact_store,
         agent_cache=official_dependencies.agent_cache,
