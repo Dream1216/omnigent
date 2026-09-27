@@ -3100,6 +3100,9 @@ def build_production_host_isolation_executor(
             containment=LinuxCgroupV2ContainmentVerifier(
                 runner_id=config.runner_id,
                 expected_cgroup_path=_expected_cgroup_path(source),
+                allow_root_cgroup=(
+                    source.get("OMNIGENT_SAAS_RUNNER_EXPECTED_CGROUP_PATH") == "self"
+                ),
             ),
             platform_model_projection=(
                 platform_model_runtime[0] if platform_model_runtime is not None else None
