@@ -396,6 +396,11 @@ def test_sealed_fetcher_keeps_secret_values_out_of_argv_environment_and_output(
         return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setenv(
+        "OMNIGENT_SAAS_RUNNER_REPOSITORY_HTTPS_PROXY",
+        "http://repository-proxy.runtime.svc.cluster.local:3128",
+    )
+    monkeypatch.setenv("HTTPS_PROXY", "http://ambient-proxy.example.test:8080")
 
     SealedGitRepositoryFetcher().fetch(
         mirror=tmp_path / "mirror.git",
@@ -414,6 +419,38 @@ def test_sealed_fetcher_keeps_secret_values_out_of_argv_environment_and_output(
     assert "http.followRedirects=false" in command
     assert "GIT_CONFIG_PARAMETERS" not in child_environment
     assert "GIT_ALTERNATE_OBJECT_DIRECTORIES" not in child_environment
+    assert child_environment["HTTPS_PROXY"] == (
+        "http://repository-proxy.runtime.svc.cluster.local:3128"
+    )
+    assert "ambient-proxy" not in serialized
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "https://repository-proxy.runtime.svc.cluster.local:3128",
+        "http://user:secret@repository-proxy.runtime.svc.cluster.local:3128",
+        "http://repository-proxy.runtime.svc.cluster.local",
+        "http://repository-proxy.runtime.svc.cluster.local:0",
+        "http://repository-proxy.example.test:3128",
+        "http://127.0.0.1:3128",
+    ),
+)
+def test_sealed_fetcher_rejects_unscoped_repository_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    value: str,
+) -> None:
+    credential = tmp_path / "credential"
+    credential.write_text("https://runner:secret@example.test/acme/repository.git\n")
+    monkeypatch.setenv("OMNIGENT_SAAS_RUNNER_REPOSITORY_HTTPS_PROXY", value)
+    with pytest.raises(RepositoryMirrorError, match="HTTPS proxy URL is invalid"):
+        SealedGitRepositoryFetcher().fetch(
+            mirror=tmp_path / "mirror.git",
+            source_url="https://example.test/acme/repository.git",
+            refspecs=("+" + "1" * 40 + ":refs/omnigent/pins/" + "1" * 40,),
+            credential_file=credential,
+        )
 
 
 def test_reviewed_ref_sha_drift_is_rejected_without_publishing_outputs(tmp_path: Path) -> None:
