@@ -14,7 +14,7 @@ import os
 import re
 import stat
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -391,6 +391,26 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         "p0s000000014",
     ): "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1",
 }
+
+# Exact deployment-time Preview authority projections accepted in addition to
+# the clean-replay catalog.  These hashes bind the full public inventory and
+# security catalog, so any extra object, ACL, policy, membership, or owner still
+# fails closed.
+_PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
+}
+_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "9839f65fa0ff7614c4bc7566fda9ae18223924cf9ad63adbf71e66433f995e34",
+}
+
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -2167,7 +2187,15 @@ def _verify_public_schema_inventory_digest(
     digest = hashlib.sha256(
         json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if expected_digest is None or digest != expected_digest:
+    accepted_digests = {
+        item
+        for item in (
+            expected_digest,
+            _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key),
+        )
+        if item is not None
+    }
+    if digest not in accepted_digests:
         raise PostgreSqlMigrationError("public_schema_inventory_drifted", "verification")
     return digest
 
@@ -2249,9 +2277,110 @@ def _verify_source_security_catalog_digest(
     digest = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if _source_security_catalog_baselines(bindings).get(key) != digest:
+    accepted_digests = {_source_security_catalog_baselines(bindings).get(key)}
+    if bindings is not None:
+        observed = {binding.service: binding.base_role for binding in bindings.bindings}
+        platform_admin = {
+            **dict(EXPECTED_PRODUCTION_SERVICE_ROLES),
+            **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
+            **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+        }
+        if observed == platform_admin:
+            accepted_digests.add(
+                _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+            )
+    if digest not in accepted_digests:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
+
+
+_PREVIEW_OWNER_LEASE_DEFINER_SHA256 = {
+    "saas_preview_owner_heartbeat_gateway_v1(text,text)": (
+        "860cb95916d06a36922b9c2d2f71904fc589c15a393705d12199abc27e4820ac"
+    ),
+    "saas_preview_owner_release_gateway_v1(text,text)": (
+        "2a3d3e19554821e1f259bb82da3dab23b3a0e93acae64a66c9ceef54750ace89"
+    ),
+}
+
+
+def _preview_owner_lease_definers_are_safe(
+    function_rows: Iterable[Sequence[object]],
+    acl_rows: Iterable[Sequence[object]],
+    *,
+    bootstrap_name: str,
+) -> bool:
+    """Admit only the two digest-pinned bootstrap RLS bypass functions."""
+
+    functions = list(function_rows)
+    if len(functions) != len(_PREVIEW_OWNER_LEASE_DEFINER_SHA256):
+        return False
+    identities: set[str] = set()
+    signatures: set[str] = set()
+    for signature, identity, owner, kind, security_definer, config, definition in functions:
+        signature = str(signature)
+        if (
+            _PREVIEW_OWNER_LEASE_DEFINER_SHA256.get(signature)
+            != hashlib.sha256(str(definition).encode()).hexdigest()
+            or str(owner) != bootstrap_name
+            or str(kind) != "f"
+            or not bool(security_definer)
+            or not isinstance(config, (list, tuple))
+            or list(config) != ["search_path=pg_catalog, pg_temp"]
+        ):
+            return False
+        signatures.add(signature)
+        identities.add(f"routine:{identity}")
+    expected_acl = {
+        (signature, grantee, bootstrap_name, "EXECUTE", False)
+        for signature in signatures
+        for grantee in (bootstrap_name, "saas_preview_owner")
+    }
+    observed_acl = {
+        (str(signature), str(grantee), str(grantor), str(privilege), bool(grantable))
+        for signature, grantee, grantor, privilege, grantable in acl_rows
+    }
+    return observed_acl == expected_acl and len(identities) == len(signatures)
+
+
+def _verify_preview_owner_lease_definers(
+    connection: Connection,
+    *,
+    bootstrap_name: str,
+) -> frozenset[str]:
+    names = [signature.partition("(")[0] for signature in _PREVIEW_OWNER_LEASE_DEFINER_SHA256]
+    function_rows = connection.execute(
+        sa.text(
+            "SELECT routine.oid::regprocedure::text, routine.proname || '(' || "
+            "pg_get_function_identity_arguments(routine.oid) || ')', "
+            "pg_get_userbyid(routine.proowner), routine.prokind, routine.prosecdef, "
+            "routine.proconfig, pg_get_functiondef(routine.oid) FROM pg_proc routine "
+            "JOIN pg_namespace namespace ON namespace.oid = routine.pronamespace "
+            "WHERE namespace.nspname = 'public' AND routine.proname = ANY(:names) "
+            "ORDER BY routine.proname"
+        ),
+        {"names": names},
+    ).all()
+    acl_rows = connection.execute(
+        sa.text(
+            "SELECT routine.oid::regprocedure::text, "
+            "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END, "
+            "CASE WHEN acl.grantor = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantor) END, "
+            "acl.privilege_type, acl.is_grantable FROM pg_proc routine "
+            "JOIN pg_namespace namespace ON namespace.oid = routine.pronamespace "
+            "CROSS JOIN LATERAL aclexplode(routine.proacl) acl "
+            "WHERE namespace.nspname = 'public' AND routine.proname = ANY(:names) "
+            "ORDER BY routine.proname, 2, 3, 4, 5"
+        ),
+        {"names": names},
+    ).all()
+    if not _preview_owner_lease_definers_are_safe(
+        function_rows,
+        acl_rows,
+        bootstrap_name=bootstrap_name,
+    ):
+        raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
+    return frozenset(f"routine:{row[1]}" for row in function_rows)
 
 
 def _verify_object_ownership(
@@ -2307,7 +2436,25 @@ def _verify_object_ownership(
             "AND left(relation.relname, 5) = 'saas_')) ORDER BY 1"
         )
     ).all()
-    if not saas_rows or any(owner != saas_owner for _table, owner in saas_rows):
+    foreign_saas_owners = {
+        (str(table), str(owner)) for table, owner in saas_rows if owner != saas_owner
+    }
+    preview_lease_definers: frozenset[str] = frozenset()
+    bootstrap_name = ""
+    if foreign_saas_owners:
+        bootstrap_name = str(
+            saas_connection.execute(
+                sa.text("SELECT rolname FROM pg_roles WHERE oid = 10")
+            ).scalar_one()
+        )
+        preview_lease_definers = _verify_preview_owner_lease_definers(
+            saas_connection,
+            bootstrap_name=bootstrap_name,
+        )
+    if not saas_rows or any(
+        table not in preview_lease_definers or owner != bootstrap_name
+        for table, owner in foreign_saas_owners
+    ):
         raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
     _verify_public_schema_inventory(
         official_connection,
