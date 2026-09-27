@@ -28,7 +28,7 @@ class TenantAgentCatalogInitializer:
     """Initialize packaged Agents once per Runtime Partition and release.
 
     The caller must already have bound the reviewed :class:`RuntimeContext`.
-    A PostgreSQL session advisory lock serializes the content-aware official
+    A PostgreSQL transaction advisory lock serializes the content-aware official
     seed across server replicas; an in-process lock collapses concurrent first
     requests on one replica.  Failed attempts are never cached and may be
     retried by the next request.
@@ -97,18 +97,12 @@ class TenantAgentCatalogInitializer:
             f"omnigent-agent-catalog:{workspace_id}".encode("ascii")
         ).digest()[:8]
         advisory_key = int.from_bytes(key_bytes, byteorder="big", signed=True)
-        with self._runtime_engine.connect() as connection:
+        with self._runtime_engine.begin() as connection:
             connection.execute(
-                sa.text("SELECT pg_advisory_lock(:advisory_key)"),
+                sa.text("SELECT pg_advisory_xact_lock(:advisory_key)"),
                 {"advisory_key": advisory_key},
             )
-            try:
-                self._seed(self._agent_store, self._artifact_store, self._agent_cache)
-            finally:
-                connection.execute(
-                    sa.text("SELECT pg_advisory_unlock(:advisory_key)"),
-                    {"advisory_key": advisory_key},
-                )
+            self._seed(self._agent_store, self._artifact_store, self._agent_cache)
 
 
 def create_execution_readiness_router(

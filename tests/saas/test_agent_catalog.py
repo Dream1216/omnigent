@@ -146,6 +146,47 @@ async def test_agent_catalog_failure_is_redacted_and_retried() -> None:
         engine.dispose()
 
 
+def test_agent_catalog_postgresql_uses_least_privilege_transaction_lock() -> None:
+    events: list[Any] = []
+    connection = Mock()
+
+    def execute(statement: object, parameters: object) -> None:
+        events.append((str(statement), parameters))
+
+    connection.execute.side_effect = execute
+
+    class Transaction:
+        def __enter__(self) -> Mock:
+            events.append("begin")
+            return connection
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("end")
+
+    engine = Mock()
+    engine.dialect = SimpleNamespace(name="postgresql")
+    engine.begin.return_value = Transaction()
+
+    def seed(*_stores: Any) -> None:
+        events.append("seed")
+
+    initializer = TenantAgentCatalogInitializer(
+        runtime_engine=engine,
+        agent_store=object(),
+        artifact_store=object(),
+        agent_cache=object(),
+        seed=seed,
+    )
+    initializer._seed_with_replica_lock(91)
+
+    assert events[0] == "begin"
+    statement, parameters = events[1]
+    assert statement == "SELECT pg_advisory_xact_lock(:advisory_key)"
+    assert isinstance(parameters["advisory_key"], int)
+    assert events[2:] == ["seed", "end"]
+    engine.connect.assert_not_called()
+
+
 def test_agent_catalog_initializes_only_agent_consuming_runtime_routes() -> None:
     engine = sa.create_engine("sqlite://")
     initializer = TenantAgentCatalogInitializer(
