@@ -332,6 +332,10 @@ def test_runtime_runner_memberships_allow_only_exact_least_privilege_shape() -> 
     assert not migration._runtime_runner_membership_is_safe(
         (*edge[:2], "other", *edge[3:]), bootstrap_name="postgres"
     )
+    assert not migration._runtime_runner_membership_is_safe(edge[:-1], bootstrap_name="postgres")
+    assert not migration._runtime_runner_membership_is_safe(
+        (edge[0], None, *edge[2:]), bootstrap_name="postgres"
+    )
     assert not migration._runtime_runner_login_flags_are_safe(
         (runner_login, True, True, False, False, False, False, True, 8, None)
     )
