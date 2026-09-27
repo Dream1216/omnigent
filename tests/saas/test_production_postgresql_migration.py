@@ -266,9 +266,18 @@ def test_principal_operator_allows_only_non_runtime_admin_edges() -> None:
         )
 
 
-def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> None:
+def test_role_graph_allows_only_runtime_runner_management_edge_to_be_absent() -> None:
     expected: set[migration._RoleGraphEdge] = {
         ("saas_app", "principal_operator", "postgres", True, False, False, 10),
+        (
+            "saas_runner_agent",
+            "principal_operator",
+            "postgres",
+            True,
+            False,
+            False,
+            10,
+        ),
         (
             "saas_app",
             "app_login",
@@ -283,14 +292,25 @@ def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> No
         set(expected), expected=expected, require_complete=True
     )
 
-    missing_management = {edge for edge in expected if edge[1] != "principal_operator"}
+    missing_runner_management = {edge for edge in expected if edge[0] != "saas_runner_agent"}
     assert migration._role_graph_projection_is_safe(
-        missing_management,
+        missing_runner_management,
         expected=expected,
         require_complete=False,
     )
+    assert migration._role_graph_projection_is_safe(
+        missing_runner_management,
+        expected=expected,
+        require_complete=True,
+    )
+
+    missing_app_management = {
+        edge
+        for edge in expected
+        if edge != ("saas_app", "principal_operator", "postgres", True, False, False, 10)
+    }
     assert not migration._role_graph_projection_is_safe(
-        missing_management,
+        missing_app_management,
         expected=expected,
         require_complete=True,
     )

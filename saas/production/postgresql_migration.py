@@ -1246,9 +1246,25 @@ def _role_graph_projection_is_safe(
     expected: set[_RoleGraphEdge],
     require_complete: bool,
 ) -> bool:
-    """Allow a clean/bootstrap subset preflight, but require exact terminal state."""
+    """Allow the admitted runtime Runner-management edge to be absent.
 
-    return observed.issubset(expected) and (not require_complete or observed == expected)
+    The principal operator needs ADMIN on ``saas_runner_agent`` while the
+    deployment stages Runner logins.  The independently signed Runner fleet
+    admission requires that management edge to be revoked before the runtime
+    fleet becomes online.  Both states are valid terminal projections: all
+    other expected edges remain mandatory and every unexpected edge is denied.
+    """
+
+    if not observed.issubset(expected):
+        return False
+    if not require_complete:
+        return True
+    missing = expected - observed
+    return not missing or (
+        len(missing) == 1
+        and next(iter(missing))[0] == "saas_runner_agent"
+        and next(iter(missing))[3:] == (True, False, False, 10)
+    )
 
 
 def _runtime_runner_membership_is_safe(
