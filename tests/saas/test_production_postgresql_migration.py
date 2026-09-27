@@ -765,6 +765,131 @@ def test_p0s11_source_security_catalog_keeps_legacy_row_order(
     assert reordered.value.code == "source_security_catalog_drifted"
 
 
+def test_preview_owner_lease_definer_exception_is_exact() -> None:
+    bootstrap = "next_beta_bootstrap"
+    functions = [
+        (
+            signature,
+            signature.partition("(")[0]
+            + "(expected_gateway_id text, presented_gateway_token_hash text)",
+            bootstrap,
+            "f",
+            True,
+            ["search_path=pg_catalog, pg_temp"],
+            definition,
+        )
+        for signature, definition in (
+            (
+                "saas_preview_owner_heartbeat_gateway_v1(text,text)",
+                "heartbeat-definition",
+            ),
+            (
+                "saas_preview_owner_release_gateway_v1(text,text)",
+                "release-definition",
+            ),
+        )
+    ]
+    digests = {
+        signature: migration.hashlib.sha256(definition.encode()).hexdigest()
+        for signature, definition in (
+            (functions[0][0], functions[0][6]),
+            (functions[1][0], functions[1][6]),
+        )
+    }
+    original = migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256
+    migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256 = digests
+    try:
+        acls = [
+            (signature, grantee, bootstrap, "EXECUTE", False)
+            for signature in digests
+            for grantee in (bootstrap, "saas_preview_owner")
+        ]
+        assert migration._preview_owner_lease_definers_are_safe(
+            functions,
+            acls,
+            bootstrap_name=bootstrap,
+        )
+        assert not migration._preview_owner_lease_definers_are_safe(
+            functions,
+            [*acls, (functions[0][0], "PUBLIC", bootstrap, "EXECUTE", False)],
+            bootstrap_name=bootstrap,
+        )
+        changed = [*functions]
+        changed[0] = (*changed[0][:6], "changed-definition")
+        assert not migration._preview_owner_lease_definers_are_safe(
+            changed,
+            acls,
+            bootstrap_name=bootstrap,
+        )
+    finally:
+        migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256 = original
+
+
+def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (18, "official", "saas")
+    inventory = [["policy", "preview-edge", "saas_owner"]]
+    digest = migration.hashlib.sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_PUBLIC_SCHEMA_INVENTORY_SHA256", {key: "0" * 64})
+    monkeypatch.setattr(
+        migration,
+        "_PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256",
+        {key: digest},
+    )
+
+    assert migration._verify_public_schema_inventory_digest(inventory, key=key) == digest
+    with pytest.raises(migration.PostgreSqlMigrationError) as drift:
+        migration._verify_public_schema_inventory_digest(
+            [*inventory, ["policy", "unexpected", "PUBLIC"]],
+            key=key,
+        )
+    assert drift.value.code == "public_schema_inventory_drifted"
+
+
+def test_preview_authority_security_catalog_requires_platform_admin_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (18, "official", "saas")
+    catalog = {"policies": [["preview-edge", "SELECT"]]}
+    digest = migration.hashlib.sha256(
+        json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    graph = migration.compose_production_service_role_graph(
+        _bindings(),
+        _platform_bindings(),
+        _platform_admin_bindings(),
+    )
+    monkeypatch.setattr(
+        migration, "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256", {key: "0" * 64}
+    )
+    monkeypatch.setattr(
+        migration,
+        "_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+        {key: digest},
+    )
+
+    assert (
+        migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+            bindings=graph,
+        )
+        == digest
+    )
+    with pytest.raises(migration.PostgreSqlMigrationError) as wrong_profile:
+        migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+            bindings=_bindings(),
+        )
+    assert wrong_profile.value.code == "source_security_catalog_drifted"
+
+
 def test_source_security_catalog_normalizes_roles_and_rejects_acl_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
