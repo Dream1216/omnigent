@@ -124,17 +124,40 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_pnpm_cache_budget_revision_retains_hard_source_ceilings(
+def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 3036
-    assert budget["max_direct_upstream_files"] == 107
+    assert budget["max_upstream_net_added_loc"] == 4139
+    assert budget["max_direct_upstream_files"] == 118
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "next-preview-agent-session-reliability-v22"
+    assert revision["previous_max_direct_upstream_files"] == 107
+    assert revision["previous_max_upstream_net_added_loc"] == 3036
+    assert revision["previous_measured_upstream_net_added_loc"] == 3036
+    assert revision["scoped_agent_delta"] == {
+        "omnigent/host/connect.py": -120,
+        "omnigent/host/runner_zygote.py": 10,
+        "omnigent/onboarding/harness_readiness.py": 251,
+        "omnigent/runtime/pending_inputs.py": 52,
+        "omnigent/server/routes/_sessions/orchestration.py": 52,
+        "omnigent/server/routes/sessions/routes_core.py": 53,
+        "tests/host/test_orphan_reaper.py": 227,
+        "tests/onboarding/test_harness_readiness.py": 37,
+        "tests/runtime/test_pending_inputs.py": 33,
+        "tests/server/integration/test_sessions_endpoints.py": 158,
+        "web/src/lib/capabilities.test.ts": 7,
+        "web/src/lib/capabilities.ts": 1,
+        "web/src/lib/harnessSetup.test.ts": 137,
+        "web/src/lib/harnessSetup.ts": 90,
+        "web/src/shell/NewChatDialog.test.tsx": 75,
+        "web/src/shell/NewChatDialog.tsx": 40,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "pnpm-cache-only-ci-post-job-v21"
     assert revision["previous_max_direct_upstream_files"] == 106
     assert revision["previous_max_upstream_net_added_loc"] == 3032
@@ -294,8 +317,8 @@ def test_pnpm_cache_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 3036 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 20000, 0),
+            FileDelta("omnigent/stores/host_store.py", 4139 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
         active_patch_count=8,

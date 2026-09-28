@@ -47,11 +47,37 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 107,
-    "max_upstream_net_added_loc": 3036,
+    "max_direct_upstream_files": 118,
+    "max_upstream_net_added_loc": 4139,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 107,
+    "previous_max_upstream_net_added_loc": 3036,
+    "previous_measured_upstream_net_added_loc": 3036,
+    "reason": "User-authorized next SaaS delivery and Preview release hardening incorporates the independently reviewed sandbox Agent-readiness and session replay repair. The source diff against the protected 37bce722 baseline changes 16 official paths by 1,399 added and 296 deleted lines (net 1,103); 11 paths become newly divergent from the pinned upstream. Exact remeasurement moves the ceilings from 107 files / 3,036 net lines to 118 files / 4,139 net lines. Preserve the eight-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta scope record does not approve production promotion, waive technical CI, or substitute for the exact-version 17-Agent and five delivery acceptance gates.",
+    "revision": "next-preview-agent-session-reliability-v22",
+    "scoped_agent_delta": {
+      "omnigent/host/connect.py": -120,
+      "omnigent/host/runner_zygote.py": 10,
+      "omnigent/onboarding/harness_readiness.py": 251,
+      "omnigent/runtime/pending_inputs.py": 52,
+      "omnigent/server/routes/_sessions/orchestration.py": 52,
+      "omnigent/server/routes/sessions/routes_core.py": 53,
+      "tests/host/test_orphan_reaper.py": 227,
+      "tests/onboarding/test_harness_readiness.py": 37,
+      "tests/runtime/test_pending_inputs.py": 33,
+      "tests/server/integration/test_sessions_endpoints.py": 158,
+      "web/src/lib/capabilities.test.ts": 7,
+      "web/src/lib/capabilities.ts": 1,
+      "web/src/lib/harnessSetup.test.ts": 137,
+      "web/src/lib/harnessSetup.ts": 90,
+      "web/src/shell/NewChatDialog.test.tsx": 75,
+      "web/src/shell/NewChatDialog.tsx": 40
+    },
+    "previous_revision": {
     "approved_at": "2026-09-28",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 106,
@@ -378,6 +404,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
