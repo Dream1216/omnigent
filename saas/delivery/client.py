@@ -147,6 +147,12 @@ class DcpResponseError(RuntimeError):
 
 
 class DeliveryClient:
+    _CONTRACTS = (
+        "dcp-openapi-v1.json",
+        "dcp-openapi-v1-wildcard-edge.json",
+        "dcp-openapi-v1-release-edge.json",
+    )
+
     def __init__(
         self, config: DeliveryConfig, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
@@ -172,6 +178,41 @@ class DeliveryClient:
                 "membership_version": context.tenant_membership_version,
                 "token_schema_version": 1,
                 "permissions": sorted(permissions),
+                "iat": now,
+                "exp": now + 60,
+                "jti": uuid4().hex,
+            },
+            self.config.private_key,
+            algorithm="RS256",
+            headers={"kid": self.config.key_id},
+        )
+
+    def release_preview_exchange_token(
+        self,
+        context: RequestContext,
+        *,
+        preview_id: UUID,
+        hostname: str,
+        target_generation: int,
+        git_revision: str,
+    ) -> str:
+        """Mint a short-lived browser handoff bound to one ready DCP preview."""
+        now = int(time.time())
+        return jwt.encode(
+            {
+                "iss": self.config.issuer,
+                "aud": "omnigent-release-preview-edge",
+                "sub": str(context.actor_id),
+                "tenant_id": str(context.tenant_id),
+                "space_id": str(context.space_id),
+                "project_id": str(context.project_id),
+                "membership_version": context.tenant_membership_version,
+                "token_schema_version": 1,
+                "permissions": ["deployment:read", "domain:read"],
+                "preview_id": str(preview_id),
+                "hostname": hostname,
+                "target_generation": target_generation,
+                "git_revision": git_revision,
                 "iat": now,
                 "exp": now + 60,
                 "jti": uuid4().hex,
@@ -236,15 +277,10 @@ class DeliveryClient:
         )
 
     async def check_contract(self) -> None:
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
         async with self._http() as client:
             response = await client.get("/v1/openapi.json")
             response.raise_for_status()
-        current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        ).encode()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
-            raise ValueError("App and DCP contract revisions differ")
+        self._assert_contract(response.json())
 
     def assert_ready(self) -> None:
         with httpx.Client(
@@ -252,9 +288,17 @@ class DeliveryClient:
         ) as client:
             response = client.get(self.config.endpoint.rstrip("/") + "/v1/openapi.json")
             response.raise_for_status()
+        self._assert_contract(response.json())
+
+    @classmethod
+    def _assert_contract(cls, document: Any) -> None:
         current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode()
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
+        current_digest = hashlib.sha256(current).digest()
+        contract_directory = Path(__file__).parents[1] / "production"
+        if not any(
+            current_digest == hashlib.sha256((contract_directory / name).read_bytes()).digest()
+            for name in cls._CONTRACTS
+        ):
             raise ValueError("App and DCP contract revisions differ")

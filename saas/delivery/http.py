@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -382,6 +384,23 @@ def create_delivery_router(
             or urlsplit("https://" + hostname).hostname != hostname
         ):
             raise HTTPException(409, detail={"code": "preview_origin_invalid"})
+        if re.fullmatch(rf"app-r{preview_id.hex}\.jxhh\.com", hostname):
+            assert access.client is not None
+            exchange_token = access.client.release_preview_exchange_token(
+                current,
+                preview_id=preview_id,
+                hostname=hostname,
+                target_generation=preview["target_generation"],
+                git_revision=preview["git_revision"],
+            )
+            await call(
+                current,
+                READ | {"domain:read"},
+                "POST",
+                f"/v1/release-previews/{preview_id}/access",
+                body={"token_sha256": hashlib.sha256(exchange_token.encode()).hexdigest()},
+            )
+            return {"url": f"https://{hostname}/__omnigent/bootstrap#token={exchange_token}"}
         return {"url": "https://" + hostname}
 
     @router.get("/delivery/projects/{project_id}/runs")

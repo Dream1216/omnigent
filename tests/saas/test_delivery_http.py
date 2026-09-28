@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import httpx
+import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -48,6 +49,7 @@ from omnigent_dcp.persistence.builds import BuildRepository
 from omnigent_dcp.persistence.delivery import DeliveryRepository
 from omnigent_dcp.persistence.domains import DomainBindingRepository
 from omnigent_dcp.persistence.models import Base, DeliveryRow, SourceSnapshotRow
+from omnigent_dcp.persistence.preview_access import ReleasePreviewAccessRepository
 from omnigent_dcp.persistence.previews import ReleasePreviewRepository
 from omnigent_dcp.persistence.repository import ReleaseRepository
 from omnigent_dcp.services.admission import StaticCapacityProbe
@@ -201,6 +203,7 @@ def build_harness(
         preview_service=previews,
         delivery_service=delivery,
         domain_service=DomainService(DomainBindingRepository(engine)),
+        preview_access=ReleasePreviewAccessRepository(engine, root_domain="jxhh.com"),
         actor_resolver=actor_resolver,
         checkpoint_service=checkpoint_service,
     )
@@ -427,6 +430,89 @@ def test_preview_link_requires_current_domain_generation_and_unexpired_lease(har
         )
     assert h.client.get(path).json()["detail"]["code"] == "preview_expired"
     assert h.client.get(h.base + "/runs").status_code == 200
+
+
+def test_wildcard_release_preview_open_registers_one_use_exchange(harness):
+    import hashlib
+    from datetime import timedelta
+    from urllib.parse import urlsplit
+
+    from omnigent_dcp.domain.models import ActorContext, DomainBindingMode, DomainBindingSpec
+    from omnigent_dcp.persistence.models import (
+        DomainBindingRow,
+        ReleasePreviewAccessGrantRow,
+        ReleasePreviewRow,
+    )
+
+    h = harness
+    assert post(h, h.base + "/build", {"snapshot_id": h.snapshot_id}).status_code == 202
+    for _ in range(3):
+        tick(h)
+    delivery = h.client.get(h.base).json()["deliveries"][0]
+    preview_id = delivery["preview_id"]
+    hostname = f"app-r{UUID(preview_id).hex}.jxhh.com"
+    with Session(h.engine) as session:
+        preview = session.get(ReleasePreviewRow, preview_id)
+        spec = DomainBindingSpec(
+            environment_id=preview.environment_id,
+            hostname=hostname,
+            target_generation=preview.target_generation,
+            git_revision=preview.git_revision,
+            desired_fingerprint="a" * 64,
+            dns_target="121.41.172.58",
+            health_path="/.well-known/omnigent/release-preview-health",
+            mode=DomainBindingMode.WILDCARD_EDGE,
+        )
+    actor = ActorContext(
+        tenant_id=str(h.context.tenant_id),
+        project_id=str(h.project.project_id),
+        actor_id=str(h.context.actor_id),
+        membership_version=h.context.tenant_membership_version,
+        token_id="wildcard-domain-fixture",
+        permissions=frozenset({"domain:create"}),
+    )
+    domain = DomainBindingRepository(h.engine).reserve(
+        identity=actor,
+        spec=spec,
+        ownership_token="x" * 48,
+        idempotency_key="wildcard-domain-fixture",
+        correlation_id="wildcard-domain-fixture",
+    )
+    now = datetime.now(timezone.utc)
+    with Session(h.engine) as session, session.begin():
+        row = session.get(DomainBindingRow, domain.id)
+        row.status = "ready"
+        row.aggregate_version = 4
+        row.ownership_evidence_sha256 = "b" * 64
+        row.ownership_resolver_ids = ["aliyun", "tencent"]
+        row.ownership_verified_at = now
+        row.ready_evidence_sha256 = "c" * 64
+        row.public_addresses = ["121.41.172.58"]
+        row.certificate_not_after = now + timedelta(days=1)
+        row.ready_at = now
+    opened = h.client.get(h.base + f"/previews/{preview_id}/open")
+    assert opened.status_code == 200, opened.text
+    url = urlsplit(opened.json()["url"])
+    assert url.hostname == hostname
+    assert url.path == "/__omnigent/bootstrap"
+    assert url.fragment.startswith("token=")
+    token = url.fragment.removeprefix("token=")
+    claims = jwt.decode(
+        token,
+        serialization.load_pem_private_key(
+            h.transport.config.private_key, password=None
+        ).public_key(),
+        algorithms=["RS256"],
+        audience="omnigent-release-preview-edge",
+        issuer=h.transport.config.issuer,
+    )
+    assert claims["preview_id"] == preview_id
+    assert claims["hostname"] == hostname
+    with Session(h.engine) as session:
+        grants = session.query(ReleasePreviewAccessGrantRow).all()
+    assert len(grants) == 1
+    assert grants[0].token_hash == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in str(grants[0].__dict__)
 
 
 def test_expired_cookie_can_load_delivery_login_without_exposing_project_data(harness):
