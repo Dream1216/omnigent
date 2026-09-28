@@ -34,7 +34,9 @@ class TenantAgentCatalogInitializer:
     concurrent first requests on one replica. Failed attempts are never cached.
     """
 
-    _ROUTE_PREFIXES = ("/v1/agents", "/v1/sessions", "/v1/execution-readyz")
+    _CATALOG_ROUTE_PREFIX = "/v1/agents"
+    _SESSION_CREATE_PATH = "/v1/sessions"
+    _READINESS_PATH = "/v1/execution-readyz"
 
     def __init__(
         self,
@@ -53,12 +55,20 @@ class TenantAgentCatalogInitializer:
         self._initialized: set[int] = set()
         self._locks: dict[int, asyncio.Lock] = {}
 
-    def should_initialize(self, path: str) -> bool:
-        """Return whether *path* consumes tenant Agent catalog state."""
+    def should_initialize(self, path: str, method: str) -> bool:
+        """Return whether the request requires packaged Agent catalog state.
 
-        return any(
-            path == prefix or path.startswith(f"{prefix}/") for prefix in self._ROUTE_PREFIXES
-        )
+        Session history and item reads remain available while a first-request
+        catalog seed is recovering. Only the catalog itself, readiness probe,
+        and top-level session create depend on the packaged built-ins.
+        """
+
+        normalized_method = method.upper()
+        if path == self._READINESS_PATH:
+            return True
+        if path == self._CATALOG_ROUTE_PREFIX or path.startswith(f"{self._CATALOG_ROUTE_PREFIX}/"):
+            return True
+        return path == self._SESSION_CREATE_PATH and normalized_method == "POST"
 
     async def ensure(self, runtime: RuntimeContext) -> None:
         """Ensure the current tenant workspace has the packaged Agent catalog."""

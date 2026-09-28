@@ -196,12 +196,82 @@ def test_agent_catalog_initializes_only_agent_consuming_runtime_routes() -> None
         agent_cache=object(),
     )
     try:
-        assert initializer.should_initialize("/v1/agents")
-        assert initializer.should_initialize("/v1/sessions/conv-1")
-        assert initializer.should_initialize("/v1/execution-readyz")
-        assert not initializer.should_initialize("/v1/hosts/host-1/tunnel")
-        assert not initializer.should_initialize("/v1/info")
+        assert initializer.should_initialize("/v1/agents", "GET")
+        assert initializer.should_initialize("/v1/agents/agent-1", "DELETE")
+        assert initializer.should_initialize("/v1/sessions", "POST")
+        assert initializer.should_initialize("/v1/execution-readyz", "GET")
+        assert not initializer.should_initialize("/v1/sessions", "GET")
+        assert not initializer.should_initialize("/v1/sessions/conv-1", "GET")
+        assert not initializer.should_initialize("/v1/sessions/conv-1/events", "POST")
+        assert not initializer.should_initialize("/v1/hosts/host-1/tunnel", "GET")
+        assert not initializer.should_initialize("/v1/info", "GET")
     finally:
+        engine.dispose()
+
+
+def test_catalog_failure_does_not_block_session_history_reads() -> None:
+    app, _scope = _build_fastapi_app()
+    engine = sa.create_engine("sqlite://")
+    attempts = 0
+
+    def fail_seed(*_stores: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("transient catalog dependency")
+
+    initializer = TenantAgentCatalogInitializer(
+        coordination_engine=engine,
+        agent_store=object(),
+        artifact_store=object(),
+        agent_cache=object(),
+        seed=fail_seed,
+    )
+    runtime_context_middleware = next(
+        middleware
+        for middleware in app.user_middleware
+        if middleware.cls is SaasAuthContextMiddleware
+    )
+    runtime_context_middleware.kwargs["runtime_initializer"] = initializer
+
+    @app.get("/v1/sessions")
+    def list_sessions() -> dict[str, object]:
+        return {"object": "list", "data": []}
+
+    @app.post("/v1/sessions")
+    def create_session() -> dict[str, str]:
+        return {"id": "should-not-run"}
+
+    @app.get("/v1/agents")
+    def list_agents() -> dict[str, object]:
+        return {"object": "list", "data": []}
+
+    try:
+        with TestClient(app) as client:
+            csrf = _login(client)
+
+            history = client.get("/v1/sessions")
+            assert history.status_code == 200
+            assert history.json() == {"object": "list", "data": []}
+            assert attempts == 0
+
+            agents = client.get("/v1/agents")
+            assert agents.status_code == 503
+            assert agents.json()["error"]["code"] == "runtime_catalog_unavailable"
+            assert attempts == 1
+
+            history_during_retry = client.get("/v1/sessions")
+            assert history_during_retry.status_code == 200
+            assert attempts == 1
+
+            create = client.post(
+                "/v1/sessions",
+                headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+            )
+            assert create.status_code == 503
+            assert create.json()["error"]["code"] == "runtime_catalog_unavailable"
+            assert attempts == 2
+    finally:
+        app.state.saas_test_engine.dispose()
         engine.dispose()
 
 

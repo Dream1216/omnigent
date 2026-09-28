@@ -89,6 +89,13 @@ describe("sandboxProviderOptions", () => {
   });
 });
 
+describe("sandboxOptionLabel", () => {
+  it("formats the production sandbox provider names", () => {
+    expect(sandboxOptionLabel("agent_sandbox")).toBe("Agent Sandbox");
+    expect(sandboxOptionLabel("kubernetes")).toBe("Kubernetes Sandbox");
+  });
+});
+
 describe("resolveServerInfo sandbox_providers", () => {
   it("keeps the provider list from the probe", async () => {
     // Regression: the probe rebuilds ServerInfo field by field, so a
