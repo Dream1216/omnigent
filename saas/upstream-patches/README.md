@@ -170,6 +170,16 @@ LOC ceiling, 8-patch ceiling, isolation floor, forbidden paths and
 reverse-dependency checks remain unchanged.  This is a Single-Owner Beta
 corrective record, not production admission or a technical-gate waiver.
 
+The `next-preview-agent-session-reliability-v22` revision carries the Host
+orphan-reaper, managed-sandbox readiness, message deduplication and
+same-token session-create repairs in patch 0010. It replays after the existing
+eight patches and must reproduce the six official Python files byte for byte.
+The exact diff against product main adds 11 newly divergent official paths and
+1,103 net lines, moving the strict ceilings to 118 files / 4,139 lines and
+nine active patches. The 0.85 isolation floor, forbidden native paths and
+reverse-dependency check remain. The 17-Agent matrix and five authenticated
+delivery gates remain separate live release requirements.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
@@ -180,3 +190,4 @@ corrective record, not production admission or a technical-gate waiver.
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official OpenCode gateway resolution; configured-provider readiness; platform runtime synthetic-token routing; no native Runner edit | Generic upstream OpenCode provider-fallback proposal pending | `9616bf97` | Remove when upstream can route OpenCode through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official package install; headless/native temporary Provider routing; no persisted token; vendor-login fallback; no workflow/native Runner edit | Generic upstream Kimi temporary-provider proposal pending | `9616bf97` after patches 0002-0007 | Remove when upstream can install Kimi and route it through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/sandboxes/kubernetes.py`; `omnigent/server/managed_hosts.py` | Kubernetes SDK image material; bounded Host command and reserved server URL; workspace propagation; Agent Sandbox and Job provider parsing; Kiro device-flow login and `whoami` readiness; dual-provider production contracts | Generic upstream managed Kubernetes Host-command, multi-provider and Kiro readiness proposal pending | `9616bf97` after patches 0002-0008 | Remove when upstream exposes equivalent bounded managed-Host commands, reserved server/workspace propagation, composable Agent Sandbox plus Kubernetes Job providers, and revocation-aware Kiro readiness |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/host/connect.py`; `omnigent/host/runner_zygote.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py` | Host orphan cleanup; per-provider managed-sandbox readiness; single-turn message deduplication; concurrent same-token session-create replay | Generic upstream reliability proposal pending | `9616bf97` after patches 0002-0009 | Remove when upstream preserves runner exit status during cleanup and provides equivalent readiness, message and session-create idempotency semantics |

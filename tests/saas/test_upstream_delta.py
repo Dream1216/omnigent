@@ -119,7 +119,7 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     report = check_patch_queue(repo)
 
     assert report["status"] == "pass"
-    assert report["patch_count"] == 8
+    assert report["patch_count"] == 9
     assert report["covered_paths"] == report["official_source_paths"]
 
 
@@ -132,10 +132,11 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4139
     assert budget["max_direct_upstream_files"] == 118
-    assert budget["max_active_patches"] == 8
+    assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
     assert revision["revision"] == "next-preview-agent-session-reliability-v22"
+    assert revision["previous_max_active_patches"] == 8
     assert revision["previous_max_direct_upstream_files"] == 107
     assert revision["previous_max_upstream_net_added_loc"] == 3036
     assert revision["previous_measured_upstream_net_added_loc"] == 3036
@@ -321,7 +322,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
-        active_patch_count=8,
+        active_patch_count=9,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,

@@ -46,7 +46,7 @@
     "users": ["workspace_id", "id"]
   },
   "source_intrusion_budget": {
-    "max_active_patches": 8,
+    "max_active_patches": 9,
     "max_direct_upstream_files": 118,
     "max_upstream_net_added_loc": 4139,
     "min_isolated_custom_code_ratio": 0.85
@@ -54,10 +54,11 @@
   "source_intrusion_budget_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 8,
     "previous_max_direct_upstream_files": 107,
     "previous_max_upstream_net_added_loc": 3036,
     "previous_measured_upstream_net_added_loc": 3036,
-    "reason": "User-authorized next SaaS delivery and Preview release hardening incorporates the independently reviewed sandbox Agent-readiness and session replay repair. The source diff against the protected 37bce722 baseline changes 16 official paths by 1,399 added and 296 deleted lines (net 1,103); 11 paths become newly divergent from the pinned upstream. Exact remeasurement moves the ceilings from 107 files / 3,036 net lines to 118 files / 4,139 net lines. Preserve the eight-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta scope record does not approve production promotion, waive technical CI, or substitute for the exact-version 17-Agent and five delivery acceptance gates.",
+    "reason": "User-authorized next SaaS delivery and Preview release hardening incorporates the independently reviewed sandbox Agent-readiness and session replay repair. The source diff against the protected 37bce722 baseline changes 16 official paths by 1,399 added and 296 deleted lines (net 1,103); 11 paths become newly divergent from the pinned upstream. Exact remeasurement moves the ceilings from 107 files / 3,036 net lines to 118 files / 4,139 net lines. Independently replayable patch 0010 carries the six official Python seams after patches 0002-0009, raising the active-patch ceiling from eight to nine. Preserve the 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta scope record does not approve production promotion, waive technical CI, or substitute for the exact-version 17-Agent and five delivery acceptance gates.",
     "revision": "next-preview-agent-session-reliability-v22",
     "scoped_agent_delta": {
       "omnigent/host/connect.py": -120,
