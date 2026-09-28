@@ -8,6 +8,7 @@ are authenticated integration proof, not live Snapshot/Tekton/GitOps proof.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import os
 import sys
@@ -23,7 +24,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from saas.control_plane import (
@@ -32,7 +33,7 @@ from saas.control_plane import (
     RuntimeCompatibilityPolicy,
     SqlAlchemyContextResolver,
 )
-from saas.control_plane.db_models import GlobalUser
+from saas.control_plane.db_models import GlobalUser, TenantMembership
 from saas.delivery.authorization import AuthorizationBody, DeliveryAuthorization
 from saas.delivery.client import DeliveryClient, DeliveryConfig, DeliveryProject
 from saas.delivery.http import create_delivery_router
@@ -52,10 +53,11 @@ from omnigent_dcp.persistence.models import Base, DeliveryRow, SourceSnapshotRow
 from omnigent_dcp.persistence.preview_access import ReleasePreviewAccessRepository
 from omnigent_dcp.persistence.previews import ReleasePreviewRepository
 from omnigent_dcp.persistence.repository import ReleaseRepository
+from omnigent_dcp.release_preview_edge import create_release_preview_edge_app
 from omnigent_dcp.services.admission import StaticCapacityProbe
 from omnigent_dcp.services.builds import BuildService
 from omnigent_dcp.services.delivery import DeliveryService
-from omnigent_dcp.services.domains import DomainService
+from omnigent_dcp.services.domains import DomainService, WildcardEdgePolicy
 from omnigent_dcp.services.entitlements import EntitlementKey, StaticEntitlementAdmission
 from omnigent_dcp.services.previews import ReleasePreviewService
 from omnigent_dcp.services.releases import ReleaseService
@@ -196,6 +198,7 @@ def build_harness(
         JwksConfig(issuer=config.issuer, jwks_url="https://app.test/jwks"),
         transport=httpx.ASGITransport(app=jwks_app),
     )
+    preview_access = ReleasePreviewAccessRepository(engine, root_domain="jxhh.com")
     dcp_app = create_app(
         release_service=releases,
         build_service=builds,
@@ -203,7 +206,7 @@ def build_harness(
         preview_service=previews,
         delivery_service=delivery,
         domain_service=DomainService(DomainBindingRepository(engine)),
-        preview_access=ReleasePreviewAccessRepository(engine, root_domain="jxhh.com"),
+        preview_access=preview_access,
         actor_resolver=actor_resolver,
         checkpoint_service=checkpoint_service,
     )
@@ -222,6 +225,7 @@ def build_harness(
         transport=transport,
         dcp_app=dcp_app,
         delivery=delivery,
+        preview_access=preview_access,
         context=context,
         snapshot_id=snapshot.id,
         engine=engine,
@@ -513,6 +517,154 @@ def test_wildcard_release_preview_open_registers_one_use_exchange(harness):
     assert len(grants) == 1
     assert grants[0].token_hash == hashlib.sha256(token.encode()).hexdigest()
     assert token not in str(grants[0].__dict__)
+
+
+def test_release_preview_uses_one_use_exchange_and_current_membership(harness):
+    from datetime import timedelta
+
+    from omnigent_dcp.domain.models import ActorContext, DomainBindingMode, DomainBindingSpec
+    from omnigent_dcp.persistence.models import (
+        DomainBindingRow,
+        ReleasePreviewAccessGrantRow,
+        ReleasePreviewRow,
+    )
+
+    h = harness
+    assert post(h, h.base + "/build", {"snapshot_id": h.snapshot_id}).status_code == 202
+    for _ in range(3):
+        tick(h)
+    delivery = h.client.get(h.base).json()["deliveries"][0]
+    preview_id = delivery["preview_id"]
+    hostname = f"app-r{UUID(preview_id).hex}.jxhh.com"
+    with Session(h.engine) as session:
+        preview = session.get(ReleasePreviewRow, preview_id)
+        spec = DomainBindingSpec(
+            environment_id=preview.environment_id,
+            hostname=hostname,
+            target_generation=preview.target_generation,
+            git_revision=preview.git_revision,
+            desired_fingerprint="a" * 64,
+            dns_target="121.41.172.58",
+            health_path="/.well-known/omnigent/release-preview-health",
+            mode=DomainBindingMode.WILDCARD_EDGE,
+        )
+    actor = ActorContext(
+        tenant_id=str(h.context.tenant_id),
+        project_id=str(h.project.project_id),
+        actor_id=str(h.context.actor_id),
+        membership_version=h.context.tenant_membership_version,
+        token_id="wildcard-fixture",
+        permissions=frozenset({"domain:create", "deployment:read"}),
+    )
+    domain = (
+        DomainService(
+            DomainBindingRepository(h.engine),
+            wildcard_edge_policy=WildcardEdgePolicy("jxhh.com", "121.41.172.58"),
+            preview_repository=ReleasePreviewRepository(h.engine),
+        )
+        .create(
+            identity=actor,
+            spec=spec,
+            idempotency_key="wildcard-fixture",
+            correlation_id="test",
+        )
+        .domain
+    )
+    now = datetime.now(timezone.utc)
+    with Session(h.engine) as session, session.begin():
+        row = session.get(DomainBindingRow, domain.id)
+        row.status = "ready"
+        row.ownership_evidence_sha256 = "a" * 64
+        row.ownership_resolver_ids = ["resolver-a", "resolver-b"]
+        row.ownership_verified_at = now
+        row.ready_evidence_sha256 = "b" * 64
+        row.public_addresses = ["121.41.172.58"]
+        row.certificate_not_after = now + timedelta(days=1)
+        row.ready_at = now
+
+    path = h.base + f"/previews/{preview_id}/open"
+    assert TestClient(h.app).post(path).status_code == 401
+    assert (
+        h.client.post(
+            path,
+            json={},
+            headers={"Origin": "http://testserver", "X-CSRF-Token": "invalid"},
+        ).status_code
+        == 401
+    )
+    opened = post(h, path, {})
+    assert opened.status_code == 201, opened.text
+    assert opened.headers["Cache-Control"] == "no-store"
+    assert opened.json()["url"] == f"https://{hostname}"
+    token = opened.json()["token"]
+    assert token not in opened.json()["url"]
+
+    resolver = JwksActorResolver(
+        JwksConfig(
+            issuer=h.transport.config.issuer,
+            audience="omnigent-release-preview-edge",
+            jwks_url="https://app.test/saas/delivery/.well-known/jwks.json",
+        ),
+        transport=httpx.ASGITransport(app=h.app),
+    )
+    identity, claims = asyncio.run(resolver.resolve_token_with_claims(token))
+    assert claims["hostname"] == hostname
+    assert claims["preview_id"] == preview_id
+    assert claims["target_generation"] == spec.target_generation
+    assert claims["git_revision"] == spec.git_revision
+    assert claims["permissions"] == ["deployment:read", "domain:read"]
+    assert identity.actor_id == str(h.context.actor_id)
+    with Session(h.engine) as session:
+        grant = session.scalar(
+            select(ReleasePreviewAccessGrantRow).where(
+                ReleasePreviewAccessGrantRow.preview_id == preview_id
+            )
+        )
+        assert grant.token_hash == hashlib.sha256(token.encode()).hexdigest()
+        assert grant.consumed_at is None
+
+    class Revalidator:
+        def authorize_resource(self, *, identity, action, resource):
+            return h.authority.decide(
+                AuthorizationBody(
+                    action=action,
+                    actor_id=UUID(identity.actor_id),
+                    tenant_id=UUID(identity.tenant_id),
+                    project_id=UUID(identity.project_id),
+                    membership_version=identity.membership_version,
+                    token_id=identity.token_id,
+                    request_nonce=uuid4().hex,
+                    resource=resource,
+                )
+            )["allowed"]
+
+    edge = create_release_preview_edge_app(
+        repository=h.preview_access,
+        resolver=resolver,
+        revalidator=Revalidator(),
+        root_domain="jxhh.com",
+        cookie_secret=b"z" * 48,
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, content=b"preview-content")
+        ),
+    )
+    with TestClient(edge, base_url=f"https://{hostname}") as browser:
+        exchange = browser.post(
+            "/__omnigent/authorize", data={"token": token}, follow_redirects=False
+        )
+        assert exchange.status_code == 303
+        assert "Secure" in exchange.headers["set-cookie"]
+        assert "HttpOnly" in exchange.headers["set-cookie"]
+        assert browser.get("/").text == "preview-content"
+        with h.app.state.saas_test_sessions.begin() as session:
+            membership = session.get(TenantMembership, (h.context.tenant_id, h.context.actor_id))
+            membership.status = "removed"
+            membership.version += 1
+        assert browser.get("/").status_code == 403
+    with TestClient(edge, base_url=f"https://{hostname}") as replay:
+        assert replay.post("/__omnigent/authorize", data={"token": token}).status_code == 403
+    with Session(h.engine) as session:
+        assert session.get(ReleasePreviewAccessGrantRow, grant.id).consumed_at is not None
 
 
 def test_expired_cookie_can_load_delivery_login_without_exposing_project_data(harness):

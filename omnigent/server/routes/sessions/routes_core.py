@@ -163,6 +163,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _best_effort_stop,
     _build_session_list_item,
     _build_session_response,
+    _client_create_token,
     _create_session_from_bundle,
     _create_session_from_existing_agent,
     _ensure_runner_relay_ready,
@@ -205,6 +206,7 @@ from omnigent.stores.conversation_store import (
     PINNED_LABEL_KEY,
     PROJECT_LABEL_KEY,
     RUNNER_LIVENESS_TTL_S,
+    ConversationAlreadyExistsError,
     ConversationNotFoundError,
     pinned_label_key,
     runner_seen_is_fresh,
@@ -601,21 +603,72 @@ def register_core_routes(
             # message survives in each entry's `msg`.
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
-        resp = await _create_session_from_existing_agent(
-            conversation_store,
-            agent_store,
-            runner_router,
-            body,
-            request,
-            agent_cache=agent_cache,
-            user_id=user_id,
-            permission_store=permission_store,
-            liveness_lookup=liveness_lookup,
-            file_store=file_store,
-            artifact_store=artifact_store,
-            background_title_coordinator=background_title_coordinator,
-            project_store=project_store,
-        )
+        try:
+            resp = await _create_session_from_existing_agent(
+                conversation_store,
+                agent_store,
+                runner_router,
+                body,
+                request,
+                agent_cache=agent_cache,
+                user_id=user_id,
+                permission_store=permission_store,
+                liveness_lookup=liveness_lookup,
+                file_store=file_store,
+                artifact_store=artifact_store,
+                background_title_coordinator=background_title_coordinator,
+                project_store=project_store,
+            )
+        except ConversationAlreadyExistsError as collision:
+            # The web client deliberately reuses its 128-bit create token when
+            # retrying a POST whose response was lost. That token is the row's
+            # primary key, so a concurrent replay lands here after the winning
+            # transaction. Wait briefly for its metadata, labels, and owner
+            # grant, then return the existing snapshot without repeating runner
+            # launch, worktree, or initial-message side effects.
+            create_token = _client_create_token(body)
+            if create_token is None:
+                raise
+            for _attempt in range(200):
+                existing = await asyncio.to_thread(
+                    conversation_store.get_conversation, create_token
+                )
+                if (
+                    existing is not None
+                    and existing.agent_id == body.agent_id
+                    and existing.labels.get("omnigent.client_create_token") == create_token
+                ):
+                    try:
+                        access = await _require_access_and_level(
+                            user_id,
+                            create_token,
+                            LEVEL_READ,
+                            permission_store,
+                            conversation_store,
+                        )
+                    except OmnigentError as exc:
+                        if exc.code != ErrorCode.NOT_FOUND:
+                            raise
+                    else:
+                        return await _get_session_snapshot(
+                            conversation_store,
+                            create_token,
+                            access.level,
+                            agent_store,
+                            agent_cache,
+                            conversation=access.conversation,
+                            liveness_lookup=liveness_lookup,
+                            runner_exit_reports=runner_exit_reports,
+                            host_store=getattr(request.app.state, "host_store", None),
+                            sandbox_config=getattr(request.app.state, "sandbox_config", None),
+                            viewer_id=user_id,
+                        )
+                await asyncio.sleep(0.01)
+            raise OmnigentError(
+                "A session already uses this create token, but it is not an accessible "
+                "replay of this request",
+                code=ErrorCode.CONFLICT,
+            ) from collision
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
         # Without this, the runner doesn't know this session exists

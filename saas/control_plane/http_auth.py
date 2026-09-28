@@ -130,7 +130,7 @@ class RuntimeInitializerError(RuntimeError):
 class RuntimeInitializer(Protocol):
     """Request-time initializer that runs only inside a bound RuntimeContext."""
 
-    def should_initialize(self, path: str) -> bool: ...
+    def should_initialize(self, path: str, method: str) -> bool: ...
 
     async def ensure(self, runtime: RuntimeContext) -> None: ...
 
@@ -490,7 +490,10 @@ class SaasAuthContextMiddleware:
             if (
                 scope["type"] == "http"
                 and self._runtime_initializer is not None
-                and self._runtime_initializer.should_initialize(connection.url.path)
+                and self._runtime_initializer.should_initialize(
+                    connection.url.path,
+                    cast(str, scope.get("method", "GET")),
+                )
             ):
                 try:
                     await self._runtime_initializer.ensure(runtime_context)

@@ -36,6 +36,25 @@ export interface ResolvedSetupStep {
   harness: string;
 }
 
+/** In-process SDK harness spellings whose ``needs-auth`` state is advisory.
+ * The host cannot see agent-level ``executor.auth``, so these rows must stay
+ * selectable and visible even when the host has no ambient credential. */
+const SDK_HARNESSES = new Set([
+  "claude-sdk",
+  "claude_sdk",
+  "claude",
+  "openai-agents",
+  "openai-agents-sdk",
+  "agents_sdk",
+  "antigravity",
+  "agy",
+  "google-antigravity",
+]);
+
+export function isSdkHarness(harness: string): boolean {
+  return SDK_HARNESSES.has(harness);
+}
+
 /** Whether *harness* is a Codex spelling (bare or native). Codex is the only
  *  family whose flag-off warning copy is harness-specific ("run codex login"),
  *  so the message helper gates on this. */
@@ -45,6 +64,67 @@ export function isCodexHarness(harness: string): boolean {
 
 export function isNativeCursorHarness(harness: string): boolean {
   return harness === "cursor-native" || harness === "native-cursor";
+}
+
+/** Build the readiness profile for a newly provisioned managed sandbox.
+ *
+ * Managed hosts are not user-selectable machines, but their connect handshake
+ * is the authoritative probe of the image, credentials, and provider config a
+ * new sandbox will inherit. Prefer live instances for the selected provider;
+ * when an idle-reclaiming provider has none, fall back to its last reports.
+ * Conflicting reports fail closed per harness so a mixed rollout never claims
+ * an agent is ready until every sampled runtime agrees.
+ */
+export function managedSandboxReadinessHost(
+  hosts: readonly Host[],
+  provider: string | null | undefined,
+  label: string,
+): Host | null {
+  if (!provider) return null;
+  const matching = hosts.filter(
+    (host) =>
+      host.sandbox_provider === provider &&
+      host.configured_harnesses != null &&
+      Object.keys(host.configured_harnesses).length > 0,
+  );
+  const online = matching.filter((host) => host.status === "online");
+  const samples = online.length > 0 ? online : matching;
+  if (samples.length === 0) return null;
+
+  const keys = new Set(samples.flatMap((host) => Object.keys(host.configured_harnesses ?? {})));
+  const configuredHarnesses: Record<string, boolean | string> = {};
+  for (const key of keys) {
+    const values = samples.map((host) => host.configured_harnesses?.[key]);
+    if (values.every((value) => value === true)) {
+      configuredHarnesses[key] = true;
+      continue;
+    }
+    configuredHarnesses[key] =
+      values.find((value) => value === "needs-auth") ??
+      values.find((value) => value === "version-too-low") ??
+      values.find((value) => value === "binary-missing") ??
+      values.find((value): value is string => typeof value === "string") ??
+      false;
+  }
+
+  const gatewayReports = samples
+    .map((host) => host.gateway_inference)
+    .filter((report): report is Record<string, boolean> => report != null);
+  const gatewayKeys = new Set(gatewayReports.flatMap((report) => Object.keys(report)));
+  const gatewayInference: Record<string, boolean> = {};
+  for (const key of gatewayKeys) {
+    gatewayInference[key] = gatewayReports.every((report) => report[key] === true);
+  }
+
+  return {
+    host_id: `sandbox-provider:${provider}`,
+    name: label,
+    owner: "managed-sandbox",
+    status: "online",
+    sandbox_provider: provider,
+    configured_harnesses: configuredHarnesses,
+    gateway_inference: gatewayReports.length > 0 ? gatewayInference : null,
+  };
 }
 
 /**
@@ -106,6 +186,16 @@ export function harnessUnconfiguredOnHost(
   host: Host | undefined | null,
 ): boolean {
   return harnessUnavailableReasonOnHost(harness, host) !== null;
+}
+
+/** Whether the opt-in "hide unconfigured" filter should remove a harness.
+ * SDK ``needs-auth`` is a warning, not proof the agent cannot authenticate. */
+export function harnessHiddenAsUnconfiguredOnHost(
+  harness: string | null | undefined,
+  host: Host | undefined | null,
+): boolean {
+  const reason = harnessUnavailableReasonOnHost(harness, host);
+  return reason !== null && !(reason === "needs-auth" && !!harness && isSdkHarness(harness));
 }
 
 /**

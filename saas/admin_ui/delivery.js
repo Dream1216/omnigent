@@ -130,6 +130,48 @@
     sessionStorage.removeItem(storageKey);
     return result;
   }
+  async function openReleasePreview(previewId) {
+    const name = `omnigent-release-preview-${crypto.randomUUID()}`;
+    const popup = window.open("about:blank", name);
+    if (!popup) throw new Error("浏览器阻止了预览窗口，请允许本站打开新窗口。");
+    const popupDocument = popup.document;
+    popup.opener = null;
+    if (popupDocument.body)
+      popupDocument.body.textContent = "正在打开受保护的预览…";
+    try {
+      const result = await api(`${projectPath()}/previews/${previewId}/open`, {
+        method: "POST",
+      });
+      const url = new URL(result.url);
+      if (
+        url.protocol !== "https:" ||
+        !/^app-r[0-9a-f]{32}\.jxhh\.com$/.test(url.hostname) ||
+        url.port ||
+        url.pathname !== "/" ||
+        url.search ||
+        url.hash ||
+        typeof result.token !== "string" ||
+        !result.token
+      )
+        throw new Error("预览地址或交换凭据无效，请刷新后重试。");
+      if (popup.closed) throw new Error("预览窗口已关闭，请重新打开。");
+      const form = popupDocument.createElement("form");
+      form.method = "POST";
+      form.action = `${url.origin}/__omnigent/authorize`;
+      const token = popupDocument.createElement("input");
+      token.type = "hidden";
+      token.name = "token";
+      token.value = result.token;
+      form.append(token);
+      (popupDocument.body || popupDocument.documentElement).append(form);
+      form.submit();
+      form.remove();
+      popup.focus();
+    } catch (error) {
+      popup.close();
+      throw error;
+    }
+  }
   async function perform(action) {
     if (state.busy) return;
     state.busy = true;
@@ -275,11 +317,7 @@
           button(
             "查看预览",
             async () => {
-              const result = await api(
-                `${projectPath()}/previews/${delivery.preview_id}/open`,
-              );
-              $("release-preview-link").href = result.url;
-              $("release-preview").showModal();
+              await openReleasePreview(delivery.preview_id);
             },
             delivery.status === "ready",
           ),

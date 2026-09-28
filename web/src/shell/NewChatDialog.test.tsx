@@ -7002,6 +7002,81 @@ describe("NewChatLandingScreen custom-agent sandbox gating", () => {
     );
   }
 
+  it("presents an enabled sandbox provider as available with its default model", async () => {
+    renderLanding({ managed_sandboxes_enabled: true });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip")).toHaveAccessibleName(
+        /Sandbox, Available/,
+      ),
+    );
+    expect(screen.getByTestId("new-chat-landing-agent-model-value")).toHaveTextContent("Default");
+    expect(screen.queryByText("Models unavailable")).toBeNull();
+  });
+
+  it("uses only the selected provider's managed runtime report to gate sandbox agents", async () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": false },
+      },
+      {
+        host_id: "managed_agent_sandbox",
+        name: "managed-agent-sandbox",
+        owner: "me",
+        status: "online",
+        sandbox_provider: "agent_sandbox",
+        configured_harnesses: {
+          "claude-native": "needs-auth",
+          "codex-native": true,
+        },
+      },
+      {
+        host_id: "managed_kubernetes",
+        name: "managed-kubernetes",
+        owner: "me",
+        status: "online",
+        sandbox_provider: "kubernetes",
+        configured_harnesses: {
+          "claude-native": true,
+          "codex-native": "needs-auth",
+        },
+      },
+    ] as Host[]);
+
+    renderLanding({
+      managed_sandboxes_enabled: true,
+      sandbox_provider: "agent_sandbox",
+      sandbox_providers: ["agent_sandbox", "kubernetes"],
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent(
+        "Claude Code isn't ready in Agent Sandbox",
+      ),
+    );
+    expect(useHostsMock).toHaveBeenCalledWith({ includeSandbox: true, refetchOnFocus: true });
+    expect(screen.queryByTestId("new-chat-landing-harness-setup")).toBeNull();
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "Run in a managed sandbox" },
+    });
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    expect(screen.queryByTestId("new-chat-landing-host-managed_agent_sandbox")).toBeNull();
+    expect(screen.queryByTestId("new-chat-landing-host-managed_kubernetes")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-agent-warning-a1")).toBeVisible();
+    expect(screen.queryByTestId("new-chat-landing-agent-warning-a2")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-agent-a2"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("new-chat-landing-harness-warning")).toBeNull(),
+    );
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeEnabled();
+  });
+
   it("hides 'Create custom agent' on a sandbox", async () => {
     renderLanding({ managed_sandboxes_enabled: true });
     await selectSandbox();

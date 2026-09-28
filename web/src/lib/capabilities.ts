@@ -397,6 +397,7 @@ export function isSingleUserMode(info: ServerInfo | "loading"): boolean {
  * provider still reads sensibly without a frontend change.
  */
 const SANDBOX_PROVIDER_NAMES: Record<string, string> = {
+  agent_sandbox: "Agent",
   modal: "Modal",
   lakebox: "Databricks",
   daytona: "Daytona",

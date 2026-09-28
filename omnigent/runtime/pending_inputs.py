@@ -172,6 +172,12 @@ class _Entry:
 _pending: WorkspaceScopedCache[str, dict[str, _Entry]] = WorkspaceScopedCache()
 _lock = threading.Lock()
 
+# Remember a drained submission long enough for a web client to retry a POST
+# whose response was lost. Per-conversation insertion order bounds the cache.
+_COMMITTED_TTL_S: float = 3600.0
+_COMMITTED_MAX_PER_CONVERSATION = 256
+_committed: WorkspaceScopedCache[str, dict[str, tuple[str, float]]] = WorkspaceScopedCache()
+
 
 def _evict_stale_locked(conversation_id: str, now: float) -> None:
     """
@@ -268,6 +274,51 @@ def resolve(conversation_id: str, pending_id: str) -> None:
         entries.pop(pending_id, None)
         if not entries:
             _pending.pop(conversation_id, None)
+
+
+def pending_id_for(conversation_id: str, stable_id: str) -> str | None:
+    """Return the live pending id recorded for a client ``stable_id``."""
+    with _lock:
+        _evict_stale_locked(conversation_id, _now())
+        for entry in _pending.get(conversation_id, {}).values():
+            if entry.stable_id == stable_id:
+                return entry.pending_id
+    return None
+
+
+def remember_committed(conversation_id: str, stable_id: str, item_id: str) -> None:
+    """Remember the durable item produced for a client submission."""
+    now = _now()
+    with _lock:
+        entries = _committed.setdefault(conversation_id, {})
+        entries.pop(stable_id, None)
+        entries[stable_id] = (item_id, now)
+        _evict_stale_committed_locked(conversation_id, now)
+
+
+def committed_item_id(conversation_id: str, stable_id: str) -> str | None:
+    """Return the durable item id remembered for ``stable_id``."""
+    with _lock:
+        _evict_stale_committed_locked(conversation_id, _now())
+        entries = _committed.get(conversation_id)
+        if entries is None:
+            return None
+        found = entries.get(stable_id)
+        return None if found is None else found[0]
+
+
+def _evict_stale_committed_locked(conversation_id: str, now: float) -> None:
+    """Drop remembered submissions past the TTL or per-session cap."""
+    entries = _committed.get(conversation_id)
+    if entries is None:
+        return
+    stale = [stable_id for stable_id, (_, at) in entries.items() if now - at > _COMMITTED_TTL_S]
+    for stable_id in stale:
+        entries.pop(stable_id, None)
+    while len(entries) > _COMMITTED_MAX_PER_CONVERSATION:
+        entries.pop(next(iter(entries)))
+    if not entries:
+        _committed.pop(conversation_id, None)
 
 
 def resolve_oldest(conversation_id: str) -> DrainedInput | None:
@@ -484,3 +535,4 @@ def reset_for_tests() -> None:
     """
     with _lock:
         _pending.clear()
+        _committed.clear()
