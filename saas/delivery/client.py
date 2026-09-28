@@ -147,6 +147,11 @@ class DcpResponseError(RuntimeError):
 
 
 class DeliveryClient:
+    _CONTRACTS = (
+        "dcp-openapi-v1.json",
+        "dcp-openapi-v1-wildcard-edge.json",
+    )
+
     def __init__(
         self, config: DeliveryConfig, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
@@ -236,15 +241,10 @@ class DeliveryClient:
         )
 
     async def check_contract(self) -> None:
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
         async with self._http() as client:
             response = await client.get("/v1/openapi.json")
             response.raise_for_status()
-        current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        ).encode()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
-            raise ValueError("App and DCP contract revisions differ")
+        self._assert_contract(response.json())
 
     def assert_ready(self) -> None:
         with httpx.Client(
@@ -252,9 +252,17 @@ class DeliveryClient:
         ) as client:
             response = client.get(self.config.endpoint.rstrip("/") + "/v1/openapi.json")
             response.raise_for_status()
+        self._assert_contract(response.json())
+
+    @classmethod
+    def _assert_contract(cls, document: Any) -> None:
         current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode()
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
+        current_digest = hashlib.sha256(current).digest()
+        contract_directory = Path(__file__).parents[1] / "production"
+        if not any(
+            current_digest == hashlib.sha256((contract_directory / name).read_bytes()).digest()
+            for name in cls._CONTRACTS
+        ):
             raise ValueError("App and DCP contract revisions differ")
