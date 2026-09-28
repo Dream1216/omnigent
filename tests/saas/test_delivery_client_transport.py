@@ -30,6 +30,7 @@ delivery_config = _delivery_config
         "dcp-openapi-v1.json",
         "dcp-openapi-v1-wildcard-edge.json",
         "dcp-openapi-v1-release-edge.json",
+        "dcp-openapi-v1-next-preview-edge.json",
     ],
 )
 def test_delivery_client_uses_mtls_for_requests_and_both_readiness_paths(

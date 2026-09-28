@@ -140,7 +140,9 @@ def create_delivery_router(
             headers={
                 "Content-Security-Policy": (
                     "default-src 'none'; script-src 'self'; style-src 'self'; "
-                    "connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+                    "connect-src 'self'; img-src 'self'; "
+                    "form-action 'self' https://*.jxhh.com; "
+                    "base-uri 'none'; frame-ancestors 'none'"
                 ),
                 "Referrer-Policy": "no-referrer",
                 "Cache-Control": "no-store",
@@ -402,6 +404,62 @@ def create_delivery_router(
             )
             return {"url": f"https://{hostname}/__omnigent/bootstrap#token={exchange_token}"}
         return {"url": "https://" + hostname}
+
+    @router.post("/delivery/projects/{project_id}/previews/{preview_id}/open", status_code=201)
+    async def exchange_preview(
+        project_id: UUID, preview_id: UUID, request: Request, response: Response
+    ) -> dict[str, str]:
+        project = binding(project_id)
+        current = context(request, project, "preview.open")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        preview = (await call(current, READ, "GET", f"/v1/release-previews/{preview_id}"))[
+            "preview"
+        ]
+        if preview["status"] != "ready":
+            raise HTTPException(409, detail={"code": "preview_endpoint_unavailable"})
+        expires_at = datetime.fromisoformat(preview["expires_at"])
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(409, detail={"code": "preview_expired"})
+        assert client is not None
+        hostname = f"app-r{preview_id.hex}.{client.config.release_preview_root_domain}"
+        try:
+            generation = int(preview["target_generation"])
+            revision = str(preview["git_revision"])
+            token = client.release_preview_exchange_token(
+                current,
+                preview_id=preview_id,
+                hostname=hostname,
+                target_generation=generation,
+                git_revision=revision,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(409, detail={"code": "preview_endpoint_stale"}) from error
+        grant = await call(
+            current,
+            READ | {"domain:read"},
+            "POST",
+            f"/v1/release-previews/{preview_id}/access",
+            body={"token_sha256": hashlib.sha256(token.encode()).hexdigest()},
+        )
+        try:
+            grant_expires = datetime.fromisoformat(grant["expires_at"])
+            if grant_expires.tzinfo is None:
+                grant_expires = grant_expires.replace(tzinfo=timezone.utc)
+            grant_matches = (
+                grant["preview_id"] == str(preview_id)
+                and grant["hostname"] == hostname
+                and grant["target_generation"] == generation
+                and grant["git_revision"] == revision
+                and grant_expires > datetime.now(timezone.utc)
+            )
+        except (KeyError, TypeError, ValueError):
+            grant_matches = False
+        if not grant_matches:
+            raise HTTPException(409, detail={"code": "preview_endpoint_stale"})
+        return {"url": f"https://{hostname}", "token": token}
 
     @router.get("/delivery/projects/{project_id}/runs")
     def source_runs(project_id: UUID, request: Request) -> list[dict[str, str]]:
