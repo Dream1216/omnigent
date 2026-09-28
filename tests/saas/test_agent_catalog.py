@@ -59,7 +59,7 @@ async def test_agent_catalog_initializes_once_per_workspace_under_bound_context(
         seeded.append(current_workspace_id())
 
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
@@ -88,7 +88,7 @@ async def test_agent_catalog_real_seed_is_visible_and_isolated_per_workspace(
     artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
     agent_cache = AgentCache(artifact_store=artifact_store, cache_dir=tmp_path / "cache")
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=agent_store,
         artifact_store=artifact_store,
         agent_cache=agent_cache,
@@ -126,7 +126,7 @@ async def test_agent_catalog_failure_is_redacted_and_retried() -> None:
             raise RuntimeError("secret backend detail")
 
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
@@ -171,7 +171,7 @@ def test_agent_catalog_postgresql_uses_least_privilege_transaction_lock() -> Non
         events.append("seed")
 
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
@@ -190,7 +190,7 @@ def test_agent_catalog_postgresql_uses_least_privilege_transaction_lock() -> Non
 def test_agent_catalog_initializes_only_agent_consuming_runtime_routes() -> None:
     engine = sa.create_engine("sqlite://")
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),

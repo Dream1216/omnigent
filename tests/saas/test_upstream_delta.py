@@ -124,17 +124,25 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
+def test_pnpm_cache_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 3032
-    assert budget["max_direct_upstream_files"] == 106
+    assert budget["max_upstream_net_added_loc"] == 3036
+    assert budget["max_direct_upstream_files"] == 107
     assert budget["max_active_patches"] == 8
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "pnpm-cache-only-ci-post-job-v21"
+    assert revision["previous_max_direct_upstream_files"] == 106
+    assert revision["previous_max_upstream_net_added_loc"] == 3032
+    assert revision["previous_measured_upstream_net_added_loc"] == 3032
+    assert revision["scoped_ci_delta"] == {
+        ".github/actions/setup-pnpm/action.yml": 4,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "bilingual-visual-baselines-v20"
     assert revision["previous_max_direct_upstream_files"] == 101
     assert revision["previous_max_upstream_net_added_loc"] == 3032
@@ -286,7 +294,7 @@ def test_bilingual_visual_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 3032 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 3036 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 20000, 0),
         ],
         manifest,

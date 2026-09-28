@@ -47,11 +47,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 8,
-    "max_direct_upstream_files": 106,
-    "max_upstream_net_added_loc": 3032,
+    "max_direct_upstream_files": 107,
+    "max_upstream_net_added_loc": 3036,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-28",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 106,
+    "previous_max_upstream_net_added_loc": 3032,
+    "previous_measured_upstream_net_added_loc": 3032,
+    "reason": "The Codex-parity cache-only CI job passed its tests but failed during actions/setup-node post-job cache save because the pnpm store directory did not exist. The reviewed four-line setup-pnpm action fix creates that directory and its rerun passed. This changes one additional upstream-tracked action file and adds exactly four measured net lines, moving the exact totals from 106 files / 3,032 lines to 107 files / 3,036 lines. Raise only those two ceilings to the measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "pnpm-cache-only-ci-post-job-v21",
+    "scoped_ci_delta": {
+      ".github/actions/setup-pnpm/action.yml": 4
+    },
+    "previous_revision": {
     "approved_at": "2026-09-26",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 101,
@@ -367,6 +378,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
