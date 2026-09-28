@@ -26,7 +26,11 @@ delivery_config = _delivery_config
 
 @pytest.mark.parametrize(
     "contract_name",
-    ["dcp-openapi-v1.json", "dcp-openapi-v1-wildcard-edge.json"],
+    [
+        "dcp-openapi-v1.json",
+        "dcp-openapi-v1-wildcard-edge.json",
+        "dcp-openapi-v1-release-edge.json",
+    ],
 )
 def test_delivery_client_uses_mtls_for_requests_and_both_readiness_paths(
     tmp_path, delivery_config, contract_name

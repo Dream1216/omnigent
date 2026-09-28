@@ -150,6 +150,7 @@ class DeliveryClient:
     _CONTRACTS = (
         "dcp-openapi-v1.json",
         "dcp-openapi-v1-wildcard-edge.json",
+        "dcp-openapi-v1-release-edge.json",
     )
 
     def __init__(
@@ -177,6 +178,41 @@ class DeliveryClient:
                 "membership_version": context.tenant_membership_version,
                 "token_schema_version": 1,
                 "permissions": sorted(permissions),
+                "iat": now,
+                "exp": now + 60,
+                "jti": uuid4().hex,
+            },
+            self.config.private_key,
+            algorithm="RS256",
+            headers={"kid": self.config.key_id},
+        )
+
+    def release_preview_exchange_token(
+        self,
+        context: RequestContext,
+        *,
+        preview_id: UUID,
+        hostname: str,
+        target_generation: int,
+        git_revision: str,
+    ) -> str:
+        """Mint a short-lived browser handoff bound to one ready DCP preview."""
+        now = int(time.time())
+        return jwt.encode(
+            {
+                "iss": self.config.issuer,
+                "aud": "omnigent-release-preview-edge",
+                "sub": str(context.actor_id),
+                "tenant_id": str(context.tenant_id),
+                "space_id": str(context.space_id),
+                "project_id": str(context.project_id),
+                "membership_version": context.tenant_membership_version,
+                "token_schema_version": 1,
+                "permissions": ["deployment:read", "domain:read"],
+                "preview_id": str(preview_id),
+                "hostname": hostname,
+                "target_generation": target_generation,
+                "git_revision": git_revision,
                 "iat": now,
                 "exp": now + 60,
                 "jti": uuid4().hex,
