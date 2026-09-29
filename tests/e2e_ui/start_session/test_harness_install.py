@@ -240,15 +240,15 @@ async def _drive_install(base_url: str) -> None:
             # so no "Set up" notice appears. Explicitly select Codex in the
             # picker: open it, wait for the Codex row to render (it mounts only
             # after the /v1/agents fetch resolves — can lag under CI load), then
-            # click it. Only then does the composer show the "Set up Codex"
-            # notice for its unconfigured harness. Codex is a fully supported
+            # use its separate Set up action. Then the composer shows the
+            # "Set up Codex" notice for its unconfigured harness. Codex is supported,
             # harness, so it lists inline even while it needs setup — no "More"
             # drill-in.
             await page.get_by_test_id("new-chat-landing-agent-select").click()
             codex_option = page.get_by_test_id("new-chat-landing-agent-ag_codex_e2e")
             await expect(codex_option).to_be_visible(timeout=60_000)
-            await codex_option.click()
-            await page.keyboard.press("Escape")
+            await expect(codex_option).to_be_disabled()
+            await page.get_by_test_id("new-chat-landing-agent-ag_codex_e2e-setup").click()
             await expect(page.get_by_role("menu")).to_have_count(0)
 
             setup = page.get_by_test_id("new-chat-landing-harness-setup")

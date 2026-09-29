@@ -130,17 +130,48 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4139
-    assert budget["max_direct_upstream_files"] == 118
+    assert budget["max_upstream_net_added_loc"] == 4396
+    assert budget["max_direct_upstream_files"] == 126
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["revision"] == "next-preview-agent-session-reliability-v22"
-    assert revision["previous_max_active_patches"] == 8
-    assert revision["previous_max_direct_upstream_files"] == 107
-    assert revision["previous_max_upstream_net_added_loc"] == 3036
-    assert revision["previous_measured_upstream_net_added_loc"] == 3036
-    assert revision["scoped_agent_delta"] == {
+    assert revision["revision"] == "next-agent-admission-e2e-closure-v25"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 122
+    assert revision["previous_max_upstream_net_added_loc"] == 4391
+    assert revision["previous_measured_upstream_net_added_loc"] == 4391
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "next-agent-picker-browser-coverage-v24"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 120
+    assert revision["previous_max_upstream_net_added_loc"] == 4327
+    assert revision["previous_measured_upstream_net_added_loc"] == 4327
+    assert revision["scoped_browser_delta"] == {
+        "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+        (
+            "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/"
+            "test_story_matches_baseline/"
+            "test_story_matches_baseline[chromium-components-agents-"
+            "agentharnesspicker--needs-setup-badges][linux].png"
+        ): 0,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "next-agent-create-readiness-admission-v23"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 118
+    assert revision["previous_max_upstream_net_added_loc"] == 4139
+    assert revision["previous_measured_upstream_net_added_loc"] == 4139
+    assert revision["scoped_admission_delta"] == {
+        "omnigent/server/routes/_sessions/orchestration.py": 59,
+        "omnigent/server/routes/sessions/routes_core.py": 14,
+        "tests/server/integration/test_session_host_launch.py": 80,
+        "web/src/components/composer/HarnessPicker.tsx": 15,
+        "web/src/shell/NewChatDialog.test.tsx": 22,
+        "web/src/shell/NewChatDialog.tsx": -2,
+    }
+    previous = revision["previous_revision"]
+    assert previous["revision"] == "next-preview-agent-session-reliability-v22"
+    assert previous["scoped_agent_delta"] == {
         "omnigent/host/connect.py": -120,
         "omnigent/host/runner_zygote.py": 10,
         "omnigent/onboarding/harness_readiness.py": 251,
@@ -158,7 +189,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
         "web/src/shell/NewChatDialog.test.tsx": 75,
         "web/src/shell/NewChatDialog.tsx": 40,
     }
-    revision = revision["previous_revision"]
+    revision = previous["previous_revision"]
     assert revision["revision"] == "pnpm-cache-only-ci-post-job-v21"
     assert revision["previous_max_direct_upstream_files"] == 106
     assert revision["previous_max_upstream_net_added_loc"] == 3032
@@ -318,7 +349,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4139 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4396 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,

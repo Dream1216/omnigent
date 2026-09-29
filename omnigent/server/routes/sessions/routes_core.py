@@ -410,13 +410,11 @@ def register_core_routes(
         sends the ``host.launch_runner`` frame and waits for the host's
         verdict.
 
-        Lenient on every launch failure: the picker's readiness data can
-        be stale (the user may have run ``omnigent setup`` since the host
-        last connected), so the create is never blocked. The session
-        keeps the binding; the first message drives the real runner
-        start, and if the host still refuses there, that path consults
-        the daemon and persists a transcript error (see post_event's
-        relaunch branch). No create-time harness gating.
+        Lenient on launch failure after create-time reported-readiness
+        admission: the Host may change between its last report and launch.
+        The session keeps its binding; the first message drives a relaunch,
+        and if the Host still refuses, that path persists a transcript error
+        (see post_event's relaunch branch).
 
         :param request: The create request (for ``app.state`` lookups).
         :param user_id: Authenticated caller, or ``None`` when auth is
@@ -893,6 +891,22 @@ def register_core_routes(
                 host_registry=getattr(request.app.state, "host_registry", None),
             )
             parsed_metadata = parsed_metadata.model_copy(update={"workspace": canonical_workspace})
+
+        # An uploaded bundle bypasses the JSON agent-id path. Apply the same
+        # reported-readiness admission before its agent and session rows exist.
+        from omnigent.harness_aliases import canonicalize_harness
+        from omnigent.models.model_catalog import spec_harness
+        from omnigent.server.routes._sessions.orchestration import (
+            _reject_unavailable_harness_for_create,
+        )
+
+        raw_harness = spec_harness(spec)
+        await _reject_unavailable_harness_for_create(
+            parsed_metadata,
+            request,
+            user_id,
+            canonicalize_harness(raw_harness) or raw_harness,
+        )
 
         result = await asyncio.to_thread(
             _create_session_from_bundle,

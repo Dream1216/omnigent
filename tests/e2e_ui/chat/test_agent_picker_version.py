@@ -112,15 +112,39 @@ def _scan_body() -> str:
     )
 
 
-def _hosts_body() -> str:
+def _hosts_body(*, configured_harnesses: dict[str, bool | str] | None = None) -> str:
     return json.dumps(
-        {"hosts": [{"host_id": _HOST_ID, "name": "e2e-host", "owner": "e2e", "status": "online"}]}
+        {
+            "hosts": [
+                {
+                    "host_id": _HOST_ID,
+                    "name": "e2e-host",
+                    "owner": "e2e",
+                    "status": "online",
+                    **(
+                        {"configured_harnesses": configured_harnesses}
+                        if configured_harnesses is not None
+                        else {}
+                    ),
+                }
+            ]
+        }
     )
 
 
-async def _register_routes(page, *, created_session_id: str, create_requests: list[dict]) -> None:
+async def _register_routes(
+    page,
+    *,
+    created_session_id: str,
+    create_requests: list[dict],
+    configured_harnesses: dict[str, bool | str] | None = None,
+) -> None:
     async def handle_hosts(route: Route) -> None:
-        await route.fulfill(status=200, content_type="application/json", body=_hosts_body())
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=_hosts_body(configured_harnesses=configured_harnesses),
+        )
 
     async def handle_agents(route: Route) -> None:
         await route.fulfill(status=200, content_type="application/json", body=_agents_body())
@@ -183,6 +207,46 @@ def test_picker_binds_newest_agent_version(seeded_session: tuple[str, str]) -> N
     """Selecting Agent A binds the newer upload, not the stale template."""
     base_url, session_id = seeded_session
     _run_in_fresh_loop(_drive(base_url, session_id))
+
+
+def test_unavailable_agent_requires_setup_before_create(seeded_session: tuple[str, str]) -> None:
+    """A Host's needs-auth report disables launch, but leaves setup reachable."""
+    base_url, session_id = seeded_session
+    _run_in_fresh_loop(_drive_unavailable_agent(base_url, session_id))
+
+
+async def _drive_unavailable_agent(base_url: str, created_session_id: str) -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+        try:
+            create_requests: list[dict] = []
+            await _register_routes(
+                page,
+                created_session_id=created_session_id,
+                create_requests=create_requests,
+                configured_harnesses={"claude-sdk": "needs-auth"},
+            )
+            await _seed_workspace(page)
+            await page.goto(f"{base_url}/")
+            await page.get_by_test_id("new-chat-landing-input").wait_for(
+                state="visible", timeout=30_000
+            )
+            await page.get_by_test_id("new-chat-landing-agent-select").click()
+
+            row = page.get_by_test_id(f"new-chat-landing-agent-{_DEBBY_ID}")
+            await expect(row).to_be_visible()
+            await expect(row).to_be_disabled()
+            await expect(
+                page.get_by_test_id(f"new-chat-landing-agent-warning-{_DEBBY_ID}")
+            ).to_be_visible()
+            await page.get_by_test_id(f"new-chat-landing-agent-{_DEBBY_ID}-setup").click()
+
+            await page.get_by_test_id("new-chat-landing-input").fill("do not create a session")
+            await expect(page.get_by_test_id("new-chat-landing-submit")).to_be_disabled()
+            assert create_requests == [], "unavailable Agent unexpectedly created a session"
+        finally:
+            await browser.close()
 
 
 async def _drive(base_url: str, created_session_id: str) -> None:

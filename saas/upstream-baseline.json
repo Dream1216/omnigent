@@ -47,11 +47,50 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 118,
-    "max_upstream_net_added_loc": 4139,
+    "max_direct_upstream_files": 126,
+    "max_upstream_net_added_loc": 4396,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 122,
+    "previous_max_upstream_net_added_loc": 4391,
+    "previous_measured_upstream_net_added_loc": 4391,
+    "reason": "The exact-candidate admission CI exposed a false Pi needs-auth result for its own logged-in models and four browser tests that still clicked unavailable Agent launch rows. Reuse Pi's launch credential catalog for readiness and assert the separate setup action in those browser tests. This correction adds four newly divergent official test paths and five measured net lines, moving the strict ceilings from 122 files / 4,391 lines to 126 files / 4,396 lines. Extend existing patch 0010 without increasing the nine-patch ceiling; retain the 0.85 isolation floor, forbidden native paths and reverse-dependency check. CI and the 17-Agent and authenticated delivery gates remain required.",
+    "revision": "next-agent-admission-e2e-closure-v25",
+    "previous_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 120,
+    "previous_max_upstream_net_added_loc": 4327,
+    "previous_measured_upstream_net_added_loc": 4327,
+    "reason": "The browser E2E coverage required for the user-requested unavailable-Agent picker behavior adds one official test path and 64 measured net lines. Its reviewed Storybook visual baseline changes one binary official path and zero lines. The exact measured source delta is 122 files / 4,391 net lines; raise only those two hard ceilings from 120 / 4,327, retaining nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. The tests verify disabled launch and setup access but do not replace the 17-Agent or authenticated delivery release gates.",
+    "revision": "next-agent-picker-browser-coverage-v24",
+    "scoped_browser_delta": {
+      "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+      "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--needs-setup-badges][linux].png": 0
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 118,
+    "previous_max_upstream_net_added_loc": 4139,
+    "previous_measured_upstream_net_added_loc": 4139,
+    "reason": "The user-requested 17-Agent admission gate exposed that reported-unavailable Harnesses could still create sessions. JSON and uploaded-bundle create now reject known Host readiness failures before persisting, while unknown legacy reports remain recoverable. The picker disables unavailable launch rows but offers a separate Set up action. Exact source remeasurement adds two newly divergent official paths and 188 net lines, moving ceilings from 118 files / 4,139 lines to 120 files / 4,327 lines. Patch 0010 replays both official Python changes. Retain nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. This beta scope record does not waive CI, authorize production promotion, or replace the exact-version 17-Agent and five delivery gates.",
+    "revision": "next-agent-create-readiness-admission-v23",
+    "scoped_admission_delta": {
+      "omnigent/server/routes/_sessions/orchestration.py": 59,
+      "omnigent/server/routes/sessions/routes_core.py": 14,
+      "tests/server/integration/test_session_host_launch.py": 80,
+      "web/src/components/composer/HarnessPicker.tsx": 15,
+      "web/src/shell/NewChatDialog.test.tsx": 22,
+      "web/src/shell/NewChatDialog.tsx": -2
+    },
+    "previous_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 8,
@@ -419,6 +458,9 @@
     }
     }
     }
+    }
+    }
+  }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",

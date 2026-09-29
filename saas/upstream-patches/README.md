@@ -180,6 +180,31 @@ nine active patches. The 0.85 isolation floor, forbidden native paths and
 reverse-dependency check remain. The 17-Agent matrix and five authenticated
 delivery gates remain separate live release requirements.
 
+The `next-agent-create-readiness-admission-v23` correction extends patch 0010
+with the JSON and uploaded-bundle pre-create Host readiness guard. The web
+picker disables known-unavailable launch rows and exposes a separate setup
+action; legacy Hosts with no readiness report remain recoverable. The exact
+source delta is 120 direct official files / 4,327 net lines, an increase of
+two files and 188 lines from v22. The nine-patch ceiling, 0.85 isolation
+floor, forbidden native paths and reverse-dependency check remain. This
+scope record does not admit the build to production or replace the
+exact-version 17-Agent and five authenticated delivery gates.
+
+The `next-agent-picker-browser-coverage-v24` record includes the browser E2E
+test required for the unavailable-Agent picker and its reviewed Storybook
+baseline. Relative to v23, these add two directly changed official paths and
+64 net lines, bringing the exact ceilings to 122 files / 4,391 lines. The
+nine-patch ceiling and all other source boundaries remain unchanged; these
+local proofs do not replace the 17-Agent or authenticated delivery gates.
+
+The `next-agent-admission-e2e-closure-v25` record aligns Pi readiness with
+its own logged-in model catalog and updates four browser E2E tests to use the
+unavailable Agent's separate setup action. Patch 0010 still replays the
+official Python change. The exact source delta is 126 official files / 4,396
+net lines, so only those two ceilings rise from v24; the nine-patch ceiling,
+0.85 isolation floor, forbidden paths and reverse-dependency checks remain.
+The 17-Agent and authenticated delivery gates remain separate live checks.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
@@ -190,4 +215,4 @@ delivery gates remain separate live release requirements.
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official OpenCode gateway resolution; configured-provider readiness; platform runtime synthetic-token routing; no native Runner edit | Generic upstream OpenCode provider-fallback proposal pending | `9616bf97` | Remove when upstream can route OpenCode through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/provider_config.py` | official package install; headless/native temporary Provider routing; no persisted token; vendor-login fallback; no workflow/native Runner edit | Generic upstream Kimi temporary-provider proposal pending | `9616bf97` after patches 0002-0007 | Remove when upstream can install Kimi and route it through an OpenAI-compatible configured Provider without persisting its upstream credential |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/onboarding/harness_install.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/onboarding/sandboxes/kubernetes.py`; `omnigent/server/managed_hosts.py` | Kubernetes SDK image material; bounded Host command and reserved server URL; workspace propagation; Agent Sandbox and Job provider parsing; Kiro device-flow login and `whoami` readiness; dual-provider production contracts | Generic upstream managed Kubernetes Host-command, multi-provider and Kiro readiness proposal pending | `9616bf97` after patches 0002-0008 | Remove when upstream exposes equivalent bounded managed-Host commands, reserved server/workspace propagation, composable Agent Sandbox plus Kubernetes Job providers, and revocation-aware Kiro readiness |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/host/connect.py`; `omnigent/host/runner_zygote.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py` | Host orphan cleanup; per-provider managed-sandbox readiness; single-turn message deduplication; concurrent same-token session-create replay | Generic upstream reliability proposal pending | `9616bf97` after patches 0002-0009 | Remove when upstream preserves runner exit status during cleanup and provides equivalent readiness, message and session-create idempotency semantics |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/host/connect.py`; `omnigent/host/runner_zygote.py`; `omnigent/onboarding/harness_readiness.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py` | Host orphan cleanup; per-provider managed-sandbox readiness; single-turn message deduplication; concurrent same-token session-create replay; known-unavailable Harness admission | Generic upstream reliability proposal pending | `9616bf97` after patches 0002-0009 | Remove when upstream preserves runner exit status during cleanup and provides equivalent readiness, message and session-create idempotency semantics |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -92,6 +93,33 @@ def _no_clis_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     :param monkeypatch: The pytest monkeypatch fixture.
     """
     monkeypatch.setattr(hi.shutil, "which", lambda name: None)
+
+
+def test_pi_own_login_with_model_is_ready_without_managed_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same Pi login used by an unmanaged launch must pass readiness."""
+    _all_clis_installed(monkeypatch)
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured", lambda _h: False
+    )
+    assert configured_harness_map()["pi-native"] == "needs-auth"
+
+    (agent_dir / "auth.json").write_text(
+        json.dumps({"anthropic": {"type": "api_key", "key": "test-token"}})
+    )
+    (agent_dir / "models-store.json").write_text(
+        json.dumps({"anthropic": {"models": [{"id": "test-model"}]}})
+    )
+    readiness = configured_harness_map()
+    assert readiness["pi-native"] is True
+    assert readiness["pi"] is True
+
+    (agent_dir / "auth.json").write_text("{}")
+    assert configured_harness_map()["pi-native"] == "needs-auth"
 
 
 # SDK and unknown harnesses are never gated — their credentials resolve at
