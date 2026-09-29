@@ -919,3 +919,105 @@ index 0c20996..f89b327 100644
 +                "replay of this request",
 +                code=ErrorCode.CONFLICT,
 +            ) from collision
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 1881a1d1c..9d607d384 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -8380 +8380 @@ async def _routing_host_for_create(
+-    body: SessionCreateInput,
++    body: SessionCreateInput | SessionCreateMetadata,
+@@ -8442,0 +8443,54 @@ def _create_resolved_harness(
++def _reported_harness_failure(host: Host, harness: str) -> str | None:
++    """Return an actionable failure only when a Host supplied readiness data."""
++    readiness = host.configured_harnesses
++    if not readiness:
++        return None
++    value = readiness.get(harness, False)
++    if value is True:
++        return None
++    if value == HARNESS_NEEDS_AUTH:
++        return f"{harness} needs authentication on {host.name}; sign in on that Host and retry"
++    if value == HARNESS_VERSION_TOO_LOW:
++        return f"{harness} is too old on {host.name}; upgrade it and retry"
++    return f"{harness} is not configured on {host.name}; run omnigent setup there and retry"
++
++
++async def _reject_unavailable_harness_for_create(
++    body: SessionCreateInput | SessionCreateMetadata,
++    request: Request,
++    user_id: str | None,
++    harness: str | None,
++) -> None:
++    """Reject a known-bad Host/harness before creating a session or worktree.
++
++    An absent readiness report remains unknown. Managed creates use reports
++    from the selected provider, preferring online Hosts; every sampled Host
++    must be able to launch the Agent because the next sandbox may be any one
++    of them.
++    """
++    if harness is None or harness == "auto":
++        return
++    if body.host_id is not None:
++        host = await _routing_host_for_create(body, request, user_id)
++        hosts = [host] if host is not None else []
++    elif body.host_type == "managed" and user_id is not None:
++        host_store = getattr(request.app.state, "host_store", None)
++        sandbox_config = getattr(request.app.state, "sandbox_config", None)
++        if host_store is None or sandbox_config is None:
++            return
++        provider = body.sandbox_provider or sandbox_config.default.provider
++        reported = [
++            host
++            for host in await asyncio.to_thread(host_store.list_hosts, user_id)
++            if host.sandbox_provider == provider and host.configured_harnesses
++        ]
++        online = [host for host in reported if host_is_live(host)]
++        hosts = online or reported
++    else:
++        return
++    for host in hosts:
++        failure = _reported_harness_failure(host, harness)
++        if failure is not None:
++            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
++
++
+@@ -9082,0 +9137,5 @@ async def _create_session_from_existing_agent(
++    resolved_harness = await asyncio.to_thread(
++        _create_resolved_harness, agent, harness_override, agent_cache
++    )
++    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
++
+diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
+index f89b32709..e7aeaaad0 100644
+--- a/omnigent/server/routes/sessions/routes_core.py
++++ b/omnigent/server/routes/sessions/routes_core.py
+@@ -413,7 +413,5 @@ def register_core_routes(
+-        Lenient on every launch failure: the picker's readiness data can
+-        be stale (the user may have run ``omnigent setup`` since the host
+-        last connected), so the create is never blocked. The session
+-        keeps the binding; the first message drives the real runner
+-        start, and if the host still refuses there, that path consults
+-        the daemon and persists a transcript error (see post_event's
+-        relaunch branch). No create-time harness gating.
++        Lenient on launch failure after create-time reported-readiness
++        admission: the Host may change between its last report and launch.
++        The session keeps its binding; the first message drives a relaunch,
++        and if the Host still refuses, that path persists a transcript error
++        (see post_event's relaunch branch).
+@@ -896,0 +895,16 @@ def register_core_routes(
++        # An uploaded bundle bypasses the JSON agent-id path. Apply the same
++        # reported-readiness admission before its agent and session rows exist.
++        from omnigent.harness_aliases import canonicalize_harness
++        from omnigent.models.model_catalog import spec_harness
++        from omnigent.server.routes._sessions.orchestration import (
++            _reject_unavailable_harness_for_create,
++        )
++
++        raw_harness = spec_harness(spec)
++        await _reject_unavailable_harness_for_create(
++            parsed_metadata,
++            request,
++            user_id,
++            canonicalize_harness(raw_harness) or raw_harness,
++        )
++

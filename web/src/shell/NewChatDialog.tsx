@@ -1593,6 +1593,7 @@ export function AgentHarnessPicker({
           }
         }}
         onSelect={() => onSelectAgent(agent)}
+        onSetup={unavailable ? () => onSelectAgent(agent) : undefined}
         configContent={active ? selectedConfigContent : null}
         testId={`new-chat-landing-agent-${agent.id}`}
         icon={<ComposerAgentIcon agent={agent} />}
@@ -1601,6 +1602,7 @@ export function AgentHarnessPicker({
         description={blurb}
         active={active}
         editable={editable}
+        disabled={unavailable}
         isMobile={isMobile}
         summaryTestId={`new-chat-landing-agent-summary-${agent.id}`}
         editTestId={`new-chat-landing-agent-config-${agent.id}`}
@@ -4055,11 +4057,7 @@ export function NewChatLandingScreen() {
     selectedAgent?.harness,
     harnessWarningHost,
   );
-  const selectedAgentLaunchBlocked =
-    selectedAgentUnconfigured &&
-    ((sandboxSelected &&
-      harnessHiddenAsUnconfiguredOnHost(selectedAgent?.harness, harnessWarningHost)) ||
-      isCodexHarness(selectedAgent?.harness ?? ""));
+  const selectedAgentLaunchBlocked = selectedAgentUnconfigured;
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
   // with one arm is just that arm. The Claude wrapper is the placeholder the

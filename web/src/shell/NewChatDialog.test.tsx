@@ -1351,7 +1351,10 @@ function selectUnconfiguredAgent(agentId: string): void {
   if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
     fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
   }
-  fireEvent.click(screen.getByTestId(`new-chat-landing-agent-${agentId}`));
+  fireEvent.click(
+    screen.queryByTestId(`new-chat-landing-agent-${agentId}-setup`) ??
+      screen.getByTestId(`new-chat-landing-agent-${agentId}`),
+  );
   closeMenu();
 }
 
@@ -4005,7 +4008,10 @@ describe("NewChatLandingScreen", () => {
 
   it("enables submit only with a ready agent, message, host and valid workspace", async () => {
     mockHosts([
-      { ...host("online"), configured_harnesses: { "codex-native": "needs-auth" } } as Host,
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+      } as Host,
     ]);
     renderLanding();
     const submit = screen.getByTestId("new-chat-landing-submit") as HTMLButtonElement;
@@ -4021,7 +4027,7 @@ describe("NewChatLandingScreen", () => {
       target: { value: "inspect the repo" },
     });
     expect(submit.disabled).toBe(false);
-    selectAgent("a2");
+    selectUnconfiguredAgent("a2");
     expect(submit.disabled).toBe(true);
     expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("Responses");
   });
@@ -4241,6 +4247,22 @@ describe("NewChatLandingScreen", () => {
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
     expect(screen.getByTestId("new-chat-landing-agent-a1")).toBeTruthy();
     expect(screen.getByTestId("new-chat-landing-agent-a_cursor")).toBeTruthy();
+    expect(
+      screen.getByTestId("new-chat-landing-agent-a_cursor").closest("[data-disabled]"),
+    ).toBeTruthy();
+  });
+
+  it("disables an unauthenticated native harness in the picker", () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+      } as Host,
+    ]);
+    renderLanding();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-agent-a2").closest("[data-disabled]")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-a1").closest("[data-disabled]")).toBeNull();
   });
 
   it("hides harnesses unconfigured on the selected host when the preference is on", () => {

@@ -57,7 +57,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
 from tests.budgets import Deadline, budget
-from tests.server.helpers import create_test_agent
+from tests.server.helpers import build_agent_bundle, create_test_agent
 
 pytestmark = pytest.mark.asyncio
 
@@ -146,7 +146,10 @@ def _websocket_scope(path: str) -> dict[str, object]:
     }
 
 
-async def _connect_host(app: FastAPI) -> ApplicationCommunicator:
+async def _connect_host(
+    app: FastAPI,
+    configured_harnesses: dict[str, bool | str] | None = None,
+) -> ApplicationCommunicator:
     """Connect a mock host over the WebSocket tunnel and wait for it
     to register in the app's host registry.
 
@@ -161,7 +164,12 @@ async def _connect_host(app: FastAPI) -> ApplicationCommunicator:
     assert accepted["type"] == "websocket.accept"
 
     hello = encode_host_frame(
-        HostHelloFrame(version="0.1.0-test", frame_protocol_version=1, name="laptop")
+        HostHelloFrame(
+            version="0.1.0-test",
+            frame_protocol_version=1,
+            name="laptop",
+            configured_harnesses=configured_harnesses,
+        )
     )
     await comm.send_input({"type": "websocket.receive", "text": hello})
     registry = app.state.host_registry
@@ -651,19 +659,91 @@ _HARNESS_REFUSAL = (
 _WORKSPACE_MISSING_ERROR = "workspace path does not exist: /deleted/worktree"
 
 
+async def _serve_one_workspace_stat(comm: ApplicationCommunicator) -> None:
+    """Reply to the pre-create workspace validation without launching."""
+    while True:
+        output = await comm.receive_output(timeout=budget(3.0))
+        if output["type"] != "websocket.send":
+            continue
+        frame = decode_host_frame(output["text"])
+        if isinstance(frame, HostStatFrame):
+            await comm.send_input(
+                {
+                    "type": "websocket.receive",
+                    "text": encode_host_frame(
+                        HostStatResultFrame(
+                            request_id=frame.request_id,
+                            status="ok",
+                            exists=True,
+                            type="directory",
+                            canonical_path=frame.path,
+                        )
+                    ),
+                }
+            )
+            return
+
+
+@pytest.mark.parametrize("readiness", [False, "needs-auth", "binary-missing", "version-too-low"])
+async def test_inline_create_rejects_reported_unavailable_harness_before_row(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    readiness: bool | str,
+) -> None:
+    comm = await _connect_host(app, {"codex": readiness})
+    agent = await create_test_agent(
+        client,
+        executor={"type": "omnigent", "config": {"harness": "codex"}},
+    )
+    existing = SqlAlchemyConversationStore(db_uri).list_conversations().data
+    stat = asyncio.create_task(_serve_one_workspace_stat(comm))
+    response = await client.post(
+        "/v1/sessions",
+        json={"agent_id": agent["id"], "host_id": _HOST_ID, "workspace": _WORKSPACE},
+    )
+    await stat
+    assert response.status_code == 400, response.text
+    assert "codex" in response.text
+    assert SqlAlchemyConversationStore(db_uri).list_conversations().data == existing
+    comm.stop()
+
+
+async def test_bundled_create_rejects_reported_unavailable_harness_before_row(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+) -> None:
+    comm = await _connect_host(app, {"codex": "needs-auth"})
+    bundle = build_agent_bundle(
+        name="unavailable",
+        executor={"type": "omnigent", "config": {"harness": "codex"}},
+    )
+
+    stat = asyncio.create_task(_serve_one_workspace_stat(comm))
+    response = await client.post(
+        "/v1/sessions",
+        data={"metadata": json.dumps({"host_id": _HOST_ID, "workspace": _WORKSPACE})},
+        files={"bundle": ("agent.tar.gz", bundle, "application/gzip")},
+    )
+    await stat
+    assert response.status_code == 400, response.text
+    assert "needs authentication" in response.text
+    assert SqlAlchemyConversationStore(db_uri).list_conversations().data == []
+    comm.stop()
+
+
 async def test_inline_create_harness_not_configured_stays_lenient(
     client: httpx.AsyncClient,
     app: FastAPI,
     db_uri: str,
 ) -> None:
-    """A ``harness_not_configured`` refusal at CREATE is fully lenient.
+    """An unreported readiness state keeps launch refusal recoverable.
 
-    The picker's readiness data can be stale (the user may have run
-    ``omnigent setup`` since the host last connected), so create never
-    gates on it: the session opens (201), the binding is kept, and —
-    unlike the earlier design — NO transcript item is written at create
-    time. The error is deferred to the first-message relaunch (the real
-    runner-start attempt), covered by the next test.
+    This Host supplied no readiness map, so create cannot reject it ahead of
+    time. A dynamic refusal still opens the session (201), keeps its binding,
+    and writes no transcript item before the first message. The error is
+    deferred to first-message relaunch, covered by the next test.
 
     If create starts persisting an item again, the premature
     before-you-typed-anything notice this iteration removed is back; if

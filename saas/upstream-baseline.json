@@ -47,11 +47,28 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 118,
-    "max_upstream_net_added_loc": 4139,
+    "max_direct_upstream_files": 120,
+    "max_upstream_net_added_loc": 4327,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 118,
+    "previous_max_upstream_net_added_loc": 4139,
+    "previous_measured_upstream_net_added_loc": 4139,
+    "reason": "The user-requested 17-Agent admission gate exposed that reported-unavailable Harnesses could still create sessions. JSON and uploaded-bundle create now reject known Host readiness failures before persisting, while unknown legacy reports remain recoverable. The picker disables unavailable launch rows but offers a separate Set up action. Exact source remeasurement adds two newly divergent official paths and 188 net lines, moving ceilings from 118 files / 4,139 lines to 120 files / 4,327 lines. Patch 0010 replays both official Python changes. Retain nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. This beta scope record does not waive CI, authorize production promotion, or replace the exact-version 17-Agent and five delivery gates.",
+    "revision": "next-agent-create-readiness-admission-v23",
+    "scoped_admission_delta": {
+      "omnigent/server/routes/_sessions/orchestration.py": 59,
+      "omnigent/server/routes/sessions/routes_core.py": 14,
+      "tests/server/integration/test_session_host_launch.py": 80,
+      "web/src/components/composer/HarnessPicker.tsx": 15,
+      "web/src/shell/NewChatDialog.test.tsx": 22,
+      "web/src/shell/NewChatDialog.tsx": -2
+    },
+    "previous_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 8,
@@ -405,6 +422,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }
