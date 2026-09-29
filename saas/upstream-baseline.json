@@ -47,11 +47,24 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 120,
-    "max_upstream_net_added_loc": 4327,
+    "max_direct_upstream_files": 122,
+    "max_upstream_net_added_loc": 4391,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 120,
+    "previous_max_upstream_net_added_loc": 4327,
+    "previous_measured_upstream_net_added_loc": 4327,
+    "reason": "The browser E2E coverage required for the user-requested unavailable-Agent picker behavior adds one official test path and 64 measured net lines. Its reviewed Storybook visual baseline changes one binary official path and zero lines. The exact measured source delta is 122 files / 4,391 net lines; raise only those two hard ceilings from 120 / 4,327, retaining nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. The tests verify disabled launch and setup access but do not replace the 17-Agent or authenticated delivery release gates.",
+    "revision": "next-agent-picker-browser-coverage-v24",
+    "scoped_browser_delta": {
+      "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+      "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--needs-setup-badges][linux].png": 0
+    },
+    "previous_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,
@@ -422,6 +435,7 @@
       "web/ios/Gemfile.lock": 20,
       "web/ios/RELEASE.md": 1,
       "web/package.json": 0
+    }
     }
     }
     }

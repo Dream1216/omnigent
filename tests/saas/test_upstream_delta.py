@@ -130,11 +130,26 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4327
-    assert budget["max_direct_upstream_files"] == 120
+    assert budget["max_upstream_net_added_loc"] == 4391
+    assert budget["max_direct_upstream_files"] == 122
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "next-agent-picker-browser-coverage-v24"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 120
+    assert revision["previous_max_upstream_net_added_loc"] == 4327
+    assert revision["previous_measured_upstream_net_added_loc"] == 4327
+    assert revision["scoped_browser_delta"] == {
+        "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+        (
+            "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/"
+            "test_story_matches_baseline/"
+            "test_story_matches_baseline[chromium-components-agents-"
+            "agentharnesspicker--needs-setup-badges][linux].png"
+        ): 0,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "next-agent-create-readiness-admission-v23"
     assert revision["previous_max_active_patches"] == 9
     assert revision["previous_max_direct_upstream_files"] == 118
@@ -328,7 +343,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4327 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4391 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,

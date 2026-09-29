@@ -190,6 +190,13 @@ floor, forbidden native paths and reverse-dependency check remain. This
 scope record does not admit the build to production or replace the
 exact-version 17-Agent and five authenticated delivery gates.
 
+The `next-agent-picker-browser-coverage-v24` record includes the browser E2E
+test required for the unavailable-Agent picker and its reviewed Storybook
+baseline. Relative to v23, these add two directly changed official paths and
+64 net lines, bringing the exact ceilings to 122 files / 4,391 lines. The
+nine-patch ceiling and all other source boundaries remain unchanged; these
+local proofs do not replace the 17-Agent or authenticated delivery gates.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
