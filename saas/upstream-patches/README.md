@@ -197,6 +197,14 @@ baseline. Relative to v23, these add two directly changed official paths and
 nine-patch ceiling and all other source boundaries remain unchanged; these
 local proofs do not replace the 17-Agent or authenticated delivery gates.
 
+The `next-agent-admission-e2e-closure-v25` record aligns Pi readiness with
+its own logged-in model catalog and updates four browser E2E tests to use the
+unavailable Agent's separate setup action. Patch 0010 still replays the
+official Python change. The exact source delta is 126 official files / 4,396
+net lines, so only those two ceilings rise from v24; the nine-patch ceiling,
+0.85 isolation floor, forbidden paths and reverse-dependency checks remain.
+The 17-Agent and authenticated delivery gates remain separate live checks.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |

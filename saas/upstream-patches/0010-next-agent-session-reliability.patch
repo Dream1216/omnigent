@@ -667,10 +667,33 @@ index 19cda97..5c07cae 100644
 +    return HARNESS_NEEDS_AUTH
 +
 +
-@@ -518,0 +768,2 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
+@@ -491,16 +741,17 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
+         # warning copy uniform across every CLI-backed native harness.
+         return _cli_family_availability(canonical, install_key)
+     if canonical in _PI_HARNESSES:
+-        # pi has no CLI login — its only credential is either an omnigent-managed
+-        # provider (an API key / gateway) or a pi-subscription ("Pi original auth",
+-        # which signals "use Pi's own ~/.pi/agent as-is"). So the two-step signal
+-        # is binary + provider: installed-but-no-provider is the yellow "needs-auth"
+-        # state the setup dialog acts on.
++        # Pi also accepts its own login in ~/.pi/agent. Check the same models
++        # catalog the unmanaged launch uses before reporting needs-auth.
+         binary_state = _binary_availability_reason(PI_KEY)
+         if binary_state is not True:
+             return binary_state
+         if _family_provider_configured(PI_SURFACE):
+             return True
++        from omnigent.harnesses.pi_native.credentials import pi_own_login_model_options
++
++        if pi_own_login_model_options():
++            return True
+         # A pi subscription (original auth) is also a valid configured state —
+         # it means Pi will use its own ~/.pi/agent credentials, no omnigent
+         # provider needed.
+@@ -518,0 +769,2 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
 +    if canonical in _SDK_HARNESSES:
 +        return _sdk_harness_availability(canonical)
-@@ -528,4 +779,4 @@ def harness_is_configured(harness: str) -> bool:
+@@ -528,4 +780,4 @@ def harness_is_configured(harness: str) -> bool:
 -    locally. SDK harnesses and unknown harnesses always return ``True`` —
 -    their readiness depends on runtime/ambient credentials the daemon
 -    can't enumerate, so blocking them would risk false negatives that
@@ -679,7 +702,7 @@ index 19cda97..5c07cae 100644
 +    spec-level credentials are invisible here. The picker map separately
 +    reports ``"needs-auth"`` for an SDK harness with no locally visible
 +    credential, but that signal warns and never gates a launch.
-@@ -559,4 +810,4 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
+@@ -559,4 +811,4 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
 -    ``claude`` alias, and ``pi``. SDK and unknown harnesses map to
 -    ``True`` (never gated); CLI-wrapping harnesses map to whether their
 -    binary is on ``PATH``. Codex entries use a structured string reason when
@@ -688,7 +711,7 @@ index 19cda97..5c07cae 100644
 +    CLI-wrapping harnesses map to their binary/auth state; SDK harnesses map
 +    to ``True`` when a locally visible credential source could serve them,
 +    otherwise ``"needs-auth"`` (advisory only).
-@@ -566 +817 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
+@@ -566 +818 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
 -        "claude-sdk": True, "openai-agents": True, "pi": True, "qwen": True}``.
 +        "claude-sdk": "needs-auth", "pi": True, "qwen": True}``.
 diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py

@@ -1,20 +1,19 @@
 """E2E: auth-aware Codex availability in the New Chat landing screen.
 
 The landing composer (``NewChatLandingScreen`` in
-``web/src/shell/NewChatDialog.tsx``) warns — but does not block — when the
+``web/src/shell/NewChatDialog.tsx``) warns and blocks launch when the
 selected agent's harness is not ready on the selected host. For Codex the
 readiness signal is structured: the host's ``host.hello`` readiness map flows
 through ``host_store`` and ``GET /v1/hosts`` as a per-harness
 ``configured_harnesses`` value of ``"needs-auth"``, ``"binary-missing"``, or
-available (absent / ``true``). This PR makes the picker render that distinction:
+available (absent / ``true``). The picker renders that distinction:
 
 * the **needs-auth message** under the composer
   (``new-chat-landing-harness-warning``):
   ``"<agent> needs Codex authentication on <host> — run codex login on that
   machine."`` — shown for any selected Codex agent (native or brain harness).
-* the **needs-setup badge** (``new-chat-landing-harness-warning-codex``,
-  text ``"needs auth"``) on the Codex row inside a bundle agent's per-entry
-  "Agent Harness" config submenu.
+* the **needs-auth badge** on the unavailable Codex bundle row, with a separate
+  enabled setup action.
 
 Why the ``page.route`` stubbing (mirrors
 ``start_session/test_start_session.py``): the e2e harness's runner tunnels
@@ -42,8 +41,6 @@ from collections.abc import Coroutine
 from typing import Any
 
 from playwright.async_api import Route, async_playwright, expect
-
-from tests.e2e_ui.start_session.test_start_session import _open_entry_config as open_entry_config
 
 # Stubbed host the composer auto-selects (the tunneled runner registers no
 # host). Keyed identically in the recent-workspaces localStorage seed.
@@ -190,22 +187,6 @@ async def _register_routes(
     )
 
 
-async def _open_entry_config(page, agent_id: str) -> None:
-    """Select one agent and open its Agent Harness select in the config modal.
-
-    A bundle agent's brain-harness options (the "Agent Harness" group, with the
-    per-row readiness badges) now live in the gear-icon config modal's Select,
-    not a picker submenu. Select the agent from the dropdown, open its config
-    modal via the gear, then open the harness Select so the badged options
-    render.
-
-    :param page: The Playwright page (the landing picker is already mounted).
-    :param agent_id: The stubbed agent id to configure, e.g. ``"ag_polly_e2e"``.
-    """
-    await open_entry_config(page, agent_id)
-    await page.get_by_test_id("new-chat-landing-config-harness").click()
-
-
 def test_codex_needs_auth_warns_and_clears_when_available(
     live_server: str,
 ) -> None:
@@ -295,14 +276,7 @@ async def _drive_codex_needs_auth(base_url: str) -> None:
 def test_codex_needs_auth_badge_in_harness_menu(
     live_server: str,
 ) -> None:
-    """A bundle agent's harness picker badges the Codex row "needs auth".
-
-    For a brain-harness bundle agent (Polly), the composer's harness picker
-    lists each brain harness as a radio row. When the selected host reports the
-    ``codex`` harness as ``needs-auth``, that row carries the warning badge
-    (``new-chat-landing-harness-warning-codex``) reading "needs auth" — the
-    per-row counterpart to the under-composer message.
-    """
+    """An unavailable Codex bundle row is badged and cannot be launched."""
     base_url = live_server
     _run_in_fresh_loop(_drive_codex_badge(base_url))
 
@@ -329,17 +303,15 @@ async def _drive_codex_badge(base_url: str) -> None:
                 state="visible", timeout=30_000
             )
 
-            # Polly auto-selects (sole agent); its Agent Harness options live in
-            # the gear config modal's Select. Radix mirrors the selected item's
-            # content in the trigger, so a badge can match twice — take .first.
-            await _open_entry_config(page, "ag_polly_e2e")
-            badge = page.get_by_test_id("new-chat-landing-harness-warning-codex").first
+            await page.get_by_test_id("new-chat-landing-agent-select").click()
+            row = page.get_by_test_id("new-chat-landing-agent-ag_polly_e2e")
+            await expect(row).to_be_visible(timeout=30_000)
+            await expect(row).to_be_disabled()
+            badge = page.get_by_test_id("new-chat-landing-agent-warning-ag_polly_e2e")
             await expect(badge).to_be_visible(timeout=30_000)
-            # This test doesn't enable harness_install in OMNIGENT_FEATURES, so the
-            # picker runs on the feature-OFF default — where the badge keeps the
-            # original per-reason text ("needs auth"). (With the feature ON the
-            # badge collapses to a single "needs setup" and the reason moves into
-            # the setup dialog.)
-            await expect(badge).to_contain_text("needs auth")
+            await expect(badge).to_have_accessible_name("needs auth")
+            await expect(
+                page.get_by_test_id("new-chat-landing-agent-ag_polly_e2e-setup")
+            ).to_be_enabled()
         finally:
             await browser.close()

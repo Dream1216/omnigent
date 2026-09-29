@@ -47,11 +47,20 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 122,
-    "max_upstream_net_added_loc": 4391,
+    "max_direct_upstream_files": 126,
+    "max_upstream_net_added_loc": 4396,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 122,
+    "previous_max_upstream_net_added_loc": 4391,
+    "previous_measured_upstream_net_added_loc": 4391,
+    "reason": "The exact-candidate admission CI exposed a false Pi needs-auth result for its own logged-in models and four browser tests that still clicked unavailable Agent launch rows. Reuse Pi's launch credential catalog for readiness and assert the separate setup action in those browser tests. This correction adds four newly divergent official test paths and five measured net lines, moving the strict ceilings from 122 files / 4,391 lines to 126 files / 4,396 lines. Extend existing patch 0010 without increasing the nine-patch ceiling; retain the 0.85 isolation floor, forbidden native paths and reverse-dependency check. CI and the 17-Agent and authenticated delivery gates remain required.",
+    "revision": "next-agent-admission-e2e-closure-v25",
+    "previous_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,
@@ -451,6 +460,7 @@
     }
     }
     }
+  }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
