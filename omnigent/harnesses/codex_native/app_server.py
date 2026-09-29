@@ -1255,6 +1255,9 @@ async def _codex_launch_catalog(
     except Exception:  # noqa: BLE001 — a broken provider config means no catalog
         _logger.warning("codex catalog: launch shape resolution failed", exc_info=True)
         return None
+    declared = declared_codex_model_options(launch)
+    if declared is not None:
+        return declared
     fingerprint = codex_catalog_fingerprint(launch, codex_path=codex_path)
 
     async def _probe() -> list[_JsonObject] | None:
@@ -2710,6 +2713,7 @@ class NativeCodexLaunch:
         on the sign-in screen and never start a thread on its own. Lets a
         headless caller fail the turn fast with an actionable error instead
         of burning the thread-start timeout.
+    :param catalog_models: Explicit gateway allowlist, when configured.
     """
 
     config_overrides: list[str]
@@ -2717,6 +2721,48 @@ class NativeCodexLaunch:
     profile: str | None
     summary: str = ""
     login_required: bool = False
+    # A gateway's declared allowlist is more authoritative than Codex's
+    # account-wide model/list, which can include models the gateway rejects.
+    catalog_models: tuple[str, ...] = ()
+
+
+def declared_codex_model_options(launch: NativeCodexLaunch) -> list[_JsonObject] | None:
+    """Return a gateway's declared selectable models, if it has an allowlist."""
+    if not launch.catalog_models:
+        return None
+    return [
+        {
+            "id": model,
+            "model": model,
+            "displayName": model,
+            "isDefault": model == launch.model,
+        }
+        for model in launch.catalog_models
+    ]
+
+
+def declared_codex_models_for_provider(entry: ProviderEntry) -> tuple[str, ...]:
+    """Read an explicit gateway allowlist without resolving its credential."""
+    from omnigent.onboarding.provider_config import (
+        GATEWAY_KIND,
+        KEY_KIND,
+        LOCAL_KIND,
+        OPENAI_FAMILY,
+    )
+
+    if entry.kind not in (KEY_KIND, GATEWAY_KIND, LOCAL_KIND):
+        return ()
+    family = entry.families.get(OPENAI_FAMILY)
+    if family is None:
+        return ()
+    models = tuple(
+        dict.fromkeys(
+            value for key, value in family.models.items() if key.startswith("allowed-") and value
+        )
+    )
+    if models and family.default_model not in models:
+        raise ValueError("Declared Codex model catalog omits the default model")
+    return models
 
 
 _MODEL_PROVIDER_OVERRIDE_PREFIX = "model_provider="
@@ -2977,6 +3023,7 @@ def _codex_provider_launch(entry: ProviderEntry, model: str | None) -> NativeCod
         model=pinned,
         profile=None,
         summary=f"provider {entry.name!r} (model={pinned})",
+        catalog_models=declared_codex_models_for_provider(entry),
     )
 
 

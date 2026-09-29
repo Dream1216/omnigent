@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import stat
 import subprocess
@@ -10,12 +11,22 @@ from pathlib import Path
 from uuid import UUID
 
 from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
-from omnigent.host.connect import HostProcess, run_host_process
+from omnigent.harnesses.codex_native.app_server import (
+    NativeCodexLaunch,
+    _find_codex_cli,
+    declared_codex_model_options,
+    declared_codex_models_for_provider,
+)
+from omnigent.host.connect import HostProcess, ModelOptionsResult, run_host_process
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
-from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+from omnigent.onboarding.provider_config import (
+    OPENAI_FAMILY,
+    default_provider_for_harness,
+    load_config,
+)
 from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayTokenAuthority,
     inject_platform_model_gateway_token,
@@ -27,6 +38,7 @@ _SERVER_URL_ENV = "OMNIGENT_SAAS_SERVER_URL"
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _SIGNING_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _TOKEN_TTL_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"
+_logger = logging.getLogger(__name__)
 
 
 class PlatformModelHostConfigurationError(ValueError):
@@ -54,6 +66,31 @@ class PlatformModelHostProcess(HostProcess):
         )
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
+
+    async def _probed_codex_model_options(self) -> ModelOptionsResult | None:
+        """Publish the managed gateway allowlist before a session bearer exists."""
+        if not _platform_codex_provider_configured():
+            return await super()._probed_codex_model_options()
+        try:
+            if _find_codex_cli() is None:
+                return None
+            provider = default_provider_for_harness(load_config(), "codex")
+            if provider is None:
+                return None
+            declared = declared_codex_models_for_provider(provider)
+            if not declared:
+                return None
+            launch = NativeCodexLaunch(
+                config_overrides=[],
+                model=provider.families[OPENAI_FAMILY].default_model,
+                profile=None,
+                catalog_models=declared,
+            )
+            rows = declared_codex_model_options(launch) or []
+            return ModelOptionsResult(models=rows, routable_models=list(declared))
+        except Exception:  # noqa: BLE001 - the managed picker must fail closed.
+            _logger.warning("Platform Codex model catalog unavailable", exc_info=True)
+            return None
 
     async def _probe_configured_harnesses(
         self,

@@ -11,7 +11,10 @@ from uuid import uuid4
 import pytest
 import sqlalchemy as sa
 
-from omnigent.harnesses.codex_native.app_server import resolve_native_codex_launch
+from omnigent.harnesses.codex_native.app_server import (
+    codex_launch_catalog,
+    resolve_native_codex_launch,
+)
 from omnigent.harnesses.opencode_native.provider import resolve_databricks_gateway
 from omnigent.harnesses.pi_native.credentials import resolve_pi_native_provider
 from saas.control_plane.isolation import (
@@ -125,6 +128,64 @@ def test_gateway_projection_routes_codex_without_cli_login(
     assert 'base_url="http://omnigent-platform-model-gateway:8090/v1"' in rendered
     assert 'wire_api="responses"' in rendered
     assert "session-bound-gateway-token" in rendered
+    assert launch.catalog_models == ("deepseek-flash", "deepseek-v4-pro")
+
+
+@pytest.mark.asyncio
+async def test_platform_codex_picker_uses_declared_models_without_host_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv(PLATFORM_MODEL_CREDENTIAL_ENV, raising=False)
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
+        lambda: "/test/codex",
+    )
+
+    async def unexpected_probe():
+        raise AssertionError("Host must not probe an account-wide Codex catalog")
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server.codex_launch_catalog",
+        unexpected_probe,
+    )
+    host = object.__new__(PlatformModelHostProcess)
+    result = await host._probed_codex_model_options()
+
+    assert result is not None
+    assert result.routable_models == ["deepseek-flash", "deepseek-v4-pro"]
+    assert [row["id"] for row in result.models] == result.routable_models
+    assert result.models[0]["isDefault"] is True
+
+
+@pytest.mark.asyncio
+async def test_platform_codex_session_catalog_never_advertises_account_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, "session-bound-gateway-token")
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+
+    rows = await codex_launch_catalog(launch=resolve_native_codex_launch(model=None))
+
+    assert rows is not None
+    assert [row["id"] for row in rows] == ["deepseek-flash", "deepseek-v4-pro"]
+    assert [row["id"] for row in rows if row["isDefault"]] == ["deepseek-flash"]
 
 
 def test_gateway_projection_routes_opencode_without_cli_login(

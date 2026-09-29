@@ -1016,6 +1016,11 @@ async def test_codex_native_model_options_query_model_list(
     for model_row in expected_models:
         if model_row["id"] == expected_default:
             model_row["isDefault"] = True
+        model_row["source"] = {
+            "kind": "subscription",
+            "label": "Subscription",
+            "name": "codex",
+        }
     assert resp.json() == {"models": expected_models}
     assert fake_client.requests == [
         ("model/list", {"includeHidden": False}),
@@ -1023,6 +1028,82 @@ async def test_codex_native_model_options_query_model_list(
     ]
     assert fake_client.connected
     assert fake_client.closed
+
+
+@pytest.mark.asyncio
+async def test_platform_codex_runner_model_options_use_gateway_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An account-wide Codex model/list must never leak into a platform session."""
+    from omnigent.harnesses.codex_native import app_server as codex
+    from saas.runner_adapter.platform_models import (
+        PLATFORM_MODEL_CREDENTIAL_ENV,
+        render_platform_model_gateway_config,
+    )
+
+    conv_id = uuid.uuid4().hex
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, "session-bound-test-token")
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+    monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "bridges")
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('model = "deepseek-v4-pro"\n')
+    codex_native_bridge.write_bridge_state(
+        codex_native_bridge.bridge_dir_for_bridge_id(conv_id),
+        codex_native_bridge.CodexNativeBridgeState(
+            session_id=conv_id,
+            socket_path="ws://codex.test",
+            thread_id="test-thread",
+            codex_home=str(codex_home),
+        ),
+    )
+
+    async def fake_launch(session_id: str, *args: Any, **kwargs: Any) -> SessionResourceView:
+        return SessionResourceView(
+            id="terminal_codex_main",
+            type="terminal",
+            session_id=session_id,
+            name="codex:main",
+            metadata={"running": True},
+        )
+
+    async def resolve_spec(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return AgentSpec(
+            spec_version=1,
+            name="codex",
+            executor=ExecutorSpec(type="omnigent", config={"harness": "codex-native"}),
+        )
+
+    def unexpected_model_list(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("Gateway catalog must not request account-wide Codex model/list")
+
+    monkeypatch.setattr(
+        "omnigent.runner.native.orchestration._auto_create_codex_terminal", fake_launch
+    )
+    monkeypatch.setattr(codex, "client_for_transport", unexpected_model_list)
+    app = create_runner_app(
+        process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
+        spec_resolver=resolve_spec,
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions", json={"session_id": conv_id, "agent_id": "test-agent"}
+        )
+        assert created.status_code == 201, created.text
+        response = await client.get(f"/v1/sessions/{conv_id}/codex-model-options")
+
+    assert response.status_code == 200, response.text
+    rows = response.json()["models"]
+    assert [row["id"] for row in rows] == ["deepseek-flash", "deepseek-v4-pro"]
+    assert [row["id"] for row in rows if row.get("isDefault")] == ["deepseek-v4-pro"]
 
 
 @pytest.mark.asyncio
