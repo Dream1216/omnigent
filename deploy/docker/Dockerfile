@@ -592,18 +592,18 @@ RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
 # directory and the venv before the system paths.
 RUN echo 'export PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:/opt/venv/bin:${PATH}"' > /etc/profile.d/omnigent-venv.sh
 
-# Optional extra harness CLIs, off by default: space-separated harness names
-# with optional @version pins, or npm:<pkg-spec> — see install-harness-cli.sh
+# Optional extra harness CLIs: the SaaS wrapper adds fleet-only pinned rows,
+# then delegates standard names to install-harness-cli.sh. See both scripts
 # and deploy/docker/README.md. Kept at the end of the stage so script churn
 # doesn't bust the layers above. `set -f` stops glob expansion in the unquoted
 # arg list (npm specs may contain *). The script is removed after use.
 ARG EXTRA_HARNESS_CLIS=
-COPY deploy/docker/install-harness-cli.sh /tmp/install-harness-cli.sh
+COPY deploy/docker/install-harness-cli.sh saas/scripts/install-saas-harness-cli.sh /tmp/
 RUN if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
         set -f; \
-        bash /tmp/install-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
+        bash /tmp/install-saas-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
     fi; \
-    rm -f /tmp/install-harness-cli.sh
+    rm -f /tmp/install-harness-cli.sh /tmp/install-saas-harness-cli.sh
 
 WORKDIR /root
 
