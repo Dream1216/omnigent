@@ -1301,8 +1301,12 @@ BEGIN
     END LOOP;
     FOREACH target_signature IN ARRAY preview_functions
     LOOP
-        -- These verified SECURITY DEFINER functions retain bootstrap ownership.
-        IF target_signature = ANY(bootstrap_owned_gateway_functions) THEN
+        -- Bootstrap-owned SECURITY DEFINER functions keep their exact ACL.
+        IF target_signature = ANY(bootstrap_owned_gateway_functions)
+           AND (SELECT proowner FROM pg_proc
+                WHERE oid = to_regprocedure(target_signature)) <> (
+                    SELECT oid FROM pg_roles WHERE rolname = current_user
+                ) THEN
             CONTINUE;
         END IF;
         EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
@@ -1311,6 +1315,10 @@ BEGIN
             EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
                 ' FROM ' || quote_ident(target_role);
         END LOOP;
+        IF target_signature = ANY(bootstrap_owned_gateway_functions) THEN
+            EXECUTE 'GRANT EXECUTE ON FUNCTION ' || target_signature ||
+                ' TO saas_preview_owner';
+        END IF;
     END LOOP;
 
     GRANT EXECUTE ON FUNCTION
