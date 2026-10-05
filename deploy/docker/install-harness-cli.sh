@@ -20,7 +20,7 @@
 # the binary name isn't known here).
 #
 # Why names instead of raw npm specs: the row knows HOW the harness ships.
-# Several harness CLIs are not npm packages at all (goose and jcode ship
+# Several harness CLIs are not npm packages at all (goose, jcode, and Devin ship
 # single-binary vendor installers), and for the npm ones the row carries the
 # right package and default pin (e.g. opencode → opencode-ai@~1.18.0, mirroring
 # omnigent/onboarding/harness_install.py — keep the two in sync). An unknown
@@ -45,6 +45,10 @@
 #               builtin harness (omnigent/acp_cli_harnesses.py); a managed
 #               deployment still needs the binary on the host's PATH, since
 #               the sandbox cannot run the installer at session start
+#   devin     → Cognition's pinned, checksum-verified release bundle. The
+#               interactive installer ends in ``devin setup`` and is therefore
+#               unsuitable for an image build; this row installs the same
+#               official bundle directly without creating a user credential
 #   cursor    → vendor installer (cursor.com/install) — always fetches the
 #               latest agent build, so VERSION pins are rejected
 #   kimi      → npm @moonshot-ai/kimi-code (default pin 0.43.1)
@@ -57,9 +61,9 @@
 # HERMES_HOME) while the host images ship Node 22 — it needs the image's
 # Node baseline raised first, not just a baked binary.
 #
-# Supply-chain note: only agy here (and kiro-cli baked in the Dockerfile) is
-# pinned to an immutable asset + sha256. The vendor-installer rows (goose,
-# jcode, cursor) run the harness's own curl-piped install script off
+# Supply-chain note: agy and Devin here (and kiro-cli baked in the Dockerfile)
+# are pinned to immutable assets + sha256. The other vendor-installer rows
+# (goose, jcode, cursor) run the harness's own curl-piped install script off
 # mutable refs and are checked only with `--version`; cursor cannot be
 # pinned at all.
 # Off-by-default bounds this, but a deployment needing kiro-cli-grade integrity
@@ -83,6 +87,13 @@ BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 # (see install_jcode / install_cursor).
 JCODE_HOME="${JCODE_HOME:-/opt/jcode}"
 CURSOR_HOME="${CURSOR_HOME:-/opt/cursor}"
+
+# Pinned from Cognition's official versioned manifest. Keep the version and
+# both architecture hashes together; ``install_devin`` refuses a different
+# command-line pin so a caller cannot accidentally bypass the reviewed hashes.
+DEVIN_VERSION="${DEVIN_VERSION:-3000.11.3}"
+DEVIN_SHA256_AMD64="${DEVIN_SHA256_AMD64:-83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e}"
+DEVIN_SHA256_ARM64="${DEVIN_SHA256_ARM64:-21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b67f15}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -196,6 +207,36 @@ install_jcode() { # <version|"">
     verify jcode
 }
 
+install_devin() { # <version|"">
+    local requested="$1" target sha archive
+    if [ -n "$requested" ] && [ "$requested" != "$DEVIN_VERSION" ]; then
+        die "devin is pinned to $DEVIN_VERSION with reviewed per-arch hashes; got $requested"
+    fi
+    case "$(uname -m)" in
+        x86_64)
+            target="x86_64-unknown-linux"
+            sha="$DEVIN_SHA256_AMD64"
+            ;;
+        aarch64)
+            target="aarch64-unknown-linux"
+            sha="$DEVIN_SHA256_ARM64"
+            ;;
+        *) die "unsupported architecture '$(uname -m)' for devin" ;;
+    esac
+    archive="/tmp/devin-${DEVIN_VERSION}.tar.gz"
+    echo ">> installing devin $DEVIN_VERSION from Cognition's signed release channel"
+    curl -fsSL -o "$archive" \
+        "https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-${target}.tar.gz"
+    echo "$sha  $archive" | sha256sum -c -
+    rm -rf /opt/devin
+    mkdir -p /opt/devin
+    tar -xzf "$archive" -C /opt/devin
+    chmod -R a+rX /opt/devin
+    ln -sf /opt/devin/bin/devin "$BIN_DIR/devin"
+    rm -f "$archive"
+    verify devin
+}
+
 install_cursor() {
     # cursor's installer hardcodes $HOME/.local/{share,bin} with no directory
     # override, so it gets the jcode treatment: redirect HOME to a shared
@@ -235,6 +276,7 @@ for spec in "$@"; do
             install_agy
             ;;
         jcode)    install_jcode "$version" ;;
+        devin)    install_devin "$version" ;;
         cursor)
             [ -z "$version" ] \
                 || die "cursor's installer always fetches the latest build — cursor@VERSION pins are not supported"
@@ -249,6 +291,6 @@ for spec in "$@"; do
         kiro | kiro-cli)
             die "$name ships in the host image by default, version-pinned via the KIRO_CLI_VERSION build ARG — override with --build-arg instead" ;;
         *)
-            die "unknown harness CLI '$name' — supported names: opencode, qwen, goose, agy, jcode, cursor, kimi (or npm:<pkg-spec> for a package with no row)" ;;
+            die "unknown harness CLI '$name' — supported names: opencode, qwen, goose, agy, jcode, devin, cursor, kimi (or npm:<pkg-spec> for a package with no row)" ;;
     esac
 done

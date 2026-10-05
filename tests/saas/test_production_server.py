@@ -864,7 +864,7 @@ def _reviewed_production_sandbox_config() -> dict[str, object]:
         "reaper": {
             "enabled": True,
             "sweep_interval_s": 3600,
-            "terminate_after_offline_days": 30,
+            "terminate_after_offline_days": 7,
         },
         "host_config": host_config,
         "kubernetes": {
@@ -932,6 +932,7 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
     parsed = parse_sandbox_config(cast(dict[str, object], loaded["sandbox"]))
     assert parsed is not None
     assert parsed.launchable_providers() == ("agent_sandbox", "kubernetes")
+    assert parsed.reaper.terminate_after_offline_days == 7
 
 
 @pytest.mark.parametrize(
@@ -945,6 +946,7 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
         "missing_output_limit",
         "output_limit_mismatch",
         "context_window_mismatch",
+        "month_reaper",
     ),
 )
 def test_official_config_rejects_unreviewed_sandbox_authority(
@@ -988,6 +990,9 @@ def test_official_config_rejects_unreviewed_sandbox_authority(
             openai["max_output_tokens"] = 393_216
         else:
             openai["context_window"] = 128_000
+    elif mutation == "month_reaper":
+        reaper = cast(dict[str, object], sandbox["reaper"])
+        reaper["terminate_after_offline_days"] = 30
     else:
         kubernetes["kubeconfig"] = "/tmp/admin.conf"
     path = tmp_path / f"official-{mutation}.yaml"
