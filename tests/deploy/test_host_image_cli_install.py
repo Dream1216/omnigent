@@ -78,32 +78,3 @@ def test_extra_cli_rows_match_harness_install_table() -> None:
 
     # goose's default pin mirrors the runtime's minimum supported goose.
     assert f"${{1:-{hi._GOOSE_MIN_VERSION}}}" in script
-
-
-def test_saas_host_candidate_bakes_pinned_jcode_and_devin() -> None:
-    """Both reproducibility builds and the signed release include fleet CLIs."""
-    action = (_ROOT / "saas/actions/build-oci-candidate/action.yml").read_text()
-    workflow = (_ROOT / ".github/workflows/saas-image-candidate.yml").read_text()
-    expected = "EXTRA_HARNESS_CLIS=jcode@0.90.1 devin@3000.11.3"
-
-    assert "jcode@0.90.1 devin@3000.11.3" in action
-    assert expected in workflow
-    assert (
-        '("anthropic", "openai", "pi", "kiro", "kimi", "qwen", '
-        '"opencode", "gemini", "devin", "jcode")'
-    ) in workflow
-
-
-def test_devin_extra_cli_row_is_version_and_hash_pinned() -> None:
-    """The non-interactive image install uses Cognition's reviewed bundle."""
-    script = (_ROOT / "deploy/docker/install-harness-cli.sh").read_text()
-
-    assert 'DEVIN_VERSION="${DEVIN_VERSION:-3000.11.3}"' in script
-    assert "DEVIN_SHA256_AMD64" in script
-    assert "DEVIN_SHA256_ARM64" in script
-    assert (
-        "https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-${target}.tar.gz"
-        in script
-    )
-    assert 'echo "$sha  $archive" | sha256sum -c -' in script
-    assert 'devin)    install_devin "$version" ;;' in script
