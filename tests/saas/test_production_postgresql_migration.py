@@ -825,6 +825,40 @@ def test_preview_owner_lease_definer_exception_is_exact() -> None:
         migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256 = original
 
 
+@pytest.mark.parametrize("state", ["absent", "complete", "partial", "wrong_grantor"])
+def test_preview_authority_acl_preservation_requires_an_exact_projection(
+    state: str,
+) -> None:
+    owner = "next_beta_saas_owner"
+    grants = [
+        ("saas_preview_gateway_certificates", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_certificates", "", "saas_preview_owner", owner, False),
+        ("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_instances", "server_name", "saas_preview_owner", owner, False),
+    ]
+    if state == "absent":
+        grants = []
+    elif state == "partial":
+        grants.pop()
+    elif state == "wrong_grantor":
+        grants[-1] = (*grants[-1][:3], "next_beta_bootstrap", False)
+
+    class Connection:
+        def execute(self, statement: object) -> SimpleNamespace:
+            if str(statement) == "SELECT current_user":
+                return SimpleNamespace(scalar_one=lambda: owner)
+            return SimpleNamespace(all=lambda: grants)
+
+    if state in {"partial", "wrong_grantor"}:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._preview_authority_grants_present(Connection())  # type: ignore[arg-type]
+        assert error.value.code == "preview_authority_acl_partial"
+    else:
+        assert migration._preview_authority_grants_present(Connection()) is (  # type: ignore[arg-type]
+            state == "complete"
+        )
+
+
 def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
