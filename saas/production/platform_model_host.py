@@ -89,7 +89,7 @@ class PlatformModelHostProcess(HostProcess):
                 raise PlatformModelHostConfigurationError(
                     "Platform Codex model catalog omits its default model"
                 )
-            rows = [
+            rows: list[dict[str, object]] = [
                 {
                     "id": model,
                     "model": model,
