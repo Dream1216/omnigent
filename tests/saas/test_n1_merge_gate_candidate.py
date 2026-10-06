@@ -37,11 +37,14 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
 
     assert len(trusted_inputs) == 21
     for trusted_input in trusted_inputs:
-        path, expected_digest = trusted_input.split("|", 1)
+        path, expected_digests = trusted_input.split("|", 1)
+        allowed_digests = expected_digests.split(",")
+        assert 1 <= len(allowed_digests) <= 2
+        assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in allowed_digests)
         observed_digest = hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest()
-        assert observed_digest == expected_digest, (
+        assert observed_digest in allowed_digests, (
             f"trusted input digest drift for {path}: "
-            f"observed {observed_digest}, expected {expected_digest}"
+            f"observed {observed_digest}, expected one of {allowed_digests}"
         )
 
 

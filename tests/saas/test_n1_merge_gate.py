@@ -208,7 +208,7 @@ elif [[ "$args" =~ /contents/([^?]+)\?ref= ]]; then
     && [[ "$FAKE_TAMPER_HARNESS" == 1 ]]; then
     printf 'tampered\n'
   else
-    grep -F "\"$path|" "$FAKE_EVALUATOR" | head -n1 | cut -d'|' -f2 | cut -d'"' -f1
+    grep -F "\"$path|" "$FAKE_EVALUATOR" | head -n1 | cut -d'|' -f2 | cut -d'"' -f1 | cut -d',' -f1
   fi
 elif [[ "$args" == *'/actions/workflows/342012814/runs?'* ]]; then
   cat "$FAKE_GH_FIXTURES/runs"

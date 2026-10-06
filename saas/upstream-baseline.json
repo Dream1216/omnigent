@@ -49,10 +49,23 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 144,
-    "max_upstream_net_added_loc": 4518,
+    "max_upstream_net_added_loc": 4568,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-10-07",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 144,
+    "previous_max_upstream_net_added_loc": 4518,
+    "previous_measured_upstream_net_added_loc": 4518,
+    "reason": "Exact measured follow-up for the merged SaaS CSRF cross-tab repair (#126): two already-divergent official Web files add 50 net lines (identity.ts +19 and identity.test.ts +31), moving the measured total from 144 files / 4,518 lines to 144 files / 4,568 lines. Raise only the LOC ceiling to that exact measurement; retain the 144-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency checks. This Single-Owner Beta record is not production admission or a technical-gate waiver.",
+    "revision": "next-csrf-cross-tab-budget-v27",
+    "scoped_csrf_delta": {
+      "web/src/lib/identity.ts": 19,
+      "web/src/lib/identity.test.ts": 31
+    },
+    "previous_revision": {
     "approved_at": "2026-10-07",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,
@@ -495,6 +508,7 @@
     }
     }
     }
+  }
   }
   }
   },

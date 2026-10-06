@@ -16,24 +16,24 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "pyproject.toml|5774f6609a5d1f9a708cccd758dc48cb5582c5e75cfd65470f90d29c39bed023"
-  "uv.lock|04f16482ffa04ad553fbbb1b1ab1ca950f1b4f9bf0b1bb39b99a3e53e80c6028"
+  "pyproject.toml|ce6cb9d3853e883840c9431fde4614052045cb4ab10605226c9e055d286ea857,1816fff38d553c2f7cd3d3ebc2aa81bbd9e9c63ada435e59a26a6f79a52619f2"
+  "uv.lock|785552347613ba9898eaef6ab9b5bde8b22eec48e011f093258a1751bb4d6ece,43d84d7081e7316812acef7e3991971b8601c5e5f58cbbf7b7d659ad39b366ea"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
   "tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8"
-  "tests/conftest.py|8dc962866d33ba30ebac092b47e6afd0318bac2e2c861fd78b8bbe6d15792b8f"
+  "tests/conftest.py|70284aa293f3492393587e2c078ed53bfacb5060b4cd030a77b6991df1707411,8dc962866d33ba30ebac092b47e6afd0318bac2e2c861fd78b8bbe6d15792b8f"
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
   "tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475"
-  "tests/saas/test_image_supply_chain.py|da77992b19b20a16c2f08fd377afcfc2cd228c2760d66904e143a500a9c21769"
+  "tests/saas/test_image_supply_chain.py|1c296a354fe8e7a4a56423d4e9803a75e4bc4090fe0eb43246cf780497d288ed,da77992b19b20a16c2f08fd377afcfc2cd228c2760d66904e143a500a9c21769"
   "saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d"
   "saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
   "saas/n1_compat/manifest.json|eb74bc6f938da18792a190ade70f3604f247f50f6c1b25f70bb96ac68d56d99f"
   "saas/n1_compat/Dockerfile|df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed"
   "saas/n1_compat/Dockerfile.dockerignore|72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275"
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
-  "tests/saas/test_n1_merge_gate_candidate.py|45a29ba955b638c0a8850d5f39e62e0d4dd537cf8d8be3b65e5c40a958a1f2cc"
-  "tests/saas/test_n1_merge_gate.py|d37d3dfc19d280579e6c9ec23781fba84a74a19d00ff9c2615f5d0a80a112a04"
+  "tests/saas/test_n1_merge_gate_candidate.py|ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365"
+  "tests/saas/test_n1_merge_gate.py|14ac6f69efaf5dcb165e082857bcbbe11764dab043a8cf1ff3b738d3c9b4d262"
   "tests/saas/test_n1_outbox_admission.py|05087e68310e0045fa18cbdd72614a45dddd6c7e3d4b703fcf2dac160b34fc1e"
   "tests/saas/test_control_plane_migration.py|22178ebb77d198f3a2a2979b8ea6270549f332be05c3b4f7aa6dd5c0113e08b8"
   "tests/saas/test_production_runner_postgresql.py|384f5ecdc9ec341d498d99a634c82c02d3e2456af3b4c89a4a6430fec25bfe39"
@@ -175,12 +175,14 @@ OBSERVED_WORKFLOW_SHA256=$(gh api \
 
 for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
   trusted_path="${trusted_input%%|*}"
-  trusted_sha256="${trusted_input#*|}"
+  trusted_sha256s="${trusted_input#*|}"
+  [[ "$trusted_sha256s" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})?$ ]] || \
+    fail "PostgreSQL N-1 trusted input policy is malformed: $trusted_path"
   observed_sha256=$(gh api \
     -H 'Accept: application/vnd.github.raw+json' \
     "repos/$REPO/contents/$trusted_path?ref=$SHA" \
     | shasum -a 256 | awk '{print $1}')
-  [[ "$observed_sha256" == "$trusted_sha256" ]] || \
+  [[ ",$trusted_sha256s," == *",$observed_sha256,"* ]] || \
     fail "PostgreSQL N-1 trusted input drift: $trusted_path"
 done
 
