@@ -8468,7 +8468,12 @@ async def _reject_unavailable_harness_for_create(
     must be able to launch the Agent because the next sandbox may be any one
     of them.
     """
-    if harness is None or harness == "auto":
+    if harness is None:
+        raise OmnigentError(
+            "Agent configuration is unavailable; repair its bundle and retry",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if harness == "auto":
         return
     if body.host_id is not None:
         host = await _routing_host_for_create(body, request, user_id)

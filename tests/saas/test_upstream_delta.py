@@ -130,11 +130,42 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4396
-    assert budget["max_direct_upstream_files"] == 126
+    assert budget["max_upstream_net_added_loc"] == 4518
+    assert budget["max_direct_upstream_files"] == 144
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "next-agent-null-harness-gate-v26"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 126
+    assert revision["previous_max_upstream_net_added_loc"] == 4396
+    assert revision["previous_measured_upstream_net_added_loc"] == 4396
+    assert revision["scoped_agent_delta"] == {
+        "omnigent/server/routes/_sessions/orchestration.py": 5,
+        "tests/e2e_ui/chat/test_hide_unconfigured_harnesses.py": 50,
+        "tests/e2e_ui/sessions/test_initial_prompt_session_switch.py": 0,
+        "tests/e2e_ui/sessions/test_new_session_optimistic_title.py": 0,
+        "tests/e2e_ui/start_session/test_codex_bypass_agent_switch.py": 0,
+        "tests/e2e_ui/start_session/test_create_agent_focus_ring_clipping.py": 0,
+        "tests/e2e_ui/start_session/test_create_custom_agent.py": 0,
+        "tests/e2e_ui/start_session/test_project_config_prefill.py": 0,
+        "tests/e2e_ui/start_session/test_start_session.py": 0,
+        "tests/e2e_ui/visual/test_landing_snapshot.py": 0,
+        "tests/e2e_ui/visual/test_sidebar_flyout_snapshot.py": 0,
+        "tests/e2e_ui/visual/test_sidebar_snapshot.py": 0,
+        "tests/server/routes/test_session_create_project_consistency.py": 6,
+        "tests/server/routes/test_sessions_cost_labels.py": 15,
+        "web/src/lib/harnessSetup.test.ts": 21,
+        "web/src/lib/harnessSetup.ts": 13,
+        "web/src/shell/NewChatDialog.flow.test.tsx": 0,
+        "web/src/shell/NewChatDialog.projectCreate.test.tsx": 7,
+        "web/src/shell/NewChatDialog.projectPrefill.test.tsx": 0,
+        "web/src/shell/NewChatDialog.test.tsx": 0,
+        "web/src/shell/NewChatDialog.tsx": 5,
+        "web/src/shell/NewChatLandingScreen.mobileChrome.test.tsx": 0,
+        "web/src/shell/ProjectSettingsDialog.test.tsx": 0,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "next-agent-admission-e2e-closure-v25"
     assert revision["previous_max_active_patches"] == 9
     assert revision["previous_max_direct_upstream_files"] == 122
@@ -349,7 +380,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4396 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4518 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,

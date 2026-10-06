@@ -115,6 +115,7 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { HarnessSetupDialog } from "@/shell/HarnessSetupDialog";
 import {
   harnessUnavailableReasonOnHost,
+  agentHarnessUnavailableReasonOnHost,
   harnessHiddenAsUnconfiguredOnHost,
   harnessUnconfiguredOnHost,
   harnessWarningBadgeText,
@@ -852,7 +853,12 @@ function HarnessSetupNotice({
       data-testid="new-chat-landing-harness-warning"
     >
       <TriangleAlertIcon className="size-3.5 shrink-0" />
-      {sandbox ? (
+      {reason === "agent-unavailable" ? (
+        <span>
+          {agentName} cannot start because its agent configuration is unavailable. Ask an
+          administrator to repair it.
+        </span>
+      ) : sandbox ? (
         <span>
           {agentName} isn&apos;t ready in {hostName}. Choose a ready agent or another sandbox
           provider.
@@ -1574,11 +1580,9 @@ export function AgentHarnessPicker({
       : "";
     const summary = details || entrySummaries?.[agent.id] || "Default";
     const editable = selectedConfigContent !== undefined && (isEntryConfigurable?.(agent) ?? true);
-    const unavailable = harnessUnconfiguredOnHost(agent.harness, host);
-    const warning = harnessWarningBadgeText(
-      harnessUnavailableReasonOnHost(agent.harness, host),
-      collapsedBadge,
-    );
+    const unavailableReason = agentHarnessUnavailableReasonOnHost(agent, host);
+    const unavailable = unavailableReason !== null;
+    const warning = harnessWarningBadgeText(unavailableReason, collapsedBadge);
     return (
       <HarnessPickerEntry
         key={agent.id}
@@ -1593,7 +1597,7 @@ export function AgentHarnessPicker({
           }
         }}
         onSelect={() => onSelectAgent(agent)}
-        onSetup={unavailable ? () => onSelectAgent(agent) : undefined}
+        onSetup={unavailable && agent.harness ? () => onSelectAgent(agent) : undefined}
         configContent={active ? selectedConfigContent : null}
         testId={`new-chat-landing-agent-${agent.id}`}
         icon={<ComposerAgentIcon agent={agent} />}
@@ -4053,10 +4057,11 @@ export function NewChatLandingScreen() {
   }, [pickedHarness]);
   // Native harnesses receive skill invocations as plain text for their CLI to interpret.
   const isNativeTerminalAgent = isNativeCodingAgent(selectedAgent);
-  const selectedAgentUnconfigured = harnessUnconfiguredOnHost(
-    selectedAgent?.harness,
+  const selectedAgentUnavailableReason = agentHarnessUnavailableReasonOnHost(
+    selectedAgent,
     harnessWarningHost,
   );
+  const selectedAgentUnconfigured = selectedAgentUnavailableReason !== null;
   const selectedAgentLaunchBlocked = selectedAgentUnconfigured;
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
@@ -6740,7 +6745,7 @@ export function NewChatLandingScreen() {
               agentName={selectedAgent?.display_name}
               hostName={harnessWarningHost?.name}
               harness={selectedAgent?.harness ?? null}
-              reason={harnessUnavailableReasonOnHost(selectedAgent?.harness, harnessWarningHost)}
+              reason={selectedAgentUnavailableReason}
               featureEnabled={harnessInstallEnabled}
               sandbox={sandboxSelected}
               onSetup={() =>

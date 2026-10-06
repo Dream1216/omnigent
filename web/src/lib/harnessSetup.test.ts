@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentHarnessUnavailableReasonOnHost,
   harnessAuthableOnHost,
   harnessCredentialAdoptFamilies,
   harnessCredentialFamily,
@@ -8,6 +9,7 @@ import {
   harnessInstallableOnHost,
   harnessUnavailableReasonOnHost,
   harnessUnconfiguredOnHost,
+  harnessWarningBadgeText,
   managedSandboxReadinessHost,
   resolveSetupSteps,
 } from "./harnessSetup";
@@ -123,7 +125,26 @@ describe("harnessUnavailableReasonOnHost", () => {
       "unconfigured",
     );
     expect(harnessUnavailableReasonOnHost("codex", hostWith(null))).toBe(null);
-    expect(harnessUnavailableReasonOnHost(null, hostWith({ codex: false }))).toBe(null);
+    expect(harnessUnavailableReasonOnHost(null, hostWith({ codex: false }))).toBe(
+      "agent-unavailable",
+    );
+  });
+
+  it("blocks an agent whose bundle has no resolvable harness even without host readiness", () => {
+    expect(harnessUnavailableReasonOnHost(null, hostWith(null))).toBe("agent-unavailable");
+    expect(harnessUnconfiguredOnHost(null, undefined)).toBe(true);
+    expect(harnessHiddenAsUnconfiguredOnHost(null, hostWith({}))).toBe(true);
+    expect(harnessWarningBadgeText("agent-unavailable", true)).toBe("agent unavailable");
+    expect(agentHarnessUnavailableReasonOnHost({ harness: null }, hostWith(null))).toBe(
+      "agent-unavailable",
+    );
+    expect(
+      agentHarnessUnavailableReasonOnHost(
+        { harness: null, sessionId: "conv_existing" },
+        hostWith(null),
+      ),
+    ).toBe(null);
+    expect(agentHarnessUnavailableReasonOnHost(null, hostWith(null))).toBe(null);
   });
 
   it("treats a missing key on a readiness-reporting host as unconfigured", () => {
