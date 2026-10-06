@@ -2130,8 +2130,10 @@ class HostProcess:
                 proc = subprocess.Popen(
                     # -P keeps cwd off sys.path: a workspace that is itself an
                     # omnigent checkout would otherwise shadow the installed
-                    # package. _entry re-adds it for spec-declared local tools.
-                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
+                    # package. The selected entry re-adds it for spec-declared
+                    # local tools. Managed compositions override this seam with
+                    # their reviewed metering entrypoint; ambient input cannot.
+                    [sys.executable, "-P", "-m", self._runner_entry_module()],
                     env=env,
                     # A daemon may outlive the checkout it started from.
                     cwd=str(workspace),
@@ -2150,6 +2152,11 @@ class HostProcess:
             return proc, log_path
         finally:
             log_fh.close()
+
+    def _runner_entry_module(self) -> str:
+        """Return the installed Runner entrypoint for this Host composition."""
+
+        return "omnigent.runner._entry"
 
     async def _stop_abandoned_spawn(
         self,

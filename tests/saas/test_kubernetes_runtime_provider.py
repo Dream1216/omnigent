@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from omnigent.version import VERSION
 from saas.control_plane.runtime_provider import (
     RuntimeProviderCredential,
     RuntimeProviderError,
@@ -54,7 +55,7 @@ def _document() -> dict[str, object]:
         "account_ref_hash": sha256(b"onboarding-runtime-provider").hexdigest(),
         "region": "cn-east-1",
         "runtime_namespace": "omnigent-next-runtime",
-        "runtime_version": "0.15.0.dev0",
+        "runtime_version": VERSION,
         "source_revision": "3" * 40,
         "adapter_contract_version": "0.2.0",
         "placement_generation": 1,

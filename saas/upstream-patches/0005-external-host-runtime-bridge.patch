@@ -9,7 +9,7 @@ index b1221f7a2..b94cd5e21 100644
 +            HOST_TOKEN_FILE_ENV_VAR,
 +            HOST_WORKSPACE_ID_ENV_VAR,
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index e87617a09..9015efae0 100644
+index e87617a09..79e5847c8 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
 @@ -127 +127,5 @@ from omnigent.host.git_worktree import (
@@ -31,7 +31,20 @@ index e87617a09..9015efae0 100644
 +        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
 @@ -1875,0 +1886 @@ class HostProcess:
 +            workspace_id=load_host_tunnel_workspace_id(),
-@@ -4402 +4413,6 @@ class HostProcess:
+@@ -2122,2 +2133,4 @@ class HostProcess:
+-                    # package. _entry re-adds it for spec-declared local tools.
+-                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
++                    # package. The selected entry re-adds it for spec-declared
++                    # local tools. Managed compositions override this seam with
++                    # their reviewed metering entrypoint; ambient input cannot.
++                    [sys.executable, "-P", "-m", self._runner_entry_module()],
+@@ -2142,0 +2156,5 @@ class HostProcess:
++    def _runner_entry_module(self) -> str:
++        """Return the installed Runner entrypoint for this Host composition."""
++
++        return "omnigent.runner._entry"
++
+@@ -4402 +4420,6 @@ class HostProcess:
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
 +        from omnigent.host.identity import (
 +            MANAGED_HOST_TOKEN_HEADER,
@@ -39,22 +52,22 @@ index e87617a09..9015efae0 100644
 +            load_host_tunnel_token,
 +            load_host_tunnel_workspace_id,
 +        )
-@@ -4421 +4437 @@ class HostProcess:
+@@ -4421 +4444 @@ class HostProcess:
 -        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
 +        managed_token = load_host_tunnel_token()
-@@ -4422,0 +4439,4 @@ class HostProcess:
+@@ -4422,0 +4446,4 @@ class HostProcess:
 +            # A managed machine credential is deliberately independent from
 +            # the user's bearer. Drop any Authorization header contributed by
 +            # deployment routing helpers so the two identities never mix.
 +            headers.pop("Authorization", None)
-@@ -4423,0 +4444,3 @@ class HostProcess:
+@@ -4423,0 +4451,3 @@ class HostProcess:
 +            workspace_id = load_host_tunnel_workspace_id()
 +            if workspace_id is not None:
 +                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
-@@ -4443 +4466 @@ class HostProcess:
+@@ -4443 +4473 @@ class HostProcess:
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
 +        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
-@@ -4445 +4468 @@ class HostProcess:
+@@ -4445 +4475 @@ class HostProcess:
 -        if os.environ.get(HOST_TOKEN_ENV_VAR):
 +        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
 diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py
@@ -196,6 +209,17 @@ index aeea4c0aa..277cd8594 100644
 +    return workspace_id
 +
 +
+diff --git a/omnigent/runner/transports/ws_tunnel/serve.py b/omnigent/runner/transports/ws_tunnel/serve.py
+index e2a170cc0..f766b6b13 100644
+--- a/omnigent/runner/transports/ws_tunnel/serve.py
++++ b/omnigent/runner/transports/ws_tunnel/serve.py
+@@ -42,0 +43,2 @@ from omnigent.runner.identity import (
++    RUNNER_TUNNEL_WORKSPACE_HEADER,
++    load_runner_tunnel_workspace_id,
+@@ -919,0 +922,3 @@ async def _serve_tunnel_once(
++    workspace_id = load_runner_tunnel_workspace_id()
++    if workspace_id is not None:
++        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
 index 42f8e51aa..9b8cc459f 100644
 --- a/omnigent/server/routes/host_tunnel.py
