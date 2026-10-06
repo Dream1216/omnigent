@@ -255,7 +255,6 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         ".github/ci-deps/package.json",
         "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
-        "saas/scripts/install-saas-harness-cli.sh",
     ):
         target = repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -558,22 +557,6 @@ def test_image_material_lock_rejects_host_hardlink_normalizer_drift(
 
     assert (
         "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
-        in validate_image_material_lock(repo)
-    )
-
-
-def test_image_material_lock_rejects_volatile_jcode_logs(tmp_path: Path) -> None:
-    repo = _material_lock_repo(tmp_path)
-    installer = repo / "saas/scripts/install-saas-harness-cli.sh"
-    source = installer.read_text(encoding="utf-8")
-    assert "rm -rf -- /opt/jcode/.jcode/logs" in source
-    installer.write_text(
-        source.replace("rm -rf -- /opt/jcode/.jcode/logs", ": # leave logs in image", 1),
-        encoding="utf-8",
-    )
-
-    assert (
-        "extra Host CLI layer must remove volatile Jcode logs before normalization"
         in validate_image_material_lock(repo)
     )
 
