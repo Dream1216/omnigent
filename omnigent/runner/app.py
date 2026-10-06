@@ -5731,18 +5731,18 @@ def create_runner_app(
         if state is None:
             raise _CodexNativeModelOptionsNotReady("Codex-native model options are not ready yet.")
 
-        spec = await _resolve_session_agent_spec(conv_id)
-        # Only a machine-default provider can be inferred from the Host's
-        # pre-launch catalog. An explicit session auth/profile owns its own
-        # route and must keep the existing Codex model/list behavior.
-        spec_has_route = spec is not None and (
-            spec.executor.auth is not None
-            or spec.executor.profile
-            or spec.executor.config.get("profile")
-        )
-        if not spec_has_route:
-            provider = default_provider_for_harness(load_config(), "codex")
-            if provider is not None and declared_codex_models_for_provider(provider):
+        provider = default_provider_for_harness(load_config(), "codex")
+        if provider is not None and declared_codex_models_for_provider(provider):
+            spec = await _resolve_session_agent_spec(conv_id)
+            # Only a machine-default provider can be inferred from the Host's
+            # pre-launch catalog. An explicit session auth/profile owns its own
+            # route and must keep the existing Codex model/list behavior.
+            spec_has_route = spec is not None and (
+                spec.executor.auth is not None
+                or spec.executor.profile
+                or spec.executor.config.get("profile")
+            )
+            if not spec_has_route:
                 launch = await asyncio.to_thread(
                     resolve_native_codex_launch, model=None, spec=spec
                 )
