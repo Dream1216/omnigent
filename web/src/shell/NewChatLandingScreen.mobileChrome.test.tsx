@@ -102,7 +102,7 @@ beforeEach(() => {
         name: "hello_world",
         display_name: "Hello World",
         description: null,
-        harness: null,
+        harness: "omnigent",
         skills: [],
       } as AvailableAgent,
     ],

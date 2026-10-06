@@ -205,6 +205,15 @@ net lines, so only those two ceilings rise from v24; the nine-patch ceiling,
 0.85 isolation floor, forbidden paths and reverse-dependency checks remain.
 The 17-Agent and authenticated delivery gates remain separate live checks.
 
+The `next-agent-null-harness-gate-v26` correction rejects unreadable catalog
+Agents before session creation while preserving session-discovered Agents until
+their spec loads. It extends replayable patch 0010 and aligns browser fixtures
+with the non-null catalog contract. The measured delta is 142 direct official
+files / 4,497 net lines, including 16 newly divergent paths and 101 net lines
+since v25. The nine-patch ceiling, 0.85 isolation floor, forbidden paths and
+reverse-dependency checks remain; signed-image, 17-Agent and five authenticated
+online gates are still required.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/db/utils.py` | Store adapter contract; shared-read bypass; real PostgreSQL Runtime RLS | Generic extension proposal pending | `9616bf97` | Remove when upstream exposes a per-transaction Store session initializer or equivalent hook |
