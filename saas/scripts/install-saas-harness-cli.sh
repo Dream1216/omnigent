@@ -66,7 +66,7 @@ done
 if [ "${#roots[@]}" -gt 0 ]; then
     [ -n "${SOURCE_DATE_EPOCH:-}" ] || die "SOURCE_DATE_EPOCH is required"
     python -B /tmp/normalize_host_cli_tree.py \
-        --source-date-epoch "$SOURCE_DATE_EPOCH" "${roots[@]}"
+        --source-date-epoch "$SOURCE_DATE_EPOCH" --diagnostic-tree "${roots[@]}"
     for launcher in jcode devin; do
         if [ -L "$BIN_DIR/$launcher" ]; then
             touch -h -d "@${SOURCE_DATE_EPOCH}" "$BIN_DIR/$launcher"

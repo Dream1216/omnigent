@@ -441,6 +441,38 @@ def test_host_cli_hardlink_normalizer_detaches_all_regular_file_links(
     assert os.readlink(symlink) == second.name
 
 
+def test_host_cli_normalizer_diagnostic_tree_reports_only_metadata_and_fingerprints(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "vendor-cli"
+    root.mkdir()
+    binary = root / "cli"
+    binary.write_bytes(b"pinned binary")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(_repo() / "saas/scripts/normalize_host_cli_tree.py"),
+            "--root",
+            str(root),
+            "--source-date-epoch",
+            "0",
+            "--diagnostic-tree",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "pinned binary" not in result.stdout
+    assert f"root={root} path=cli kind=file" in result.stdout
+    assert (
+        f"payload_fingerprint={hashlib.sha256(binary.read_bytes()).hexdigest()}" in result.stdout
+    )
+    assert f"Host CLI normalized root sha256: {root} " in result.stdout
+
+
 def test_host_cli_hardlink_normalizer_fails_closed_on_temporary_collision(
     tmp_path: Path,
 ) -> None:

@@ -69,7 +69,9 @@ def detach_hardlinked_regular_files(root: Path) -> int:
     return detached
 
 
-def normalize_tree_metadata(root: Path, *, source_date_epoch: int) -> int:
+def normalize_tree_metadata(
+    root: Path, *, source_date_epoch: int, diagnostic_tree: bool = False
+) -> int:
     """Normalize retained metadata and return a deterministic tree digest."""
 
     if source_date_epoch < 0:
@@ -109,6 +111,14 @@ def normalize_tree_metadata(root: Path, *, source_date_epoch: int) -> int:
         digest.update(record)
         digest.update(payload)
         digest.update(b"\0")
+        if diagnostic_tree:
+            fingerprint = payload.hex() if kind == "file" else hashlib.sha256(payload).hexdigest()
+            print(
+                f"Host CLI normalized entry: root={root} path={relative} "
+                f"kind={kind} mode={stat.S_IMODE(metadata.st_mode):o} "
+                f"uid={metadata.st_uid} gid={metadata.st_gid} size={payload_size} "
+                f"payload_fingerprint={fingerprint}"
+            )
     for path in entries:
         os.utime(path, ns=(timestamp_ns, timestamp_ns), follow_symlinks=False)
     return int.from_bytes(digest.digest(), "big")
@@ -118,12 +128,20 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", action="append", type=Path, required=True)
     parser.add_argument("--source-date-epoch", type=int, required=True)
+    parser.add_argument("--diagnostic-tree", action="store_true")
     args = parser.parse_args()
     detached = sum(detach_hardlinked_regular_files(root) for root in args.root)
     tree_digests = [
-        normalize_tree_metadata(root, source_date_epoch=args.source_date_epoch)
+        normalize_tree_metadata(
+            root,
+            source_date_epoch=args.source_date_epoch,
+            diagnostic_tree=args.diagnostic_tree,
+        )
         for root in args.root
     ]
+    if args.diagnostic_tree:
+        for root, tree_digest in zip(args.root, tree_digests, strict=True):
+            print(f"Host CLI normalized root sha256: {root} {tree_digest:064x}")
     manifest = hashlib.sha256()
     for tree_digest in tree_digests:
         manifest.update(tree_digest.to_bytes(32, "big"))
