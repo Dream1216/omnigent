@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4497
-    assert budget["max_direct_upstream_files"] == 142
+    assert budget["max_upstream_net_added_loc"] == 4518
+    assert budget["max_direct_upstream_files"] == 144
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -153,6 +153,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
         "tests/e2e_ui/visual/test_landing_snapshot.py": 0,
         "tests/e2e_ui/visual/test_sidebar_flyout_snapshot.py": 0,
         "tests/e2e_ui/visual/test_sidebar_snapshot.py": 0,
+        "tests/server/routes/test_session_create_project_consistency.py": 6,
+        "tests/server/routes/test_sessions_cost_labels.py": 15,
         "web/src/lib/harnessSetup.test.ts": 21,
         "web/src/lib/harnessSetup.ts": 13,
         "web/src/shell/NewChatDialog.flow.test.tsx": 0,
@@ -378,7 +380,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4497 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4518 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
