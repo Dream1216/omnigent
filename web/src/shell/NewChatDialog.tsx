@@ -113,6 +113,7 @@ import {
   harnessWarningBadgeText,
   isCodexHarness,
   isNativeCursorHarness,
+  managedSandboxReadinessHost,
   skillInvocationPrefix,
 } from "@/lib/harnessSetup";
 
@@ -836,6 +837,7 @@ function HarnessSetupNotice({
   harness,
   reason,
   featureEnabled,
+  sandbox = false,
   onSetup,
 }: {
   agentName: string | undefined;
@@ -843,6 +845,7 @@ function HarnessSetupNotice({
   harness: string | null | undefined;
   reason: string | null;
   featureEnabled: boolean;
+  sandbox?: boolean;
   onSetup: () => void;
 }) {
   const { trackClick } = useOmnigentAnalytics();
@@ -854,7 +857,12 @@ function HarnessSetupNotice({
       data-testid="new-chat-landing-harness-warning"
     >
       <TriangleAlertIcon className="size-3.5 shrink-0" />
-      {featureEnabled ? (
+      {sandbox ? (
+        <span>
+          {agentName} isn&apos;t ready in {hostName}. Choose a ready agent or another sandbox
+          provider.
+        </span>
+      ) : featureEnabled ? (
         <>
           <span>
             {agentName} isn&apos;t ready on {hostName}.
@@ -1499,7 +1507,9 @@ export function AgentHarnessPicker({
   const visibleModelText = selectedUnavailable
     ? ""
     : triggerModelText === "Default"
-      ? modelsUnavailableText
+      ? sandboxSelected
+        ? t("landing.default")
+        : modelsUnavailableText
       : triggerModelText;
   const visibleEffortText =
     triggerEffortText === "Default" || triggerEffortText === "—" ? "" : triggerEffortText;
@@ -1730,7 +1740,7 @@ export function AgentHarnessPicker({
       Create custom agent
     </DropdownMenuItem>
   ) : null;
-  const hasCustomGroup = hasCustomAgents || canCreateAgent;
+  const hasCustomGroup = hasCustomAgents || (canCreateAgent && hasAgents);
   // Shared body for the custom-agents submenu (desktop flyout + mobile page):
   // the custom agents, the pending upload, and the create action.
   const customAgentsBody = (
@@ -1809,7 +1819,7 @@ export function AgentHarnessPicker({
         }
       }}
       trigger={{
-        disabled: disabledLabel !== undefined || previewOnly || !hasAgents,
+        disabled: disabledLabel !== undefined || previewOnly || (!hasAgents && !canCreateAgent),
         "aria-busy": loading || undefined,
         label: disabledLabel ?? visibleCachedPreview?.label ?? triggerAccessibleName,
         model: disabledLabel ?? visibleCachedPreview?.model ?? triggerText,
@@ -2184,7 +2194,18 @@ export function NewChatLandingScreen() {
     data: hosts,
     isLoading: hostsLoading,
     isError: hostsError,
-  } = useHosts({ refetchOnFocus: true });
+  } = useHosts({ includeSandbox: true, refetchOnFocus: true });
+  // Provisioned sandbox hosts are runtime probes, not manually selectable
+  // machines. Keep them available for provider readiness while excluding them
+  // from the host picker and ordinary host defaults.
+  const managedSandboxHosts = useMemo(
+    () => (hosts ?? []).filter((host) => host.sandbox_provider != null),
+    [hosts],
+  );
+  const allHosts = useMemo(
+    () => (hosts ?? []).filter((host) => host.sandbox_provider == null),
+    [hosts],
+  );
 
   // Offer an import affordance on the empty landing: a brand-new user with no
   // Omnigent sessions can pull in their existing local CLI history. Same query
@@ -2375,15 +2396,15 @@ export function NewChatLandingScreen() {
       (rememberedHostChoice === SANDBOX_HOST_CHOICE
         ? managedSandboxesEnabled
         : rememberedHostChoice
-          ? (hosts ?? []).some((host) => host.host_id === rememberedHostChoice)
-          : managedSandboxesEnabled || (hosts ?? []).some((host) => host.status === "online")));
+          ? allHosts.some((host) => host.host_id === rememberedHostChoice)
+          : managedSandboxesEnabled || allHosts.some((host) => host.status === "online")));
   const noExecutionTargetSelected =
     !sandboxSelected && selectedHostId === null && !executionTargetSelectionPending;
   // Desktop-shell host status for THIS machine (null outside Electron), so the
   // picker can tag the current machine and offer to auto-connect it.
   const [desktopHost, setDesktopHost] = useState<HostIdentity | null>(null);
   // The runner picked during desktop onboarding, preselected once it's online.
-  const onboardingHost = useOnboardingRunnerHost(hosts);
+  const onboardingHost = useOnboardingRunnerHost(allHosts);
   // Applied (or given up) once, after the first prefill; later resets use the usual defaults.
   const onboardingHostSettled = useRef(false);
   const [connectingThisMachine, setConnectingThisMachine] = useState(false);
@@ -2420,6 +2441,15 @@ export function NewChatLandingScreen() {
   // is what the launch will use.
   const effectiveSandboxProvider =
     sandboxProvider ?? (info !== "loading" ? info.sandbox_provider : null);
+  const sandboxReadinessHost = useMemo(
+    () =>
+      managedSandboxReadinessHost(
+        managedSandboxHosts,
+        effectiveSandboxProvider,
+        sandboxOptionLabel(effectiveSandboxProvider),
+      ),
+    [managedSandboxHosts, effectiveSandboxProvider],
+  );
   const sandboxMultiRepo =
     info !== "loading" &&
     effectiveSandboxProvider !== null &&
@@ -2649,7 +2679,6 @@ export function NewChatLandingScreen() {
   const { recent, addRecent } = useRecentWorkspaces(selectedHostId);
   const { addRecentHarness } = useRecentHarnesses();
 
-  const allHosts = hosts ?? [];
   const onlineHosts = allHosts.filter((h) => h.status === "online");
   const offlineHosts = allHosts.filter((h) => h.status === "offline");
 
@@ -2814,7 +2843,7 @@ export function NewChatLandingScreen() {
       // Restore offline hosts too; availability gates creation, not selection.
       // Wait for the list so a remembered host cannot lose to a default.
       if (hostsLoading) return;
-      const stored = (hosts ?? []).find((h) => h.host_id === lastChoice);
+      const stored = allHosts.find((h) => h.host_id === lastChoice);
       if (stored) {
         setSelectedHostId(stored.host_id);
         return;
@@ -2829,10 +2858,10 @@ export function NewChatLandingScreen() {
       setSandboxProvider(defaultSandboxProvider());
       return;
     }
-    const firstOnline = (hosts ?? []).find((h) => h.status === "online");
+    const firstOnline = allHosts.find((h) => h.status === "online");
     if (firstOnline) setSelectedHostId(firstOnline.host_id);
   }, [
-    hosts,
+    allHosts,
     hostsLoading,
     selectedHostId,
     sandboxSelected,
@@ -3004,9 +3033,9 @@ export function NewChatLandingScreen() {
     pickedAgentId !== PENDING_AGENT_ID &&
     !agentList.some((a) => a.id === pickedAgentId);
   const selectedHost = allHosts.find((host) => host.host_id === selectedHostId);
-  // Readiness is meaningful only for a connected host; managed sandboxes
-  // provision their own tooling and should not drive fallback warnings.
-  const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
+  // A connected machine reports its own readiness. A new sandbox uses only
+  // the selected provider's managed-runtime profile, never a local host probe.
+  const harnessWarningHost = sandboxSelected ? sandboxReadinessHost : selectedHost;
   const rememberedNativeAgent = harnessEntries.find((agent) => agent.id === pickedAgentId);
   const rememberedHarnessResolution = useMemo(
     () =>
@@ -4217,6 +4246,9 @@ export function NewChatLandingScreen() {
     selectedAgent?.harness,
     harnessWarningHost,
   );
+  const selectedAgentReadiness = harnessReadinessOnHost(selectedAgent?.harness, harnessWarningHost);
+  const selectedAgentLaunchBlocked =
+    !selectedAgentReadiness.selectable && selectedAgentReadiness.fallbackRelevant;
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
   // with one arm is just that arm. The Claude wrapper is the placeholder the
@@ -4597,13 +4629,16 @@ export function NewChatLandingScreen() {
               ? "Choose a harness to discover host skills."
               : undefined;
   const canDiscoverHostSkills = skillsUnavailableMessage === undefined;
+  // Cached and placeholder agent rows are previews, not authoritative
+  // bindings. Wait for the live catalog before scoping a host skill request.
+  const skillsAgentBindingReady = !agentsLoading && !agentsArePlaceholder;
   const {
     skills: hostSkills,
     skillsStatus,
     refetch: refreshSkills,
   } = useSkills({
     target:
-      selectedHostId && skillsHarness && workspaceTrimmed
+      skillsAgentBindingReady && selectedHostId && skillsHarness && workspaceTrimmed
         ? {
             hostId: selectedHostId,
             harness: skillsHarness,
@@ -4612,7 +4647,7 @@ export function NewChatLandingScreen() {
           }
         : null,
     enabled: canDiscoverHostSkills,
-    starting: !sandboxSelected && (hostsLoading || agentsLoading),
+    starting: !sandboxSelected && (hostsLoading || agentsLoading || agentsArePlaceholder),
   });
   const availableSkills = useMemo(
     () => (skillsStatus === "ready" ? hostSkills : (selectedAgent?.skills ?? [])),
@@ -4834,6 +4869,7 @@ export function NewChatLandingScreen() {
     sandboxCatalogError === null &&
     selectedAgent != null &&
     (sandboxSelected ? sandboxRepoValid : selectedHost?.status === "online" && workspaceValid) &&
+    !selectedAgentLaunchBlocked &&
     !creating;
 
   // Why submit is disabled, surfaced as the button's tooltip. Checked in the
@@ -4860,9 +4896,11 @@ export function NewChatLandingScreen() {
                   ? "Please choose a host and working directory"
                   : configuredAgentUnavailable && selectedAgent == null
                     ? "This project's configured agent is unavailable — pick an agent to continue"
-                    : message.trim().length === 0 && files.length === 0
-                      ? "Enter a message to get started"
-                      : null;
+                    : selectedAgentLaunchBlocked
+                      ? "Choose a ready agent or finish setting up this agent"
+                      : message.trim().length === 0 && files.length === 0
+                        ? "Enter a message to get started"
+                        : null;
 
   // Names the picked provider, else the server's default label.
   const selectedSandboxLabel =
@@ -6516,9 +6554,15 @@ export function NewChatLandingScreen() {
                     >
                       <DropdownMenuTrigger asChild>
                         <ComposerHostTrigger
-                          label={`Host: ${hostLabel}, ${selectedHost?.status === "online" && !sandboxSelected ? "Online" : "Offline"}`}
+                          label={`Host: ${hostLabel}, ${
+                            sandboxSelected
+                              ? "Available"
+                              : selectedHost?.status === "online"
+                                ? "Online"
+                                : "Offline"
+                          }`}
                           status={
-                            selectedHost?.status === "online" && !sandboxSelected
+                            sandboxSelected || selectedHost?.status === "online"
                               ? "online"
                               : "offline"
                           }
@@ -6868,11 +6912,8 @@ export function NewChatLandingScreen() {
                 </span>
               </div>
             )}
-          {/* Warn (don't block) when the selected agent's harness isn't
-              configured on the selected host — the host re-checks at
-              launch, so submitting surfaces a specific error if it
-              really can't run. Normal-flow directly under the composer
-              (like the createError line below) so it reads as part of it. */}
+          {/* Surface readiness failures before launch. Native harness failures
+              also block submission; advisory SDK auth warnings remain selectable. */}
           {selectedAgentUnconfigured && (
             <HarnessSetupNotice
               agentName={selectedAgent?.display_name}
@@ -6880,6 +6921,7 @@ export function NewChatLandingScreen() {
               harness={selectedAgent?.harness ?? null}
               reason={harnessUnavailableReasonOnHost(selectedAgent?.harness, harnessWarningHost)}
               featureEnabled={harnessInstallEnabled}
+              sandbox={sandboxSelected}
               onSetup={() =>
                 setSetupTarget({
                   agentName: selectedAgent?.display_name,

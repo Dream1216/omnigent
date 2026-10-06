@@ -187,6 +187,59 @@ export function isNativeCursorHarness(harness: string): boolean {
   return harness === "cursor-native" || harness === "native-cursor";
 }
 
+/** Build a fail-closed readiness profile for a newly provisioned sandbox. */
+export function managedSandboxReadinessHost(
+  hosts: readonly Host[],
+  provider: string | null | undefined,
+  label: string,
+): Host | null {
+  if (!provider) return null;
+  const matching = hosts.filter(
+    (host) =>
+      host.sandbox_provider === provider &&
+      host.configured_harnesses != null &&
+      Object.keys(host.configured_harnesses).length > 0,
+  );
+  const online = matching.filter((host) => host.status === "online");
+  const samples = online.length > 0 ? online : matching;
+  if (samples.length === 0) return null;
+
+  const keys = new Set(samples.flatMap((host) => Object.keys(host.configured_harnesses ?? {})));
+  const configuredHarnesses: Record<string, boolean | string> = {};
+  for (const key of keys) {
+    const values = samples.map((host) => host.configured_harnesses?.[key]);
+    if (values.every((value) => value === true)) {
+      configuredHarnesses[key] = true;
+      continue;
+    }
+    configuredHarnesses[key] =
+      values.find((value) => value === "needs-auth") ??
+      values.find((value) => value === "version-too-low") ??
+      values.find((value) => value === "binary-missing") ??
+      values.find((value): value is string => typeof value === "string") ??
+      false;
+  }
+
+  const gatewayReports = samples
+    .map((host) => host.gateway_inference)
+    .filter((report): report is Record<string, boolean> => report != null);
+  const gatewayKeys = new Set(gatewayReports.flatMap((report) => Object.keys(report)));
+  const gatewayInference: Record<string, boolean> = {};
+  for (const key of gatewayKeys) {
+    gatewayInference[key] = gatewayReports.every((report) => report[key] === true);
+  }
+
+  return {
+    host_id: `sandbox-provider:${provider}`,
+    name: label,
+    owner: "managed-sandbox",
+    status: "online",
+    sandbox_provider: provider,
+    configured_harnesses: configuredHarnesses,
+    gateway_inference: gatewayReports.length > 0 ? gatewayInference : null,
+  };
+}
+
 /**
  * Why *harness* can't run on *host* right now, or ``null`` when it's ready
  * (or readiness is unknown / no host selected). Drives the picker "needs setup"

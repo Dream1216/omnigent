@@ -4898,7 +4898,7 @@ describe("NewChatLandingScreen", () => {
     mockHosts([
       {
         ...host("online"),
-        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+        configured_harnesses: { "claude-native": true, "codex-native": true },
       } as Host,
     ]);
     renderLanding();
@@ -4915,9 +4915,11 @@ describe("NewChatLandingScreen", () => {
       target: { value: "inspect the repo" },
     });
     expect(submit.disabled).toBe(false);
-    selectUnconfiguredAgent("a2");
+    breakSelectedHarness("a2", "codex-native", "needs-auth");
     expect(submit.disabled).toBe(true);
-    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("Responses");
+    expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent(
+      "run codex login",
+    );
   });
 
   it("keeps the disabled reason tooltip on the new-chat submit button", async () => {
@@ -5099,6 +5101,7 @@ describe("NewChatLandingScreen", () => {
     ]);
     renderLanding();
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
     expect(screen.getByTestId("new-chat-landing-agent-a2").closest("[data-disabled]")).toBeTruthy();
     expect(screen.getByTestId("new-chat-landing-agent-a1").closest("[data-disabled]")).toBeNull();
   });
@@ -5896,7 +5899,7 @@ describe("NewChatLandingScreen", () => {
 
       const notice = screen.getByTestId("new-chat-landing-harness-warning");
       expect(notice).toHaveTextContent(warning);
-      expect(screen.getByTestId("new-chat-landing-submit")).toBeEnabled();
+      expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
       fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
       if (screen.queryByTestId(`new-chat-landing-agent-${id}`) == null) {
         fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));

@@ -8,6 +8,7 @@ import {
   harnessReadinessOnHost,
   harnessUnavailableReasonOnHost,
   harnessUnconfiguredOnHost,
+  managedSandboxReadinessHost,
   resolveSetupSteps,
   skillInvocationPrefix,
 } from "./harnessSetup";
@@ -261,6 +262,113 @@ describe("harnessReadinessOnHost", () => {
       label: "Harness is not installed",
       description: "Install this harness on the selected host before using it.",
     });
+  });
+});
+
+describe("managedSandboxReadinessHost", () => {
+  const managedHost = (
+    id: string,
+    provider: string,
+    status: "online" | "offline",
+    configured: Record<string, boolean | string>,
+    gateway: Record<string, boolean> | null = null,
+  ): Host => ({
+    host_id: id,
+    name: id,
+    owner: "alice",
+    status,
+    sandbox_provider: provider,
+    configured_harnesses: configured,
+    gateway_inference: gateway,
+  });
+
+  it("uses only live managed hosts from the selected sandbox provider", () => {
+    const profile = managedSandboxReadinessHost(
+      [
+        hostWith({ "claude-native": true }),
+        managedHost("stale", "agent_sandbox", "offline", { "claude-native": true }),
+        managedHost("live", "agent_sandbox", "online", {
+          "claude-native": "needs-auth",
+          "codex-native": true,
+        }),
+        managedHost("k8s", "kubernetes", "online", { "claude-native": true }),
+      ],
+      "agent_sandbox",
+      "Agent Sandbox",
+    );
+
+    expect(profile).toMatchObject({
+      host_id: "sandbox-provider:agent_sandbox",
+      name: "Agent Sandbox",
+      status: "online",
+      sandbox_provider: "agent_sandbox",
+      configured_harnesses: {
+        "claude-native": "needs-auth",
+        "codex-native": true,
+      },
+    });
+  });
+
+  it("falls back to reclaimed instances without treating them as provider outages", () => {
+    const profile = managedSandboxReadinessHost(
+      [
+        managedHost(
+          "reclaimed",
+          "agent_sandbox",
+          "offline",
+          { "pi-native": true, "qwen-native": "binary-missing" },
+          { "pi-native": true },
+        ),
+      ],
+      "agent_sandbox",
+      "Agent Sandbox",
+    );
+
+    expect(profile?.status).toBe("online");
+    expect(profile?.configured_harnesses).toEqual({
+      "pi-native": true,
+      "qwen-native": "binary-missing",
+    });
+    expect(profile?.gateway_inference).toEqual({ "pi-native": true });
+  });
+
+  it("fails closed when live sandboxes disagree during a rollout", () => {
+    const profile = managedSandboxReadinessHost(
+      [
+        managedHost(
+          "old-image",
+          "kubernetes",
+          "online",
+          { "claude-native": true, "codex-native": true },
+          { "codex-native": true },
+        ),
+        managedHost(
+          "new-image",
+          "kubernetes",
+          "online",
+          { "claude-native": "needs-auth" },
+          { "codex-native": false },
+        ),
+      ],
+      "kubernetes",
+      "Kubernetes Sandbox",
+    );
+
+    expect(profile?.configured_harnesses).toEqual({
+      "claude-native": "needs-auth",
+      "codex-native": false,
+    });
+    expect(profile?.gateway_inference).toEqual({ "codex-native": false });
+  });
+
+  it("returns unknown when the selected provider has no runtime report", () => {
+    expect(
+      managedSandboxReadinessHost(
+        [managedHost("k8s", "kubernetes", "online", { "codex-native": true })],
+        "agent_sandbox",
+        "Agent Sandbox",
+      ),
+    ).toBeNull();
   });
 });
 
