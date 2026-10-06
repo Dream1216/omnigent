@@ -128,8 +128,9 @@ export function managedSandboxReadinessHost(
 }
 
 /**
- * Why *harness* can't run on *host* right now, or ``null`` when it's ready
- * (or readiness is unknown / no host selected). Drives the picker "needs setup"
+ * Why *harness* can't run on *host* right now, including an unresolved
+ * Agent harness even when no host is selected. Otherwise null means ready or
+ * unknown readiness. Drives the picker "needs setup"
  * badge and the composer notice; the setup dialog uses the fuller
  * {@link resolveSetupSteps}.
  */

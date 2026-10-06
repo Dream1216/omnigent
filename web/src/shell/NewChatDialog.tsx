@@ -4058,10 +4058,8 @@ export function NewChatLandingScreen() {
   }, [pickedHarness]);
   // Native harnesses receive skill invocations as plain text for their CLI to interpret.
   const isNativeTerminalAgent = isNativeCodingAgent(selectedAgent);
-  const selectedAgentUnconfigured = harnessUnconfiguredOnHost(
-    selectedAgent?.harness,
-    harnessWarningHost,
-  );
+  const selectedAgentUnconfigured =
+    selectedAgent != null && harnessUnconfiguredOnHost(selectedAgent.harness, harnessWarningHost);
   const selectedAgentLaunchBlocked = selectedAgentUnconfigured;
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
