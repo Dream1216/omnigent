@@ -5124,7 +5124,9 @@ export function NewChatLandingScreen() {
       // Codex model the selected host no longer advertises.
       const codexModelAvailable =
         selectedNativeHarness !== "codex-native" ||
-        pickerModelOptions.some((option) => (option.model ?? option.id) === submittedModel);
+        pickerModelOptions.some(
+          (option) => option.id === submittedModel || option.model === submittedModel,
+        );
       const normalizedModelOverride =
         !smartRoutingHarnessSelected &&
         !routingOwnsModel &&

@@ -4716,6 +4716,42 @@ describe("NewChatLandingScreen", () => {
     expect(body.model_override).toBeUndefined();
   });
 
+  it("keeps an advertised Codex catalog id when its wire model spelling differs", async () => {
+    mockModelQueries((harness) =>
+      harness === "codex-native"
+        ? {
+            ...SUCCESS_QUERY_STATE,
+            data: [
+              {
+                id: "catalog-default",
+                model: "wire-default",
+                displayName: "Default",
+                isDefault: true,
+              },
+              { id: "catalog-choice", model: "wire-choice", displayName: "Catalog choice" },
+            ],
+          }
+        : CLAUDE_MODEL_OPTIONS_RESULT,
+    );
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+    renderLanding();
+    openAgentModels("a2");
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Catalog choice" }));
+    closePrimaryPicker();
+
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "report progress" },
+    });
+    fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = authenticatedFetchMock.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
+    expect(body.model_override).toBe("catalog-choice");
+  });
+
   it("keeps legacy Mod+Enter as a default-mode send alias", async () => {
     authenticatedFetchMock.mockResolvedValue({
       ok: true,
