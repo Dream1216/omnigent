@@ -53,7 +53,11 @@ class OIDCServer:
 
 
 def spawn_oidc_server(
-    mock_llm_server_url: str, server_tmp, *, public_client: bool = False
+    mock_llm_server_url: str,
+    server_tmp,
+    *,
+    public_client: bool = False,
+    public_origin: bool = True,
 ) -> Iterator[OIDCServer]:
     """Spawn an OIDC-mode server wired to a fake IdP; yield a handle.
 
@@ -65,6 +69,8 @@ def spawn_oidc_server(
     :param mock_llm_server_url: Session-scoped mock LLM base (no real creds).
     :param server_tmp: A per-test temp dir (``tmp_path_factory.mktemp(...)``).
     :param public_client: Exercise secretless PKCE, PS256, and explicit endpoints.
+    :param public_origin: Use the public-looking loopback alias. Native-shell
+        coverage uses the literal RFC 8252 loopback origin instead.
     :yields: An :class:`OIDCServer` handle.
     """
     with fake_idp(
@@ -82,7 +88,7 @@ def spawn_oidc_server(
         agent_yaml_path.write_text(_TEST_AGENT_YAML)
 
         base_url = f"http://127.0.0.1:{port}"
-        public_url = public_loopback_url(base_url)
+        public_url = public_loopback_url(base_url) if public_origin else base_url
         # The callback (and thus the session cookie) must be issued for the
         # browser-visible origin, so derive the redirect URI from public_url.
         redirect_uri = f"{public_url}/auth/callback"
