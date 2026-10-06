@@ -40,6 +40,8 @@ from omnigent.runner.identity import (
     OMNIGENT_INTERNAL_WS_ORIGIN,
     RUNNER_SLICE_KEY_ENV_VAR,
     RUNNER_TUNNEL_TOKEN_HEADER,
+    RUNNER_TUNNEL_WORKSPACE_HEADER,
+    load_runner_tunnel_workspace_id,
     touch_connect_marker,
 )
 from omnigent.runner.transports.ws_tunnel.event_delivery import RunnerEventDispatcher
@@ -917,6 +919,9 @@ async def _serve_tunnel_once(
     headers.update(
         databricks_request_headers(server_url, bearer_token=auth_token, host_id=host_id)
     )
+    workspace_id = load_runner_tunnel_workspace_id()
+    if workspace_id is not None:
+        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
     if tunnel_token:
         headers[RUNNER_TUNNEL_TOKEN_HEADER] = tunnel_token
     # Verifying SSL context from a real CA bundle for wss:// — a bare default
