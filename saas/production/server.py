@@ -739,7 +739,7 @@ def _validate_production_sandbox_config(value: object) -> None:
     if value.get("reaper") != {
         "enabled": True,
         "sweep_interval_s": 3600,
-        "terminate_after_offline_days": 30,
+        "terminate_after_offline_days": 7,
     }:
         raise ProductionServerCompositionError(
             "official server sandbox reaper is not the reviewed production profile"
