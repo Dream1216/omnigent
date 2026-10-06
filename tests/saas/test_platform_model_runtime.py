@@ -146,7 +146,7 @@ async def test_platform_codex_picker_uses_declared_models_without_host_secret(
         encoding="ascii",
     )
     monkeypatch.setattr(
-        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
+        "saas.production.platform_model_host._find_codex_cli",
         lambda: "/test/codex",
     )
 
