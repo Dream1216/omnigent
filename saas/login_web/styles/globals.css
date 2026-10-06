@@ -98,7 +98,7 @@ a {
   color: #162b50;
   font-size: 23px;
   font-weight: 750;
-  letter-spacing: -0.8px;
+  letter-spacing: 0;
   text-decoration: none;
 }
 .brand-icon {
@@ -110,9 +110,6 @@ a {
   background: #2563eb;
   color: white;
   box-shadow: 0 3px 5px #2563eb15;
-}
-.wordmark-dot {
-  color: #2563eb;
 }
 .brand-story {
   position: relative;

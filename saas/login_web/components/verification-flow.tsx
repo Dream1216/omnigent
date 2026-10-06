@@ -60,6 +60,16 @@ export function VerificationFlow() {
     setState({ pending: matchingPending, registrationId, token });
   }, []);
 
+  useEffect(() => {
+    if (state?.token && window.location.hash) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
+  }, [state]);
+
   const verifyKey = useMemo(() => {
     if (!state) return "";
     return state.pending?.verifyKey || newIdempotencyKey("verify");

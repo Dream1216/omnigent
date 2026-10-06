@@ -425,7 +425,7 @@ def test_login_layout_is_responsive_and_has_no_registration_steps(
         ),
     )
     page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
-    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page).to_have_title("Sign in · 胜天半子")
     expect(page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible()
     expect(page.get_by_label("Work email")).to_be_enabled()
     expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
@@ -452,7 +452,7 @@ def test_signup_matches_login_shell_and_is_responsive(
     page.on("pageerror", lambda error: errors.append(str(error)))
 
     page.goto(f"{live_server}/signup")
-    expect(page).to_have_title("Create a workspace · Omnigent")
+    expect(page).to_have_title("Create a workspace · 胜天半子")
     expect(page.get_by_role("heading", name="Create your organization")).to_be_visible()
     expect(page.get_by_role("group", name="Change language")).to_be_visible()
     expect(page.get_by_role("link", name="Sign in")).to_be_visible()
@@ -470,7 +470,7 @@ def test_login_language_switches_immediately_and_persists(
     page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
 
     page.get_by_role("button", name="Chinese").click()
-    expect(page).to_have_title("登录 · Omnigent")
+    expect(page).to_have_title("登录 · 胜天半子")
     expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
     expect(page.get_by_label("工作邮箱")).to_be_enabled()
     expect(page.get_by_role("button", name="登录", exact=True)).to_be_visible()
@@ -482,7 +482,7 @@ def test_login_language_switches_immediately_and_persists(
     page.reload()
     expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
     page.get_by_role("button", name="英文").click()
-    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page).to_have_title("Sign in · 胜天半子")
     expect(page.get_by_role("heading", name="Sign in to your workspace.")).to_be_visible()
     assert page.evaluate("document.documentElement.lang") == "en-US"
     assert page.evaluate("localStorage.getItem('omnigent.locale')") == "en-US"
