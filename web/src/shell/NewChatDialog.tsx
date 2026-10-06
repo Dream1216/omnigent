@@ -852,7 +852,12 @@ function HarnessSetupNotice({
       data-testid="new-chat-landing-harness-warning"
     >
       <TriangleAlertIcon className="size-3.5 shrink-0" />
-      {sandbox ? (
+      {reason === "agent-unavailable" ? (
+        <span>
+          {agentName} cannot start because its agent configuration is unavailable. Ask an
+          administrator to repair it.
+        </span>
+      ) : sandbox ? (
         <span>
           {agentName} isn&apos;t ready in {hostName}. Choose a ready agent or another sandbox
           provider.
@@ -1593,7 +1598,7 @@ export function AgentHarnessPicker({
           }
         }}
         onSelect={() => onSelectAgent(agent)}
-        onSetup={unavailable ? () => onSelectAgent(agent) : undefined}
+        onSetup={unavailable && agent.harness ? () => onSelectAgent(agent) : undefined}
         configContent={active ? selectedConfigContent : null}
         testId={`new-chat-landing-agent-${agent.id}`}
         icon={<ComposerAgentIcon agent={agent} />}

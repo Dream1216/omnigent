@@ -1006,8 +1006,8 @@ describe("harnessUnconfiguredOnHost", () => {
     // No host selected (sandbox / nothing picked) → no warning.
     expect(harnessUnconfiguredOnHost("codex", undefined)).toBe(false);
     expect(harnessUnconfiguredOnHost("codex", null)).toBe(false);
-    // Agent without a harness → nothing to warn about.
-    expect(harnessUnconfiguredOnHost(null, hostWith({ codex: false }))).toBe(false);
+    // An unreadable agent bundle has no launchable harness.
+    expect(harnessUnconfiguredOnHost(null, hostWith({ codex: false }))).toBe(true);
   });
 
   it("warns for a harness missing from a host that reports other harnesses", () => {
