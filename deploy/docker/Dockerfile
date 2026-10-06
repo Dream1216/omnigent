@@ -598,12 +598,12 @@ RUN echo 'export PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:
 # doesn't bust the layers above. `set -f` stops glob expansion in the unquoted
 # arg list (npm specs may contain *). The script is removed after use.
 ARG EXTRA_HARNESS_CLIS=
-COPY deploy/docker/install-harness-cli.sh saas/scripts/install-saas-harness-cli.sh /tmp/
+COPY deploy/docker/install-harness-cli.sh saas/scripts/install-saas-harness-cli.sh saas/scripts/normalize_host_cli_tree.py /tmp/
 RUN if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
         set -f; \
         bash /tmp/install-saas-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
     fi; \
-    rm -f /tmp/install-harness-cli.sh /tmp/install-saas-harness-cli.sh
+    rm -f /tmp/install-harness-cli.sh /tmp/install-saas-harness-cli.sh /tmp/normalize_host_cli_tree.py
 
 WORKDIR /root
 
