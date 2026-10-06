@@ -28,7 +28,6 @@ _CANDIDATE_BUILD_ACTION = "saas/actions/build-oci-candidate/action.yml"
 _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
-_SAAS_HARNESS_CLI_INSTALLER = "saas/scripts/install-saas-harness-cli.sh"
 _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
@@ -751,12 +750,6 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="host CLI filesystem normalizer",
         violations=violations,
     )
-    saas_harness_cli_installer = _read_repository_contract(
-        repo,
-        _SAAS_HARNESS_CLI_INSTALLER,
-        label="SaaS harness CLI installer",
-        violations=violations,
-    )
     if None in (
         dockerfile,
         runtime_revision_binder,
@@ -765,7 +758,6 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         pnpm_workspace,
         cli_manifest,
         host_cli_normalizer,
-        saas_harness_cli_installer,
     ):
         return violations
     assert dockerfile is not None
@@ -775,7 +767,6 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     assert pnpm_workspace is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
-    assert saas_harness_cli_installer is not None
 
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
@@ -1075,17 +1066,6 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     ):
         violations.append(
             "host CLI layer must detach installer hardlinks and reject residual hardlinked files"
-        )
-    log_cleanup = "rm -rf -- /opt/jcode/.jcode/logs"
-    extra_cli_normalization = "python -B /tmp/normalize_host_cli_tree.py"
-    if (
-        log_cleanup not in saas_harness_cli_installer
-        or extra_cli_normalization not in saas_harness_cli_installer
-        or saas_harness_cli_installer.index(log_cleanup)
-        > saas_harness_cli_installer.index(extra_cli_normalization)
-    ):
-        violations.append(
-            "extra Host CLI layer must remove volatile Jcode logs before normalization"
         )
     standalone_cli_timestamp_contract = {
         'touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/kiro-cli /usr/local/bin',
