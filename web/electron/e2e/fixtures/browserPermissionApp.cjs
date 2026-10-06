@@ -61,12 +61,10 @@ app.whenReady().then(async () => {
     origin,
     request() {
       this.pending = new Promise((resolve) => {
-        permissionSession.requestHandler(
-          parent.webContents,
-          "loopback-network",
-          resolve,
-          { requestingUrl: origin, isMainFrame: true },
-        );
+        permissionSession.requestHandler(parent.webContents, "loopback-network", resolve, {
+          requestingUrl: origin,
+          isMainFrame: true,
+        });
       });
     },
     check: () =>

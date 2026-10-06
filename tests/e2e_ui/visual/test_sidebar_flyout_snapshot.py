@@ -50,7 +50,15 @@ _AGENTS_BODY = {
     ]
 }
 _HOSTS_BODY = {
-    "hosts": [{"host_id": _HOST_ID, "name": "e2e-host", "owner": "e2e", "status": "online"}]
+    "hosts": [
+        {
+            "host_id": _HOST_ID,
+            "name": "e2e-host",
+            "owner": "e2e",
+            "status": "online",
+            "configured_harnesses": {"claude-native": "binary-missing"},
+        }
+    ]
 }
 _EMPTY_LIST_BODY = {"object": "list", "data": [], "has_more": False}
 

@@ -131,6 +131,7 @@ map an area, remove it here in the same change.
   Sessions; other browser behavior remains unmapped)
 - Desktop app: `tests/e2e_ui/desktop/`
 - Web sign-in: `tests/e2e_ui/auth/`
+- Language switching and translated UI: `tests/e2e_ui/i18n/`
 - Branding and base-path deploys: `tests/e2e_ui/branding/`, `tests/e2e_ui/base_path/`
 - Hotkeys: `tests/e2e_ui/hotkeys/`
 - Message rendering: `tests/e2e_ui/messages/` (only per-harness render parity
