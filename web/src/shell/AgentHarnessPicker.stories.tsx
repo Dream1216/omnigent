@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import type { Host } from "@/hooks/useHosts";
 import type { AgentBundleInput } from "@/lib/agentBundle";
@@ -424,7 +424,7 @@ export const NoAgents: Story = {
     const createAgent = await within(canvasElement.ownerDocument.body).findByTestId(
       "new-chat-landing-create-agent",
     );
-    await expect(createAgent).toBeVisible();
+    await waitFor(() => expect(createAgent).toBeVisible());
   },
 };
 
