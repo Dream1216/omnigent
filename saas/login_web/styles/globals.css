@@ -311,6 +311,53 @@ a {
   align-items: center;
   min-height: 38px;
 }
+.stage-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+}
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #dbe5f3;
+  border-radius: 10px;
+  background: #f8faff;
+  color: #6c7e99;
+  box-shadow: 0 1px 2px #1d4ed80a;
+}
+.language-switcher > svg {
+  margin: 0 4px 0 5px;
+  color: #6684b2;
+}
+.language-option {
+  min-width: 36px;
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+.language-option:hover {
+  color: #245dc8;
+}
+.language-option[aria-pressed="true"] {
+  background: #fff;
+  color: #205ccf;
+  box-shadow: 0 1px 4px #214d9920;
+}
 .mobile-wordmark {
   display: none;
 }
@@ -483,6 +530,10 @@ h1 > span {
     align-items: flex-start;
     gap: 15px;
   }
+  .stage-header-actions {
+    flex-wrap: wrap;
+    gap: 9px 12px;
+  }
   .mobile-wordmark {
     display: inline-flex;
     font-size: 19px;
@@ -507,6 +558,9 @@ h1 > span {
     margin: 0;
     font-size: 11px;
   }
+  .language-switcher {
+    margin-left: auto;
+  }
   .login-content {
     padding: 48px 0;
   }
@@ -517,6 +571,9 @@ h1 > span {
 @media (max-width: 360px) {
   .login-stage {
     padding-inline: 20px;
+  }
+  .stage-header-actions {
+    max-width: 184px;
   }
   .mobile-wordmark {
     font-size: 17px;

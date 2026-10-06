@@ -26,6 +26,7 @@ function list(
   scrollEl: HTMLElement,
   onGeometryChange: (geometry: TranscriptGeometry) => void = vi.fn(),
   disableVirtualization = false,
+  loadingMoreHistory = false,
 ) {
   return (
     <Conversation>
@@ -38,6 +39,7 @@ function list(
           sessionIdle
           conversationId={undefined}
           hasTasks={hasTasks}
+          loadingMoreHistory={loadingMoreHistory}
           disableVirtualization={disableVirtualization}
           onGeometryChange={onGeometryChange}
         />
@@ -58,6 +60,7 @@ function messageList(bubbles: Bubble[], showsWorking: boolean, sessionIdle: bool
           sessionIdle={sessionIdle}
           conversationId="conv-1"
           hasTasks={false}
+          loadingMoreHistory={false}
           disableVirtualization
           onGeometryChange={vi.fn()}
         />
@@ -88,6 +91,25 @@ it("remeasures scrollMargin when task padding changes without changing bubbles",
   view.rerender(list(true, scrollEl));
 
   await waitFor(() => expect(row.style.transform).toBe("translateY(-64px)"));
+});
+
+it("remeasures scrollMargin when the history indicator moves the list", async () => {
+  const scrollEl = document.createElement("div");
+  Object.defineProperties(scrollEl, {
+    scrollTop: { configurable: true, writable: true, value: 100 },
+    clientHeight: { configurable: true, value: 500 },
+    scrollHeight: { configurable: true, value: 1_000 },
+  });
+  scrollEl.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+
+  const view = render(list(false, scrollEl));
+  const row = view.container.querySelector<HTMLElement>('[data-index="0"]')!;
+  const wrapper = row.parentElement!;
+  wrapper.getBoundingClientRect = () => ({ top: 64 }) as DOMRect;
+
+  view.rerender(list(false, scrollEl, vi.fn(), false, true));
+
+  await waitFor(() => expect(row.style.transform).toBe("translateY(-164px)"));
 });
 
 it("publishes navigation that distinguishes loaded and missing turns", async () => {
@@ -186,6 +208,7 @@ it("keeps a renamed top bubble's row across a history prepend", () => {
           sessionIdle
           conversationId="conv-1"
           hasTasks={false}
+          loadingMoreHistory={false}
           disableVirtualization={false}
           onGeometryChange={vi.fn()}
         />

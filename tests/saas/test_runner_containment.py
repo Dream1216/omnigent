@@ -79,6 +79,37 @@ def test_linux_cgroup_v2_verifier_accepts_exact_hardened_runner_boundary(
     verifier.require_enforced(runner_id=runner_id, contract=_contract())
 
 
+def test_linux_cgroup_v2_verifier_accepts_private_namespace_root_when_self_selected(
+    tmp_path: Path,
+) -> None:
+    runner_id = uuid4()
+    verifier, proc, cgroup = _verifier(tmp_path, runner_id)
+    (proc / "self" / "cgroup").write_text("0::/\n", encoding="utf-8")
+    for source in cgroup.iterdir():
+        source.replace(verifier.cgroup_root / source.name)
+    cgroup.rmdir()
+    verifier = LinuxCgroupV2ContainmentVerifier(
+        runner_id=runner_id,
+        expected_cgroup_path="/",
+        allow_root_cgroup=True,
+        proc_root=proc,
+        cgroup_root=verifier.cgroup_root,
+        effective_uid=lambda: 65532,
+        process_id=lambda: 321,
+    )
+
+    verifier.require_enforced(runner_id=runner_id, contract=_contract())
+
+
+def test_linux_cgroup_v2_verifier_rejects_explicit_root_path() -> None:
+    with pytest.raises(RunnerIsolationAdapterError) as error:
+        LinuxCgroupV2ContainmentVerifier(
+            runner_id=uuid4(),
+            expected_cgroup_path="/",
+        )
+    assert error.value.code == "containment_cgroup_path_invalid"
+
+
 @pytest.mark.parametrize(
     ("file_name", "value", "code"),
     [

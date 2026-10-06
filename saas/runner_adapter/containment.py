@@ -95,6 +95,7 @@ class LinuxCgroupV2ContainmentVerifier:
 
     runner_id: UUID
     expected_cgroup_path: str
+    allow_root_cgroup: bool = False
     proc_root: Path = Path("/proc")
     cgroup_root: Path = Path("/sys/fs/cgroup")
     effective_uid: Callable[[], int] = _current_effective_uid
@@ -104,9 +105,9 @@ class LinuxCgroupV2ContainmentVerifier:
         path = self.expected_cgroup_path
         if (
             not path.startswith("/")
-            or path == "/"
+            or (path == "/" and not self.allow_root_cgroup)
             or "\x00" in path
-            or any(part in {"", ".", ".."} for part in path.split("/")[1:])
+            or (path != "/" and any(part in {"", ".", ".."} for part in path.split("/")[1:]))
             or len(path) > 4096
         ):
             raise RunnerIsolationAdapterError(

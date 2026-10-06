@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from saas.control_plane.platform_security import PlatformSecurityError
 from saas.production.platform_admin import transition_local_operator
 
@@ -63,8 +65,12 @@ def main() -> int:
             approval_ref=args.approval_ref,
             reason=args.reason,
         )
-    except (OSError, UnicodeError, ValueError, PlatformSecurityError) as error:
-        code = getattr(error, "code", "platform_transition_rejected")
+    except (OSError, UnicodeError, ValueError, PlatformSecurityError, SQLAlchemyError) as error:
+        code = (
+            error.code
+            if isinstance(error, PlatformSecurityError)
+            else "platform_transition_rejected"
+        )
         sys.stderr.write(f"Local Platform operator transition rejected: {code}\n")
         return 1
     sys.stdout.write(

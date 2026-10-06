@@ -359,6 +359,7 @@ function TranscriptImpl({
                   sessionIdle={sessionStatus === "idle"}
                   conversationId={display.conversationId}
                   hasTasks={display.hasTasks}
+                  loadingMoreHistory={display.loadingMoreHistory}
                   disableVirtualization={disableVirtualization}
                   onGeometryChange={onGeometryChange}
                 />
@@ -545,6 +546,7 @@ export function VirtualBubbleList({
   sessionIdle,
   conversationId,
   hasTasks,
+  loadingMoreHistory,
   disableVirtualization,
   onGeometryChange,
 }: {
@@ -555,6 +557,7 @@ export function VirtualBubbleList({
   sessionIdle: boolean;
   conversationId: string | null | undefined;
   hasTasks: boolean;
+  loadingMoreHistory: boolean;
   disableVirtualization: boolean;
   /** Publishes virtualizer-derived geometry up to the rail/spacer. */
   onGeometryChange: (geometry: TranscriptGeometry) => void;
@@ -612,9 +615,10 @@ export function VirtualBubbleList({
       // change, so their writes add rather than double-count.
       // Native scroll anchoring can't — the rows it would anchor to are out of
       // flow — so it is off for this scroller (data-virtualized-transcript).
-      // Only the observer sees the net change per painted frame; a layout
-      // effect can catch the indicator mid unmount-and-remount. At the very
-      // top the indicator is meant to be seen, so nothing moves there.
+      // The layout effect sees React-owned changes (notably the history
+      // indicator) before paint. The observer catches later, non-React reflow.
+      // At the very top the indicator is meant to be seen, so nothing moves
+      // there.
       // While the transcript is shorter than its viewport the column is
       // bottom-aligned, so the list's offset moves with every growth; only a
       // scrollable transcript's offset reflects content above the list.
@@ -639,13 +643,17 @@ export function VirtualBubbleList({
       }
       setScrollMargin((prev) => (Math.abs(prev - offset) >= 1 ? offset : prev));
     };
-    measure(false);
+    // Treat each relevant React commit as a real measurement. A newly attached
+    // ResizeObserver is not guaranteed to report a position-only change (the
+    // history indicator moves the wrapper without resizing it), which otherwise
+    // lets the indicator's 53px mount/unmount flash under the reader.
+    measure(true);
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => measure(true));
     observer.observe(scrollEl); // viewport height changes
     if (wrapper.parentElement) observer.observe(wrapper.parentElement); // content reflow above
     return () => observer.disconnect();
-  }, [scrollEl, bubbles.length, hasTasks, disableVirtualization]);
+  }, [scrollEl, bubbles.length, hasTasks, loadingMoreHistory, disableVirtualization]);
 
   // Marks the scroller as virtualized so the stylesheet turns native scroll
   // anchoring off: the transcript holds its own position (see the prepend and

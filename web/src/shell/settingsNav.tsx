@@ -29,6 +29,7 @@ import { isSingleUserMode } from "@/lib/capabilities";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
@@ -208,6 +209,7 @@ export function SettingsSidebarBody({
 }: {
   onNavClick: (e: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
+  const { t } = useI18n();
   const info = useServerInfo();
   // Account section shows whenever there's a login session (accounts OR OIDC).
   const hasAuthSession = info !== "loading" && info.login_url !== null;
@@ -224,6 +226,27 @@ export function SettingsSidebarBody({
     isSingleUserMode(info),
     integrationsEnabled,
   );
+  const groupKey: Record<string, MessageKey> = {
+    Desktop: "settings.group.desktop",
+    General: "settings.group.general",
+    Admin: "settings.group.admin",
+    Archived: "settings.group.archived",
+  };
+  const itemKey: Record<SettingsSectionId, MessageKey> = {
+    appearance: "settings.appearance",
+    general: "settings.nav.general",
+    git: "settings.nav.git",
+    integrations: "settings.nav.integrations",
+    shortcuts: "settings.nav.shortcuts",
+    import: "settings.nav.import",
+    account: "settings.nav.account",
+    members: "settings.nav.members",
+    policies: "settings.nav.policies",
+    sharing: "settings.nav.sharing",
+    archived: "settings.nav.archived",
+    cli: "settings.nav.cli",
+    updates: "settings.nav.updates",
+  };
 
   return (
     <>
@@ -249,14 +272,16 @@ export function SettingsSidebarBody({
           (persistent card), so dropping it changes nothing there. */}
           <Link to={settingsReturnPath} componentId="settings.back_to_omnigent">
             <ArrowLeftIcon className="ui-icon" />
-            Back
+            {t("settings.back")}
           </Link>
         </Button>
       </div>
       <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {groups.map((group) => (
           <div key={group.title} className="flex flex-col gap-0">
-            <h2 className="px-2 py-1 text-sm font-normal text-muted-foreground">{group.title}</h2>
+            <h2 className="px-2 py-1 text-sm font-normal text-muted-foreground">
+              {t(groupKey[group.title] ?? "settings.group.general")}
+            </h2>
             {group.items.map((item) => {
               const Icon = item.icon;
               const selected = section === item.id;
@@ -288,7 +313,7 @@ export function SettingsSidebarBody({
                           : "text-muted-foreground",
                       )}
                     />
-                    {item.label}
+                    {t(itemKey[item.id])}
                   </Link>
                 </Button>
               );

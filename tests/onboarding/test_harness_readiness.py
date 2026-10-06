@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import yaml
 
 import omnigent.onboarding.harness_install as hi
 from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
-from omnigent.harness_availability import HARNESS_VERSION_TOO_LOW
+from omnigent.harness_availability import HARNESS_NEEDS_AUTH, HARNESS_VERSION_TOO_LOW
 from omnigent.onboarding.harness_readiness import (
     configured_harness_map,
     harness_is_configured,
@@ -94,6 +95,33 @@ def _no_clis_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hi.shutil, "which", lambda name: None)
 
 
+def test_pi_own_login_with_model_is_ready_without_managed_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same Pi login used by an unmanaged launch must pass readiness."""
+    _all_clis_installed(monkeypatch)
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
+    monkeypatch.setattr(
+        "omnigent.onboarding.harness_readiness._family_provider_configured", lambda _h: False
+    )
+    assert configured_harness_map()["pi-native"] == "needs-auth"
+
+    (agent_dir / "auth.json").write_text(
+        json.dumps({"anthropic": {"type": "api_key", "key": "test-token"}})
+    )
+    (agent_dir / "models-store.json").write_text(
+        json.dumps({"anthropic": {"models": [{"id": "test-model"}]}})
+    )
+    readiness = configured_harness_map()
+    assert readiness["pi-native"] is True
+    assert readiness["pi"] is True
+
+    (agent_dir / "auth.json").write_text("{}")
+    assert configured_harness_map()["pi-native"] == "needs-auth"
+
+
 # SDK and unknown harnesses are never gated — their credentials resolve at
 # runtime from ambient/spec sources the daemon can't enumerate.
 @pytest.mark.parametrize(
@@ -121,6 +149,36 @@ def test_sdk_and_unknown_harnesses_are_never_gated(
     """
     _no_clis_installed(monkeypatch)
     assert harness_is_configured(harness) is True
+
+
+def test_sdk_picker_readiness_is_credential_aware_but_advisory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDK rows warn without credentials and turn ready with an ambient key."""
+    import omnigent.onboarding.harness_readiness as hrmod
+
+    for helper in (
+        "_family_provider_configured",
+        "_family_fallback_provider_configured",
+        "_global_auth_configured",
+        "_databricks_workspace_configured",
+        "_claude_token_env_configured",
+        "_claude_managed_gateway_configured",
+        "_claude_code_login_configured",
+    ):
+        monkeypatch.setattr(hrmod, helper, lambda *args: False)
+    monkeypatch.setattr(hrmod, "_ambient_family_env_key_configured", lambda _family: False)
+
+    result = configured_harness_map()
+    assert result["claude-sdk"] == HARNESS_NEEDS_AUTH
+    assert result["openai-agents"] == HARNESS_NEEDS_AUTH
+    assert harness_is_configured("claude-sdk") is True
+    assert harness_is_configured("openai-agents") is True
+
+    monkeypatch.setattr(hrmod, "_ambient_family_env_key_configured", lambda _family: True)
+    result = configured_harness_map()
+    assert result["claude-sdk"] is True
+    assert result["openai-agents"] is True
 
 
 # CLI-wrapping harnesses are gated on their binary being on PATH. Native Cursor
@@ -279,6 +337,10 @@ def test_family_provider_configured_excludes_subscription(
     class _Provider:
         def __init__(self, kind: str) -> None:
             self.kind = kind
+            self.families = {"anthropic": object()}
+
+        def family(self, name: str) -> object:
+            return self.families[name]
 
     monkeypatch.setattr(
         "omnigent.onboarding.harness_readiness.default_provider_for_harness",
@@ -417,14 +479,14 @@ def test_configured_harness_map_gates_only_cli_harnesses(
     """With no CLI installed, only CLI-wrapping spellings read False.
 
     SDK spellings (incl. the ``openai-agents-sdk`` workflow spelling and
-    the ``claude`` alias) stay True; the native + pi spellings flip to
-    False. A misclassified spelling would warn the wrong agents in the
-    picker — e.g. an SDK agent authenticating via a Databricks profile
-    flagged "needs setup" when it launches fine.
+    the ``claude`` alias) remain launchable but report advisory
+    ``needs-auth`` in the picker; native + pi spellings are gated. A
+    misclassified spelling would either suppress a useful warning or block
+    an SDK agent whose credentials live in its spec.
     """
     _no_clis_installed(monkeypatch)
     result = configured_harness_map()
-    # SDK / alias spellings — never gated.
+    # SDK / alias spellings warn in the picker but remain launchable.
     for sdk in (
         "claude-sdk",
         "claude_sdk",
@@ -433,7 +495,10 @@ def test_configured_harness_map_gates_only_cli_harnesses(
         "openai-agents-sdk",
         "agents_sdk",
     ):
-        assert result[sdk] is True, f"{sdk} should never be gated"
+        assert result[sdk] == HARNESS_NEEDS_AUTH, (
+            f"{sdk} should warn when no credential is visible"
+        )
+        assert harness_is_configured(sdk) is True, f"{sdk} should never be launch-gated"
     # CLI-wrapping spellings — gated, so False when the binary is absent.
     # (The SDK ``cursor`` harness is excluded: it runs via the ``cursor-sdk``
     # package and gates on a configured ``CURSOR_API_KEY``, not a binary —

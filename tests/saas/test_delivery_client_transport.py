@@ -24,13 +24,22 @@ from tests.saas.test_delivery_config import delivery_config as _delivery_config
 delivery_config = _delivery_config
 
 
+@pytest.mark.parametrize(
+    "contract_name",
+    [
+        "dcp-openapi-v1.json",
+        "dcp-openapi-v1-wildcard-edge.json",
+        "dcp-openapi-v1-release-edge.json",
+        "dcp-openapi-v1-next-preview-edge.json",
+    ],
+)
 def test_delivery_client_uses_mtls_for_requests_and_both_readiness_paths(
-    tmp_path, delivery_config
+    tmp_path, delivery_config, contract_name
 ):
     certs = _certificate_fixture(tmp_path, (uuid4(),))
     server_files, client_files = certs["server"], certs["runner-0"]
     client_files.private_key.chmod(0o600)
-    frozen = Path("saas/production/dcp-openapi-v1.json").read_bytes()
+    frozen = (Path("saas/production") / contract_name).read_bytes()
     public_key = serialization.load_pem_private_key(
         delivery_config.private_key, password=None
     ).public_key()

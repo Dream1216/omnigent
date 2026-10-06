@@ -46,12 +46,157 @@
     "users": ["workspace_id", "id"]
   },
   "source_intrusion_budget": {
-    "max_active_patches": 8,
-    "max_direct_upstream_files": 83,
-    "max_upstream_net_added_loc": 2579,
+    "max_active_patches": 9,
+    "max_direct_upstream_files": 126,
+    "max_upstream_net_added_loc": 4396,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 122,
+    "previous_max_upstream_net_added_loc": 4391,
+    "previous_measured_upstream_net_added_loc": 4391,
+    "reason": "The exact-candidate admission CI exposed a false Pi needs-auth result for its own logged-in models and four browser tests that still clicked unavailable Agent launch rows. Reuse Pi's launch credential catalog for readiness and assert the separate setup action in those browser tests. This correction adds four newly divergent official test paths and five measured net lines, moving the strict ceilings from 122 files / 4,391 lines to 126 files / 4,396 lines. Extend existing patch 0010 without increasing the nine-patch ceiling; retain the 0.85 isolation floor, forbidden native paths and reverse-dependency check. CI and the 17-Agent and authenticated delivery gates remain required.",
+    "revision": "next-agent-admission-e2e-closure-v25",
+    "previous_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 120,
+    "previous_max_upstream_net_added_loc": 4327,
+    "previous_measured_upstream_net_added_loc": 4327,
+    "reason": "The browser E2E coverage required for the user-requested unavailable-Agent picker behavior adds one official test path and 64 measured net lines. Its reviewed Storybook visual baseline changes one binary official path and zero lines. The exact measured source delta is 122 files / 4,391 net lines; raise only those two hard ceilings from 120 / 4,327, retaining nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. The tests verify disabled launch and setup access but do not replace the 17-Agent or authenticated delivery release gates.",
+    "revision": "next-agent-picker-browser-coverage-v24",
+    "scoped_browser_delta": {
+      "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+      "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--needs-setup-badges][linux].png": 0
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 118,
+    "previous_max_upstream_net_added_loc": 4139,
+    "previous_measured_upstream_net_added_loc": 4139,
+    "reason": "The user-requested 17-Agent admission gate exposed that reported-unavailable Harnesses could still create sessions. JSON and uploaded-bundle create now reject known Host readiness failures before persisting, while unknown legacy reports remain recoverable. The picker disables unavailable launch rows but offers a separate Set up action. Exact source remeasurement adds two newly divergent official paths and 188 net lines, moving ceilings from 118 files / 4,139 lines to 120 files / 4,327 lines. Patch 0010 replays both official Python changes. Retain nine patches, the 0.85 isolation floor, forbidden native paths and reverse-dependency check. This beta scope record does not waive CI, authorize production promotion, or replace the exact-version 17-Agent and five delivery gates.",
+    "revision": "next-agent-create-readiness-admission-v23",
+    "scoped_admission_delta": {
+      "omnigent/server/routes/_sessions/orchestration.py": 59,
+      "omnigent/server/routes/sessions/routes_core.py": 14,
+      "tests/server/integration/test_session_host_launch.py": 80,
+      "web/src/components/composer/HarnessPicker.tsx": 15,
+      "web/src/shell/NewChatDialog.test.tsx": 22,
+      "web/src/shell/NewChatDialog.tsx": -2
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-29",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 8,
+    "previous_max_direct_upstream_files": 107,
+    "previous_max_upstream_net_added_loc": 3036,
+    "previous_measured_upstream_net_added_loc": 3036,
+    "reason": "User-authorized next SaaS delivery and Preview release hardening incorporates the independently reviewed sandbox Agent-readiness and session replay repair. The source diff against the protected 37bce722 baseline changes 16 official paths by 1,399 added and 296 deleted lines (net 1,103); 11 paths become newly divergent from the pinned upstream. Exact remeasurement moves the ceilings from 107 files / 3,036 net lines to 118 files / 4,139 net lines. Independently replayable patch 0010 carries the six official Python seams after patches 0002-0009, raising the active-patch ceiling from eight to nine. Preserve the 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta scope record does not approve production promotion, waive technical CI, or substitute for the exact-version 17-Agent and five delivery acceptance gates.",
+    "revision": "next-preview-agent-session-reliability-v22",
+    "scoped_agent_delta": {
+      "omnigent/host/connect.py": -120,
+      "omnigent/host/runner_zygote.py": 10,
+      "omnigent/onboarding/harness_readiness.py": 251,
+      "omnigent/runtime/pending_inputs.py": 52,
+      "omnigent/server/routes/_sessions/orchestration.py": 52,
+      "omnigent/server/routes/sessions/routes_core.py": 53,
+      "tests/host/test_orphan_reaper.py": 227,
+      "tests/onboarding/test_harness_readiness.py": 37,
+      "tests/runtime/test_pending_inputs.py": 33,
+      "tests/server/integration/test_sessions_endpoints.py": 158,
+      "web/src/lib/capabilities.test.ts": 7,
+      "web/src/lib/capabilities.ts": 1,
+      "web/src/lib/harnessSetup.test.ts": 137,
+      "web/src/lib/harnessSetup.ts": 90,
+      "web/src/shell/NewChatDialog.test.tsx": 75,
+      "web/src/shell/NewChatDialog.tsx": 40
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-28",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 106,
+    "previous_max_upstream_net_added_loc": 3032,
+    "previous_measured_upstream_net_added_loc": 3032,
+    "reason": "The Codex-parity cache-only CI job passed its tests but failed during actions/setup-node post-job cache save because the pnpm store directory did not exist. The reviewed four-line setup-pnpm action fix creates that directory and its rerun passed. This changes one additional upstream-tracked action file and adds exactly four measured net lines, moving the exact totals from 106 files / 3,032 lines to 107 files / 3,036 lines. Raise only those two ceilings to the measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "pnpm-cache-only-ci-post-job-v21",
+    "scoped_ci_delta": {
+      ".github/actions/setup-pnpm/action.yml": 4
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 101,
+    "previous_max_upstream_net_added_loc": 3032,
+    "previous_measured_upstream_net_added_loc": 3032,
+    "reason": "The protected visual-baseline workflow regenerated exactly five reviewed authenticated-shell PNG snapshots after adding the language switcher. Binary snapshots add five directly tracked upstream files but zero measured net-added LOC, moving the exact totals from 101 files / 3,032 lines to 106 files / 3,032 lines. Raise only the direct-file ceiling to the measured 106; retain the 3,032 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The workflow's second full comparison passed all 175 visual scenarios. This Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "bilingual-visual-baselines-v20",
+    "scoped_visual_delta": {
+      "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png": 0,
+      "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png": 0
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 88,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2477,
+    "reason": "User-requested Chinese and English interface support for the current next SaaS Beta: share one persisted locale across the isolated login application and the authenticated web shell, expose switching in the sidebar and Appearance settings, preserve tenant branding, and cover the signed-in journey in a real browser. The login implementation and its browser coverage remain under downstream-owned saas/ and tests/saas/ paths. On the exact new-session stability mainline, the authenticated shell changes add exactly thirteen newly divergent official files and 555 measured net lines across fifteen reviewed frontend and E2E files, moving the exact totals from 88 files / 2,477 lines to 101 files / 3,032 lines. Raise the hard ceilings only to those measured totals; retain the 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope record is not production admission or a merge waiver.",
+    "revision": "bilingual-authenticated-interface-v19",
+    "scoped_frontend_delta": {
+      "tests/e2e_ui/i18n/__init__.py": 0,
+      "tests/e2e_ui/i18n/test_language_switching.py": 43,
+      "web/src/components/LanguageSwitcher.test.tsx": 47,
+      "web/src/components/LanguageSwitcher.tsx": 101,
+      "web/src/embed.tsx": 3,
+      "web/src/lib/branding.ts": 2,
+      "web/src/lib/i18n.test.tsx": 76,
+      "web/src/lib/i18n.tsx": 212,
+      "web/src/main.tsx": 3,
+      "web/src/pages/SettingsPage.tsx": 5,
+      "web/src/shell/NewChatDialog.tsx": 25,
+      "web/src/shell/Sidebar.test.tsx": 4,
+      "web/src/shell/Sidebar.tsx": 3,
+      "web/src/shell/SidebarHeaderActions.tsx": 6,
+      "web/src/shell/settingsNav.tsx": 25
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 84,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2382,
+    "reason": "User-authorized sequential UI E2E closure on the exact 67e6ffc3b5562b967a72897fa5403be830888761 mainline: defer the new-session skill catalog until agent discovery settles, and synchronously hold the virtual transcript while the 53px older-history indicator mounts and unmounts. The seven reviewed UI and browser-test files add 95 measured net lines; four become newly divergent from official upstream, moving the exact totals from 84 files / 2,382 lines to 88 files / 2,477 lines. Raise only the direct-file ceiling to the exact measured 88; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The browser contract explicitly proves that the loading indicator painted while the reader position remained stable. This corrective Single-Owner Beta record is not production admission or a merge waiver.",
+    "revision": "new-session-catalog-scroll-stability-v18",
+    "scoped_ui_delta": {
+      "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+      "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+      "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+      "web/src/components/chat/Transcript.tsx": 8,
+      "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+      "web/src/shell/NewChatDialog.test.tsx": 43,
+      "web/src/shell/NewChatDialog.tsx": 7
+    },
+    "previous_revision": {
+    "approved_at": "2026-09-26",
+    "governance_mode": "single_owner_beta",
+    "previous_max_direct_upstream_files": 83,
+    "previous_max_upstream_net_added_loc": 2579,
+    "previous_measured_upstream_net_added_loc": 2379,
+    "reason": "User-authorized repository governance bootstrap: add the repository owner and administrator Dream1216 to the existing fail-closed maintainer allowlist without changing the approval evaluator or branch protection. The authoritative allowlist is an official upstream-tracked file, so this adds exactly one directly changed file and one measured net line, moving the exact totals from 83 files / 2,379 lines to 84 files / 2,380 lines. Raise only the direct-file ceiling to the exact measured 84; retain the 2,579 LOC ceiling, 8-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This record is not production admission or a general CI bypass.",
+    "revision": "repository-owner-maintainer-governance-v17",
+    "scoped_governance_delta": {
+      ".github/MAINTAINER": 1
+    },
+    "previous_revision": {
     "approved_at": "2026-09-24",
     "governance_mode": "single_owner_beta",
     "previous_max_direct_upstream_files": 82,
@@ -307,6 +452,15 @@
     }
     }
     }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+  }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",

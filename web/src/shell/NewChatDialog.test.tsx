@@ -1351,7 +1351,10 @@ function selectUnconfiguredAgent(agentId: string): void {
   if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
     fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
   }
-  fireEvent.click(screen.getByTestId(`new-chat-landing-agent-${agentId}`));
+  fireEvent.click(
+    screen.queryByTestId(`new-chat-landing-agent-${agentId}-setup`) ??
+      screen.getByTestId(`new-chat-landing-agent-${agentId}`),
+  );
   closeMenu();
 }
 
@@ -4005,7 +4008,10 @@ describe("NewChatLandingScreen", () => {
 
   it("enables submit only with a ready agent, message, host and valid workspace", async () => {
     mockHosts([
-      { ...host("online"), configured_harnesses: { "codex-native": "needs-auth" } } as Host,
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+      } as Host,
     ]);
     renderLanding();
     const submit = screen.getByTestId("new-chat-landing-submit") as HTMLButtonElement;
@@ -4021,7 +4027,7 @@ describe("NewChatLandingScreen", () => {
       target: { value: "inspect the repo" },
     });
     expect(submit.disabled).toBe(false);
-    selectAgent("a2");
+    selectUnconfiguredAgent("a2");
     expect(submit.disabled).toBe(true);
     expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent("Responses");
   });
@@ -4241,6 +4247,22 @@ describe("NewChatLandingScreen", () => {
     fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
     expect(screen.getByTestId("new-chat-landing-agent-a1")).toBeTruthy();
     expect(screen.getByTestId("new-chat-landing-agent-a_cursor")).toBeTruthy();
+    expect(
+      screen.getByTestId("new-chat-landing-agent-a_cursor").closest("[data-disabled]"),
+    ).toBeTruthy();
+  });
+
+  it("disables an unauthenticated native harness in the picker", () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": "needs-auth" },
+      } as Host,
+    ]);
+    renderLanding();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-agent-a2").closest("[data-disabled]")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-a1").closest("[data-disabled]")).toBeNull();
   });
 
   it("hides harnesses unconfigured on the selected host when the preference is on", () => {
@@ -6190,6 +6212,49 @@ describe("NewChatLandingScreen skills menu", () => {
     expect(authenticatedFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("defers skills discovery until the live agent binding replaces a cached preview", () => {
+    const cachedAgent: AvailableAgent = {
+      id: "cached-claude",
+      name: "cached-claude",
+      display_name: "Cached Claude",
+      description: null,
+      harness: "claude-native",
+      skills: [],
+    };
+    const liveAgent: AvailableAgent = {
+      id: "live-codex",
+      name: "live-codex",
+      display_name: "Live Codex",
+      description: null,
+      harness: "codex-native",
+      skills: [],
+    };
+    mockAgents([cachedAgent], {
+      ...PENDING_QUERY_STATE,
+      data: [cachedAgent],
+    } as unknown as Partial<ReturnType<typeof useAvailableAgents>>);
+    renderLanding();
+
+    expect(vi.mocked(useSkills).mock.lastCall?.[0]).toMatchObject({
+      target: null,
+      starting: true,
+    });
+
+    mockAgents([liveAgent]);
+    typeMessage("/review");
+
+    const resolvedOptions = vi.mocked(useSkills).mock.lastCall?.[0];
+    expect(resolvedOptions).toMatchObject({
+      target: {
+        hostId: "host_1",
+        harness: "codex-native",
+        path: "/Users/corey/repo",
+        agentId: "live-codex",
+      },
+    });
+    expect(resolvedOptions?.starting).toBeFalsy();
+  });
+
   it("shows bundled skills while loading, then uses the server's effective catalog", () => {
     mockAgents([skilledAgent()]);
     mockSkills({ skillsStatus: "loading" });
@@ -6994,6 +7059,81 @@ describe("NewChatLandingScreen custom-agent sandbox gating", () => {
       ),
     );
   }
+
+  it("presents an enabled sandbox provider as available with its default model", async () => {
+    renderLanding({ managed_sandboxes_enabled: true });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip")).toHaveAccessibleName(
+        /Sandbox, Available/,
+      ),
+    );
+    expect(screen.getByTestId("new-chat-landing-agent-model-value")).toHaveTextContent("Default");
+    expect(screen.queryByText("Models unavailable")).toBeNull();
+  });
+
+  it("uses only the selected provider's managed runtime report to gate sandbox agents", async () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { "claude-native": true, "codex-native": false },
+      },
+      {
+        host_id: "managed_agent_sandbox",
+        name: "managed-agent-sandbox",
+        owner: "me",
+        status: "online",
+        sandbox_provider: "agent_sandbox",
+        configured_harnesses: {
+          "claude-native": "needs-auth",
+          "codex-native": true,
+        },
+      },
+      {
+        host_id: "managed_kubernetes",
+        name: "managed-kubernetes",
+        owner: "me",
+        status: "online",
+        sandbox_provider: "kubernetes",
+        configured_harnesses: {
+          "claude-native": true,
+          "codex-native": "needs-auth",
+        },
+      },
+    ] as Host[]);
+
+    renderLanding({
+      managed_sandboxes_enabled: true,
+      sandbox_provider: "agent_sandbox",
+      sandbox_providers: ["agent_sandbox", "kubernetes"],
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-harness-warning")).toHaveTextContent(
+        "Claude Code isn't ready in Agent Sandbox",
+      ),
+    );
+    expect(useHostsMock).toHaveBeenCalledWith({ includeSandbox: true, refetchOnFocus: true });
+    expect(screen.queryByTestId("new-chat-landing-harness-setup")).toBeNull();
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "Run in a managed sandbox" },
+    });
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-host-chip"), { button: 0 });
+    expect(screen.queryByTestId("new-chat-landing-host-managed_agent_sandbox")).toBeNull();
+    expect(screen.queryByTestId("new-chat-landing-host-managed_kubernetes")).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    expect(screen.getByTestId("new-chat-landing-agent-warning-a1")).toBeVisible();
+    expect(screen.queryByTestId("new-chat-landing-agent-warning-a2")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-agent-a2"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("new-chat-landing-harness-warning")).toBeNull(),
+    );
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeEnabled();
+  });
 
   it("hides 'Create custom agent' on a sandbox", async () => {
     renderLanding({ managed_sandboxes_enabled: true });

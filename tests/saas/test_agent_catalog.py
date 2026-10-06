@@ -59,7 +59,7 @@ async def test_agent_catalog_initializes_once_per_workspace_under_bound_context(
         seeded.append(current_workspace_id())
 
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
@@ -88,7 +88,7 @@ async def test_agent_catalog_real_seed_is_visible_and_isolated_per_workspace(
     artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
     agent_cache = AgentCache(artifact_store=artifact_store, cache_dir=tmp_path / "cache")
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=agent_store,
         artifact_store=artifact_store,
         agent_cache=agent_cache,
@@ -126,7 +126,7 @@ async def test_agent_catalog_failure_is_redacted_and_retried() -> None:
             raise RuntimeError("secret backend detail")
 
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
@@ -146,21 +146,132 @@ async def test_agent_catalog_failure_is_redacted_and_retried() -> None:
         engine.dispose()
 
 
+def test_agent_catalog_postgresql_uses_least_privilege_transaction_lock() -> None:
+    events: list[Any] = []
+    connection = Mock()
+
+    def execute(statement: object, parameters: object) -> None:
+        events.append((str(statement), parameters))
+
+    connection.execute.side_effect = execute
+
+    class Transaction:
+        def __enter__(self) -> Mock:
+            events.append("begin")
+            return connection
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("end")
+
+    engine = Mock()
+    engine.dialect = SimpleNamespace(name="postgresql")
+    engine.begin.return_value = Transaction()
+
+    def seed(*_stores: Any) -> None:
+        events.append("seed")
+
+    initializer = TenantAgentCatalogInitializer(
+        coordination_engine=engine,
+        agent_store=object(),
+        artifact_store=object(),
+        agent_cache=object(),
+        seed=seed,
+    )
+    initializer._seed_with_replica_lock(91)
+
+    assert events[0] == "begin"
+    statement, parameters = events[1]
+    assert statement == "SELECT pg_advisory_xact_lock(:advisory_key)"
+    assert isinstance(parameters["advisory_key"], int)
+    assert events[2:] == ["seed", "end"]
+    engine.connect.assert_not_called()
+
+
 def test_agent_catalog_initializes_only_agent_consuming_runtime_routes() -> None:
     engine = sa.create_engine("sqlite://")
     initializer = TenantAgentCatalogInitializer(
-        runtime_engine=engine,
+        coordination_engine=engine,
         agent_store=object(),
         artifact_store=object(),
         agent_cache=object(),
     )
     try:
-        assert initializer.should_initialize("/v1/agents")
-        assert initializer.should_initialize("/v1/sessions/conv-1")
-        assert initializer.should_initialize("/v1/execution-readyz")
-        assert not initializer.should_initialize("/v1/hosts/host-1/tunnel")
-        assert not initializer.should_initialize("/v1/info")
+        assert initializer.should_initialize("/v1/agents", "GET")
+        assert initializer.should_initialize("/v1/agents/agent-1", "DELETE")
+        assert initializer.should_initialize("/v1/sessions", "POST")
+        assert initializer.should_initialize("/v1/execution-readyz", "GET")
+        assert not initializer.should_initialize("/v1/sessions", "GET")
+        assert not initializer.should_initialize("/v1/sessions/conv-1", "GET")
+        assert not initializer.should_initialize("/v1/sessions/conv-1/events", "POST")
+        assert not initializer.should_initialize("/v1/hosts/host-1/tunnel", "GET")
+        assert not initializer.should_initialize("/v1/info", "GET")
     finally:
+        engine.dispose()
+
+
+def test_catalog_failure_does_not_block_session_history_reads() -> None:
+    app, _scope = _build_fastapi_app()
+    engine = sa.create_engine("sqlite://")
+    attempts = 0
+
+    def fail_seed(*_stores: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("transient catalog dependency")
+
+    initializer = TenantAgentCatalogInitializer(
+        coordination_engine=engine,
+        agent_store=object(),
+        artifact_store=object(),
+        agent_cache=object(),
+        seed=fail_seed,
+    )
+    runtime_context_middleware = next(
+        middleware
+        for middleware in app.user_middleware
+        if middleware.cls is SaasAuthContextMiddleware
+    )
+    runtime_context_middleware.kwargs["runtime_initializer"] = initializer
+
+    @app.get("/v1/sessions")
+    def list_sessions() -> dict[str, object]:
+        return {"object": "list", "data": []}
+
+    @app.post("/v1/sessions")
+    def create_session() -> dict[str, str]:
+        return {"id": "should-not-run"}
+
+    @app.get("/v1/agents")
+    def list_agents() -> dict[str, object]:
+        return {"object": "list", "data": []}
+
+    try:
+        with TestClient(app) as client:
+            csrf = _login(client)
+
+            history = client.get("/v1/sessions")
+            assert history.status_code == 200
+            assert history.json() == {"object": "list", "data": []}
+            assert attempts == 0
+
+            agents = client.get("/v1/agents")
+            assert agents.status_code == 503
+            assert agents.json()["error"]["code"] == "runtime_catalog_unavailable"
+            assert attempts == 1
+
+            history_during_retry = client.get("/v1/sessions")
+            assert history_during_retry.status_code == 200
+            assert attempts == 1
+
+            create = client.post(
+                "/v1/sessions",
+                headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+            )
+            assert create.status_code == 503
+            assert create.json()["error"]["code"] == "runtime_catalog_unavailable"
+            assert attempts == 2
+    finally:
+        app.state.saas_test_engine.dispose()
         engine.dispose()
 
 

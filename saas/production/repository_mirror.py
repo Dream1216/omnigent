@@ -686,8 +686,45 @@ def _ensure_mirror_root(spec: RepositoryProvisioningSpec) -> Path:
     return resolved
 
 
+def _repository_https_proxy() -> str | None:
+    value = os.environ.get("OMNIGENT_SAAS_RUNNER_REPOSITORY_HTTPS_PROXY")
+    if value is None:
+        return None
+    if (
+        value != value.strip()
+        or any(ord(character) < 0x20 for character in value)
+        or "\\" in value
+        or "%" in value
+    ):
+        raise RepositoryMirrorError("repository HTTPS proxy URL is invalid")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise RepositoryMirrorError("repository HTTPS proxy URL is invalid") from error
+    hostname = parsed.hostname
+    if (
+        parsed.scheme != "http"
+        or hostname is None
+        or port is None
+        or not 1 <= port <= 65535
+        or parsed.netloc != f"{hostname}:{port}"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or hostname != hostname.lower()
+        or not hostname.endswith(".svc.cluster.local")
+        or len(hostname) > 253
+        or any(_HOST_LABEL.fullmatch(label) is None for label in hostname.split("."))
+    ):
+        raise RepositoryMirrorError("repository HTTPS proxy URL is invalid")
+    return f"http://{hostname}:{port}"
+
+
 def _git_environment() -> dict[str, str]:
-    return {
+    environment = {
         "GIT_ASKPASS": "/usr/bin/false" if Path("/usr/bin/false").exists() else "/bin/false",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -697,6 +734,10 @@ def _git_environment() -> dict[str, str]:
         "LC_ALL": "C",
         "PATH": "/usr/bin:/bin",
     }
+    proxy = _repository_https_proxy()
+    if proxy is not None:
+        environment["HTTPS_PROXY"] = proxy
+    return environment
 
 
 def _git_binary() -> str:

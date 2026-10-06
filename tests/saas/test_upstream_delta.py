@@ -119,29 +119,164 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
     report = check_patch_queue(repo)
 
     assert report["status"] == "pass"
-    assert report["patch_count"] == 8
+    assert report["patch_count"] == 9
     assert report["covered_paths"] == report["official_source_paths"]
 
 
 @pytest.mark.parametrize("extra_lines", [0, 1])
-def test_kiro_readiness_regression_budget_revision_retains_hard_source_ceilings(
+def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 2579
-    assert budget["max_direct_upstream_files"] == 83
-    assert budget["max_active_patches"] == 8
+    assert budget["max_upstream_net_added_loc"] == 4396
+    assert budget["max_direct_upstream_files"] == 126
+    assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "next-agent-admission-e2e-closure-v25"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 122
+    assert revision["previous_max_upstream_net_added_loc"] == 4391
+    assert revision["previous_measured_upstream_net_added_loc"] == 4391
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "next-agent-picker-browser-coverage-v24"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 120
+    assert revision["previous_max_upstream_net_added_loc"] == 4327
+    assert revision["previous_measured_upstream_net_added_loc"] == 4327
+    assert revision["scoped_browser_delta"] == {
+        "tests/e2e_ui/chat/test_agent_picker_version.py": 64,
+        (
+            "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/"
+            "test_story_matches_baseline/"
+            "test_story_matches_baseline[chromium-components-agents-"
+            "agentharnesspicker--needs-setup-badges][linux].png"
+        ): 0,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "next-agent-create-readiness-admission-v23"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 118
+    assert revision["previous_max_upstream_net_added_loc"] == 4139
+    assert revision["previous_measured_upstream_net_added_loc"] == 4139
+    assert revision["scoped_admission_delta"] == {
+        "omnigent/server/routes/_sessions/orchestration.py": 59,
+        "omnigent/server/routes/sessions/routes_core.py": 14,
+        "tests/server/integration/test_session_host_launch.py": 80,
+        "web/src/components/composer/HarnessPicker.tsx": 15,
+        "web/src/shell/NewChatDialog.test.tsx": 22,
+        "web/src/shell/NewChatDialog.tsx": -2,
+    }
+    previous = revision["previous_revision"]
+    assert previous["revision"] == "next-preview-agent-session-reliability-v22"
+    assert previous["scoped_agent_delta"] == {
+        "omnigent/host/connect.py": -120,
+        "omnigent/host/runner_zygote.py": 10,
+        "omnigent/onboarding/harness_readiness.py": 251,
+        "omnigent/runtime/pending_inputs.py": 52,
+        "omnigent/server/routes/_sessions/orchestration.py": 52,
+        "omnigent/server/routes/sessions/routes_core.py": 53,
+        "tests/host/test_orphan_reaper.py": 227,
+        "tests/onboarding/test_harness_readiness.py": 37,
+        "tests/runtime/test_pending_inputs.py": 33,
+        "tests/server/integration/test_sessions_endpoints.py": 158,
+        "web/src/lib/capabilities.test.ts": 7,
+        "web/src/lib/capabilities.ts": 1,
+        "web/src/lib/harnessSetup.test.ts": 137,
+        "web/src/lib/harnessSetup.ts": 90,
+        "web/src/shell/NewChatDialog.test.tsx": 75,
+        "web/src/shell/NewChatDialog.tsx": 40,
+    }
+    revision = previous["previous_revision"]
+    assert revision["revision"] == "pnpm-cache-only-ci-post-job-v21"
+    assert revision["previous_max_direct_upstream_files"] == 106
+    assert revision["previous_max_upstream_net_added_loc"] == 3032
+    assert revision["previous_measured_upstream_net_added_loc"] == 3032
+    assert revision["scoped_ci_delta"] == {
+        ".github/actions/setup-pnpm/action.yml": 4,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "bilingual-visual-baselines-v20"
+    assert revision["previous_max_direct_upstream_files"] == 101
+    assert revision["previous_max_upstream_net_added_loc"] == 3032
+    assert revision["previous_measured_upstream_net_added_loc"] == 3032
+    assert revision["scoped_visual_delta"] == {
+        (
+            "tests/e2e_ui/visual/snapshots/test_chat_snapshot/"
+            "test_chat_conversation_matches_baseline/"
+            "test_chat_conversation_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/"
+            "test_chat_turn_rail_matches_baseline/"
+            "test_chat_turn_rail_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_landing_snapshot/"
+            "test_empty_landing_matches_baseline/"
+            "test_empty_landing_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/"
+            "test_pinned_project_flyout_matches_baseline/"
+            "test_pinned_project_flyout_matches_baseline[chromium][linux].png"
+        ): 0,
+        (
+            "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/"
+            "test_populated_sidebar_matches_baseline/"
+            "test_populated_sidebar_matches_baseline[chromium][linux].png"
+        ): 0,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "bilingual-authenticated-interface-v19"
+    assert revision["previous_max_direct_upstream_files"] == 88
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2477
+    assert revision["scoped_frontend_delta"] == {
+        "tests/e2e_ui/i18n/__init__.py": 0,
+        "tests/e2e_ui/i18n/test_language_switching.py": 43,
+        "web/src/components/LanguageSwitcher.test.tsx": 47,
+        "web/src/components/LanguageSwitcher.tsx": 101,
+        "web/src/embed.tsx": 3,
+        "web/src/lib/branding.ts": 2,
+        "web/src/lib/i18n.test.tsx": 76,
+        "web/src/lib/i18n.tsx": 212,
+        "web/src/main.tsx": 3,
+        "web/src/pages/SettingsPage.tsx": 5,
+        "web/src/shell/NewChatDialog.tsx": 25,
+        "web/src/shell/Sidebar.test.tsx": 4,
+        "web/src/shell/Sidebar.tsx": 3,
+        "web/src/shell/SidebarHeaderActions.tsx": 6,
+        "web/src/shell/settingsNav.tsx": 25,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "new-session-catalog-scroll-stability-v18"
+    assert revision["previous_max_direct_upstream_files"] == 84
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2382
+    assert revision["scoped_ui_delta"] == {
+        "tests/e2e_ui/chat/test_slash_menu_skills_loading.py": 3,
+        "tests/e2e_ui/chat/test_transcript_scroll_stability.py": 10,
+        "web/src/components/chat/Transcript.cleanup.test.tsx": 1,
+        "web/src/components/chat/Transcript.tsx": 8,
+        "web/src/components/chat/Transcript.virtualList.test.tsx": 23,
+        "web/src/shell/NewChatDialog.test.tsx": 43,
+        "web/src/shell/NewChatDialog.tsx": 7,
+    }
+    revision = revision["previous_revision"]
+    assert revision["revision"] == "repository-owner-maintainer-governance-v17"
+    assert revision["previous_max_direct_upstream_files"] == 83
+    assert revision["previous_max_upstream_net_added_loc"] == 2579
+    assert revision["previous_measured_upstream_net_added_loc"] == 2379
+    assert revision["scoped_governance_delta"] == {".github/MAINTAINER": 1}
+    revision = revision["previous_revision"]
     assert revision["revision"] == "pi-native-workspace-callback-route-v16"
     assert revision["previous_max_direct_upstream_files"] == 82
     assert revision["previous_max_upstream_net_added_loc"] == 2579
     assert revision["previous_measured_upstream_net_added_loc"] == 2365
-    assert revision["scoped_runtime_delta"] == {
-        "omnigent/harnesses/pi_native/bridge.py": 14
-    }
+    assert revision["scoped_runtime_delta"] == {"omnigent/harnesses/pi_native/bridge.py": 14}
     revision = revision["previous_revision"]
     assert revision["revision"] == "kiro-readiness-regression-contract-v15"
     assert revision["previous_max_direct_upstream_files"] == 81
@@ -214,11 +349,11 @@ def test_kiro_readiness_regression_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 2579 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 15000, 0),
+            FileDelta("omnigent/stores/host_store.py", 4396 + extra_lines, 0),
+            FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
-        active_patch_count=8,
+        active_patch_count=9,
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,

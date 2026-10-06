@@ -128,6 +128,7 @@ class PlatformPasswordAuthenticationService:
                     updated_at=changed_at,
                 )
             )
+            db.flush()
             db.add(
                 PlatformPasswordCredentialRecord(
                     principal_id=principal_id,
@@ -194,6 +195,7 @@ class PlatformPasswordAuthenticationService:
                     updated_at=changed_at,
                 )
             )
+            db.flush()
             db.add(
                 PlatformPasswordCredentialRecord(
                     principal_id=principal_id,
@@ -352,6 +354,7 @@ class PlatformPasswordAuthenticationService:
                     updated_at=changed_at,
                 )
             )
+            db.flush()
             db.add(
                 PlatformPasswordCredentialRecord(
                     principal_id=principal_id,

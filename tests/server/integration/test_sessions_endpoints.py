@@ -11842,3 +11842,161 @@ async def test_external_info_error_item_publishes_and_persists_level(
     errors = [item for item in items.json()["data"] if item["type"] == "error"]
     assert len(errors) == 1
     assert errors[0]["level"] == "info"
+
+
+async def test_duplicate_message_post_returns_committed_item_without_second_forward(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An SDK re-send with one stable id persists and forwards only once."""
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"])
+    forwards: list[httpx.Request] = []
+
+    def runner_handler(request: httpx.Request) -> httpx.Response:
+        forwards.append(request)
+        return httpx.Response(202, json={"queued": True})
+
+    fake_runner = httpx.AsyncClient(
+        transport=httpx.MockTransport(runner_handler), base_url="http://runner"
+    )
+
+    async def get_runner_client(_session_id: str, _runner_router: object) -> httpx.AsyncClient:
+        return fake_runner
+
+    monkeypatch.setattr("omnigent.server.routes.sessions._get_runner_client", get_runner_client)
+    stable_id = "d" * 32
+    message = {
+        "type": "message",
+        "data": {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello again"}],
+            "stable_id": stable_id,
+        },
+    }
+    try:
+        first = await client.post(f"/v1/sessions/{session['id']}/events", json=message)
+        second = await client.post(f"/v1/sessions/{session['id']}/events", json=message)
+    finally:
+        await fake_runner.aclose()
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert first.json()["item_id"] == stable_id
+    assert second.json()["item_id"] == stable_id
+    assert len(forwards) == 1
+    items = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+    assert [item["id"] for item in items if item["type"] == "message"] == [stable_id]
+
+
+async def test_native_duplicate_message_post_never_repastes_prompt(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A native re-send resolves to the pending or committed first delivery."""
+    from omnigent.runtime import pending_inputs
+    from omnigent.server.routes import sessions as sessions_module
+
+    runner_requests: list[httpx.Request] = []
+
+    def runner_handler(request: httpx.Request) -> httpx.Response:
+        runner_requests.append(request)
+        return httpx.Response(202, json={})
+
+    monkeypatch.setattr(
+        sessions_module,
+        "_ensure_native_terminal_ready",
+        AsyncMock(return_value=_NativeTerminalEnsureOutcome(error=None)),
+    )
+    monkeypatch.setattr(
+        sessions_module, "_ensure_runner_session_initialized", AsyncMock(return_value=True)
+    )
+    stable_id = "e" * 32
+    content = [{"type": "input_text", "text": "retry me"}]
+    message = {
+        "type": "message",
+        "data": {"role": "user", "content": content, "stable_id": stable_id},
+    }
+    pending_inputs.reset_for_tests()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(runner_handler), base_url="http://runner"
+    ) as runner:
+        monkeypatch.setattr(sessions_module, "_get_runner_client", AsyncMock(return_value=runner))
+        monkeypatch.setattr(
+            "omnigent.server.routes._sessions.orchestration._get_runner_client",
+            AsyncMock(return_value=runner),
+        )
+        agent = await create_test_agent(client, name="claude-native-ui")
+        created = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "labels": {
+                    "omnigent.ui": "terminal",
+                    "omnigent.wrapper": "claude-code-native-ui",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        session_id = created.json()["id"]
+        events_url = f"/v1/sessions/{session_id}/events"
+
+        def paste_count() -> int:
+            return sum(
+                1
+                for request in runner_requests
+                if request.method == "POST" and request.url.path == events_url
+            )
+
+        try:
+            first = await client.post(events_url, json=message)
+            assert first.status_code == 202, first.text
+            pending_id = first.json()["pending_id"]
+            assert paste_count() == 1
+
+            second = await client.post(events_url, json=message)
+            assert second.status_code == 202, second.text
+            assert second.json() == {"queued": True, "pending_id": pending_id}
+            assert paste_count() == 1
+
+            echoed = await client.post(
+                events_url,
+                json={
+                    "type": "external_conversation_item",
+                    "data": {
+                        "item_type": "message",
+                        "item_data": {"role": "user", "content": content},
+                    },
+                },
+            )
+            assert echoed.status_code == 202, echoed.text
+            assert not pending_inputs.has_pending(session_id)
+
+            third = await client.post(events_url, json=message)
+            assert third.status_code == 202, third.text
+            assert third.json() == {"queued": True, "item_id": echoed.json()["item_id"]}
+            assert paste_count() == 1
+        finally:
+            pending_inputs.reset_for_tests()
+
+
+async def test_concurrent_session_create_replay_returns_one_session(
+    client: httpx.AsyncClient,
+) -> None:
+    """Concurrent retries with one client token resolve to one durable row."""
+    agent = await create_test_agent(client, name="create-idempotency-agent")
+    token = "f" * 32
+    payload = {
+        "agent_id": agent["id"],
+        "title": "Idempotent create",
+        "labels": {"omnigent.client_create_token": token},
+    }
+
+    responses = await asyncio.gather(
+        *(client.post("/v1/sessions", json=payload) for _ in range(8))
+    )
+
+    assert [response.status_code for response in responses] == [201] * 8
+    assert {response.json()["id"] for response in responses} == {token}
+    listed = (await client.get("/v1/sessions")).json()["data"]
+    assert sum(session["id"] == token for session in listed) == 1

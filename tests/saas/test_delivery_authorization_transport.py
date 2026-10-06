@@ -74,6 +74,15 @@ def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
             )
 
         assert allowed()
+        assert adapter.authorize_resource(
+            identity=actor,
+            action="preview.open",
+            resource={
+                "environment_id": h.project.preview_environment,
+                "environment_type": "preview",
+                "artifact_ref": "registry.test/app@sha256:" + "b" * 64,
+            },
+        )
         assert not allowed(actor.model_copy(update={"project_id": str(uuid4())}))
         assert not allowed(actor.model_copy(update={"membership_version": 99}))
         assert not allowed(target={**resource, "environment_id": "other"})
@@ -96,6 +105,15 @@ def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
         with h.app.state.saas_test_sessions.begin() as session:
             session.get(GlobalUser, UUID(h.scope["user_id"])).status = "suspended"
         assert not allowed()
+        assert not adapter.authorize_resource(
+            identity=actor,
+            action="preview.open",
+            resource={
+                "environment_id": h.project.preview_environment,
+                "environment_type": "preview",
+                "artifact_ref": "registry.test/app@sha256:" + "b" * 64,
+            },
+        )
         server.should_exit = True
         thread.join(timeout=10)
         assert not thread.is_alive()

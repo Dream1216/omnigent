@@ -184,6 +184,40 @@ class ProductionExternalAdapter(Protocol):
     def assert_production_ready(self) -> None: ...
 
 
+class ProductionAdapterConfigSource(Protocol):
+    """Shared public facts required by server and worker adapter factories."""
+
+    @property
+    def product_revision(self) -> str: ...
+
+    @property
+    def upstream_revision(self) -> str: ...
+
+    @property
+    def image_digest(self) -> str: ...
+
+    @property
+    def runtime_version(self) -> str: ...
+
+    @property
+    def official_schema_revision(self) -> str: ...
+
+    @property
+    def adapter_contract_version(self) -> str: ...
+
+    @property
+    def public_origin(self) -> str: ...
+
+    @property
+    def capabilities(self) -> frozenset[str]: ...
+
+    @property
+    def preview_root_domain(self) -> str | None: ...
+
+    @property
+    def preview_lease_seconds(self) -> int: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ProductionAdapterConfig:
     """Secret-free release facts exposed to trusted adapter factories."""
@@ -192,19 +226,22 @@ class ProductionAdapterConfig:
     upstream_revision: str
     image_digest: str
     runtime_version: str
+    official_schema_revision: str
     adapter_contract_version: str
     public_origin: str
     capabilities: frozenset[str]
     preview_root_domain: str | None
     preview_lease_seconds: int
+    executor_database_url: str | None = field(default=None, repr=False)
 
     @classmethod
-    def from_server_config(cls, config: ProductionServerConfig) -> ProductionAdapterConfig:
+    def from_server_config(cls, config: ProductionAdapterConfigSource) -> ProductionAdapterConfig:
         return cls(
             product_revision=config.product_revision,
             upstream_revision=config.upstream_revision,
             image_digest=config.image_digest,
             runtime_version=config.runtime_version,
+            official_schema_revision=config.official_schema_revision,
             adapter_contract_version=config.adapter_contract_version,
             public_origin=config.public_origin,
             capabilities=config.capabilities,
@@ -257,7 +294,7 @@ class ProductionExternalAdapters:
 
 @dataclass(slots=True)
 class RoleSessionFactories:
-    """Runtime and control-plane connections bound to five distinct service logins."""
+    """Runtime and control-plane connections bound to distinct service logins."""
 
     runtime_engine: Engine
     authenticator: sessionmaker[Session]
@@ -265,6 +302,7 @@ class RoleSessionFactories:
     governance: sessionmaker[Session]
     public_api: sessionmaker[Session]
     _engines: tuple[Engine, ...] = field(repr=False)
+    billing: sessionmaker[Session] | None = None
     _readiness_engines: Mapping[str, Engine] = field(
         default_factory=dict,
         repr=False,
@@ -272,12 +310,14 @@ class RoleSessionFactories:
 
     def __post_init__(self) -> None:
         factories = (self.authenticator, self.app, self.governance, self.public_api)
+        if self.billing is not None:
+            factories = (*factories, self.billing)
         if any(not callable(factory) for factory in factories):
             raise TypeError("role Session factories must be callable")
         binds = tuple(factory.kw.get("bind") for factory in factories)
         if any(bind is None for bind in binds) or len({id(bind) for bind in binds}) != len(binds):
             raise ProductionServerCompositionError(
-                "authenticator, app, governance, and public API require distinct engines"
+                "control-plane service roles require distinct engines"
             )
         if self.runtime_engine in binds:
             raise ProductionServerCompositionError(
@@ -287,7 +327,7 @@ class RoleSessionFactories:
             expected_roles = set(self.engines)
             if set(self._readiness_engines) != expected_roles:
                 raise ProductionServerCompositionError(
-                    "readiness engines must cover the exact five service roles"
+                    "readiness engines must cover every configured service role"
                 )
             readiness_ids = {id(engine) for engine in self._readiness_engines.values()}
             business_ids = {id(engine) for engine in self.engines.values()}
@@ -300,15 +340,16 @@ class RoleSessionFactories:
     def engines(self) -> Mapping[str, Engine]:
         """Expose engines by reviewed role for verify-only startup checks."""
 
-        return MappingProxyType(
-            {
-                "runtime": self.runtime_engine,
-                "authenticator": cast(Engine, self.authenticator.kw["bind"]),
-                "app": cast(Engine, self.app.kw["bind"]),
-                "governance": cast(Engine, self.governance.kw["bind"]),
-                "public_api": cast(Engine, self.public_api.kw["bind"]),
-            }
-        )
+        engines = {
+            "runtime": self.runtime_engine,
+            "authenticator": cast(Engine, self.authenticator.kw["bind"]),
+            "app": cast(Engine, self.app.kw["bind"]),
+            "governance": cast(Engine, self.governance.kw["bind"]),
+            "public_api": cast(Engine, self.public_api.kw["bind"]),
+        }
+        if self.billing is not None:
+            engines["billing"] = cast(Engine, self.billing.kw["bind"])
+        return MappingProxyType(engines)
 
     def close(self) -> None:
         """Dispose only engines created for this process."""
@@ -557,24 +598,23 @@ def _call_factory(factory: Callable[..., Any], config: ProductionAdapterConfig) 
 
 def load_external_adapter(
     reference: str,
-    config: ProductionServerConfig,
+    config: ProductionAdapterConfig,
 ) -> ProductionExternalAdapter:
-    """Load one deployment-trusted ``module:attribute`` adapter factory."""
+    """Load one deployment-trusted factory with an explicitly narrow config."""
 
     module_name, separator, attribute_name = reference.partition(":")
     if not separator or not module_name or not attribute_name:
         raise ProductionServerCompositionError("external adapter factory reference is invalid")
-    adapter_config = ProductionAdapterConfig.from_server_config(config)
     try:
         candidate = getattr(importlib.import_module(module_name), attribute_name)
         if isinstance(candidate, type):
-            candidate = _call_factory(candidate, adapter_config)
+            candidate = _call_factory(candidate, config)
         if callable(getattr(candidate, "assert_production_ready", None)):
             adapter = candidate
         elif callable(getattr(candidate, "build", None)):
-            adapter = _call_factory(candidate.build, adapter_config)
+            adapter = _call_factory(candidate.build, config)
         elif callable(candidate):
-            adapter = _call_factory(candidate, adapter_config)
+            adapter = _call_factory(candidate, config)
         else:
             adapter = candidate
     except ProductionServerCompositionError:
@@ -593,14 +633,15 @@ def load_external_adapter(
 def load_external_adapters(config: ProductionServerConfig) -> ProductionExternalAdapters:
     """Load only adapters enabled by the immutable capability profile."""
 
+    adapter_config = ProductionAdapterConfig.from_server_config(config)
     return ProductionExternalAdapters(
         runner=(
-            load_external_adapter(config.runner_adapter_factory, config)
+            load_external_adapter(config.runner_adapter_factory, adapter_config)
             if config.runner_adapter_factory is not None
             else None
         ),
         preview=(
-            load_external_adapter(config.preview_adapter_factory, config)
+            load_external_adapter(config.preview_adapter_factory, adapter_config)
             if config.preview_adapter_factory is not None
             else None
         ),
@@ -698,7 +739,7 @@ def _validate_production_sandbox_config(value: object) -> None:
     if value.get("reaper") != {
         "enabled": True,
         "sweep_interval_s": 3600,
-        "terminate_after_offline_days": 30,
+        "terminate_after_offline_days": 7,
     }:
         raise ProductionServerCompositionError(
             "official server sandbox reaper is not the reviewed production profile"
@@ -907,6 +948,11 @@ def create_role_session_factories(
             governance=sessionmaker(engines["governance"], expire_on_commit=False),
             public_api=sessionmaker(engines["public_api"], expire_on_commit=False),
             _engines=tuple(created),
+            billing=(
+                sessionmaker(engines["billing"], expire_on_commit=False)
+                if "billing" in engines
+                else None
+            ),
             _readiness_engines=MappingProxyType(readiness_engines),
         )
     except Exception:
@@ -1269,6 +1315,27 @@ def build_production_saas_services(
         schema_revision=config.official_schema_revision,
         adapter_contract_version=config.adapter_contract_version,
     )
+    enterprise_access = None
+    enterprise_scim = None
+    if "enterprise" in config.capabilities:
+        from saas.control_plane.enterprise_access import EnterpriseAccessService
+        from saas.control_plane.enterprise_identity import EnterpriseScimService
+
+        enterprise_access = EnterpriseAccessService(sessions.governance)
+        enterprise_scim = EnterpriseScimService(sessions.governance)
+    billing = None
+    if "billing" in config.capabilities:
+        from saas.control_plane.billing import BillingControlPlane
+
+        if sessions.billing is None:
+            raise ProductionServerCompositionError(
+                "billing capability requires its dedicated service login"
+            )
+        billing = BillingControlPlane(sessions.billing)
+    elif sessions.billing is not None:
+        raise ProductionServerCompositionError(
+            "billing service login requires the billing capability"
+        )
     availability = ControlPlaneAvailabilityGate()
     integration = create_saas_http_integration(
         lifecycle=lifecycle,
@@ -1287,6 +1354,9 @@ def build_production_saas_services(
         runtime_store_adapter=OmnigentStoreAdapter(config.adapter_contract_version),
         api_credentials=cast(ApiCredentialService, api_credentials),
         public_api_execution=public_execution,
+        enterprise_access=enterprise_access,
+        enterprise_scim=enterprise_scim,
+        billing=billing,
         onboarding=None if onboarding is None else onboarding.onboarding,
         onboarding_status=None if onboarding is None else onboarding.onboarding_status,
         onboarding_client_network=(
@@ -1379,7 +1449,7 @@ def build_production_server(
     )
 
     agent_catalog = TenantAgentCatalogInitializer(
-        runtime_engine=sessions.runtime_engine,
+        coordination_engine=sessions.engines["app"],
         agent_store=official_dependencies.agent_store,
         artifact_store=official_dependencies.artifact_store,
         agent_cache=official_dependencies.agent_cache,

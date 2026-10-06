@@ -19,3 +19,7 @@ runs:
         node-version: ${{ inputs.node-version }}
         cache: pnpm
         cache-dependency-path: pnpm-lock.yaml
+
+    - name: Ensure pnpm cache directory exists
+      shell: bash
+      run: mkdir -p "$(pnpm store path --silent)"

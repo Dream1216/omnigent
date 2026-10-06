@@ -421,3 +421,36 @@ def test_stable_id_dedup_scoped_per_conversation() -> None:
     id_a = pending_inputs.record("conv_scope_a", [_text_block("x")], stable_id=stable)
     id_b = pending_inputs.record("conv_scope_b", [_text_block("x")], stable_id=stable)
     assert id_a != id_b
+
+
+def test_pending_id_for_finds_only_a_live_entry_with_that_stable_id() -> None:
+    """A retry resolves to the live pending entry and never another session."""
+    stable = "a" * 32
+    pending_id = pending_inputs.record("conv_a", [_text_block("hi")], stable_id=stable)
+
+    assert pending_inputs.pending_id_for("conv_a", stable) == pending_id
+    assert pending_inputs.pending_id_for("conv_a", "b" * 32) is None
+    assert pending_inputs.pending_id_for("conv_other", stable) is None
+
+    pending_inputs.resolve_oldest("conv_a")
+    assert pending_inputs.pending_id_for("conv_a", stable) is None
+
+
+def test_committed_submission_is_remembered_until_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drained submission resolves to its durable item until the TTL."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(pending_inputs, "_now", lambda: clock["t"])
+    stable = "c" * 32
+
+    assert pending_inputs.committed_item_id("conv_a", stable) is None
+    pending_inputs.remember_committed("conv_a", stable, "item_1")
+    assert pending_inputs.committed_item_id("conv_a", stable) == "item_1"
+    assert pending_inputs.committed_item_id("conv_other", stable) is None
+
+    clock["t"] = 1000.0 + pending_inputs._COMMITTED_TTL_S - 0.1
+    assert pending_inputs.committed_item_id("conv_a", stable) == "item_1"
+
+    clock["t"] = 1000.0 + pending_inputs._COMMITTED_TTL_S + 0.1
+    assert pending_inputs.committed_item_id("conv_a", stable) is None

@@ -28,24 +28,26 @@ class TenantAgentCatalogInitializer:
     """Initialize packaged Agents once per Runtime Partition and release.
 
     The caller must already have bound the reviewed :class:`RuntimeContext`.
-    A PostgreSQL session advisory lock serializes the content-aware official
-    seed across server replicas; an in-process lock collapses concurrent first
-    requests on one replica.  Failed attempts are never cached and may be
-    retried by the next request.
+    A PostgreSQL transaction advisory lock on the SaaS app-role connection
+    serializes the content-aware official seed across server replicas. The
+    runtime login cannot acquire advisory locks. An in-process lock collapses
+    concurrent first requests on one replica. Failed attempts are never cached.
     """
 
-    _ROUTE_PREFIXES = ("/v1/agents", "/v1/sessions", "/v1/execution-readyz")
+    _CATALOG_ROUTE_PREFIX = "/v1/agents"
+    _SESSION_CREATE_PATH = "/v1/sessions"
+    _READINESS_PATH = "/v1/execution-readyz"
 
     def __init__(
         self,
         *,
-        runtime_engine: Engine,
+        coordination_engine: Engine,
         agent_store: Any,
         artifact_store: Any,
         agent_cache: Any,
         seed: Callable[[Any, Any, Any], None] = _ensure_default_agents,
     ) -> None:
-        self._runtime_engine = runtime_engine
+        self._coordination_engine = coordination_engine
         self._agent_store = agent_store
         self._artifact_store = artifact_store
         self._agent_cache = agent_cache
@@ -53,12 +55,20 @@ class TenantAgentCatalogInitializer:
         self._initialized: set[int] = set()
         self._locks: dict[int, asyncio.Lock] = {}
 
-    def should_initialize(self, path: str) -> bool:
-        """Return whether *path* consumes tenant Agent catalog state."""
+    def should_initialize(self, path: str, method: str) -> bool:
+        """Return whether the request requires packaged Agent catalog state.
 
-        return any(
-            path == prefix or path.startswith(f"{prefix}/") for prefix in self._ROUTE_PREFIXES
-        )
+        Session history and item reads remain available while a first-request
+        catalog seed is recovering. Only the catalog itself, readiness probe,
+        and top-level session create depend on the packaged built-ins.
+        """
+
+        normalized_method = method.upper()
+        if path == self._READINESS_PATH:
+            return True
+        if path == self._CATALOG_ROUTE_PREFIX or path.startswith(f"{self._CATALOG_ROUTE_PREFIX}/"):
+            return True
+        return path == self._SESSION_CREATE_PATH and normalized_method == "POST"
 
     async def ensure(self, runtime: RuntimeContext) -> None:
         """Ensure the current tenant workspace has the packaged Agent catalog."""
@@ -90,25 +100,19 @@ class TenantAgentCatalogInitializer:
             logger.info("tenant Agent catalog initialized workspace_id=%s", workspace_id)
 
     def _seed_with_replica_lock(self, workspace_id: int) -> None:
-        if self._runtime_engine.dialect.name != "postgresql":
+        if self._coordination_engine.dialect.name != "postgresql":
             self._seed(self._agent_store, self._artifact_store, self._agent_cache)
             return
         key_bytes = hashlib.sha256(
             f"omnigent-agent-catalog:{workspace_id}".encode("ascii")
         ).digest()[:8]
         advisory_key = int.from_bytes(key_bytes, byteorder="big", signed=True)
-        with self._runtime_engine.connect() as connection:
+        with self._coordination_engine.begin() as connection:
             connection.execute(
-                sa.text("SELECT pg_advisory_lock(:advisory_key)"),
+                sa.text("SELECT pg_advisory_xact_lock(:advisory_key)"),
                 {"advisory_key": advisory_key},
             )
-            try:
-                self._seed(self._agent_store, self._artifact_store, self._agent_cache)
-            finally:
-                connection.execute(
-                    sa.text("SELECT pg_advisory_unlock(:advisory_key)"),
-                    {"advisory_key": advisory_key},
-                )
+            self._seed(self._agent_store, self._artifact_store, self._agent_cache)
 
 
 def create_execution_readiness_router(

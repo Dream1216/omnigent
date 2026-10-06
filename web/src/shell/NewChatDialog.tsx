@@ -115,10 +115,12 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { HarnessSetupDialog } from "@/shell/HarnessSetupDialog";
 import {
   harnessUnavailableReasonOnHost,
+  harnessHiddenAsUnconfiguredOnHost,
   harnessUnconfiguredOnHost,
   harnessWarningBadgeText,
   isCodexHarness,
   isNativeCursorHarness,
+  managedSandboxReadinessHost,
 } from "@/lib/harnessSetup";
 
 // Re-exported for tests that import the readiness helpers from this module.
@@ -209,6 +211,7 @@ import {
 } from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import { useOmnigentAnalytics } from "@/lib/analytics";
+import { useI18n } from "@/lib/i18n";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
 import {
   isNativeCodingAgent,
@@ -829,6 +832,7 @@ function HarnessSetupNotice({
   harness,
   reason,
   featureEnabled,
+  sandbox = false,
   onSetup,
 }: {
   agentName: string | undefined;
@@ -836,6 +840,7 @@ function HarnessSetupNotice({
   harness: string | null | undefined;
   reason: string | null;
   featureEnabled: boolean;
+  sandbox?: boolean;
   onSetup: () => void;
 }) {
   const { trackClick } = useOmnigentAnalytics();
@@ -847,7 +852,12 @@ function HarnessSetupNotice({
       data-testid="new-chat-landing-harness-warning"
     >
       <TriangleAlertIcon className="size-3.5 shrink-0" />
-      {featureEnabled ? (
+      {sandbox ? (
+        <span>
+          {agentName} isn&apos;t ready in {hostName}. Choose a ready agent or another sandbox
+          provider.
+        </span>
+      ) : featureEnabled ? (
         <>
           <span>
             {agentName} isn&apos;t ready on {hostName}.
@@ -1455,6 +1465,7 @@ export function AgentHarnessPicker({
   const appliedOpenNonce = useRef(0);
   const queryClient = useQueryClient();
   const info = useServerInfo();
+  const { t } = useI18n();
   // Feature ON → single "needs setup" badge; OFF → per-reason original text.
   const collapsedBadge = isFeatureEnabled(info, "harness_install");
   const triggerModel = triggerDetails.find((detail) => detail.label === "Model");
@@ -1463,17 +1474,27 @@ export function AgentHarnessPicker({
   );
   const triggerModelText = triggerModel ? compactModelTriggerLabel(triggerModel.value) : "";
   const triggerEffortText = triggerEffort ? compactModelTriggerLabel(triggerEffort.value) : "";
-  const visibleModelText = triggerModelText === "Default" ? "Models unavailable" : triggerModelText;
+  const modelsUnavailableText = t("landing.modelsUnavailable");
+  const visibleModelText =
+    triggerModelText === "Default"
+      ? sandboxSelected
+        ? t("landing.default")
+        : modelsUnavailableText
+      : triggerModelText;
   const visibleEffortText =
     triggerEffortText === "Default" || triggerEffortText === "—" ? "" : triggerEffortText;
   const triggerAccessibleDetails = triggerDetails
     .map((detail) => `${detail.label} ${compactModelTriggerLabel(detail.value)}`)
     .join(", ");
-  const triggerAccessibleName = [hasAgents ? agentLabel : "No agents", triggerAccessibleDetails]
+  const triggerAccessibleName = [
+    hasAgents ? agentLabel : t("landing.noAgents"),
+    triggerAccessibleDetails,
+  ]
     .filter(Boolean)
     .join(", ");
   const triggerText =
-    visibleModelText || (triggerModel === undefined ? (hasAgents ? agentLabel : "No agents") : "");
+    visibleModelText ||
+    (triggerModel === undefined ? (hasAgents ? agentLabel : t("landing.noAgents")) : "");
   const selectedEntry = [...harnessEntries, ...agentEntries].find(
     (agent) => agent.id === effectiveAgentId,
   );
@@ -1481,7 +1502,7 @@ export function AgentHarnessPicker({
   const cachedPreview = previewOnly ? readNewChatPickerCache(cacheKey) : null;
   const resolvedPreview = useMemo<NewChatPickerPreview | null>(
     () =>
-      selectedEntry && hasAgents && visibleModelText !== "Models unavailable"
+      selectedEntry && hasAgents && visibleModelText !== modelsUnavailableText
         ? {
             agent: { name: selectedEntry.name, harness: selectedEntry.harness },
             label: triggerAccessibleName,
@@ -1493,6 +1514,7 @@ export function AgentHarnessPicker({
     [
       selectedEntry,
       hasAgents,
+      modelsUnavailableText,
       visibleModelText,
       triggerAccessibleName,
       triggerText,
@@ -1571,6 +1593,7 @@ export function AgentHarnessPicker({
           }
         }}
         onSelect={() => onSelectAgent(agent)}
+        onSetup={unavailable ? () => onSelectAgent(agent) : undefined}
         configContent={active ? selectedConfigContent : null}
         testId={`new-chat-landing-agent-${agent.id}`}
         icon={<ComposerAgentIcon agent={agent} />}
@@ -1579,6 +1602,7 @@ export function AgentHarnessPicker({
         description={blurb}
         active={active}
         editable={editable}
+        disabled={unavailable}
         isMobile={isMobile}
         summaryTestId={`new-chat-landing-agent-summary-${agent.id}`}
         editTestId={`new-chat-landing-agent-config-${agent.id}`}
@@ -1610,7 +1634,8 @@ export function AgentHarnessPicker({
     const secondaryOrder = ["opencode", "pi"];
     for (const agent of harnessEntries) {
       const selected = agent.id === effectiveAgentId;
-      if (!selected && hideUnconfigured && harnessUnconfiguredOnHost(agent.harness, host)) continue;
+      if (!selected && hideUnconfigured && harnessHiddenAsUnconfiguredOnHost(agent.harness, host))
+        continue;
       const key = nativeCodingAgentForAvailableAgent(agent)?.iconKind ?? "";
       if (primaryOrder.includes(key) || agent.id === promotedHarnessId) {
         ready.push(agent);
@@ -1972,7 +1997,7 @@ function HarnessConfigModal({
         ([id]) =>
           id === (draftHarness ?? brainDefault) ||
           !hideUnconfigured ||
-          !harnessUnconfiguredOnHost(id, host),
+          !harnessHiddenAsUnconfiguredOnHost(id, host),
       )
     : [];
 
@@ -2123,6 +2148,7 @@ export function resetLandingDraft(): void {
 
 export function NewChatLandingScreen() {
   const navigate = useNavigate();
+  const { locale, t } = useI18n();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const isMobileViewport = useIsMobileViewport();
@@ -2217,7 +2243,17 @@ export function NewChatLandingScreen() {
     data: hosts,
     isLoading: hostsLoading,
     isError: hostsError,
-  } = useHosts({ refetchOnFocus: true });
+  } = useHosts({ includeSandbox: true, refetchOnFocus: true });
+  // Keep provisioned sandboxes out of the manual machine picker, while retaining
+  // their Host-reported readiness as the runtime profile for a new sandbox.
+  const managedSandboxHosts = useMemo(
+    () => (hosts ?? []).filter((host) => host.sandbox_provider != null),
+    [hosts],
+  );
+  const allHosts = useMemo(
+    () => (hosts ?? []).filter((host) => host.sandbox_provider == null),
+    [hosts],
+  );
 
   // Offer an import affordance on the empty landing: a brand-new user with no
   // Omnigent sessions can pull in their existing local CLI history. Same query
@@ -2418,7 +2454,7 @@ export function NewChatLandingScreen() {
         ? managedSandboxesEnabled
         : rememberedHostChoice
           ? (hosts ?? []).some((host) => host.host_id === rememberedHostChoice)
-          : managedSandboxesEnabled || (hosts ?? []).some((host) => host.status === "online")));
+          : managedSandboxesEnabled || allHosts.some((host) => host.status === "online")));
   const noExecutionTargetSelected =
     !sandboxSelected && selectedHostId === null && !executionTargetSelectionPending;
   const {
@@ -2544,6 +2580,15 @@ export function NewChatLandingScreen() {
     info !== "loading" &&
     effectiveSandboxProvider !== null &&
     info.sandbox_provider_capabilities?.[effectiveSandboxProvider]?.multi_repo === true;
+  const sandboxReadinessHost = useMemo(
+    () =>
+      managedSandboxReadinessHost(
+        managedSandboxHosts,
+        effectiveSandboxProvider,
+        sandboxOptionLabel(effectiveSandboxProvider),
+      ),
+    [managedSandboxHosts, effectiveSandboxProvider],
+  );
   const maxSandboxRepos = sandboxMultiRepo ? MAX_SANDBOX_REPOS : 1;
   // Append a repo (deduped by URL — adding one already picked is a no-op),
   // remove one, or repoint its branch. Order is preserved so the list reads
@@ -2775,7 +2820,6 @@ export function NewChatLandingScreen() {
   const { recent, addRecent } = useRecentWorkspaces(selectedHostId);
   const { addRecentHarness } = useRecentHarnesses();
 
-  const allHosts = hosts ?? [];
   const onlineHosts = allHosts.filter((h) => h.status === "online");
   const offlineHosts = allHosts.filter((h) => h.status === "offline");
 
@@ -2930,7 +2974,7 @@ export function NewChatLandingScreen() {
       // Restore offline hosts too; availability gates creation, not selection.
       // Wait for the list so a remembered host cannot lose to a default.
       if (hostsLoading) return;
-      const stored = (hosts ?? []).find((h) => h.host_id === lastChoice);
+      const stored = allHosts.find((h) => h.host_id === lastChoice);
       if (stored) {
         setSelectedHostId(stored.host_id);
         return;
@@ -2945,10 +2989,10 @@ export function NewChatLandingScreen() {
       setSandboxProvider(defaultSandboxProvider());
       return;
     }
-    const firstOnline = (hosts ?? []).find((h) => h.status === "online");
+    const firstOnline = allHosts.find((h) => h.status === "online");
     if (firstOnline) setSelectedHostId(firstOnline.host_id);
   }, [
-    hosts,
+    allHosts,
     hostsLoading,
     selectedHostId,
     sandboxSelected,
@@ -3159,11 +3203,9 @@ export function NewChatLandingScreen() {
   // which have no knobs to remember.
   const selectedHost = allHosts.find((h) => h.host_id === selectedHostId);
 
-  // Warn-only readiness signal for the agent picker: only meaningful when
-  // a connected host is selected (a sandbox provisions its own tooling).
-  // Selection stays allowed — the host re-checks at launch and the create
-  // call surfaces a specific error if the harness really can't run.
-  const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
+  // A connected machine reports its own readiness. A new sandbox instead uses
+  // the selected provider's managed-runtime profile, never a local Host probe.
+  const harnessWarningHost = sandboxSelected ? sandboxReadinessHost : selectedHost;
   // Smart Routing as a Model choice is offered on the two native harnesses
   // whose running CLI accepts a per-turn model switch (the server injects
   // ``/model`` when cost_control_mode_override is "on"). Everything else routes
@@ -3762,6 +3804,13 @@ export function NewChatLandingScreen() {
             : supportsDevinPermission
               ? DEVIN_NATIVE_PERMISSION_MODES
               : [];
+  const localizedDirectModeOptions =
+    locale === "en-US"
+      ? directModeOptions
+      : directModeOptions.map((option) => ({
+          ...option,
+          label: option.label === "Default" ? t("landing.default") : option.label,
+        }));
   const selectDirectMode = (mode: string) => {
     if (!selectedNativeHarness) return;
     if (supportsPermissionMode) setPermissionMode(mode);
@@ -4008,8 +4057,7 @@ export function NewChatLandingScreen() {
     selectedAgent?.harness,
     harnessWarningHost,
   );
-  const selectedAgentLaunchBlocked =
-    selectedAgentUnconfigured && isCodexHarness(selectedAgent?.harness ?? "");
+  const selectedAgentLaunchBlocked = selectedAgentUnconfigured;
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
   // with one arm is just that arm. The Claude wrapper is the placeholder the
@@ -4361,13 +4409,20 @@ export function NewChatLandingScreen() {
               ? "Choose a harness to discover host skills."
               : undefined;
   const canDiscoverHostSkills = skillsUnavailableMessage === undefined;
+  // Cached picker rows and catalog-only placeholder rows are display previews,
+  // not an authoritative agent binding. Starting discovery from either can
+  // send one request with the previous session's agent/harness before the live
+  // catalog reconciles, leaving the slash menu scoped to the wrong agent even
+  // after the picker visibly updates. Keep the preview interactive, but defer
+  // the host-backed request until the merged agent query is authoritative.
+  const skillsAgentBindingReady = !agentsLoading && !agentsArePlaceholder;
   const {
     skills: hostSkills,
     skillsStatus,
     refetch: refreshSkills,
   } = useSkills({
     target:
-      selectedHostId && skillsHarness && workspaceTrimmed
+      skillsAgentBindingReady && selectedHostId && skillsHarness && workspaceTrimmed
         ? {
             hostId: selectedHostId,
             harness: skillsHarness,
@@ -4376,7 +4431,7 @@ export function NewChatLandingScreen() {
           }
         : null,
     enabled: canDiscoverHostSkills,
-    starting: !sandboxSelected && (hostsLoading || agentsLoading),
+    starting: !sandboxSelected && (hostsLoading || agentsLoading || agentsArePlaceholder),
   });
   const availableSkills = useMemo(
     () => (skillsStatus === "ready" ? hostSkills : (selectedAgent?.skills ?? [])),
@@ -4700,7 +4755,7 @@ export function NewChatLandingScreen() {
   // clone-dir rule), a count when several, or a placeholder when none.
   const sandboxRepoLabel =
     sandboxRepoSelections.length === 0
-      ? "Repository"
+      ? t("landing.repository")
       : sandboxRepoSelections.length === 1
         ? ((only) => {
             const name = deriveRepoName(only.url) ?? "repository";
@@ -5497,8 +5552,8 @@ export function NewChatLandingScreen() {
   }
 
   const placeholderText = selectedProject
-    ? `Start a new session in ${selectedProject}`
-    : "Describe a task to start a new session…";
+    ? t("landing.projectPlaceholder", { project: selectedProject })
+    : t("landing.placeholder");
 
   const isCloudHostEntry = (host: Host) =>
     host.host_id === arcaHostId ||
@@ -6125,9 +6180,15 @@ export function NewChatLandingScreen() {
                     >
                       <DropdownMenuTrigger asChild>
                         <ComposerHostTrigger
-                          label={`Host: ${hostLabel}, ${selectedHost?.status === "online" && !sandboxSelected ? "Online" : "Offline"}`}
+                          label={`Host: ${hostLabel}, ${
+                            sandboxSelected
+                              ? "Available"
+                              : selectedHost?.status === "online"
+                                ? "Online"
+                                : "Offline"
+                          }`}
                           status={
-                            selectedHost?.status === "online" && !sandboxSelected
+                            sandboxSelected || selectedHost?.status === "online"
                               ? "online"
                               : "offline"
                           }
@@ -6272,10 +6333,10 @@ export function NewChatLandingScreen() {
 
                     {noExecutionTargetSelected ? (
                       <ComposerPermissionPicker
-                        label="Permission mode"
-                        value="No host selected"
+                        label={t("landing.permissionMode")}
+                        value={t("landing.noHost")}
                         disabled
-                        options={directModeOptions}
+                        options={localizedDirectModeOptions}
                         onSelect={selectDirectMode}
                         testIdPrefix="new-chat-landing"
                       />
@@ -6286,11 +6347,19 @@ export function NewChatLandingScreen() {
                       />
                     ) : visiblePermissionRow ? (
                       <ComposerPermissionPicker
-                        label={visiblePermissionRow.label}
-                        value={visiblePermissionRow.value}
+                        label={
+                          visiblePermissionRow.label === "Permission mode"
+                            ? t("landing.permissionMode")
+                            : visiblePermissionRow.label
+                        }
+                        value={
+                          visiblePermissionRow.value === "Default"
+                            ? t("landing.default")
+                            : visiblePermissionRow.value
+                        }
                         loading={pickerLoading}
                         interactiveWhileLoading={interactiveWhileLoading}
-                        options={directModeOptions}
+                        options={localizedDirectModeOptions}
                         onSelect={selectDirectMode}
                         testIdPrefix="new-chat-landing"
                       />
@@ -6527,7 +6596,7 @@ export function NewChatLandingScreen() {
                         interactiveWhileLoading={interactiveWhileLoading}
                         disabledLabel={
                           noExecutionTargetSelected && agentList.length > 0
-                            ? "No host selected"
+                            ? t("landing.noHost")
                             : undefined
                         }
                         cacheKey={pickerCacheKey}
@@ -6600,7 +6669,7 @@ export function NewChatLandingScreen() {
                           <span className="inline-flex shrink-0">
                             <ComposerSendButton
                               disabled={!canSubmit}
-                              label={creating ? "Starting session" : "Start session"}
+                              label={creating ? t("landing.starting") : t("landing.start")}
                               busy={creating}
                               data-testid="new-chat-landing-submit"
                             />
@@ -6610,7 +6679,7 @@ export function NewChatLandingScreen() {
                           <TooltipContent>{submitDisabledReason}</TooltipContent>
                         ) : !creating && !preventsKeyboardSubmit ? (
                           <KeyboardShortcutTooltipContent
-                            label="Start session"
+                            label={t("landing.start")}
                             keys={composerSendShortcutKeys(submitWithModEnter)}
                           />
                         ) : null}
@@ -6679,6 +6748,7 @@ export function NewChatLandingScreen() {
               harness={selectedAgent?.harness ?? null}
               reason={harnessUnavailableReasonOnHost(selectedAgent?.harness, harnessWarningHost)}
               featureEnabled={harnessInstallEnabled}
+              sandbox={sandboxSelected}
               onSetup={() =>
                 setSetupTarget({
                   agentName: selectedAgent?.display_name,
@@ -6763,7 +6833,7 @@ export function NewChatLandingScreen() {
               onClick={() => navigate("/settings/import")}
               data-testid="landing-import-sessions"
             >
-              Import your recent sessions
+              {t("landing.importSessions")}
             </Button>
           </div>
         ) : null}

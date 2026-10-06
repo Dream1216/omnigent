@@ -66,6 +66,8 @@ DCP 的强制 mTLS 监听器要求 App 同时配置客户端证书与私钥；�
 
 DCP 的 App workload profile 使用上述 issuer、`/saas/delivery/.well-known/jwks.json` 和 audience `omnigent-deployment-control-plane`。在既有 formal identity 环境保留 human broker，并使用相互独立且权限不交叉的 workload profile；不要为了接入关闭 formal identity、容量或配额治理。
 
+独立发布 Preview Edge 使用同一个 JWKS issuer、独立 audience `omnigent-release-preview-edge` 和配置项 `release_preview_root_domain`（next 为 `jxhh.com`）。App 只在当前 Cookie、CSRF 和项目 `preview.open` 权限通过后，向 DCP 登记 60 秒 JWT 的哈希；浏览器以表单 POST 将原文交给 `app-r<preview UUID hex>.jxhh.com/__omnigent/authorize`，不把 token 放入 URL。Edge 一次性消费哈希并设置仅本域的 Secure/HttpOnly Cookie，每次访问通过独立 mTLS 授权服务复核当前成员身份。该链路依赖 DCP `0029_preview_domain_probe`、单独的 Edge Cookie 密钥以及精确匹配的 App/DCP OpenAPI 契约；上线后仍需在同一线上版本完成真实鉴权验收。
+
 App 所需委托权限集合：`build:read`、`build:create`、`build:cancel`、`snapshot:read`、`snapshot:create`、`snapshot:promote`、`deployment:read`、`deployment:create`、`deployment:promote`、`deployment:rollback`、`domain:read`。每个请求只签发其所需子集。
 
 生产动作回查使用独立监听器：

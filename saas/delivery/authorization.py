@@ -51,16 +51,22 @@ class DeliveryAuthorization:
             ),
             None,
         )
-        if (
-            project is not None
-            and body.action
-            in {
-                "deployment:create:production",
-                "deployment:promote:production",
-                "deployment:rollback:production",
-            }
-            and body.resource.get("environment_id") == project.production_environment
-            and body.resource.get("environment_type") == "production"
+        if project is not None and (
+            (
+                body.action == "preview.open"
+                and body.resource.get("environment_id") == project.preview_environment
+                and body.resource.get("environment_type") == "preview"
+            )
+            or (
+                body.action
+                in {
+                    "deployment:create:production",
+                    "deployment:promote:production",
+                    "deployment:rollback:production",
+                }
+                and body.resource.get("environment_id") == project.production_environment
+                and body.resource.get("environment_type") == "production"
+            )
         ):
             try:
                 current = self.resolver.resolve_request_context(
@@ -70,7 +76,10 @@ class DeliveryAuthorization:
                     trace_id=body.request_nonce,
                 )
                 authorizer = ProjectAuthorizer(self.sessions)
-                for action in ("project.content.read", "environment.manage"):
+                required_action = (
+                    "preview.open" if body.action == "preview.open" else "environment.manage"
+                )
+                for action in ("project.content.read", required_action):
                     current = authorizer.bind_project_context(
                         current, action=action, project_id=project.project_id
                     )

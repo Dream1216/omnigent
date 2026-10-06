@@ -248,6 +248,7 @@ export function HarnessPickerEntry({
   open,
   onOpenChange,
   onSelect,
+  onSetup,
   configContent,
   editable = true,
   isMobile = false,
@@ -260,6 +261,7 @@ export function HarnessPickerEntry({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect?: () => void;
+  onSetup?: () => void;
   configContent?: ReactNode;
   editable?: boolean;
   isMobile?: boolean;
@@ -400,6 +402,19 @@ export function HarnessPickerEntry({
           }}
         >
           {content}
+        </DropdownMenuItem>
+      )}
+      {disabled && onSetup && (
+        <DropdownMenuItem
+          data-testid={testId ? `${testId}-setup` : undefined}
+          aria-label={`Set up ${row.label}`}
+          className="shrink-0 px-2 text-xs text-muted-foreground"
+          onSelect={() => {
+            onSetup();
+            closeMenu();
+          }}
+        >
+          Set up
         </DropdownMenuItem>
       )}
     </div>

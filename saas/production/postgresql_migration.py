@@ -14,7 +14,7 @@ import os
 import re
 import stat
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -391,6 +391,26 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         "p0s000000014",
     ): "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1",
 }
+
+# Exact deployment-time Preview authority projections accepted in addition to
+# the clean-replay catalog.  These hashes bind the full public inventory and
+# security catalog, so any extra object, ACL, policy, membership, or owner still
+# fails closed.
+_PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
+}
+_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000014",
+    ): "9839f65fa0ff7614c4bc7566fda9ae18223924cf9ad63adbf71e66433f995e34",
+}
+
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -431,6 +451,7 @@ _CAPABILITY_ROLES = (
     "saas_runtime_provider_journal",
     _RUNTIME_ROLE,
 )
+_RUNNER_AGENT_LOGIN = re.compile(r"^runner_([0-9a-f]{32})_g([1-9][0-9]{0,18})$")
 _RoleGraphEdge = tuple[str, str, str, bool, bool, bool, int]
 
 
@@ -1142,11 +1163,38 @@ def _verify_service_principal_graph(
     ).scalar_one_or_none()
     if not bootstrap_name:
         raise PostgreSqlMigrationError("bootstrap_principal_missing", "principals")
+    bootstrap_name = str(bootstrap_name)
+    runtime_runner_edges = {
+        edge
+        for edge in observed
+        if _runtime_runner_membership_is_safe(edge, bootstrap_name=bootstrap_name)
+    }
+    runtime_runner_logins = sorted({edge[1] for edge in runtime_runner_edges})
+    if runtime_runner_logins:
+        runtime_runner_rows = tuple(
+            connection.execute(
+                sa.text(
+                    "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+                    "rolreplication, rolbypassrls, rolinherit, rolconnlimit, rolconfig "
+                    "FROM pg_roles WHERE rolname = ANY(:logins) ORDER BY rolname"
+                ),
+                {"logins": runtime_runner_logins},
+            ).all()
+        )
+        if (
+            len(runtime_runner_rows) != len(runtime_runner_logins)
+            or [str(row[0]) for row in runtime_runner_rows] != runtime_runner_logins
+            or any(
+                not _runtime_runner_login_flags_are_safe(tuple(row)) for row in runtime_runner_rows
+            )
+        ):
+            raise PostgreSqlMigrationError("service_role_graph_drifted", "principals")
+        observed.difference_update(runtime_runner_edges)
     expected_complete = _expected_service_principal_graph(
         bindings=bindings,
         principal_operator=principal_operator,
         principal_operator_oid=principal_operator_oid,
-        bootstrap_name=str(bootstrap_name),
+        bootstrap_name=bootstrap_name,
     )
     if not _role_graph_projection_is_safe(
         observed,
@@ -1218,9 +1266,80 @@ def _role_graph_projection_is_safe(
     expected: set[_RoleGraphEdge],
     require_complete: bool,
 ) -> bool:
-    """Allow a clean/bootstrap subset preflight, but require exact terminal state."""
+    """Allow the admitted runtime Runner-management edge to be absent.
 
-    return observed.issubset(expected) and (not require_complete or observed == expected)
+    The principal operator needs ADMIN on ``saas_runner_agent`` while the
+    deployment stages Runner logins.  The independently signed Runner fleet
+    admission requires that management edge to be revoked before the runtime
+    fleet becomes online.  Both states are valid terminal projections: all
+    other expected edges remain mandatory and every unexpected edge is denied.
+    """
+
+    if not observed.issubset(expected):
+        return False
+    if not require_complete:
+        return True
+    missing = expected - observed
+    return not missing or (
+        len(missing) == 1
+        and next(iter(missing))[0] == "saas_runner_agent"
+        and next(iter(missing))[3:] == (True, False, False, 10)
+    )
+
+
+def _runtime_runner_membership_is_safe(
+    edge: tuple[object, ...],
+    *,
+    bootstrap_name: str,
+) -> bool:
+    if len(edge) != 7:
+        return False
+    granted, member, grantor, admin, inherit, can_set, grantor_oid = edge
+    if not isinstance(member, str):
+        return False
+    match = _RUNNER_AGENT_LOGIN.fullmatch(member)
+    return bool(
+        granted == "saas_runner_agent"
+        and match is not None
+        and int(match.group(1), 16) != 0
+        and int(match.group(2)) <= (1 << 63) - 1
+        and grantor == bootstrap_name
+        and not admin
+        and inherit
+        and not can_set
+        and grantor_oid == 10
+    )
+
+
+def _runtime_runner_login_flags_are_safe(row: tuple[object, ...]) -> bool:
+    if len(row) != 10:
+        return False
+    login = str(row[0])
+    match = _RUNNER_AGENT_LOGIN.fullmatch(login)
+    return bool(
+        match is not None
+        and int(match.group(1), 16) != 0
+        and int(match.group(2)) <= (1 << 63) - 1
+        and tuple(row[1:9]) == (True, False, False, False, False, False, True, 8)
+        and row[9] is None
+    )
+
+
+def _stable_control_plane_memberships(
+    rows: list[list[object]],
+    *,
+    bootstrap_name: str,
+) -> list[list[object]]:
+    """Exclude validated dynamic Runner edges from the static catalog anchor."""
+
+    return [
+        row[:6]
+        for row in rows
+        if not _runtime_runner_membership_is_safe(
+            tuple(row),
+            bootstrap_name=bootstrap_name,
+        )
+    ]
 
 
 def _service_login_flags_are_safe(
@@ -1792,11 +1911,63 @@ def _apply_runtime_authority(engine: Engine) -> None:
         _verify_owner_acl_surface(connection, phase="runtime_authority")
 
 
+def _preview_authority_grants_present(connection: Connection) -> bool:
+    rows = connection.execute(
+        sa.text(
+            "SELECT relation.relname, '' AS column_name, grantee.rolname, "
+            "pg_get_userbyid(acl.grantor), acl.is_grantable "
+            "FROM pg_class relation JOIN pg_namespace namespace "
+            "ON namespace.oid = relation.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(relation.relacl) acl "
+            "JOIN pg_roles grantee ON grantee.oid = acl.grantee "
+            "WHERE namespace.nspname = 'public' "
+            "AND relation.relname IN ('saas_preview_gateway_certificates', "
+            "'saas_preview_gateway_instances') "
+            "AND grantee.rolname IN ('saas_preview_edge', 'saas_preview_owner') "
+            "AND acl.privilege_type = 'SELECT' "
+            "UNION ALL "
+            "SELECT relation.relname, attribute.attname, grantee.rolname, "
+            "pg_get_userbyid(acl.grantor), acl.is_grantable "
+            "FROM pg_attribute attribute JOIN pg_class relation "
+            "ON relation.oid = attribute.attrelid "
+            "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(attribute.attacl) acl "
+            "JOIN pg_roles grantee ON grantee.oid = acl.grantee "
+            "WHERE namespace.nspname = 'public' "
+            "AND relation.relname = 'saas_preview_gateway_instances' "
+            "AND attribute.attname = 'server_name' "
+            "AND grantee.rolname = 'saas_preview_owner' "
+            "AND acl.privilege_type = 'SELECT'"
+        )
+    ).all()
+    observed = {tuple(row) for row in rows}
+    owner = connection.execute(sa.text("SELECT current_user")).scalar_one()
+    expected = {
+        ("saas_preview_gateway_certificates", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_certificates", "", "saas_preview_owner", owner, False),
+        ("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_instances", "server_name", "saas_preview_owner", owner, False),
+    }
+    if observed not in (set(), expected):
+        raise PostgreSqlMigrationError("preview_authority_acl_partial", "control_plane_authority")
+    return bool(observed)
+
+
 def _apply_control_plane_authority(engine: Engine) -> None:
     with engine.begin() as connection:
         _preflight_owner_acl_surface(connection, phase="control_plane_authority")
+        preview_authority = _preview_authority_grants_present(connection)
         _revoke_owner_acl_surface(connection)
         connection.exec_driver_sql(_read_resource("saas.control_plane", "postgresql_roles.sql"))
+        if preview_authority:
+            connection.exec_driver_sql(
+                "GRANT SELECT (server_name) ON public.saas_preview_gateway_instances "
+                "TO saas_preview_owner; "
+                "GRANT SELECT ON public.saas_preview_gateway_certificates "
+                "TO saas_preview_edge, saas_preview_owner; "
+                "GRANT SELECT ON public.saas_preview_gateway_instances "
+                "TO saas_preview_edge"
+            )
         _verify_owner_acl_surface(connection, phase="control_plane_authority")
 
 
@@ -2068,7 +2239,15 @@ def _verify_public_schema_inventory_digest(
     digest = hashlib.sha256(
         json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if expected_digest is None or digest != expected_digest:
+    accepted_digests = {
+        item
+        for item in (
+            expected_digest,
+            _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key),
+        )
+        if item is not None
+    }
+    if digest not in accepted_digests:
         raise PostgreSqlMigrationError("public_schema_inventory_drifted", "verification")
     return digest
 
@@ -2150,9 +2329,110 @@ def _verify_source_security_catalog_digest(
     digest = hashlib.sha256(
         json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if _source_security_catalog_baselines(bindings).get(key) != digest:
+    accepted_digests = {_source_security_catalog_baselines(bindings).get(key)}
+    if bindings is not None:
+        observed = {binding.service: binding.base_role for binding in bindings.bindings}
+        platform_admin = {
+            **dict(EXPECTED_PRODUCTION_SERVICE_ROLES),
+            **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
+            **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+        }
+        if observed == platform_admin:
+            accepted_digests.add(
+                _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+            )
+    if digest not in accepted_digests:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
+
+
+_PREVIEW_OWNER_LEASE_DEFINER_SHA256 = {
+    "saas_preview_owner_heartbeat_gateway_v1(text,text)": (
+        "860cb95916d06a36922b9c2d2f71904fc589c15a393705d12199abc27e4820ac"
+    ),
+    "saas_preview_owner_release_gateway_v1(text,text)": (
+        "2a3d3e19554821e1f259bb82da3dab23b3a0e93acae64a66c9ceef54750ace89"
+    ),
+}
+
+
+def _preview_owner_lease_definers_are_safe(
+    function_rows: Iterable[Sequence[object]],
+    acl_rows: Iterable[Sequence[object]],
+    *,
+    bootstrap_name: str,
+) -> bool:
+    """Admit only the two digest-pinned bootstrap RLS bypass functions."""
+
+    functions = list(function_rows)
+    if len(functions) != len(_PREVIEW_OWNER_LEASE_DEFINER_SHA256):
+        return False
+    identities: set[str] = set()
+    signatures: set[str] = set()
+    for signature, identity, owner, kind, security_definer, config, definition in functions:
+        signature = str(signature)
+        if (
+            _PREVIEW_OWNER_LEASE_DEFINER_SHA256.get(signature)
+            != hashlib.sha256(str(definition).encode()).hexdigest()
+            or str(owner) != bootstrap_name
+            or str(kind) != "f"
+            or not bool(security_definer)
+            or not isinstance(config, (list, tuple))
+            or list(config) != ["search_path=pg_catalog, pg_temp"]
+        ):
+            return False
+        signatures.add(signature)
+        identities.add(f"routine:{identity}")
+    expected_acl = {
+        (signature, grantee, bootstrap_name, "EXECUTE", False)
+        for signature in signatures
+        for grantee in (bootstrap_name, "saas_preview_owner")
+    }
+    observed_acl = {
+        (str(signature), str(grantee), str(grantor), str(privilege), bool(grantable))
+        for signature, grantee, grantor, privilege, grantable in acl_rows
+    }
+    return observed_acl == expected_acl and len(identities) == len(signatures)
+
+
+def _verify_preview_owner_lease_definers(
+    connection: Connection,
+    *,
+    bootstrap_name: str,
+) -> frozenset[str]:
+    names = [signature.partition("(")[0] for signature in _PREVIEW_OWNER_LEASE_DEFINER_SHA256]
+    function_rows = connection.execute(
+        sa.text(
+            "SELECT routine.oid::regprocedure::text, routine.proname || '(' || "
+            "pg_get_function_identity_arguments(routine.oid) || ')', "
+            "pg_get_userbyid(routine.proowner), routine.prokind, routine.prosecdef, "
+            "routine.proconfig, pg_get_functiondef(routine.oid) FROM pg_proc routine "
+            "JOIN pg_namespace namespace ON namespace.oid = routine.pronamespace "
+            "WHERE namespace.nspname = 'public' AND routine.proname = ANY(:names) "
+            "ORDER BY routine.proname"
+        ),
+        {"names": names},
+    ).all()
+    acl_rows = connection.execute(
+        sa.text(
+            "SELECT routine.oid::regprocedure::text, "
+            "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END, "
+            "CASE WHEN acl.grantor = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantor) END, "
+            "acl.privilege_type, acl.is_grantable FROM pg_proc routine "
+            "JOIN pg_namespace namespace ON namespace.oid = routine.pronamespace "
+            "CROSS JOIN LATERAL aclexplode(routine.proacl) acl "
+            "WHERE namespace.nspname = 'public' AND routine.proname = ANY(:names) "
+            "ORDER BY routine.proname, 2, 3, 4, 5"
+        ),
+        {"names": names},
+    ).all()
+    if not _preview_owner_lease_definers_are_safe(
+        function_rows,
+        acl_rows,
+        bootstrap_name=bootstrap_name,
+    ):
+        raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
+    return frozenset(f"routine:{row[1]}" for row in function_rows)
 
 
 def _verify_object_ownership(
@@ -2208,7 +2488,25 @@ def _verify_object_ownership(
             "AND left(relation.relname, 5) = 'saas_')) ORDER BY 1"
         )
     ).all()
-    if not saas_rows or any(owner != saas_owner for _table, owner in saas_rows):
+    foreign_saas_owners = {
+        (str(table), str(owner)) for table, owner in saas_rows if owner != saas_owner
+    }
+    preview_lease_definers: frozenset[str] = frozenset()
+    bootstrap_name = ""
+    if foreign_saas_owners:
+        bootstrap_name = str(
+            saas_connection.execute(
+                sa.text("SELECT rolname FROM pg_roles WHERE oid = 10")
+            ).scalar_one()
+        )
+        preview_lease_definers = _verify_preview_owner_lease_definers(
+            saas_connection,
+            bootstrap_name=bootstrap_name,
+        )
+    if not saas_rows or any(
+        table not in preview_lease_definers or owner != bootstrap_name
+        for table, owner in foreign_saas_owners
+    ):
         raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
     _verify_public_schema_inventory(
         official_connection,
@@ -2909,6 +3207,9 @@ def _control_plane_security_catalog(
         ]
 
     roles = list(_CAPABILITY_ROLES)
+    bootstrap_name = str(
+        connection.execute(sa.text("SELECT rolname FROM pg_roles WHERE oid = 10")).scalar_one()
+    )
     role_name = "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END"
     grantor_name = "CASE WHEN acl.grantor = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantor) END"
     parameters = {"owner": saas_owner}
@@ -2920,18 +3221,22 @@ def _control_plane_security_catalog(
             "WHERE rolname = ANY(:roles) ORDER BY rolname",
             {"roles": roles},
         ),
-        "memberships": rows(
-            "SELECT granted.rolname, member.rolname, grantor.rolname, "
-            "membership.admin_option, "
-            "COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true), "
-            "COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true) "
-            "FROM pg_auth_members AS membership "
-            "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
-            "JOIN pg_roles AS member ON member.oid = membership.member "
-            "JOIN pg_roles AS grantor ON grantor.oid = membership.grantor "
-            "WHERE granted.rolname = ANY(:roles) OR member.rolname = ANY(:roles) "
-            "ORDER BY granted.rolname, member.rolname, grantor.rolname",
-            {"roles": roles},
+        "memberships": _stable_control_plane_memberships(
+            rows(
+                "SELECT granted.rolname, member.rolname, grantor.rolname, "
+                "membership.admin_option, "
+                "COALESCE((to_jsonb(membership) ->> 'inherit_option')::boolean, true), "
+                "COALESCE((to_jsonb(membership) ->> 'set_option')::boolean, true), "
+                "membership.grantor "
+                "FROM pg_auth_members AS membership "
+                "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
+                "JOIN pg_roles AS member ON member.oid = membership.member "
+                "JOIN pg_roles AS grantor ON grantor.oid = membership.grantor "
+                "WHERE granted.rolname = ANY(:roles) OR member.rolname = ANY(:roles) "
+                "ORDER BY granted.rolname, member.rolname, grantor.rolname",
+                {"roles": roles},
+            ),
+            bootstrap_name=bootstrap_name,
         ),
         "database_acls": rows(
             f"SELECT {role_name}, {grantor_name}, acl.privilege_type, acl.is_grantable "
@@ -3401,7 +3706,7 @@ def verify_production_postgresql_state(
     engines: Mapping[str, Engine],
     config: Any,
 ) -> None:
-    """Verify an immutable migration receipt against five live service logins.
+    """Verify an immutable migration receipt against every enabled service login.
 
     This startup path performs catalog reads only.  It never opens an owner
     authority, runs Alembic, changes a role, or grants a privilege.
@@ -3409,17 +3714,20 @@ def verify_production_postgresql_state(
 
     try:
         receipt = _load_runtime_receipt(config)
-        if set(engines) != set(_SERVER_SERVICE_ROLES):
+        expected_service_roles = dict(_SERVER_SERVICE_ROLES)
+        if "billing" in config.capabilities:
+            expected_service_roles["billing"] = "saas_billing"
+        if set(engines) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_engine_set_invalid", "runtime_verification")
         configured_urls = config.secrets.database_urls.as_mapping()
-        if set(configured_urls) != set(_SERVER_SERVICE_ROLES):
+        if set(configured_urls) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_url_set_invalid", "runtime_verification")
         facts: list[_ServiceSessionFacts] = []
-        for service, expected_role in _SERVER_SERVICE_ROLES.items():
+        for service, expected_role in expected_service_roles.items():
             parsed = make_url(configured_urls[service])
             if parsed.username is None:
                 raise PostgreSqlMigrationError("service_url_login_missing", "runtime_verification")
-            if parsed.username != config.service_role_bindings.login_for(service):
+            if parsed.username != config.service_role_graph.login_for(service):
                 raise PostgreSqlMigrationError(
                     "service_url_binding_mismatch", "runtime_verification"
                 )
@@ -3430,7 +3738,7 @@ def verify_production_postgresql_state(
                     expected_role=expected_role,
                 )
             )
-        if len({fact.login for fact in facts}) != len(_SERVER_SERVICE_ROLES):
+        if len({fact.login for fact in facts}) != len(expected_service_roles):
             raise PostgreSqlMigrationError("service_login_not_distinct", "runtime_verification")
         database_facts = {_database_identity_sha256(fact) for fact in facts}
         if len(database_facts) != 1:

@@ -22,7 +22,7 @@ from typing import Any
 
 from playwright.async_api import Route, async_playwright, expect
 
-from tests.e2e_ui.start_session.helpers import select_landing_agent, stub_empty_host_picker_data
+from tests.e2e_ui.start_session.helpers import stub_empty_host_picker_data
 
 _HOST_ID = "host_e2e"
 # The stub host reports codex installed-but-not-configured; the credential POST
@@ -235,7 +235,11 @@ async def _drive_add_key(base_url: str) -> None:
             # composer auto-selects the built-in Claude Code, not our stubbed
             # Codex, so select Codex explicitly — waiting for its row to render
             # (it mounts only after the /v1/agents fetch resolves; can lag on CI).
-            await select_landing_agent(page, "ag_codex_e2e")
+            await page.get_by_test_id("new-chat-landing-agent-select").click()
+            codex_option = page.get_by_test_id("new-chat-landing-agent-ag_codex_e2e")
+            await expect(codex_option).to_be_visible(timeout=60_000)
+            await expect(codex_option).to_be_disabled()
+            await page.get_by_test_id("new-chat-landing-agent-ag_codex_e2e-setup").click()
 
             # "Set up →" opens the dialog; there's no Install (already installed).
             setup = page.get_by_test_id("new-chat-landing-harness-setup")

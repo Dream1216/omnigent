@@ -207,3 +207,17 @@ def test_local_operator_transition_cli_reads_private_files_without_echoing_secre
     captured = capsys.readouterr()
     assert str(created) in captured.out
     assert "staff-admin-password-2026" not in captured.out + captured.err
+
+    def failed_transition(_environ, **_kwargs):
+        raise sa.exc.IntegrityError(
+            "INSERT INTO credentials",
+            {"password_hash": "sensitive-hash"},
+            Exception("foreign key violation"),
+        )
+
+    monkeypatch.setattr(transition_script, "transition_local_operator", failed_transition)
+    assert transition_script.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "platform_transition_rejected" in captured.err
+    assert "sensitive-hash" not in captured.err

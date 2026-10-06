@@ -1247,6 +1247,10 @@ DECLARE
         'public.saas_preview_owner_heartbeat_gateway_v1(text,text)',
         'public.saas_preview_owner_release_gateway_v1(text,text)'
     ];
+    bootstrap_owned_gateway_functions constant text[] := ARRAY[
+        'public.saas_preview_owner_heartbeat_gateway_v1(text,text)',
+        'public.saas_preview_owner_release_gateway_v1(text,text)'
+    ];
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
@@ -1297,12 +1301,24 @@ BEGIN
     END LOOP;
     FOREACH target_signature IN ARRAY preview_functions
     LOOP
+        -- Bootstrap-owned SECURITY DEFINER functions keep their exact ACL.
+        IF target_signature = ANY(bootstrap_owned_gateway_functions)
+           AND (SELECT proowner FROM pg_proc
+                WHERE oid = to_regprocedure(target_signature)) <> (
+                    SELECT oid FROM pg_roles WHERE rolname = current_user
+                ) THEN
+            CONTINUE;
+        END IF;
         EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature || ' FROM PUBLIC';
         FOREACH target_role IN ARRAY target_roles
         LOOP
             EXECUTE 'REVOKE ALL ON FUNCTION ' || target_signature ||
                 ' FROM ' || quote_ident(target_role);
         END LOOP;
+        IF target_signature = ANY(bootstrap_owned_gateway_functions) THEN
+            EXECUTE 'GRANT EXECUTE ON FUNCTION ' || target_signature ||
+                ' TO saas_preview_owner';
+        END IF;
     END LOOP;
 
     GRANT EXECUTE ON FUNCTION
@@ -1333,9 +1349,7 @@ BEGIN
         public.saas_preview_owner_route_match_v1(
             uuid,uuid,bigint,text,text,timestamptz
         ),
-        public.saas_preview_authorize_session_v1(text,text,timestamptz),
-        public.saas_preview_owner_heartbeat_gateway_v1(text,text),
-        public.saas_preview_owner_release_gateway_v1(text,text)
+        public.saas_preview_authorize_session_v1(text,text,timestamptz)
     TO saas_preview_owner;
 
     GRANT SELECT (
@@ -2226,6 +2240,18 @@ BEGIN
           AND (
               namespace.nspname <> 'public'
               OR routine.proowner <> caller_role
+          )
+          AND NOT (
+              namespace.nspname = 'pg_catalog'
+              AND routine.proname = 'pg_advisory_xact_lock'
+              AND pg_get_function_identity_arguments(routine.oid) = 'bigint'
+              AND pg_get_userbyid(routine.proowner) = 'next_beta_bootstrap'
+              AND grantee.rolname IN (
+                  'saas_registration', 'saas_onboarding', 'saas_executor'
+              )
+              AND acl.grantor = routine.proowner
+              AND acl.privilege_type = 'EXECUTE'
+              AND NOT acl.is_grantable
           )
         UNION ALL
         SELECT 1

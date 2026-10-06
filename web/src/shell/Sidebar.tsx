@@ -185,6 +185,7 @@ import {
 } from "@/hooks/useUnseenConversations";
 import { cn } from "@/lib/utils";
 import { useOmnigentAnalytics } from "@/lib/analytics";
+import { useI18n } from "@/lib/i18n";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useIOSNativeKeyboardInset } from "@/hooks/useIOSNativeKeyboardInset";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";
@@ -589,6 +590,7 @@ function SidebarImpl({
   peek,
 }: SidebarProps) {
   const sidebarData = useSidebarData();
+  const { t } = useI18n();
   const branding = useBranding();
   const serverInfo = useServerInfo();
   const usagePageEnabled = isFeatureEnabled(serverInfo, "usage_page");
@@ -1075,7 +1077,7 @@ function SidebarImpl({
                         : "text-muted-foreground",
                     )}
                   />
-                  New session
+                  {t("sidebar.newSession")}
                 </Link>
               </Button>
               {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
@@ -1102,7 +1104,7 @@ function SidebarImpl({
                         : "text-muted-foreground",
                     )}
                   />
-                  Automations
+                  {t("sidebar.automations")}
                 </Link>
               </Button>
               <Button
@@ -1125,13 +1127,13 @@ function SidebarImpl({
                         : "text-muted-foreground",
                     )}
                   />
-                  Inbox
+                  {t("sidebar.inbox")}
                   {inboxCount > 0 && (
                     <span
                       aria-label={
                         inboxCount === 1
-                          ? "1 inbox item waiting"
-                          : `${inboxCount} inbox items waiting`
+                          ? t("sidebar.inboxOne")
+                          : t("sidebar.inboxMany", { count: inboxCount })
                       }
                       className={cn(
                         "ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-10 font-medium text-[var(--sidebar-active-foreground)] tabular-nums",
@@ -1573,6 +1575,7 @@ function ConversationList({
   onExitSelectionMode,
   getVisibleIdsRef,
 }: ConversationListProps) {
+  const { t } = useI18n();
   // Row-invariant values resolved once here and shared with rows via context
   // (see IsMobileContext etc.), so each row doesn't run its own copy.
   const viewerId = useViewerId();
@@ -1803,7 +1806,7 @@ function ConversationList({
   const toggleSectionCollapsed = useCallback((sectionTitle: string) => {
     setCollapsedSections((prev) => {
       const next = prev.includes(sectionTitle)
-        ? prev.filter((t) => t !== sectionTitle)
+        ? prev.filter((title) => title !== sectionTitle)
         : [...prev, sectionTitle];
       writeCollapsedSidebarSections(next);
       return next;
@@ -1822,7 +1825,7 @@ function ConversationList({
     if (wasPinned) {
       setCollapsedSections((prevCollapsed) => {
         if (!prevCollapsed.includes("Pinned")) return prevCollapsed;
-        const next = prevCollapsed.filter((t) => t !== "Pinned");
+        const next = prevCollapsed.filter((title) => title !== "Pinned");
         writeCollapsedSidebarSections(next);
         return next;
       });
@@ -1848,7 +1851,7 @@ function ConversationList({
     ? (sectionTitle: string) => {
         setSearchCollapsedSections((prev) =>
           prev.includes(sectionTitle)
-            ? prev.filter((t) => t !== sectionTitle)
+            ? prev.filter((title) => title !== sectionTitle)
             : [...prev, sectionTitle],
         );
       }
@@ -2266,7 +2269,7 @@ function ConversationList({
                   // an unpinned session; outline-only highlight.
                   <PinDropZone active={activeDrag != null && !activeDrag.isPinned}>
                     <ConversationSection
-                      title="Pinned"
+                      title={t("sidebar.pinned")}
                       conversations={sections.pinned}
                       activeConversationId={displayedActiveId}
                       pinnedConversationIds={pinnedConversationIds}
@@ -2289,7 +2292,7 @@ function ConversationList({
               "New project" (create-empty) stays discoverable and folders don't
               vanish when switching to Shared or Archived. */}
                 <SectionGroup
-                  title="Projects"
+                  title={t("sidebar.projects")}
                   collapsed={effectiveCollapsedSections.includes("Projects")}
                   onToggleCollapsed={() => effectiveToggleSectionCollapsed("Projects")}
                   afterHeader={
@@ -2399,7 +2402,7 @@ function ConversationList({
                     }
                   >
                     <ConversationSection
-                      title="Sessions"
+                      title={t("sidebar.sessions")}
                       conversations={sections.sessions}
                       activeConversationId={displayedActiveId}
                       emptyMessage={sessionStatus ? undefined : SIDEBAR_FILTER_EMPTY[activeTab]}

@@ -16,6 +16,7 @@ from saas.production.service_bindings import (
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
+    compose_production_service_role_graph,
 )
 from saas.scripts.run_postgresql_migration import _write_exclusive
 
@@ -265,9 +266,18 @@ def test_principal_operator_allows_only_non_runtime_admin_edges() -> None:
         )
 
 
-def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> None:
+def test_role_graph_allows_only_runtime_runner_management_edge_to_be_absent() -> None:
     expected: set[migration._RoleGraphEdge] = {
         ("saas_app", "principal_operator", "postgres", True, False, False, 10),
+        (
+            "saas_runner_agent",
+            "principal_operator",
+            "postgres",
+            True,
+            False,
+            False,
+            10,
+        ),
         (
             "saas_app",
             "app_login",
@@ -282,14 +292,25 @@ def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> No
         set(expected), expected=expected, require_complete=True
     )
 
-    missing_management = {edge for edge in expected if edge[1] != "principal_operator"}
+    missing_runner_management = {edge for edge in expected if edge[0] != "saas_runner_agent"}
     assert migration._role_graph_projection_is_safe(
-        missing_management,
+        missing_runner_management,
         expected=expected,
         require_complete=False,
     )
+    assert migration._role_graph_projection_is_safe(
+        missing_runner_management,
+        expected=expected,
+        require_complete=True,
+    )
+
+    missing_app_management = {
+        edge
+        for edge in expected
+        if edge != ("saas_app", "principal_operator", "postgres", True, False, False, 10)
+    }
     assert not migration._role_graph_projection_is_safe(
-        missing_management,
+        missing_app_management,
         expected=expected,
         require_complete=True,
     )
@@ -307,6 +328,68 @@ def test_role_graph_requires_complete_bootstrap_granted_management_edges() -> No
         expected=expected,
         require_complete=True,
     )
+
+
+def test_runtime_runner_memberships_allow_only_exact_least_privilege_shape() -> None:
+    runner_login = "runner_23dbe8e9d95a442abc841c356800ecfc_g2"
+    edge: migration._RoleGraphEdge = (
+        "saas_runner_agent",
+        runner_login,
+        "postgres",
+        False,
+        True,
+        False,
+        10,
+    )
+
+    assert migration._runtime_runner_membership_is_safe(edge, bootstrap_name="postgres")
+    assert migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, False, False, False, False, False, True, 8, None)
+    )
+    assert not migration._runtime_runner_membership_is_safe(
+        (*edge[:3], True, *edge[4:]), bootstrap_name="postgres"
+    )
+    assert not migration._runtime_runner_membership_is_safe(
+        (*edge[:2], "other", *edge[3:]), bootstrap_name="postgres"
+    )
+    assert not migration._runtime_runner_membership_is_safe(edge[:-1], bootstrap_name="postgres")
+    assert not migration._runtime_runner_membership_is_safe(
+        (edge[0], None, *edge[2:]), bootstrap_name="postgres"
+    )
+    assert not migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, True, False, False, False, False, True, 8, None)
+    )
+    assert not migration._runtime_runner_login_flags_are_safe(
+        (runner_login, True, False, False, False, False, False, True, -1, None)
+    )
+
+
+def test_static_security_catalog_excludes_only_safe_dynamic_runner_edges() -> None:
+    runner_login = "runner_23dbe8e9d95a442abc841c356800ecfc_g9"
+    management = [
+        "saas_runner_agent",
+        "principal_operator",
+        "postgres",
+        True,
+        False,
+        False,
+        10,
+    ]
+    runner = [
+        "saas_runner_agent",
+        runner_login,
+        "postgres",
+        False,
+        True,
+        False,
+        10,
+    ]
+    unsafe_runner = [*runner[:3], True, *runner[4:]]
+
+    assert migration._stable_control_plane_memberships(
+        [management, runner, unsafe_runner],
+        bootstrap_name="postgres",
+    ) == [management[:6], unsafe_runner[:6]]
 
 
 def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
@@ -680,6 +763,165 @@ def test_p0s11_source_security_catalog_keeps_legacy_row_order(
             role_aliases={},
         )
     assert reordered.value.code == "source_security_catalog_drifted"
+
+
+def test_preview_owner_lease_definer_exception_is_exact() -> None:
+    bootstrap = "next_beta_bootstrap"
+    functions = [
+        (
+            signature,
+            signature.partition("(")[0]
+            + "(expected_gateway_id text, presented_gateway_token_hash text)",
+            bootstrap,
+            "f",
+            True,
+            ["search_path=pg_catalog, pg_temp"],
+            definition,
+        )
+        for signature, definition in (
+            (
+                "saas_preview_owner_heartbeat_gateway_v1(text,text)",
+                "heartbeat-definition",
+            ),
+            (
+                "saas_preview_owner_release_gateway_v1(text,text)",
+                "release-definition",
+            ),
+        )
+    ]
+    digests = {
+        signature: migration.hashlib.sha256(definition.encode()).hexdigest()
+        for signature, definition in (
+            (functions[0][0], functions[0][6]),
+            (functions[1][0], functions[1][6]),
+        )
+    }
+    original = migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256
+    migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256 = digests
+    try:
+        acls = [
+            (signature, grantee, bootstrap, "EXECUTE", False)
+            for signature in digests
+            for grantee in (bootstrap, "saas_preview_owner")
+        ]
+        assert migration._preview_owner_lease_definers_are_safe(
+            functions,
+            acls,
+            bootstrap_name=bootstrap,
+        )
+        assert not migration._preview_owner_lease_definers_are_safe(
+            functions,
+            [*acls, (functions[0][0], "PUBLIC", bootstrap, "EXECUTE", False)],
+            bootstrap_name=bootstrap,
+        )
+        changed = [*functions]
+        changed[0] = (*changed[0][:6], "changed-definition")
+        assert not migration._preview_owner_lease_definers_are_safe(
+            changed,
+            acls,
+            bootstrap_name=bootstrap,
+        )
+    finally:
+        migration._PREVIEW_OWNER_LEASE_DEFINER_SHA256 = original
+
+
+@pytest.mark.parametrize("state", ["absent", "complete", "partial", "wrong_grantor"])
+def test_preview_authority_acl_preservation_requires_an_exact_projection(
+    state: str,
+) -> None:
+    owner = "next_beta_saas_owner"
+    grants = [
+        ("saas_preview_gateway_certificates", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_certificates", "", "saas_preview_owner", owner, False),
+        ("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_instances", "server_name", "saas_preview_owner", owner, False),
+    ]
+    if state == "absent":
+        grants = []
+    elif state == "partial":
+        grants.pop()
+    elif state == "wrong_grantor":
+        grants[-1] = (*grants[-1][:3], "next_beta_bootstrap", False)
+
+    class Connection:
+        def execute(self, statement: object) -> SimpleNamespace:
+            if str(statement) == "SELECT current_user":
+                return SimpleNamespace(scalar_one=lambda: owner)
+            return SimpleNamespace(all=lambda: grants)
+
+    if state in {"partial", "wrong_grantor"}:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._preview_authority_grants_present(Connection())  # type: ignore[arg-type]
+        assert error.value.code == "preview_authority_acl_partial"
+    else:
+        assert migration._preview_authority_grants_present(Connection()) is (  # type: ignore[arg-type]
+            state == "complete"
+        )
+
+
+def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (18, "official", "saas")
+    inventory = [["policy", "preview-edge", "saas_owner"]]
+    digest = migration.hashlib.sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_PUBLIC_SCHEMA_INVENTORY_SHA256", {key: "0" * 64})
+    monkeypatch.setattr(
+        migration,
+        "_PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256",
+        {key: digest},
+    )
+
+    assert migration._verify_public_schema_inventory_digest(inventory, key=key) == digest
+    with pytest.raises(migration.PostgreSqlMigrationError) as drift:
+        migration._verify_public_schema_inventory_digest(
+            [*inventory, ["policy", "unexpected", "PUBLIC"]],
+            key=key,
+        )
+    assert drift.value.code == "public_schema_inventory_drifted"
+
+
+def test_preview_authority_security_catalog_requires_platform_admin_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = (18, "official", "saas")
+    catalog = {"policies": [["preview-edge", "SELECT"]]}
+    digest = migration.hashlib.sha256(
+        json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    graph = migration.compose_production_service_role_graph(
+        _bindings(),
+        _platform_bindings(),
+        _platform_admin_bindings(),
+    )
+    monkeypatch.setattr(
+        migration, "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256", {key: "0" * 64}
+    )
+    monkeypatch.setattr(
+        migration,
+        "_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+        {key: digest},
+    )
+
+    assert (
+        migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+            bindings=graph,
+        )
+        == digest
+    )
+    with pytest.raises(migration.PostgreSqlMigrationError) as wrong_profile:
+        migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+            bindings=_bindings(),
+        )
+    assert wrong_profile.value.code == "source_security_catalog_drifted"
 
 
 def test_source_security_catalog_normalizes_roles_and_rejects_acl_drift(
@@ -1103,9 +1345,14 @@ def test_receipt_write_is_exclusive_and_owner_only(tmp_path: Path) -> None:
     assert output.read_text(encoding="utf-8") == "{}\n"
 
 
-def test_runtime_verify_only_binds_receipt_and_five_service_logins(
+@pytest.mark.parametrize("billing", [False, True])
+def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
     monkeypatch: pytest.MonkeyPatch,
+    billing: bool,
 ) -> None:
+    service_role_graph = compose_production_service_role_graph(
+        _bindings(), _platform_bindings() if billing else None, None
+    )
     contracts = migration.load_runtime_rls_contract()
     catalog = {
         "official_head": "official-head",
@@ -1139,7 +1386,7 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
             database_identity_sha256=identity_digest,
             catalog_sha256=catalog_digest,
             service_role_bindings_sha256=_bindings().sha256,
-            service_role_graph_sha256=_bindings().sha256,
+            service_role_graph_sha256=service_role_graph.sha256,
             runtime_rls_table_count=len(contracts),
             official_owner="official_owner",
             saas_owner="saas_owner",
@@ -1197,20 +1444,31 @@ def test_runtime_verify_only_binds_receipt_and_five_service_logins(
                 )
             )
 
+    expected_service_roles = dict(migration._SERVER_SERVICE_ROLES)
+    if billing:
+        expected_service_roles["billing"] = "saas_billing"
     urls = {
-        service: f"postgresql+psycopg://{service}_login:secret@db/omnigent"
-        for service in migration._SERVER_SERVICE_ROLES
+        service: (
+            "postgresql+psycopg://platform_model_billing_login:secret@db/omnigent"
+            if service == "billing"
+            else f"postgresql+psycopg://{service}_login:secret@db/omnigent"
+        )
+        for service in expected_service_roles
     }
     config = SimpleNamespace(
+        capabilities=frozenset({"billing"} if billing else ()),
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         service_role_bindings=_bindings(),
-        service_role_graph=_bindings(),
+        service_role_graph=service_role_graph,
     )
-    engines = {service: FakeEngine() for service in migration._SERVER_SERVICE_ROLES}
+    engines = {service: FakeEngine() for service in expected_service_roles}
 
     migration.verify_production_postgresql_state(engines=engines, config=config)
 
     assert observed == [
-        (f"{service}_login", base_role)
-        for service, base_role in migration._SERVER_SERVICE_ROLES.items()
+        (
+            "platform_model_billing_login" if service == "billing" else f"{service}_login",
+            base_role,
+        )
+        for service, base_role in expected_service_roles.items()
     ]

@@ -28,6 +28,7 @@ import {
 import { applyThemePalette, readThemePalette } from "./lib/themePalette";
 import { applyCustomTheme, readCustomTheme } from "./lib/customTheme";
 import { initChatStore } from "./store/chatStore";
+import { I18nProvider } from "./lib/i18n";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
 import "./index.css";
@@ -136,29 +137,31 @@ function RootApp({ initialInfo }: { initialInfo: ServerInfo | "loading" }) {
     link.href = faviconUrl;
   }, [info]);
   return (
-    <CapabilitiesProvider info={info}>
-      <QueryClientProvider client={queryClient}>
-        <ExtensionProvider>
-          <ThemeProvider>
-            <TooltipProvider>
-              <ImageLightboxProvider>
-                <BrowserRouter>
-                  <SidebarDataProvider config={appConfig.sidebar}>
-                    <SessionUpdatesProvider>
-                      <RunnerHealthProvider>
-                        <QueueFlushProvider>
-                          <App />
-                        </QueueFlushProvider>
-                      </RunnerHealthProvider>
-                    </SessionUpdatesProvider>
-                  </SidebarDataProvider>
-                </BrowserRouter>
-              </ImageLightboxProvider>
-            </TooltipProvider>
-          </ThemeProvider>
-        </ExtensionProvider>
-      </QueryClientProvider>
-    </CapabilitiesProvider>
+    <I18nProvider>
+      <CapabilitiesProvider info={info}>
+        <QueryClientProvider client={queryClient}>
+          <ExtensionProvider>
+            <ThemeProvider>
+              <TooltipProvider>
+                <ImageLightboxProvider>
+                  <BrowserRouter>
+                    <SidebarDataProvider config={appConfig.sidebar}>
+                      <SessionUpdatesProvider>
+                        <RunnerHealthProvider>
+                          <QueueFlushProvider>
+                            <App />
+                          </QueueFlushProvider>
+                        </RunnerHealthProvider>
+                      </SessionUpdatesProvider>
+                    </SidebarDataProvider>
+                  </BrowserRouter>
+                </ImageLightboxProvider>
+              </TooltipProvider>
+            </ThemeProvider>
+          </ExtensionProvider>
+        </QueryClientProvider>
+      </CapabilitiesProvider>
+    </I18nProvider>
   );
 }
 

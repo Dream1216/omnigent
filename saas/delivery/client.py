@@ -41,6 +41,7 @@ class DeliveryConfig:
     key_id: str
     private_key: bytes = field(repr=False)
     projects: tuple[DeliveryProject, ...]
+    release_preview_root_domain: str = "jxhh.com"
     ca_file: Path | None = None
     repository_mirrors: dict[str, Path] = field(default_factory=dict)
     client_certificate_file: Path | None = None
@@ -63,6 +64,11 @@ class DeliveryConfig:
             raise ValueError("delivery signing key must be RSA with at least 2048 bits")
         if not self.key_id or len({p.project_id for p in self.projects}) != len(self.projects):
             raise ValueError("delivery key or project configuration is invalid")
+        if (
+            re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", self.release_preview_root_domain) is None
+            or "." not in self.release_preview_root_domain
+        ):
+            raise ValueError("release Preview root domain is invalid")
         if (self.client_certificate_file is None) != (self.client_private_key_file is None):
             raise ValueError("delivery mTLS requires both a client certificate and private key")
         for path in (self.client_certificate_file, self.client_private_key_file):
@@ -109,6 +115,7 @@ class DeliveryConfig:
             issuer=raw["issuer"],
             key_id=raw["key_id"],
             private_key=private_file(Path(raw["private_key_file"])),
+            release_preview_root_domain=raw.get("release_preview_root_domain", "jxhh.com"),
             ca_file=Path(raw["ca_file"]) if raw.get("ca_file") else None,
             client_certificate_file=(
                 Path(raw["client_certificate_file"])
@@ -147,6 +154,13 @@ class DcpResponseError(RuntimeError):
 
 
 class DeliveryClient:
+    _CONTRACTS = (
+        "dcp-openapi-v1.json",
+        "dcp-openapi-v1-wildcard-edge.json",
+        "dcp-openapi-v1-release-edge.json",
+        "dcp-openapi-v1-next-preview-edge.json",
+    )
+
     def __init__(
         self, config: DeliveryConfig, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
@@ -172,6 +186,48 @@ class DeliveryClient:
                 "membership_version": context.tenant_membership_version,
                 "token_schema_version": 1,
                 "permissions": sorted(permissions),
+                "iat": now,
+                "exp": now + 60,
+                "jti": uuid4().hex,
+            },
+            self.config.private_key,
+            algorithm="RS256",
+            headers={"kid": self.config.key_id},
+        )
+
+    def release_preview_exchange_token(
+        self,
+        context: RequestContext,
+        *,
+        preview_id: UUID,
+        hostname: str,
+        target_generation: int,
+        git_revision: str,
+    ) -> str:
+        """Mint a short-lived browser handoff bound to one ready DCP preview."""
+        expected = f"app-r{preview_id.hex}.{self.config.release_preview_root_domain}"
+        if (
+            hostname != expected
+            or target_generation < 1
+            or re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", git_revision) is None
+        ):
+            raise ValueError("release Preview exchange target is invalid")
+        now = int(time.time())
+        return jwt.encode(
+            {
+                "iss": self.config.issuer,
+                "aud": "omnigent-release-preview-edge",
+                "sub": str(context.actor_id),
+                "tenant_id": str(context.tenant_id),
+                "space_id": str(context.space_id),
+                "project_id": str(context.project_id),
+                "membership_version": context.tenant_membership_version,
+                "token_schema_version": 1,
+                "permissions": ["deployment:read", "domain:read"],
+                "preview_id": str(preview_id),
+                "hostname": hostname,
+                "target_generation": target_generation,
+                "git_revision": git_revision,
                 "iat": now,
                 "exp": now + 60,
                 "jti": uuid4().hex,
@@ -236,15 +292,10 @@ class DeliveryClient:
         )
 
     async def check_contract(self) -> None:
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
         async with self._http() as client:
             response = await client.get("/v1/openapi.json")
             response.raise_for_status()
-        current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        ).encode()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
-            raise ValueError("App and DCP contract revisions differ")
+        self._assert_contract(response.json())
 
     def assert_ready(self) -> None:
         with httpx.Client(
@@ -252,9 +303,17 @@ class DeliveryClient:
         ) as client:
             response = client.get(self.config.endpoint.rstrip("/") + "/v1/openapi.json")
             response.raise_for_status()
+        self._assert_contract(response.json())
+
+    @classmethod
+    def _assert_contract(cls, document: Any) -> None:
         current = (
-            json.dumps(response.json(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode()
-        frozen = (Path(__file__).parents[1] / "production" / "dcp-openapi-v1.json").read_bytes()
-        if hashlib.sha256(current).digest() != hashlib.sha256(frozen).digest():
+        current_digest = hashlib.sha256(current).digest()
+        contract_directory = Path(__file__).parents[1] / "production"
+        if not any(
+            current_digest == hashlib.sha256((contract_directory / name).read_bytes()).digest()
+            for name in cls._CONTRACTS
+        ):
             raise ValueError("App and DCP contract revisions differ")
