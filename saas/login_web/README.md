@@ -69,7 +69,8 @@ Manual checks:
 
 - Sends the unchanged `{email, password}` contract to same-origin `/saas/auth/login`.
 - Keeps HttpOnly session cookies server-owned; stores only the existing CSRF
-  token under `omnigent.saas.csrf`. Passwords are not persisted.
+  token under `omnigent.saas.csrf` in tab-local and same-origin shared browser
+  storage so new tabs can authenticate mutations. Passwords are not persisted.
 - Validates `return_to` against the current origin. External and backslash
   redirects fall back to `/`.
 - No fake SSO, password-reset, or remember-me controls are introduced.

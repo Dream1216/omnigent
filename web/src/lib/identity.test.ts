@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -120,6 +121,7 @@ describe("logoutBrowserSession", () => {
       .mockResolvedValueOnce(mockJsonResponse({ user_id: "alice", is_admin: true }))
       .mockResolvedValueOnce(mockJsonResponse(null, { status: 204 }));
     window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-123");
+    window.localStorage.setItem("omnigent.saas.csrf", "csrf-123");
     const { getCurrentUserId, logoutBrowserSession, resolveIdentity } = await import("./identity");
     await resolveIdentity();
 
@@ -132,6 +134,7 @@ describe("logoutBrowserSession", () => {
     expect(new Headers(request.headers).get("X-CSRF-Token")).toBe("csrf-123");
     expect(getCurrentUserId()).toBeNull();
     expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBeNull();
+    expect(window.localStorage.getItem("omnigent.saas.csrf")).toBeNull();
   });
 
   it("preserves browser state and surfaces a structured logout rejection", async () => {
@@ -261,6 +264,34 @@ describe("authenticatedFetch", () => {
     const headers = new Headers(init.headers);
     expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
     expect(headers.get("Content-Type")).toBe("application/json");
+    expect(window.localStorage.getItem("omnigent.saas.csrf")).toBe("csrf-test-token");
+  });
+
+  it("uses the shared CSRF token when a new tab has no sessionStorage copy", async () => {
+    window.localStorage.setItem("omnigent.saas.csrf", "shared-csrf-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+    expect(headers.get("X-CSRF-Token")).toBe("shared-csrf-token");
+  });
+
+  it("prefers a newly shared token over a stale tab-local token", async () => {
+    window.sessionStorage.setItem("omnigent.saas.csrf", "stale-tab-token");
+    window.localStorage.setItem("omnigent.saas.csrf", "fresh-shared-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", { method: "POST" });
+
+    const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+    expect(headers.get("X-CSRF-Token")).toBe("fresh-shared-token");
   });
 
   it("does not leak the SaaS CSRF token to safe or cross-origin requests", async () => {
