@@ -4934,6 +4934,7 @@ def run_host_process(
     server_url: str,
     config_path: Path | None = None,
     *,
+    host_factory: Callable[..., HostProcess] = HostProcess,
     daemon_target: str | None = None,
     lifecycle_lock: DaemonLifecycleLock | None = None,
     interactive_shells: list[str] | None = None,
@@ -4947,6 +4948,7 @@ def run_host_process(
         ``"https://omnigent-app.databricksapps.com"``.
     :param config_path: Optional path to ``config.yaml``.
         Defaults to ``~/.omnigent/config.yaml``.
+    :param host_factory: Downstream-neutral HostProcess construction seam.
     :param daemon_target: Normalized registry target this process owns, e.g.
         ``"local"`` or a server URL. When given, the daemon binds its lifetime
         to that record (flock + self-terminate on delete/reassign). ``None``
@@ -5039,7 +5041,7 @@ def run_host_process(
 
     if lifecycle_lock is None and daemon_target is not None:
         lifecycle_lock = DaemonLifecycleLock.for_target(daemon_target)
-    host = HostProcess(
+    host = host_factory(
         identity,
         server_url,
         lifecycle_lock=lifecycle_lock,
