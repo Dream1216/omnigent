@@ -162,6 +162,25 @@ async def test_platform_codex_picker_uses_declared_models_without_host_secret(
     assert result.models[0]["isDefault"] is True
 
 
+@pytest.mark.asyncio
+async def test_platform_codex_picker_never_falls_back_to_account_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+
+    async def unexpected_probe(_self: object) -> None:
+        raise AssertionError("Managed Host must not expose account-wide Codex models")
+
+    monkeypatch.setattr(
+        "omnigent.host.connect.HostProcess._probed_codex_model_options",
+        unexpected_probe,
+    )
+    host = object.__new__(PlatformModelHostProcess)
+
+    assert await host._probed_codex_model_options() is None
+
+
 def test_gateway_projection_routes_opencode_without_cli_login(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

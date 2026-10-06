@@ -65,7 +65,7 @@ class PlatformModelHostProcess(HostProcess):
     async def _probed_codex_model_options(self) -> ModelOptionsResult | None:
         """Publish the managed gateway allowlist before a session bearer exists."""
         if not _platform_codex_provider_configured():
-            return await super()._probed_codex_model_options()
+            return None
         try:
             if _find_codex_cli() is None:
                 return None
