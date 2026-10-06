@@ -143,7 +143,14 @@ vi.mock("./CreateAgentDialog", () => ({
     <button
       type="button"
       data-testid="test-create-pending"
-      onClick={() => props.onCreate({ name: "pending-bot", instructions: "hi" })}
+      onClick={() =>
+        props.onCreate({
+          name: "pending-bot",
+          instructions: "hi",
+          harness: "claude-sdk",
+          model: "claude-sonnet-4-20250514",
+        })
+      }
     />
   ),
 }));

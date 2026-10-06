@@ -417,7 +417,13 @@ export const NoAgents: Story = {
     hasAgents: false,
   },
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByTestId("new-chat-landing-agent-select")).toBeDisabled();
+    const canvas = within(canvasElement);
+    const select = canvas.getByTestId("new-chat-landing-agent-select");
+    await expect(select).toBeEnabled();
+    await userEvent.click(select);
+    await expect(
+      within(canvasElement.ownerDocument.body).getByTestId("new-chat-landing-create-agent"),
+    ).toBeVisible();
   },
 };
 
