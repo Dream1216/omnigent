@@ -10,13 +10,22 @@ from fastapi import HTTPException, Response
 from fastapi.responses import HTMLResponse
 
 _ASSET_TYPES = {"js": "text/javascript", "css": "text/css", "woff2": "font/woff2"}
+_PAGE_EXPORTS = {
+    "login": "login.html",
+    "signup": "signup.html",
+    "signup-verify": "signup-verify.html",
+    "signup-status": "signup-status.html",
+}
 
 
-def login_page(headers: dict[str, str]) -> HTMLResponse | None:
+def login_page(headers: dict[str, str], *, page: str = "login") -> HTMLResponse | None:
+    filename = _PAGE_EXPORTS.get(page)
+    if filename is None:
+        raise ValueError("unknown auth page export")
     root = files("saas.login_ui").joinpath("static")
-    page = root.joinpath("login.html")
-    if not page.is_file():
-        # Backend-only installs retain the existing functional login page.
+    page_resource = root.joinpath(filename)
+    if not page_resource.is_file():
+        # Backend-only installs retain the existing functional onboarding UI.
         return None
     hashes = json.loads(root.joinpath("script-hashes.json").read_text(encoding="utf-8"))
     if not isinstance(hashes, list) or not all(
@@ -28,7 +37,7 @@ def login_page(headers: dict[str, str]) -> HTMLResponse | None:
         "script-src 'self'", "script-src 'self' " + " ".join(hashes)
     )
     return HTMLResponse(
-        page.read_text(encoding="utf-8"),
+        page_resource.read_text(encoding="utf-8"),
         headers={**headers, "Content-Security-Policy": policy},
     )
 

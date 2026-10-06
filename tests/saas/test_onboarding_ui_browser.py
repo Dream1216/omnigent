@@ -138,7 +138,12 @@ def test_packaged_pages_and_assets_have_locked_down_headers() -> None:
             .headers["content-type"]
             .startswith("text/css")
         )
-        assert "login-assets" not in client.get("/signup").text
+        if "__NEXT_DATA__" in client.get("/saas/login").text:
+            for path in ("/signup", "/signup/verify", "/signup/status"):
+                page = client.get(path).text
+                assert "__NEXT_DATA__" in page
+                assert "login-assets" in page
+                assert "onboarding.js" not in page
         assert (
             client.get("/saas/onboarding-assets/onboarding.js")
             .headers["content-type"]
@@ -430,6 +435,32 @@ def test_login_layout_is_responsive_and_has_no_registration_steps(
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert errors == []
     _screenshot(page, f"saas-login-{width}.png")
+
+
+@pytest.mark.parametrize(
+    "width,height", [(1440, 1000), (1024, 768), (768, 1024), (390, 844), (320, 740)]
+)
+def test_signup_matches_login_shell_and_is_responsive(
+    onboarding_ui_page: tuple[Page, str],
+    width: int,
+    height: int,
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.set_viewport_size({"width": width, "height": height})
+    _install_saas_routes(page)
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    page.goto(f"{live_server}/signup")
+    expect(page).to_have_title("Create a workspace · Omnigent")
+    expect(page.get_by_role("heading", name="Create your organization")).to_be_visible()
+    expect(page.get_by_role("group", name="Change language")).to_be_visible()
+    expect(page.get_by_role("link", name="Sign in")).to_be_visible()
+    expect(page.locator(".login-shell")).to_have_count(1)
+    expect(page.locator(".signup-form")).to_have_count(1)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert errors == []
+    _screenshot(page, f"saas-signup-{width}.png")
 
 
 def test_login_language_switches_immediately_and_persists(

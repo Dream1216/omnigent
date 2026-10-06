@@ -52,7 +52,12 @@ def test_exported_login_assets_and_csp_are_complete() -> None:
             assert result.headers["x-content-type-options"] == "nosniff"
             assert "immutable" in result.headers["cache-control"]
         assert "onboarding.js" not in response.text
-        assert "onboarding.js" in client.get("/signup").text
+        for path in ("/signup", "/signup/verify", "/signup/status"):
+            onboarding = client.get(path)
+            assert onboarding.status_code == 200
+            assert "__NEXT_DATA__" in onboarding.text
+            assert "login-assets" in onboarding.text
+            assert "onboarding.js" not in onboarding.text
 
 
 @pytest.mark.parametrize(
