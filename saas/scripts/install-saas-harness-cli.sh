@@ -55,3 +55,17 @@ for spec in "$@"; do
         *) bash /tmp/install-harness-cli.sh "$spec" ;;
     esac
 done
+
+# Installer-created hard links and timestamps must be stable across rebuilds.
+roots=()
+for root in /opt/jcode /opt/devin; do
+    if [ -d "$root" ]; then
+        roots+=(--root "$root")
+    fi
+done
+if [ "${#roots[@]}" -gt 0 ]; then
+    [ -n "${SOURCE_DATE_EPOCH:-}" ] || die "SOURCE_DATE_EPOCH is required"
+    python -B /tmp/normalize_host_cli_tree.py \
+        --source-date-epoch "$SOURCE_DATE_EPOCH" "${roots[@]}"
+    touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /usr/local/bin /tmp
+fi
