@@ -56,6 +56,9 @@ for spec in "$@"; do
     esac
 done
 
+# Version probing writes a time-varying log; only executable state belongs in the image.
+rm -rf -- /opt/jcode/.jcode/logs
+
 # Installer-created hard links and timestamps must be stable across rebuilds.
 roots=()
 for root in /opt/jcode /opt/devin; do
