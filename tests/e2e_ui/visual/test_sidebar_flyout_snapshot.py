@@ -44,7 +44,7 @@ _AGENTS_BODY = {
             "name": "claude-native-ui",
             "display_name": "Claude Code",
             "description": "Anthropic's coding agent",
-            "harness": None,
+            "harness": "claude-native",
             "skills": [],
         }
     ]

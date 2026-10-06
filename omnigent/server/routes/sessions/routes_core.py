@@ -994,6 +994,13 @@ def register_core_routes(
             host_store=getattr(request.app.state, "host_store", None),
             parent=parent_conv,
         )
+        from omnigent.server.routes._sessions.orchestration import (
+            _reject_unavailable_harness_for_create,
+        )
+
+        await _reject_unavailable_harness_for_create(
+            parsed_metadata, request, user_id, spec_harness(spec)
+        )
         with creation_stage("create_persistence_ms"):
             result = await asyncio.to_thread(
                 _create_session_from_bundle,

@@ -84,7 +84,7 @@ def test_new_session_shows_first_prompt_optimistically(
                         "name": "hello_world",
                         "display_name": "Hello World",
                         "description": None,
-                        "harness": None,
+                        "harness": "omnigent",
                     }
                 ]
             },

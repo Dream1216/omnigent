@@ -109,6 +109,7 @@ import { HarnessSetupDialog } from "@/shell/HarnessSetupDialog";
 import {
   harnessReadinessOnHost,
   harnessUnavailableReasonOnHost,
+  agentHarnessUnavailableReasonOnHost,
   harnessUnconfiguredOnHost,
   harnessWarningBadgeText,
   isCodexHarness,
@@ -857,7 +858,12 @@ function HarnessSetupNotice({
       data-testid="new-chat-landing-harness-warning"
     >
       <TriangleAlertIcon className="size-3.5 shrink-0" />
-      {sandbox ? (
+      {reason === "agent-unavailable" ? (
+        <span>
+          {agentName} cannot start because its agent configuration is unavailable. Ask an
+          administrator to repair it.
+        </span>
+      ) : sandbox ? (
         <span>
           {agentName} isn&apos;t ready in {hostName}. Choose a ready agent or another sandbox
           provider.
@@ -1619,7 +1625,10 @@ export function AgentHarnessPicker({
     const summary = details || entrySummaries?.[agent.id] || "Default";
     const editable = selectedConfigContent !== undefined && (isEntryConfigurable?.(agent) ?? true);
     const readiness = harnessReadinessOnHost(agent.harness, host);
-    const unavailable = !readiness.selectable && readiness.fallbackRelevant;
+    const unresolvedBundle = agent.harness === null && !agent.sessionId;
+    const deferredHarness = agent.harness === null && !!agent.sessionId;
+    const unavailable =
+      unresolvedBundle || (!readiness.selectable && readiness.fallbackRelevant && !deferredHarness);
     const warning = harnessWarningBadgeText(readiness.reason, collapsedBadge);
     const warningMessage = harnessWarningMessage(
       agent.display_name,
@@ -1641,6 +1650,7 @@ export function AgentHarnessPicker({
           }
         }}
         onSelect={() => onSelectAgent(agent)}
+        onSetup={unavailable && agent.harness ? () => onSelectAgent(agent) : undefined}
         configContent={active ? selectedConfigContent : null}
         focusConfig={focusConfigAgentId === agent.id}
         onConfigFocused={() => {
@@ -3069,7 +3079,7 @@ export function NewChatLandingScreen() {
             ? cachedPickerOptions!.agent.id
             : (agentList[0]?.id ?? null);
   const effectiveAgentId = automaticHarnessFallback?.candidate?.value.id ?? defaultEffectiveAgentId;
-  const selectedAgent = useMemo(
+  const selectedAgent: AvailableAgent | undefined = useMemo(
     () =>
       effectiveAgentId === PENDING_AGENT_ID && pendingAgent
         ? ({
@@ -4242,13 +4252,16 @@ export function NewChatLandingScreen() {
   }, [pickedHarness]);
   // Native harnesses receive skill invocations as plain text for their CLI to interpret.
   const isNativeTerminalAgent = isNativeCodingAgent(selectedAgent);
-  const selectedAgentUnconfigured = harnessUnconfiguredOnHost(
-    selectedAgent?.harness,
+  const selectedAgentUnavailableReason = agentHarnessUnavailableReasonOnHost(
+    selectedAgent,
     harnessWarningHost,
   );
   const selectedAgentReadiness = harnessReadinessOnHost(selectedAgent?.harness, harnessWarningHost);
+  const selectedAgentUnconfigured = selectedAgentUnavailableReason !== null;
   const selectedAgentLaunchBlocked =
-    !selectedAgentReadiness.selectable && selectedAgentReadiness.fallbackRelevant;
+    !selectedAgentReadiness.selectable &&
+    selectedAgentReadiness.fallbackRelevant &&
+    !(selectedAgent?.harness === null && selectedAgent?.sessionId);
   // Smart Routing routes between native Claude Code and Codex, so both wrapper
   // agents must be registered and both CLIs ready on the target host — a router
   // with one arm is just that arm. The Claude wrapper is the placeholder the
@@ -6919,7 +6932,7 @@ export function NewChatLandingScreen() {
               agentName={selectedAgent?.display_name}
               hostName={harnessWarningHost?.name}
               harness={selectedAgent?.harness ?? null}
-              reason={harnessUnavailableReasonOnHost(selectedAgent?.harness, harnessWarningHost)}
+              reason={selectedAgentUnavailableReason}
               featureEnabled={harnessInstallEnabled}
               sandbox={sandboxSelected}
               onSetup={() =>

@@ -92,7 +92,7 @@ describe(
         await urlField.fill(server.serverUrl);
         await app.window.locator("#connect").click();
         await app.window
-          .getByText("What should we build?")
+          .getByTestId("new-chat-landing-input")
           .waitFor({ state: "visible", timeout: 30_000 });
 
         const [opened] = await browserOpens(app.electronApp);
@@ -100,6 +100,9 @@ describe(
         const login = new URL(opened);
         assert.equal(`${login.origin}${login.pathname}`, `${server.serverUrl}/auth/login`);
         assert.equal(new URL(login.searchParams.get("native_redirect_uri")).hostname, "127.0.0.1");
+        assert.equal(login.searchParams.get("code_challenge_method"), "S256");
+        assert.match(login.searchParams.get("code_challenge"), /^[A-Za-z0-9_-]{43}$/);
+        assert.ok(login.searchParams.get("native_state"), "native OIDC state was not sent");
         assert.equal(idp.authorizeRequests.length, 1);
         assert.equal(idp.authorizeRequests[0].userAgent, "fake-system-browser");
         assert.ok(
@@ -136,7 +139,7 @@ describe(
       app = await launch(userDataDir, home);
       try {
         await app.window
-          .getByText("What should we build?")
+          .getByTestId("new-chat-landing-input")
           .waitFor({ state: "visible", timeout: 30_000 });
         assert.deepEqual(await browserOpens(app.electronApp), []);
         assert.equal(idp.authorizeRequests.length, 1);

@@ -241,8 +241,9 @@ export function managedSandboxReadinessHost(
 }
 
 /**
- * Why *harness* can't run on *host* right now, or ``null`` when it's ready
- * (or readiness is unknown / no host selected). Drives the picker "needs setup"
+ * Why *harness* can't run on *host* right now, including an unresolved
+ * Agent harness even when no host is selected. Otherwise null means ready or
+ * unknown readiness. Drives the picker "needs setup"
  * badge and the composer notice; the setup dialog uses the fuller
  * {@link resolveSetupSteps}.
  */
@@ -250,7 +251,8 @@ export function harnessUnavailableReasonOnHost(
   harness: string | null | undefined,
   host: Host | undefined | null,
 ): string | null {
-  if (!harness || !host?.configured_harnesses) return null;
+  if (!harness) return "agent-unavailable";
+  if (!host?.configured_harnesses) return null;
   const availability = host.configured_harnesses[harness];
   if (availability === false) {
     if (isCodexHarness(harness)) return "binary-missing";
@@ -290,6 +292,16 @@ export function harnessUnavailableReasonOnHost(
   return null;
 }
 
+/** A catalog Agent with no harness has an unreadable bundle; a session-discovered
+ * Agent may simply be waiting for its spec to load from that session. */
+export function agentHarnessUnavailableReasonOnHost(
+  agent: { harness: string | null; sessionId?: string } | null | undefined,
+  host: Host | undefined | null,
+): string | null {
+  if (!agent || (agent.harness === null && agent.sessionId)) return null;
+  return harnessUnavailableReasonOnHost(agent.harness, host);
+}
+
 /**
  * Whether *harness* is reported not-ready on *host*. Gates the "needs setup"
  * badge in the picker rows and the composer notice.
@@ -299,6 +311,15 @@ export function harnessUnconfiguredOnHost(
   host: Host | undefined | null,
 ): boolean {
   return harnessUnavailableReasonOnHost(harness, host) !== null;
+}
+
+/** Hide known-bad harnesses while keeping SDK credential warnings advisory. */
+export function harnessHiddenAsUnconfiguredOnHost(
+  harness: string | null | undefined,
+  host: Host | undefined | null,
+): boolean {
+  const reason = harnessUnavailableReasonOnHost(harness, host);
+  return reason !== null && !(reason === "needs-auth" && !!harness && isSdkHarness(harness));
 }
 
 /**
@@ -311,6 +332,7 @@ export function harnessUnconfiguredOnHost(
  * flag-off path renders byte-for-byte the original text.
  */
 export function harnessWarningBadgeText(reason: string | null, collapsed = false): string {
+  if (reason === "agent-unavailable") return "agent unavailable";
   if (collapsed) return "needs setup";
   if (reason === "binary-missing") return "binary missing";
   if (reason === "needs-auth") return "needs auth";

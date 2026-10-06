@@ -31,6 +31,7 @@ from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
     token_bound_runner_id,
 )
+from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER, UnifiedAuthProvider
 from omnigent.server.routes.sessions import create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -99,6 +100,7 @@ def _multi_user_app(
     *,
     runner_tunnel_tokens: frozenset[str] | None = None,
     artifact_store: LocalArtifactStore | None = None,
+    agent_cache: AgentCache | None = None,
 ) -> FastAPI:
     """Build a multi-user app (header auth + real permission store).
 
@@ -117,6 +119,7 @@ def _multi_user_app(
             conversation_store=conversation_store,
             agent_store=agent_store,
             artifact_store=artifact_store,
+            agent_cache=agent_cache,
             auth_provider=UnifiedAuthProvider(source="header"),
             permission_store=permission_store,
             runner_tunnel_tokens=runner_tunnel_tokens,
@@ -440,12 +443,24 @@ def test_bundled_create_rejects_cost_control_label_seed(
 
 def test_create_session_with_ordinary_labels_succeeds(
     stores: tuple[SqlAlchemyConversationStore, SqlAlchemyAgentStore, SqlAlchemyPermissionStore],
+    tmp_path: Path,
 ) -> None:
     """Counterpart of the rejection above: ordinary label seeds still
     work, proving the create gate is namespace-scoped too."""
     conversation_store = stores[0]
     _seed_session(stores)  # ensures ag_test exists
-    app = _multi_user_app(stores)
+    from tests.server.helpers import build_agent_bundle
+
+    artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
+    artifact_store.put(
+        "087b7cb7ac30abf4debfaa578d052ec6/bundle",
+        build_agent_bundle(name="test-agent"),
+    )
+    app = _multi_user_app(
+        stores,
+        artifact_store=artifact_store,
+        agent_cache=AgentCache(artifact_store, tmp_path / "cache"),
+    )
 
     resp = TestClient(app).post(
         "/v1/sessions",

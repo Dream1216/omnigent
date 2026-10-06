@@ -9673,7 +9673,7 @@ async def _pre_session_model_catalog(
 
 
 async def _routing_host_for_create(
-    body: SessionCreateInput,
+    body: SessionCreateInput | SessionCreateMetadata,
     request: Request,
     user_id: str | None,
 ) -> Host | None:
@@ -9734,6 +9734,62 @@ def _create_resolved_harness(
         _logger.debug("create-time routing: agent %r failed to load", agent.name, exc_info=True)
         return None
     return canonicalize_harness(_spec_harness(loaded.spec)) or None
+
+
+def _reported_harness_failure(host: Host, harness: str) -> str | None:
+    """Return an actionable failure only when a Host supplied readiness data."""
+    from omnigent.harness_availability import harness_launch_availability
+
+    available, reason = harness_launch_availability(harness, host.configured_harnesses)
+    if available is not False:
+        return None
+    if reason == HARNESS_VERSION_TOO_LOW:
+        return f"{harness} is too old on {host.name}; upgrade it and retry"
+    return f"{harness} is not configured on {host.name}; run omnigent setup there and retry"
+
+
+async def _reject_unavailable_harness_for_create(
+    body: SessionCreateInput | SessionCreateMetadata,
+    request: Request,
+    user_id: str | None,
+    harness: str | None,
+) -> None:
+    """Reject a known-bad Host/harness before creating a session or worktree.
+
+    An absent readiness report remains unknown. Managed creates use reports
+    from the selected provider, preferring online Hosts; every sampled Host
+    must be able to launch the Agent because the next sandbox may be any one
+    of them.
+    """
+    if harness is None:
+        raise OmnigentError(
+            "Agent configuration is unavailable; repair its bundle and retry",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if harness == "auto":
+        return
+    if body.host_id is not None:
+        host = await _routing_host_for_create(body, request, user_id)
+        hosts = [host] if host is not None else []
+    elif body.host_type == "managed" and user_id is not None:
+        host_store = getattr(request.app.state, "host_store", None)
+        sandbox_config = getattr(request.app.state, "sandbox_config", None)
+        if host_store is None or sandbox_config is None:
+            return
+        provider = body.sandbox_provider or sandbox_config.default.provider
+        reported = [
+            host
+            for host in await asyncio.to_thread(host_store.list_hosts, user_id)
+            if host.sandbox_provider == provider and host.configured_harnesses
+        ]
+        online = [host for host in reported if host_is_live(host)]
+        hosts = online or reported
+    else:
+        return
+    for host in hosts:
+        failure = _reported_harness_failure(host, harness)
+        if failure is not None:
+            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
 
 
 def _fixed_native_routing_harness(
@@ -10450,6 +10506,7 @@ async def _create_session_from_existing_agent(
         host_store=getattr(request.app.state, "host_store", None),
         parent=_parent_for_routing,
     )
+    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
 
     # Git worktree options (optional). Two modes on body.git:
     #  - create (default): make a worktree; it becomes the stored

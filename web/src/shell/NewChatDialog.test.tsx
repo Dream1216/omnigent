@@ -1034,8 +1034,8 @@ describe("harnessUnconfiguredOnHost", () => {
     // No host selected (sandbox / nothing picked) → no warning.
     expect(harnessUnconfiguredOnHost("codex", undefined)).toBe(false);
     expect(harnessUnconfiguredOnHost("codex", null)).toBe(false);
-    // Agent without a harness → nothing to warn about.
-    expect(harnessUnconfiguredOnHost(null, hostWith({ codex: false }))).toBe(false);
+    // An unreadable agent bundle has no launchable harness.
+    expect(harnessUnconfiguredOnHost(null, hostWith({ codex: false }))).toBe(true);
   });
 
   it("warns for a harness missing from a host that reports other harnesses", () => {
@@ -4050,34 +4050,31 @@ describe("NewChatLandingScreen", () => {
   );
 
   it.each([
-    ["claude-native", "needs-auth", true],
-    ["codex-native", "binary-missing", false],
-    ["pi-native", "version-too-low", false],
-    ["devin-native", false, false],
-  ])(
-    "skips unavailable %s and loads it when the host reports readiness",
-    (harness, readiness, poll) => {
-      mockAgents(catalogAgents);
-      mockHosts([
-        {
-          ...host("online"),
-          configured_harnesses: { ...readyCatalogs, [harness as string]: readiness },
-        },
-      ]);
-      renderLanding();
-      const agent = catalogAgents.find((candidate) => candidate.harness === harness)!;
-      selectUnconfiguredAgent(agent.id);
-      const calls = () => useHostModelOptionsMock.mock.calls.filter(([, h]) => h === harness);
-      expect(calls().every(([, , enabled]) => !enabled)).toBe(true);
-      expect(screen.queryByTestId("new-chat-landing-picker-loading")).toBeNull();
+    ["claude-native", "needs-auth"],
+    ["codex-native", "binary-missing"],
+    ["pi-native", "version-too-low"],
+    ["devin-native", false],
+  ])("skips unavailable %s and loads it when the host reports readiness", (harness, readiness) => {
+    mockAgents(catalogAgents);
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: { ...readyCatalogs, [harness as string]: readiness },
+      },
+    ]);
+    renderLanding();
+    const agent = catalogAgents.find((candidate) => candidate.harness === harness)!;
+    selectUnconfiguredAgent(agent.id);
+    const calls = () => useHostModelOptionsMock.mock.calls.filter(([, h]) => h === harness);
+    expect(calls().every(([, , enabled]) => !enabled)).toBe(true);
+    expect(screen.queryByTestId("new-chat-landing-picker-loading")).toBeNull();
 
-      mockHosts([{ ...host("online"), configured_harnesses: readyCatalogs }]);
-      fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
-        target: { value: "Ready" },
-      });
-      expect(calls().at(-1)).toEqual(["host_1", harness, poll, { poll }]);
-    },
-  );
+    mockHosts([{ ...host("online"), configured_harnesses: readyCatalogs }]);
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "Ready" },
+    });
+    expect(calls().at(-1)).toEqual(["host_1", harness, true, { poll: true }]);
+  });
 
   it.each(["pending", "offline"])(
     "waits for a %s restored host, then loads only the selected catalog",

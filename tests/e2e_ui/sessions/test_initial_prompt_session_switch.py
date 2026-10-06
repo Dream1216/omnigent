@@ -161,7 +161,7 @@ async def _drive_initial_prompt_switch(base_url: str, session_a: str, session_b:
                                     "name": "hello_world",
                                     "display_name": "Hello World",
                                     "description": None,
-                                    "harness": None,
+                                    "harness": "omnigent",
                                 }
                             ]
                         }

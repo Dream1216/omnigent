@@ -205,6 +205,16 @@ net lines, so only those two ceilings rise from v24; the nine-patch ceiling,
 0.85 isolation floor, forbidden paths and reverse-dependency checks remain.
 The 17-Agent and authenticated delivery gates remain separate live checks.
 
+The `next-agent-null-harness-gate-v26` correction rejects unreadable catalog
+Agents before session creation while preserving session-discovered Agents until
+their spec loads. It extends replayable patch 0010 and aligns browser fixtures
+with the non-null catalog contract. REST success fixtures now supply valid Agent
+bundles. The measured delta is 144 direct official files / 4,518 net lines,
+including 18 newly divergent paths and 122 net lines
+since v25. The nine-patch ceiling, 0.85 isolation floor, forbidden paths and
+reverse-dependency checks remain; signed-image, 17-Agent and five authenticated
+online gates are still required.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
@@ -215,4 +225,4 @@ The 17-Agent and authenticated delivery gates remain separate live checks.
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `825f8500` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/managed_hosts.py` | Managed Host launch command, workspace and runtime-provider contracts | Managed Host provider proposal pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch semantics |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py` | Managed Host launch command and reported harness readiness before session persistence | Managed Host and Agent readiness proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch and Agent readiness semantics |
