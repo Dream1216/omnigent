@@ -128,7 +128,6 @@
     "oxlint": "^1.62.0",
     "postcss": "^8.5.23",
     "prettier": "^3.8.3",
-    "shadcn": "0.0.0-beta.9d3f70e54",
     "storybook": "^10.5.9",
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.2",
