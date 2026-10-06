@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -91,3 +92,62 @@ def test_oidc_cli_ticket_completes_through_browser(oidc_server: OIDCServer, page
         f"{oidc_server.base_url}/auth/cli-poll", params={"ticket": ticket["ticket"]}
     )
     assert replay.status == 410
+
+
+def test_electron_system_browser_oidc_native_shell_e2e_contract() -> None:
+    """Keep the recorded native-shell OIDC journey attached to this auth lane."""
+    test_source = (
+        Path(__file__).resolve().parents[3]
+        / "web"
+        / "electron"
+        / "e2e"
+        / "desktop_oidc_browser_sign_in.e2e.js"
+    ).read_text()
+
+    assert "OIDC sign-in through the system browser" in test_source
+    assert 'hostname, "127.0.0.1"' in test_source
+    assert "the app window loaded the IdP" in test_source
+    assert "the session cookie was not renewed" in test_source
+    assert "no desktop recording was produced" in test_source
+
+
+def test_electron_local_network_permission_prompt_requires_explicit_user_choice(
+    page: Page,
+) -> None:
+    """The bundled native prompt names the origin and records one decision."""
+    permission_page = (
+        Path(__file__).resolve().parents[3]
+        / "web"
+        / "electron"
+        / "browser-permission"
+        / "index.html"
+    )
+    page.add_init_script(
+        """
+        (() => {
+          const state = { choices: [] };
+          window.__electronPermissionE2E = state;
+          window.omnigentBrowserPermission = {
+            getInfo: () => Promise.resolve({
+              origin: "https://authenticated.workspace.example",
+              reload: true,
+            }),
+            choose: (choice) => {
+              state.choices.push(choice);
+              return Promise.resolve();
+            },
+          };
+        })();
+        """
+    )
+    page.goto(permission_page.as_uri())
+
+    expect(page.get_by_role("heading", name="Allow local network access?")).to_be_visible()
+    expect(page.locator("#origin")).to_have_text("https://authenticated.workspace.example")
+    expect(page.locator("#reload")).to_be_visible()
+    page.locator("#once").click()
+
+    assert page.evaluate("() => window.__electronPermissionE2E.choices") == ["allow-once"]
+    assert page.locator("footer button").evaluate_all(
+        "buttons => buttons.every(button => button.disabled)"
+    )
