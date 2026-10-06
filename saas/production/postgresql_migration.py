@@ -1911,11 +1911,63 @@ def _apply_runtime_authority(engine: Engine) -> None:
         _verify_owner_acl_surface(connection, phase="runtime_authority")
 
 
+def _preview_authority_grants_present(connection: Connection) -> bool:
+    rows = connection.execute(
+        sa.text(
+            "SELECT relation.relname, '' AS column_name, grantee.rolname, "
+            "pg_get_userbyid(acl.grantor), acl.is_grantable "
+            "FROM pg_class relation JOIN pg_namespace namespace "
+            "ON namespace.oid = relation.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(relation.relacl) acl "
+            "JOIN pg_roles grantee ON grantee.oid = acl.grantee "
+            "WHERE namespace.nspname = 'public' "
+            "AND relation.relname IN ('saas_preview_gateway_certificates', "
+            "'saas_preview_gateway_instances') "
+            "AND grantee.rolname IN ('saas_preview_edge', 'saas_preview_owner') "
+            "AND acl.privilege_type = 'SELECT' "
+            "UNION ALL "
+            "SELECT relation.relname, attribute.attname, grantee.rolname, "
+            "pg_get_userbyid(acl.grantor), acl.is_grantable "
+            "FROM pg_attribute attribute JOIN pg_class relation "
+            "ON relation.oid = attribute.attrelid "
+            "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(attribute.attacl) acl "
+            "JOIN pg_roles grantee ON grantee.oid = acl.grantee "
+            "WHERE namespace.nspname = 'public' "
+            "AND relation.relname = 'saas_preview_gateway_instances' "
+            "AND attribute.attname = 'server_name' "
+            "AND grantee.rolname = 'saas_preview_owner' "
+            "AND acl.privilege_type = 'SELECT'"
+        )
+    ).all()
+    observed = {tuple(row) for row in rows}
+    owner = connection.execute(sa.text("SELECT current_user")).scalar_one()
+    expected = {
+        ("saas_preview_gateway_certificates", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_certificates", "", "saas_preview_owner", owner, False),
+        ("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False),
+        ("saas_preview_gateway_instances", "server_name", "saas_preview_owner", owner, False),
+    }
+    if observed not in (set(), expected):
+        raise PostgreSqlMigrationError("preview_authority_acl_partial", "control_plane_authority")
+    return bool(observed)
+
+
 def _apply_control_plane_authority(engine: Engine) -> None:
     with engine.begin() as connection:
         _preflight_owner_acl_surface(connection, phase="control_plane_authority")
+        preview_authority = _preview_authority_grants_present(connection)
         _revoke_owner_acl_surface(connection)
         connection.exec_driver_sql(_read_resource("saas.control_plane", "postgresql_roles.sql"))
+        if preview_authority:
+            connection.exec_driver_sql(
+                "GRANT SELECT (server_name) ON public.saas_preview_gateway_instances "
+                "TO saas_preview_owner; "
+                "GRANT SELECT ON public.saas_preview_gateway_certificates "
+                "TO saas_preview_edge, saas_preview_owner; "
+                "GRANT SELECT ON public.saas_preview_gateway_instances "
+                "TO saas_preview_edge"
+            )
         _verify_owner_acl_surface(connection, phase="control_plane_authority")
 
 
