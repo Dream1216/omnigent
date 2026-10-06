@@ -130,11 +130,21 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4518
+    assert budget["max_upstream_net_added_loc"] == 4568
     assert budget["max_direct_upstream_files"] == 144
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    assert revision["revision"] == "next-csrf-cross-tab-budget-v27"
+    assert revision["previous_max_active_patches"] == 9
+    assert revision["previous_max_direct_upstream_files"] == 144
+    assert revision["previous_max_upstream_net_added_loc"] == 4518
+    assert revision["previous_measured_upstream_net_added_loc"] == 4518
+    assert revision["scoped_csrf_delta"] == {
+        "web/src/lib/identity.ts": 19,
+        "web/src/lib/identity.test.ts": 31,
+    }
+    revision = revision["previous_revision"]
     assert revision["revision"] == "next-agent-null-harness-gate-v26"
     assert revision["previous_max_active_patches"] == 9
     assert revision["previous_max_direct_upstream_files"] == 126
@@ -380,7 +390,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4518 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4568 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
