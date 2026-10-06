@@ -48,10 +48,23 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 144,
-    "max_upstream_net_added_loc": 4518,
+    "max_upstream_net_added_loc": 4568,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "approved_at": "2026-10-07",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 144,
+    "previous_max_upstream_net_added_loc": 4518,
+    "previous_measured_upstream_net_added_loc": 4518,
+    "reason": "Protected-main SaaS CSRF handoff fix #126 mirrors the HttpOnly session cookie's double-submit token across browser tabs and tests the first unsafe request in a new tab. Its exact official Web delta is two already-divergent paths and 50 net lines (identity.ts +19, identity.test.ts +31). Raise only the measured net-line ceiling from 4,518 to 4,568; retain the 144-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. The protected signed-image workflow, independent provenance verification, isolated 17-Agent gate and same-version five-case authenticated online acceptance remain mandatory.",
+    "revision": "next-saas-cross-tab-csrf-v27",
+    "scoped_auth_delta": {
+      "web/src/lib/identity.test.ts": 31,
+      "web/src/lib/identity.ts": 19
+    },
+    "previous_revision": {
     "approved_at": "2026-10-07",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,
@@ -494,6 +507,7 @@
     }
     }
     }
+  }
   }
   }
   },
