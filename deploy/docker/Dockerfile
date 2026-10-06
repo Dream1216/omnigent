@@ -82,7 +82,7 @@ ARG ADAPTER_CONTRACT_VERSION=unknown
 #
 # Behind a corporate npm proxy, pass it through:
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
-FROM ${NODE_IMAGE} AS web-builder
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
@@ -103,7 +103,7 @@ COPY web/ ./web/
 RUN pnpm --filter web run build
 
 # The login is an isolated Next.js / React 18 export; no Node service is added.
-FROM ${NODE_IMAGE} AS login-web-builder
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS login-web-builder
 ARG NPM_CONFIG_REGISTRY=
 ARG SOURCE_DATE_EPOCH
 ARG SOURCE_REVISION
