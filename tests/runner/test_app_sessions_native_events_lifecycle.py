@@ -853,6 +853,8 @@ async def test_codex_native_model_options_query_model_list(
     from omnigent.spec.types import ExecutorSpec
 
     conv_id = "68ba0a62ebe928d26adf37c8974ce1eb"
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr("omnigent.onboarding.detected.detect_providers", list)
     monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
     bridge_dir = codex_native_bridge.bridge_dir_for_bridge_id(conv_id)
     codex_home = tmp_path / "codex-home"
@@ -1016,11 +1018,6 @@ async def test_codex_native_model_options_query_model_list(
     for model_row in expected_models:
         if model_row["id"] == expected_default:
             model_row["isDefault"] = True
-        model_row["source"] = {
-            "kind": "subscription",
-            "label": "Subscription",
-            "name": "codex",
-        }
     assert resp.json() == {"models": expected_models}
     assert fake_client.requests == [
         ("model/list", {"includeHidden": False}),
