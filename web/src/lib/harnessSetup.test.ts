@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentHarnessUnavailableReasonOnHost,
   harnessAuthableOnHost,
   harnessCredentialAdoptFamilies,
   harnessCredentialFamily,
@@ -134,6 +135,16 @@ describe("harnessUnavailableReasonOnHost", () => {
     expect(harnessUnconfiguredOnHost(null, undefined)).toBe(true);
     expect(harnessHiddenAsUnconfiguredOnHost(null, hostWith({}))).toBe(true);
     expect(harnessWarningBadgeText("agent-unavailable", true)).toBe("agent unavailable");
+    expect(agentHarnessUnavailableReasonOnHost({ harness: null }, hostWith(null))).toBe(
+      "agent-unavailable",
+    );
+    expect(
+      agentHarnessUnavailableReasonOnHost(
+        { harness: null, sessionId: "conv_existing" },
+        hostWith(null),
+      ),
+    ).toBe(null);
+    expect(agentHarnessUnavailableReasonOnHost(null, hostWith(null))).toBe(null);
   });
 
   it("treats a missing key on a readiness-reporting host as unconfigured", () => {

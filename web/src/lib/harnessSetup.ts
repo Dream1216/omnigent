@@ -179,6 +179,16 @@ export function harnessUnavailableReasonOnHost(
   return null;
 }
 
+/** A catalog Agent with no harness has an unreadable bundle; a session-discovered
+ * Agent may simply be waiting for its spec to load from that session. */
+export function agentHarnessUnavailableReasonOnHost(
+  agent: { harness: string | null; sessionId?: string } | null | undefined,
+  host: Host | undefined | null,
+): string | null {
+  if (!agent || (agent.harness === null && agent.sessionId)) return null;
+  return harnessUnavailableReasonOnHost(agent.harness, host);
+}
+
 /**
  * Whether *harness* is reported not-ready on *host*. Gates the "needs setup"
  * badge in the picker rows and the composer notice.
