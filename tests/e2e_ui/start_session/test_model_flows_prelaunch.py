@@ -15,19 +15,16 @@ the sibling tests in ``test_start_session.py``.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from playwright.async_api import Route, async_playwright, expect
 
 from tests.e2e_ui.start_session.test_start_session import (
     _HOST_ID,
-    _close_entry_models,
     _codex_native_agents_body,
     _open_entry_models,
     _register_common_routes,
     _run_in_fresh_loop,
-    _wait_until,
 )
 
 _CLAUDE_HOST_ROWS = [
@@ -174,104 +171,5 @@ async def _drive_codex_probe_failure(base_url: str, session_id: str) -> None:
             await expect(
                 page.get_by_text("the codex model probe failed — see the host log", exact=True)
             ).to_be_visible(timeout=30_000)
-        finally:
-            await browser.close()
-
-
-def test_hosted_codex_only_submits_advertised_deepseek_model(
-    seeded_session: tuple[str, str],
-) -> None:
-    """A gateway-bound Host must not offer or submit account-wide GPT models."""
-    base_url, session_id = seeded_session
-    _run_in_fresh_loop(_drive_hosted_codex_allowlist(base_url, session_id))
-
-
-def test_hosted_codex_discards_stale_remembered_gpt_model(
-    seeded_session: tuple[str, str],
-) -> None:
-    """A saved GPT pick cannot leak into a gateway-bound new-session create."""
-    base_url, session_id = seeded_session
-    _run_in_fresh_loop(_drive_hosted_codex_allowlist(base_url, session_id, stale_model=True))
-
-
-async def _drive_hosted_codex_allowlist(
-    base_url: str, session_id: str, *, stale_model: bool = False
-) -> None:
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
-        page = await browser.new_page()
-        try:
-            create_bodies: list[dict[str, Any]] = []
-            await _register_common_routes(
-                page,
-                created_session_id=session_id,
-                create_bodies=create_bodies,
-                agents_body=_codex_native_agents_body(),
-            )
-
-            async def handle_agent_scan(route: Route) -> None:
-                await route.fulfill(json={"data": []})
-
-            async def handle_model_options(route: Route) -> None:
-                await route.fulfill(
-                    json={
-                        "models": [
-                            {
-                                "id": "deepseek-v4-pro",
-                                "model": "deepseek-v4-pro",
-                                "displayName": "deepseek-v4-pro",
-                                "isDefault": True,
-                            },
-                            {
-                                "id": "deepseek-flash",
-                                "model": "deepseek-flash",
-                                "displayName": "deepseek-flash",
-                            },
-                        ]
-                    }
-                )
-
-            await page.route(
-                re.compile(r"/v1/sessions\?(?!.*pinned=).*visibility=mine"), handle_agent_scan
-            )
-            await page.route(
-                f"**/v1/hosts/{_HOST_ID}/harnesses/codex-native/model-options",
-                handle_model_options,
-            )
-            await page.add_init_script(
-                f"""window.localStorage.setItem(
-                    "omnigent:recent-workspaces",
-                    JSON.stringify({{ {_HOST_ID}: ["/work/repo"] }})
-                );"""
-            )
-            if stale_model:
-                await page.add_init_script(
-                    """window.localStorage.setItem(
-                        "omnigent:last-mode-by-harness",
-                        JSON.stringify({"codex-native": {"model": "gpt-5.6-sol"}})
-                    );"""
-                )
-
-            await page.goto(f"{base_url}/")
-            await page.get_by_test_id("new-chat-landing-input").wait_for(
-                state="visible", timeout=30_000
-            )
-            await _open_entry_models(page, "ag_codex_e2e")
-            await expect(
-                page.get_by_role("menuitemcheckbox", name="deepseek-flash", exact=True)
-            ).to_be_visible()
-            assert await page.get_by_role("menuitemcheckbox", name=re.compile("GPT")).count() == 0
-            if not stale_model:
-                await page.get_by_role(
-                    "menuitemcheckbox", name="deepseek-flash", exact=True
-                ).click()
-            await _close_entry_models(page)
-
-            await page.get_by_test_id("new-chat-landing-input").fill("Say hello")
-            await page.get_by_test_id("new-chat-landing-submit").click()
-            await _wait_until(lambda: len(create_bodies) == 1)
-            assert create_bodies[0].get("model_override") == (
-                None if stale_model else "deepseek-flash"
-            )
         finally:
             await browser.close()

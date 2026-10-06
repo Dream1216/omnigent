@@ -3294,7 +3294,6 @@ async def test_post_answer_message_only_committed_is_not_dropped(tmp_path: Path)
         session_id=sid, elicitation_id=eid, verdict=Verdict(accepted=True, content={"store": "A"})
     )
     await _wait_for_resolved(omnigent)
-    await _wait_for_service_turn_completion(service)
     await service.shutdown()
 
     # The post-answer text was delivered (in the post-seal segment), not dropped.
@@ -3359,7 +3358,7 @@ async def test_post_elicitation_answer_recovered_when_stream_silent(tmp_path: Pa
     await service.handle_elicitation_action(
         session_id=sid, elicitation_id=eid, verdict=Verdict(accepted=True, content={"store": "A"})
     )
-    await _wait_for_service_turn_completion(service)
+    await _wait_for_turn_end(slack)
     await service.shutdown()
 
     # The final answer was recovered and delivered exactly once; the turn task
@@ -3442,15 +3441,6 @@ async def _wait_for_turn_end(slack: FakeSlackClient) -> None:
                 return
         await asyncio.sleep(0.02)
     raise AssertionError("Timed out waiting for the turn to end")
-
-
-async def _wait_for_service_turn_completion(service: SlackOmnigentService) -> None:
-    """Wait past an elicitation seal for the actual turn task to finish."""
-    for _ in range(100):
-        if not service._turn_tasks:
-            return
-        await asyncio.sleep(0.02)
-    raise AssertionError("Timed out waiting for the service turn to finish")
 
 
 async def _run_scripted_turn(tmp_path: Path, events: list[dict[str, Any]]) -> "FakeSlackClient":

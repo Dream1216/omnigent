@@ -5120,17 +5120,9 @@ export function NewChatLandingScreen() {
         fusionSelected && pickerFusion !== undefined
           ? currentFusionCombo(pickerFusion, fusionModelUid).modelUid
           : pickedModel;
-      // A restored draft can outlive a gateway catalog refresh. Never pin a
-      // Codex model the selected host no longer advertises.
-      const codexModelAvailable =
-        selectedNativeHarness !== "codex-native" ||
-        pickerModelOptions.some(
-          (option) => option.id === submittedModel || option.model === submittedModel,
-        );
       const normalizedModelOverride =
         !smartRoutingHarnessSelected &&
         !routingOwnsModel &&
-        codexModelAvailable &&
         // devin's Model+Effort live under its own `devinMode` capability (not
         // `modelPicker`), so — like codex-native — pin the pick by harness or
         // the New-Chat selection never reaches `_auto_create_devin_terminal`

@@ -11,12 +11,7 @@ from pathlib import Path
 from uuid import UUID
 
 from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
-from omnigent.harnesses.codex_native.app_server import (
-    NativeCodexLaunch,
-    _find_codex_cli,
-    declared_codex_model_options,
-    declared_codex_models_for_provider,
-)
+from omnigent.harnesses.codex_native.app_server import _find_codex_cli
 from omnigent.host.connect import HostProcess, ModelOptionsResult, run_host_process
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.frames import HarnessAvailability
@@ -77,16 +72,32 @@ class PlatformModelHostProcess(HostProcess):
             provider = default_provider_for_harness(load_config(), "codex")
             if provider is None:
                 return None
-            declared = declared_codex_models_for_provider(provider)
+            family = provider.families.get(OPENAI_FAMILY)
+            if family is None:
+                return None
+            declared = tuple(
+                dict.fromkeys(
+                    model
+                    for key, model in family.models.items()
+                    if key.startswith("allowed-") and model
+                )
+            )
             if not declared:
                 return None
-            launch = NativeCodexLaunch(
-                config_overrides=[],
-                model=provider.families[OPENAI_FAMILY].default_model,
-                profile=None,
-                catalog_models=declared,
-            )
-            rows = declared_codex_model_options(launch) or []
+            default_model = family.default_model
+            if default_model not in declared:
+                raise PlatformModelHostConfigurationError(
+                    "Platform Codex model catalog omits its default model"
+                )
+            rows = [
+                {
+                    "id": model,
+                    "model": model,
+                    "displayName": model,
+                    "isDefault": model == default_model,
+                }
+                for model in declared
+            ]
             return ModelOptionsResult(models=rows, routable_models=list(declared))
         except Exception:  # noqa: BLE001 - the managed picker must fail closed.
             _logger.warning("Platform Codex model catalog unavailable", exc_info=True)
