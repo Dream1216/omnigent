@@ -33,7 +33,7 @@ function pickerAgent(overrides: Record<string, unknown> = {}) {
     name: "hello",
     display_name: "Hello",
     description: null,
-    harness: null,
+    harness: "omnigent",
     skills: [],
     ...overrides,
   };

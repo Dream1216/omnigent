@@ -177,7 +177,7 @@ function agent(overrides: Partial<AvailableAgent> = {}): AvailableAgent {
     name: "hello_world",
     display_name: "Hello World",
     description: null,
-    harness: null,
+    harness: "omnigent",
     skills: [],
     ...overrides,
   };

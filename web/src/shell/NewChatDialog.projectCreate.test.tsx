@@ -116,7 +116,14 @@ vi.mock("./CreateAgentDialog", () => ({
     <button
       type="button"
       data-testid="test-create-pending"
-      onClick={() => props.onCreate({ name: "pending-bot", instructions: "hi" })}
+      onClick={() =>
+        props.onCreate({
+          name: "pending-bot",
+          instructions: "hi",
+          harness: "claude-sdk",
+          model: "mock-model",
+        })
+      }
     />
   ),
 }));
@@ -154,7 +161,7 @@ function agent(overrides: Partial<AvailableAgent> = {}): AvailableAgent {
     name: "hello_world",
     display_name: "Hello World",
     description: null,
-    harness: null,
+    harness: "omnigent",
     skills: [],
     ...overrides,
   };

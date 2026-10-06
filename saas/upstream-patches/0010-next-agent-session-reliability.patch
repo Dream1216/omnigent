@@ -1044,3 +1044,43 @@ index f89b32709..e7aeaaad0 100644
 +            canonicalize_harness(raw_harness) or raw_harness,
 +        )
 +
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 9d607d384..13672e650 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -8471 +8471,6 @@ async def _reject_unavailable_harness_for_create(
+-    if harness is None or harness == "auto":
++    if harness is None:
++        raise OmnigentError(
++            "Agent configuration is unavailable; repair its bundle and retry",
++            code=ErrorCode.INVALID_INPUT,
++        )
++    if harness == "auto":
+@@ -9118,0 +9124,5 @@ async def _create_session_from_existing_agent(
++    resolved_harness = await asyncio.to_thread(
++        _create_resolved_harness, agent, harness_override, agent_cache
++    )
++    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
++
+@@ -9137,5 +9146,0 @@ async def _create_session_from_existing_agent(
+-    resolved_harness = await asyncio.to_thread(
+-        _create_resolved_harness, agent, harness_override, agent_cache
+-    )
+-    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
+-
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 13672e650..6491015ab 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -9124,5 +9123,0 @@ async def _create_session_from_existing_agent(
+-    resolved_harness = await asyncio.to_thread(
+-        _create_resolved_harness, agent, harness_override, agent_cache
+-    )
+-    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
+-
+@@ -9146,0 +9142,5 @@ async def _create_session_from_existing_agent(
++    resolved_harness = await asyncio.to_thread(
++        _create_resolved_harness, agent, harness_override, agent_cache
++    )
++    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
++

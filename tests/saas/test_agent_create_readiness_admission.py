@@ -64,3 +64,11 @@ async def test_managed_create_prefers_online_report_over_old_offline_failure() -
     )
     body = SessionCreateRequest(agent_id="agent", host_type="managed")
     await _reject_unavailable_harness_for_create(body, request, "alice", "kiro-native")
+
+
+@pytest.mark.asyncio
+async def test_managed_create_rejects_unresolvable_agent_bundle_before_a_session_exists() -> None:
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    body = SessionCreateRequest(agent_id="agent", host_type="managed")
+    with pytest.raises(OmnigentError, match="Agent configuration is unavailable"):
+        await _reject_unavailable_harness_for_create(body, request, "alice", None)
