@@ -15,7 +15,7 @@ import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
 import { authenticatedFetch } from "./identity";
 import { isAndroidShell, isElectronShell, isIOSShell } from "@/lib/nativeBridge";
-import { setSessionHost } from "./sessionHost";
+import { setSessionHost, setSessionParent } from "./sessionHost";
 import { backgroundSessionTitlesRequestHeaders } from "./backgroundSessionTitlesPreferences";
 import { parseBackgroundTasks } from "./sse";
 import type {
@@ -116,6 +116,8 @@ interface SessionResponseWire {
    * other carrier and it's absent for those.
    */
   host_id?: string | null;
+  runner_online?: boolean | null;
+  host_online?: boolean | null;
   /**
    * Whether this session is bound to a dormant managed host the server can
    * wake in place (its sandbox provider supports resume). Read only when the
@@ -170,6 +172,8 @@ interface SessionResponseWire {
   /** Effective brain harness (override-aware), e.g. ``"claude-sdk"``. */
   harness?: string | null;
   model_override?: string | null;
+  inference_configured?: boolean;
+  inference_error?: string | null;
   /** Per-session cost-control switch; `null`/absent = spec default. */
   cost_control_mode_override?: "on" | "off" | null;
   /** Sub-agent routing switch; `null`/absent reads the same as `"off"` (Default). */
@@ -178,6 +182,7 @@ interface SessionResponseWire {
   share_workspace_files?: boolean;
   context_window?: number | null;
   last_total_tokens?: number | null;
+  usage_included?: boolean;
   total_cost_usd?: number | null;
   /**
    * Per-model breakdown of the same subtree usage, keyed by the raw harness
@@ -188,9 +193,12 @@ interface SessionResponseWire {
   last_task_error?: {
     code: string;
     message: string;
+    agent_name?: string;
     title?: string;
     cause?: string;
     remediation?: string;
+    /** For `runner_rejected_event`: the persisted item the runner refused (newer servers). */
+    item_id?: string;
   } | null;
   /**
    * Outstanding `response.elicitation_request` event dicts at the
@@ -306,14 +314,18 @@ function usageByModelFromWire(
 
 function sessionFromWire(wire: SessionResponseWire): Session {
   // Record the session's host so slice-key routing (turn dispatch, terminal
-  // attach) can pin to the replica holding that host's runner tunnel.
+  // attach) can pin to the replica holding that host's runner tunnel; a
+  // sub-agent child inherits its parent's through the recorded parent link.
   setSessionHost(wire.id, wire.host_id);
+  setSessionParent(wire.id, wire.parent_session_id);
   return {
     id: wire.id,
     agentId: wire.agent_id,
     agentName: wire.agent_name ?? null,
     runnerId: wire.runner_id,
+    runnerOnline: wire.runner_online ?? undefined,
     hostId: wire.host_id ?? null,
+    hostOnline: wire.host_online ?? undefined,
     hostResumable: wire.host_resumable ?? false,
     archived: wire.archived ?? false,
     status: wire.status,
@@ -336,6 +348,7 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     shareWorkspaceFiles: wire.share_workspace_files ?? false,
     contextWindow: wire.context_window,
     lastTotalTokens: wire.last_total_tokens,
+    usageIncluded: wire.usage_included ?? true,
     totalCostUsd: wire.total_cost_usd,
     usageByModel: usageByModelFromWire(wire.usage_by_model),
     lastTaskError: wire.last_task_error,
@@ -351,6 +364,12 @@ function sessionFromWire(wire: SessionResponseWire): Session {
     kind: wire.kind === "sub_agent" ? "sub_agent" : "default",
     todos: wire.todos ?? [],
     codexModelOptions: wire.model_options ?? [],
+    ...(wire.inference_configured !== undefined
+      ? {
+          inferenceConfigured: wire.inference_configured,
+          inferenceError: wire.inference_error ?? null,
+        }
+      : {}),
     terminalPending: wire.terminal_pending ?? false,
     sandboxStatus: wire.sandbox_status ?? null,
     mcpStartup: wire.mcp_startup ?? null,
@@ -763,7 +782,7 @@ export async function createBundledSession(
  *
  * @param sourceId - Session to fork, e.g. "conv_abc123".
  * @param options.title - Optional title for the new fork.
- * @param options.agentId - Optional built-in agent to switch the fork to
+ * @param options.agentId - Optional agent to switch the fork to
  *   (e.g. fork a Claude-SDK session into Claude Code). Omitted → keep the
  *   source's agent. The server carries model settings (and native
  *   history) across only within the same provider family.
@@ -802,9 +821,11 @@ export async function forkSession(
       codexBypassSandbox?: boolean;
     };
     sandbox?: { provider?: string | null; workspace?: string | null };
+    /** Mark the fork as a side chat (hidden from the left sidebar). */
+    sideChat?: boolean;
   } = {},
 ): Promise<Session> {
-  const { title, agentId, upToResponseId, config, sandbox } = options;
+  const { title, agentId, upToResponseId, config, sandbox, sideChat } = options;
   const body: {
     title?: string;
     agent_id?: string;
@@ -816,7 +837,11 @@ export async function forkSession(
     host_type?: "managed";
     sandbox_provider?: string;
     workspace?: string | null;
+    side_chat?: boolean;
   } = {};
+  if (sideChat) {
+    body.side_chat = true;
+  }
   if (title !== undefined) {
     body.title = title;
   }
@@ -861,32 +886,38 @@ export async function forkSession(
 }
 
 /**
- * Switch an existing session in place to a different agent/harness:
- * ``POST /v1/sessions/{id}/switch-agent``.
+ * Fork a generic side chat in the parent's current working directory.
+ * Hosted sessions launch a separate runner; CLI sessions use their existing
+ * runner, and in-process sessions use normal server dispatch. Codex uses its
+ * native `/side` fork instead.
  *
- * Unlike fork, this keeps the SAME session (transcript, comments, files,
- * workspace) and only rebinds the agent. The next turn runs on the new
- * harness; history carries per the same rule as a fork switch
- * (``forkTargetCarriesHistory``). Model settings reset to the target's
- * defaults on a cross-family switch. Only built-in agents are bindable,
- * and only while the session is idle (a running turn → 409).
+ * Like native Codex side chats, these share the parent's workspace. A saved
+ * branch may belong to a previous host and must not be required to send.
  *
- * @param sessionId - The session to switch, e.g. ``"conv_abc123"``.
- * @param agentId - Built-in agent to switch to, e.g. ``"ag_builtin_codex"``.
- * @returns The session as it stands after the switch.
- * @throws Error carrying the server's failure detail (e.g. 409 when a turn
- *   is running) so the caller can surface it inline.
+ * @param sourceId - The parent conversation to fork, e.g. "conv_abc123".
+ * @returns The new side-chat session id.
+ * @throws Error when the source is disconnected or the fork / runner launch fails.
  */
-export async function switchSessionAgent(sessionId: string, agentId: string): Promise<Session> {
-  const res = await authenticatedFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/switch-agent`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_id: agentId }),
-    },
-  );
-  return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
+export async function createSideChat(sourceId: string): Promise<{ childSessionId: string }> {
+  let source = await getSession(sourceId);
+  if (source.hostResumable && source.hostOnline === false && source.runnerOnline !== true) {
+    await retrySession(sourceId);
+    source = await getSession(sourceId);
+  }
+  const { hostId, workspace, runnerId } = source;
+  const canLaunchOnHost = hostId && workspace && source.hostOnline !== false;
+  const canUseRunner =
+    source.runnerOnline !== false && (runnerId != null || source.runnerOnline === true);
+  if (!canLaunchOnHost && !canUseRunner) {
+    throw new Error("This session is disconnected. Reconnect it before starting a side chat.");
+  }
+  const fork = await forkSession(sourceId, { title: "Side chat", sideChat: true });
+  if (canLaunchOnHost) {
+    await launchRunner(hostId, fork.id, workspace);
+  } else if (runnerId) {
+    await updateSession(fork.id, { runnerId });
+  }
+  return { childSessionId: fork.id };
 }
 
 /**
@@ -978,11 +1009,9 @@ export async function launchRunner(
  * clear signal. Clearing sub-agent routing lands the session on Default,
  * the same place ``"off"`` does.
  *
- * `silent: true` persists without firing the claude-native tmux
- * forward — use for bind-time auto-apply (e.g. the sticky-pref
- * handoff in `bindStream`) where injecting a visible "/model X"
- * item into a fresh pane would look like an unexpected first
- * message in the chat.
+ * `silent: true` persists without forwarding a live command into a native
+ * harness. Use it only for persistence-only updates, such as detaching a
+ * runner while clearing its model override.
  */
 export async function updateSession(
   sessionId: string,
@@ -1116,18 +1145,16 @@ export async function getSession(sessionId: string): Promise<Session> {
 }
 
 /**
- * Snapshot a session WITHOUT its committed items or liveness fields.
+ * Snapshot a session without committed items, liveness, or subtree usage.
  *
  * Use this (not `getSession`) when the caller hydrates the transcript
  * via `fetchSessionItemsPage` and reads liveness from the /health poll +
- * WS stream — i.e. the chat surface's snapshot consumers. The skipped
- * reads are the two most expensive steps of the server's snapshot build
- * (the 100-item history read and the runner/host liveness lookup), so
- * this is the fast path for open/switch. The returned `Session` has
- * `items: []`; callers that need the snapshot's own items (or
- * `runner_online`/`host_online` once the wire type carries them) must
- * use `getSession` instead. Older servers ignore the params and return
- * the full snapshot — both shapes parse identically.
+ * WS stream — i.e. the chat surface's snapshot consumers. Subtree usage
+ * is fetched separately with `getSessionUsage`, so a large spawn tree
+ * cannot delay opening the conversation. The returned `Session` has
+ * `items: []` and `usageIncluded: false`; callers needing a full snapshot
+ * use `getSession`. Older servers ignore the params, include usage, and
+ * need no separate usage request.
  *
  * NOTE: keep all consumers of a given react-query key (`["session", id]`)
  * on the SAME variant — mixing full and slim under one key would let a
@@ -1151,6 +1178,7 @@ export async function getSessionSlim(
   const params = new URLSearchParams({
     include_items: "false",
     include_liveness: "false",
+    include_usage: "false",
   });
   if (options.refreshState === true) params.set("refresh_state", "true");
   const res = await authenticatedFetch(
@@ -1158,6 +1186,61 @@ export async function getSessionSlim(
     { signal: options.signal },
   );
   return sessionFromWire(await readJsonOrThrow<SessionResponseWire>(res));
+}
+
+export interface SessionSignInLink {
+  pending: boolean;
+  url: string | null;
+  code: string | null;
+}
+
+/**
+ * Ask the session's host for the sign-in prompt its terminal shows right now.
+ *
+ * A link saved in an error card is bound to the launcher process that printed
+ * it and goes stale once that process moves on, so the card asks at click time.
+ */
+export async function getSessionSignInLink(
+  sessionId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<SessionSignInLink> {
+  const res = await authenticatedFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/sign-in-link`,
+    { signal: options.signal },
+  );
+  return readJsonOrThrow<SessionSignInLink>(res);
+}
+
+export interface SessionUsageSnapshot {
+  id: string;
+  totalCostUsd: number | null;
+  usageByModel: Record<string, ModelUsage> | null;
+}
+
+/** Read usage outside the shared metadata query; ignore unrelated snapshot fields. */
+export async function getSessionUsage(
+  sessionId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<SessionUsageSnapshot> {
+  const params = new URLSearchParams({
+    include_usage: "true",
+    include_items: "false",
+    include_liveness: "false",
+    refresh_state: "false",
+  });
+  const res = await authenticatedFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
+    { signal: options.signal },
+  );
+  const wire =
+    await readJsonOrThrow<Pick<SessionResponseWire, "id" | "total_cost_usd" | "usage_by_model">>(
+      res,
+    );
+  return {
+    id: wire.id,
+    totalCostUsd: wire.total_cost_usd ?? null,
+    usageByModel: usageByModelFromWire(wire.usage_by_model),
+  };
 }
 
 /** One page of a session's committed items, in chronological order. */
@@ -1354,9 +1437,13 @@ export function openSessionStream(
  * `session.interrupted` (transient) and `response.incomplete` (with
  * `incomplete_details.reason == "user_interrupt"`) on the live
  * stream — clients can mark the bubble interrupted from either.
+ * Native side chats include their observed response id to target the exact turn.
  */
-export function interrupt(sessionId: string): Promise<PostEventResponse> {
-  return postEvent(sessionId, { type: "interrupt", data: {} });
+export function interrupt(sessionId: string, responseId?: string): Promise<PostEventResponse> {
+  return postEvent(sessionId, {
+    type: "interrupt",
+    data: responseId ? { response_id: responseId } : {},
+  });
 }
 
 /**
@@ -1376,11 +1463,15 @@ export function retrySession(sessionId: string): Promise<PostEventResponse> {
 }
 
 // Multiple error cards can describe the same failed turn.
-const rateLimitedTurnRetries = new Map<string, Promise<void>>();
+const failedTurnContinuations = new Map<string, Promise<void>>();
 
-/** Continue a rate-limited turn without replaying the original prompt or tools. */
-export function retryRateLimitedTurn(sessionId: string): Promise<void> {
-  const pending = rateLimitedTurnRetries.get(sessionId);
+/**
+ * Continue a turn whose upstream model call failed mid-stream (rate limit,
+ * transient gateway error) without replaying the original prompt or tools —
+ * the runner itself is healthy, only the turn died.
+ */
+export function continueFailedTurn(sessionId: string): Promise<void> {
+  const pending = failedTurnContinuations.get(sessionId);
   if (pending) return pending;
 
   const retry = postEvent(sessionId, {
@@ -1390,7 +1481,7 @@ export function retryRateLimitedTurn(sessionId: string): Promise<void> {
       content: [
         {
           type: "input_text",
-          text: "Please continue from where you left off before the rate limit error.",
+          text: "Please continue from where you left off.",
         },
       ],
     },
@@ -1400,9 +1491,9 @@ export function retryRateLimitedTurn(sessionId: string): Promise<void> {
       if (!result.queued) throw new Error("The retry was not accepted");
     })
     .finally(() => {
-      rateLimitedTurnRetries.delete(sessionId);
+      failedTurnContinuations.delete(sessionId);
     });
-  rateLimitedTurnRetries.set(sessionId, retry);
+  failedTurnContinuations.set(sessionId, retry);
   return retry;
 }
 

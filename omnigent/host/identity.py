@@ -19,21 +19,19 @@ from pathlib import Path
 import yaml
 
 from omnigent.config import global_config_path
+from omnigent.host import identity_env
 
 CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
 
-# Env vars a server-managed sandbox host is launched with. The server
-# provisions the sandbox, generates the identity + launch token, and
-# injects all three so the host registers under the server-chosen
-# identity without persisting anything to the sandbox's config.yaml
-# (managed sandboxes are disposable). HOST_TOKEN is the tunnel
-# credential (see MANAGED_HOST_TOKEN_HEADER); HOST_ID / HOST_NAME
-# override the identity file and must be set together.
-HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
-HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
-HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
-HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
-HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
+# The HOST_ID / HOST_NAME / HOST_TOKEN env-var names live in the dependency-free
+# leaf module omnigent.host.identity_env so the warm-pool readiness probe can
+# read them without importing this module's YAML/config dependencies. Bind them
+# here too so existing ``omnigent.host.identity`` callers keep working.
+HOST_ID_ENV_VAR = identity_env.HOST_ID_ENV_VAR
+HOST_NAME_ENV_VAR = identity_env.HOST_NAME_ENV_VAR
+HOST_TOKEN_ENV_VAR = identity_env.HOST_TOKEN_ENV_VAR
+HOST_TOKEN_FILE_ENV_VAR = identity_env.HOST_TOKEN_FILE_ENV_VAR
+HOST_WORKSPACE_ID_ENV_VAR = identity_env.HOST_WORKSPACE_ID_ENV_VAR
 
 # WebSocket upgrade header carrying a managed host's launch token.
 # Mirrors the runner tunnel's X-Omnigent-Runner-Tunnel-Token pattern:
@@ -47,8 +45,7 @@ _MAX_HOST_TOKEN_FILE_BYTES = 4096
 
 
 def load_host_tunnel_token() -> str | None:
-    """Load a narrow Host token from one inline or owner-only file source."""
-
+    """Load a narrow host token from one inline or owner-only file source."""
     inline = os.environ.get(HOST_TOKEN_ENV_VAR)
     file_value = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
     if inline and file_value:
@@ -81,8 +78,7 @@ def load_host_tunnel_token() -> str | None:
 
 
 def load_host_tunnel_workspace_id() -> int | None:
-    """Load the non-secret workspace selector paired with a Host token."""
-
+    """Load the non-secret workspace selector paired with a host token."""
     value = os.environ.get(HOST_WORKSPACE_ID_ENV_VAR)
     if value is None:
         return None

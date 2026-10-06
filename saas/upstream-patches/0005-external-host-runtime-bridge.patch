@@ -1,38 +1,79 @@
+diff --git a/omnigent/cli.py b/omnigent/cli.py
+index b1221f7a2..b94cd5e21 100644
+--- a/omnigent/cli.py
++++ b/omnigent/cli.py
+@@ -3590,0 +3591,2 @@ def _build_host_daemon_env(
++        HOST_TOKEN_FILE_ENV_VAR,
++        HOST_WORKSPACE_ID_ENV_VAR,
+@@ -3597,0 +3600,2 @@ def _build_host_daemon_env(
++            HOST_TOKEN_FILE_ENV_VAR,
++            HOST_WORKSPACE_ID_ENV_VAR,
+diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
+index e87617a09..9015efae0 100644
+--- a/omnigent/host/connect.py
++++ b/omnigent/host/connect.py
+@@ -127 +127,5 @@ from omnigent.host.git_worktree import (
+-from omnigent.host.identity import HostIdentity, load_or_create_host_identity
++from omnigent.host.identity import (
++    HostIdentity,
++    load_host_tunnel_workspace_id,
++    load_or_create_host_identity,
++)
+@@ -170,0 +175 @@ from omnigent.runner.identity import (
++    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
+@@ -838,0 +844 @@ def _build_runner_env(
++    workspace_id: int | None = None,
+@@ -871,0 +878,2 @@ def _build_runner_env(
++    :param workspace_id: Managed SaaS workspace partition selector. ``None``
++        leaves local and single-workspace runner behavior unchanged.
+@@ -914,0 +923,2 @@ def _build_runner_env(
++    if workspace_id is not None:
++        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
+@@ -1875,0 +1886 @@ class HostProcess:
++            workspace_id=load_host_tunnel_workspace_id(),
+@@ -4402 +4413,6 @@ class HostProcess:
+-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
++        from omnigent.host.identity import (
++            MANAGED_HOST_TOKEN_HEADER,
++            MANAGED_HOST_WORKSPACE_HEADER,
++            load_host_tunnel_token,
++            load_host_tunnel_workspace_id,
++        )
+@@ -4421 +4437 @@ class HostProcess:
+-        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
++        managed_token = load_host_tunnel_token()
+@@ -4422,0 +4439,4 @@ class HostProcess:
++            # A managed machine credential is deliberately independent from
++            # the user's bearer. Drop any Authorization header contributed by
++            # deployment routing helpers so the two identities never mix.
++            headers.pop("Authorization", None)
+@@ -4423,0 +4444,3 @@ class HostProcess:
++            workspace_id = load_host_tunnel_workspace_id()
++            if workspace_id is not None:
++                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
+@@ -4443 +4466 @@ class HostProcess:
+-        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
++        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
+@@ -4445 +4468 @@ class HostProcess:
+-        if os.environ.get(HOST_TOKEN_ENV_VAR):
++        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
 diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py
-index 38513aeb3..26f0760b0 100644
+index e8073ab48..18a0ec4db 100644
 --- a/omnigent/host/identity.py
 +++ b/omnigent/host/identity.py
-@@ -10,6 +10,7 @@ from __future__ import annotations
- import contextlib
- import os
- import socket
+@@ -12,0 +13 @@ import socket
 +import stat
- import tempfile
- import uuid
- from dataclasses import dataclass
-@@ -29,8 +30,10 @@ CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
- # credential (see MANAGED_HOST_TOKEN_HEADER); HOST_ID / HOST_NAME
- # override the identity file and must be set together.
- HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
-+HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
- HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
- HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
-+HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
- 
- # WebSocket upgrade header carrying a managed host's launch token.
- # Mirrors the runner tunnel's X-Omnigent-Runner-Tunnel-Token pattern:
-@@ -38,6 +41,57 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
- # confused with a user Bearer token by intermediate proxies or the
- # auth provider.
- MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
+@@ -31,0 +33,2 @@ HOST_TOKEN_ENV_VAR = identity_env.HOST_TOKEN_ENV_VAR
++HOST_TOKEN_FILE_ENV_VAR = identity_env.HOST_TOKEN_FILE_ENV_VAR
++HOST_WORKSPACE_ID_ENV_VAR = identity_env.HOST_WORKSPACE_ID_ENV_VAR
+@@ -38,0 +42,49 @@ MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
 +MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 +
 +_MAX_HOST_TOKEN_FILE_BYTES = 4096
 +
 +
 +def load_host_tunnel_token() -> str | None:
-+    """Load a narrow Host token from one inline or owner-only file source."""
-+
++    """Load a narrow host token from one inline or owner-only file source."""
 +    inline = os.environ.get(HOST_TOKEN_ENV_VAR)
 +    file_value = os.environ.get(HOST_TOKEN_FILE_ENV_VAR)
 +    if inline and file_value:
@@ -65,8 +106,7 @@ index 38513aeb3..26f0760b0 100644
 +
 +
 +def load_host_tunnel_workspace_id() -> int | None:
-+    """Load the non-secret workspace selector paired with a Host token."""
-+
++    """Load the non-secret workspace selector paired with a host token."""
 +    value = os.environ.get(HOST_WORKSPACE_ID_ENV_VAR)
 +    if value is None:
 +        return None
@@ -76,17 +116,19 @@ index 38513aeb3..26f0760b0 100644
 +    if workspace_id <= 0:
 +        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
 +    return workspace_id
- 
- 
- @dataclass
+diff --git a/omnigent/host/identity_env.py b/omnigent/host/identity_env.py
+index e4ee98e97..bbe91fea8 100644
+--- a/omnigent/host/identity_env.py
++++ b/omnigent/host/identity_env.py
+@@ -18,0 +19 @@ HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
++HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
+@@ -20,0 +22 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
++HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
 diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
-index 3d39aa3bd..3028bd298 100644
+index 5251eea2f..73dcb2ba2 100644
 --- a/omnigent/inner/bwrap_sandbox.py
 +++ b/omnigent/inner/bwrap_sandbox.py
-@@ -199,13 +199,16 @@ _ALLOWED_SOCKET_FAMILIES = (
- # / ``mem`` / ``maps`` / ``fd``): the retained user namespace keeps those
- # blocked even for same-uid targets and even as namespaced root, and
- # ``--unshare-pid`` still contains signalling. That leak is acceptable on a
+@@ -202,4 +202,6 @@ _ALLOWED_SOCKET_FAMILIES = (
 -# single-tenant dev microVM (Lakebox) but not on an arbitrary host, so the
 -# downgrade is only taken for vetted backends. Add entries here as more
 -# backends are verified safe.
@@ -97,99 +139,48 @@ index 3d39aa3bd..3028bd298 100644
 +# backend for ``hostPID`` pods or pods sharing another container's PID
 +# namespace.
 +_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"kubernetes", "lakebox"})
- 
- # Env var an outer launcher may set to name the host's outer sandbox
+@@ -208 +210,2 @@ _PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"lakebox"})
 -# backend (e.g. ``lakebox``). Authoritative when present; otherwise the
 +# backend (e.g. ``lakebox`` or ``kubernetes``). Authoritative when present;
 +# otherwise the
- # backend is autodetected (see ``_detect_host_sandbox_backend``). Note it
- # must survive ``SandboxPolicy.spawn_env_allowlist`` pruning to be visible
- # on the re-exec launcher path — the marker autodetect below is the
-@@ -251,7 +254,7 @@ def _should_bind_host_proc() -> bool:
-     mounting a fresh procfs.
- 
-     ``True`` only when the host runs under an outer sandbox backend in
+@@ -254 +257 @@ def _should_bind_host_proc() -> bool:
 -    :data:`_PROC_BIND_HOST_BACKENDS` (lakebox today). On every other host
 +    :data:`_PROC_BIND_HOST_BACKENDS`. On every other host
-     the fresh-proc mount is kept, so ordinary hosts — and their fail-closed
-     behaviour when a fresh procfs mount is denied — are unchanged.
- 
 diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
-index 698409d79..65ed2c7df 100644
+index 749203281..458fec9b9 100644
 --- a/omnigent/runner/_entry.py
 +++ b/omnigent/runner/_entry.py
-@@ -1069,6 +1069,8 @@ def _mint_managed_owner_token(
-     from omnigent.runner.identity import (
-         OMNIGENT_INTERNAL_WS_ORIGIN,
-         RUNNER_TUNNEL_TOKEN_HEADER,
+@@ -1024,0 +1025,2 @@ def _mint_managed_owner_token(
 +        RUNNER_TUNNEL_WORKSPACE_HEADER,
 +        load_runner_tunnel_workspace_id,
-     )
- 
-     headers = {
-@@ -1076,6 +1078,9 @@ def _mint_managed_owner_token(
-         RUNNER_TUNNEL_TOKEN_HEADER: binding_token,
-         **databricks_request_headers(server_url, bearer_token=proxy_bearer),
-     }
+@@ -1031,0 +1034,3 @@ def _mint_managed_owner_token(
 +    workspace_id = load_runner_tunnel_workspace_id()
 +    if workspace_id is not None:
 +        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
-     with httpx.Client(timeout=10.0, trust_env=not is_loopback_url(server_url)) as client:
-         response = client.post(mint_url, headers=headers)
-         response.raise_for_status()
-@@ -1383,7 +1388,9 @@ def create_app(
-         OMNIGENT_SESSION_ENV_VAR,
-         RUNNER_ID_ENV_VAR,
-         RUNNER_TUNNEL_TOKEN_HEADER,
+@@ -1345,0 +1351 @@ def create_app(
 +        RUNNER_TUNNEL_WORKSPACE_HEADER,
-         get_stable_runner_id,
+@@ -1346,0 +1353 @@ def create_app(
 +        load_runner_tunnel_workspace_id,
-     )
-     from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
- 
-@@ -1423,6 +1430,7 @@ def create_app(
-     if auth_token_factory is None:
-         auth_token_factory = _make_auth_token_factory()
-     binding_token = _runner_tunnel_binding_token_from_env()
+@@ -1385,0 +1393 @@ def create_app(
 +    workspace_id = load_runner_tunnel_workspace_id()
-     server_client = open_server_client(
-         server_url,
-         auth=_RunnerDatabricksAuth(auth_token_factory),
-@@ -1437,6 +1445,11 @@ def create_app(
-         headers={
-             "Origin": OMNIGENT_INTERNAL_WS_ORIGIN,
-             **({RUNNER_TUNNEL_TOKEN_HEADER: binding_token} if binding_token is not None else {}),
+@@ -1399,0 +1408,5 @@ def create_app(
 +            **(
 +                {RUNNER_TUNNEL_WORKSPACE_HEADER: str(workspace_id)}
 +                if workspace_id is not None
 +                else {}
 +            ),
-         },
-         timeout=httpx.Timeout(5.0, read=None),
-         # NOTE: ``follow_redirects`` deliberately stays False.
 diff --git a/omnigent/runner/identity.py b/omnigent/runner/identity.py
-index 25c816cff..bc0318135 100644
+index aeea4c0aa..277cd8594 100644
 --- a/omnigent/runner/identity.py
 +++ b/omnigent/runner/identity.py
-@@ -19,6 +19,11 @@ RUNNER_PARENT_PID_ENV_VAR = "OMNIGENT_RUNNER_PARENT_PID"
- RUNNER_ADOPT_SIGNAL: signal.Signals | None = getattr(signal, "SIGUSR1", None)
- RUNNER_WORKSPACE_ENV_VAR = "OMNIGENT_RUNNER_WORKSPACE"
- RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
-+# Physical Runtime Partition selector injected by a managed Host.  It is a
-+# routing hint, never authorization: the server still proves the path-bound
-+# runner token and resolves the owning Global User before accepting a request.
+@@ -25,0 +26,4 @@ RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
++# Runtime partition selector injected by a managed host. It is a routing hint;
++# the server still authenticates the path-bound runner token.
 +RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"
 +RUNNER_TUNNEL_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
- # A host-launched runner uses this bearer for its initial server connection,
- # then falls back to its own refreshable auth when the bearer is rejected.
- RUNNER_INITIAL_AUTH_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_INITIAL_AUTH_TOKEN"
-@@ -79,6 +84,24 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
- )
- 
- 
+@@ -89,0 +94,17 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
 +def load_runner_tunnel_workspace_id() -> int | None:
 +    """Load the canonical positive managed-runner workspace selector."""
-+
 +    value = os.environ.get(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR)
 +    if value is None:
 +        return None
@@ -205,40 +196,11 @@ index 25c816cff..bc0318135 100644
 +    return workspace_id
 +
 +
- def strip_runner_auth_secrets(env: Mapping[str, str]) -> dict[str, str]:
-     """Return a copy of *env* with runner-auth secrets removed.
- 
-diff --git a/omnigent/runner/transports/ws_tunnel/serve.py b/omnigent/runner/transports/ws_tunnel/serve.py
-index 6efc182cc..65c501856 100644
---- a/omnigent/runner/transports/ws_tunnel/serve.py
-+++ b/omnigent/runner/transports/ws_tunnel/serve.py
-@@ -32,6 +32,8 @@ from omnigent.runner.identity import (
-     OMNIGENT_INTERNAL_WS_ORIGIN,
-     RUNNER_SLICE_KEY_ENV_VAR,
-     RUNNER_TUNNEL_TOKEN_HEADER,
-+    RUNNER_TUNNEL_WORKSPACE_HEADER,
-+    load_runner_tunnel_workspace_id,
- )
- from omnigent.runner.transports.ws_tunnel.frames import (
-     HelloFrame,
-@@ -795,6 +797,9 @@ async def _serve_tunnel_once(
-     )
-     if tunnel_token:
-         headers[RUNNER_TUNNEL_TOKEN_HEADER] = tunnel_token
-+    workspace_id = load_runner_tunnel_workspace_id()
-+    if workspace_id is not None:
-+        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
-     # Verifying SSL context from a real CA bundle for wss:// — a bare default
-     # context loads zero roots on uv / python-build-standalone Pythons (no
-     # OpenSSL default cert path). Local runners use ws:// and pass ssl=None.
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
-index fc74b8424..09912e513 100644
+index 42f8e51aa..9b8cc459f 100644
 --- a/omnigent/server/routes/host_tunnel.py
 +++ b/omnigent/server/routes/host_tunnel.py
-@@ -319,7 +319,13 @@ def create_host_tunnel_router(
-                 name=f"host-sender:{host_id}",
-             )
-             ping_task = asyncio.create_task(
+@@ -383 +383,7 @@ def create_host_tunnel_router(
 -                _ping_loop(ws, conn, host_id, host_store),
 +                _ping_loop(
 +                    ws,
@@ -247,22 +209,10 @@ index fc74b8424..09912e513 100644
 +                    host_store,
 +                    presented_host_token=managed_token,
 +                ),
-                 name=f"host-ping:{host_id}",
-             )
-             receive_task = asyncio.create_task(
-@@ -830,6 +836,8 @@ async def _ping_loop(
-     conn: HostConnection,
-     host_id: str,
-     host_store: HostStore,
+@@ -977,0 +984,2 @@ async def _ping_loop(
 +    *,
 +    presented_host_token: str | None = None,
- ) -> None:
-     """Send pings every PING_INTERVAL_S; declare dead after misses.
- 
-@@ -848,6 +856,17 @@ async def _ping_loop(
-     """
-     while True:
-         await asyncio.sleep(PING_INTERVAL_S)
+@@ -995,0 +1004,11 @@ async def _ping_loop(
 +        if presented_host_token is not None:
 +            still_valid = await asyncio.to_thread(
 +                host_store.resolve_launch_token,
@@ -274,65 +224,3 @@ index fc74b8424..09912e513 100644
 +                with contextlib.suppress(RuntimeError):
 +                    await ws.close(code=4004, reason="credential revoked or expired")
 +                return
-         elapsed = time.time() - conn.last_frame_at
-         if elapsed > PING_INTERVAL_S * PING_MISS_THRESHOLD:
-             _logger.warning(
-diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 60cad8762..04042dcbd 100644
---- a/omnigent/stores/host_store.py
-+++ b/omnigent/stores/host_store.py
-@@ -18,7 +18,7 @@ import logging
- from dataclasses import dataclass
- from typing import cast
- 
--from sqlalchemy import Engine, or_, select, tuple_, update
-+from sqlalchemy import Engine, and_, or_, select, tuple_, update
- from sqlalchemy import delete as sql_delete
- from sqlalchemy.engine import CursorResult
- from sqlalchemy.exc import IntegrityError
-@@ -272,9 +272,10 @@ class HostStore:
-             Written on every connect — including ``None`` from an older
-             host that doesn't report it, which correctly resets any
-             stale value back to "unknown".
--        :param managed_token: Raw launch token for a managed host. When set,
--            registration atomically revalidates the current credential instead
--            of performing the external-host upsert path.
-+        :param managed_token: Raw launch token for a credentialed host. When
-+            set, registration atomically revalidates either an active managed
-+            sandbox generation or an explicitly armed external Host instead of
-+            performing the user-authenticated external-host upsert path.
-         :returns: The upserted :class:`Host`.
-         """
-         now = now_epoch()
-@@ -294,8 +295,20 @@ class HostStore:
-                             SqlHost.user_id == user_id,
-                             SqlHost.token_hash == hash_host_launch_token(managed_token),
-                             SqlHost.token_expires_at.is_not(None),
--                            SqlHost.token_expires_at >= now,
--                            SqlHost.sandbox_id.is_not(None),
-+                            SqlHost.token_expires_at > now,
-+                            # Accept either a live managed generation or the
-+                            # lifecycle-free tuple used by an armed external Host.
-+                            or_(
-+                                and_(
-+                                    SqlHost.sandbox_provider.is_not(None),
-+                                    SqlHost.sandbox_id.is_not(None),
-+                                ),
-+                                and_(
-+                                    SqlHost.sandbox_provider.is_(None),
-+                                    SqlHost.sandbox_id.is_(None),
-+                                    SqlHost.terminating_sandbox_id.is_(None),
-+                                ),
-+                            ),
-                             SqlHost.deleted_at.is_(None),
-                         )
-                         .values(
-@@ -1021,7 +1034,7 @@ class HostStore:
-                 return None
-             if not hmac.compare_digest(row.token_hash, hash_host_launch_token(token)):
-                 return None
--            if row.token_expires_at < now_epoch():
-+            if row.token_expires_at <= now_epoch():
-                 return None
-             return _row_to_host(row)
- 

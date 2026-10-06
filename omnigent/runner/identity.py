@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import signal
 import uuid
@@ -11,6 +12,9 @@ from pathlib import Path
 
 RUNNER_ID_ENV_VAR = "OMNIGENT_RUNNER_ID"
 RUNNER_PARENT_PID_ENV_VAR = "OMNIGENT_RUNNER_PARENT_PID"
+# Host-launched runners delegate machine-global stale-process cleanup to the
+# host daemon. CLI-local runners leave this unset and retain standalone cleanup.
+RUNNER_HOST_OWNS_GLOBAL_CLEANUP_ENV_VAR = "OMNIGENT_RUNNER_HOST_OWNS_GLOBAL_CLEANUP"
 # Signal the CLI sends to "adopt" a runner: stop watching the parent
 # pid so the runner survives an intentional CLI exit (tmux detach) and
 # keeps serving the web UI. SIGUSR1 is unused elsewhere in the runner.
@@ -19,9 +23,8 @@ RUNNER_PARENT_PID_ENV_VAR = "OMNIGENT_RUNNER_PARENT_PID"
 RUNNER_ADOPT_SIGNAL: signal.Signals | None = getattr(signal, "SIGUSR1", None)
 RUNNER_WORKSPACE_ENV_VAR = "OMNIGENT_RUNNER_WORKSPACE"
 RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
-# Physical Runtime Partition selector injected by a managed Host.  It is a
-# routing hint, never authorization: the server still proves the path-bound
-# runner token and resolves the owning Global User before accepting a request.
+# Runtime partition selector injected by a managed host. It is a routing hint;
+# the server still authenticates the path-bound runner token.
 RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"
 RUNNER_TUNNEL_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 # A host-launched runner uses this bearer for its initial server connection,
@@ -58,6 +61,10 @@ OMNIGENT_INTERNAL_WS_ORIGIN = "omnigent://internal"
 # CLI flows leave it unset (agent sees the project root directly).
 RUNNER_ISOLATE_SESSION_ENV_VAR = "OMNIGENT_RUNNER_ISOLATE_SESSION"
 
+# Set by a launching host for its first-connect watchdog; absent for CLI-local
+# runners, which have no host watching them.
+RUNNER_CONNECT_MARKER_ENV_VAR = "OMNIGENT_RUNNER_CONNECT_MARKER"
+
 # Marker env var stamped into every agent-facing environment so any
 # process launched inside an Omnigent agent session can detect it is
 # running under Omnigent. This is the analog of Claude Code's
@@ -86,7 +93,6 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
 
 def load_runner_tunnel_workspace_id() -> int | None:
     """Load the canonical positive managed-runner workspace selector."""
-
     value = os.environ.get(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR)
     if value is None:
         return None
@@ -100,6 +106,24 @@ def load_runner_tunnel_workspace_id() -> int | None:
             f"{RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer"
         )
     return workspace_id
+
+
+def touch_connect_marker(env: Mapping[str, str] | None = None) -> None:
+    """Mark a host-launched tunnel connect, if configured.
+
+    Reconnects may touch the same file; failure must not block the tunnel.
+    """
+    source = os.environ if env is None else env
+    path = source.get(RUNNER_CONNECT_MARKER_ENV_VAR)
+    if not path:
+        return
+    try:
+        Path(path).touch()
+    except OSError:
+        # A failed touch only affects the host's diagnostic.
+        logging.getLogger(__name__).warning(
+            "could not touch runner connect marker %s", path, exc_info=True
+        )
 
 
 def strip_runner_auth_secrets(env: Mapping[str, str]) -> dict[str, str]:
