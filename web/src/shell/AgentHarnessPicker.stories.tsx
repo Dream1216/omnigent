@@ -421,9 +421,10 @@ export const NoAgents: Story = {
     const select = canvas.getByTestId("new-chat-landing-agent-select");
     await expect(select).toBeEnabled();
     await userEvent.click(select);
-    await expect(
-      within(canvasElement.ownerDocument.body).getByTestId("new-chat-landing-create-agent"),
-    ).toBeVisible();
+    const createAgent = await within(canvasElement.ownerDocument.body).findByTestId(
+      "new-chat-landing-create-agent",
+    );
+    await expect(createAgent).toBeVisible();
   },
 };
 
