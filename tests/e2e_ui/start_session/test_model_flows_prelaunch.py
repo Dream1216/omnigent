@@ -186,7 +186,17 @@ def test_hosted_codex_only_submits_advertised_deepseek_model(
     _run_in_fresh_loop(_drive_hosted_codex_allowlist(base_url, session_id))
 
 
-async def _drive_hosted_codex_allowlist(base_url: str, session_id: str) -> None:
+def test_hosted_codex_discards_stale_remembered_gpt_model(
+    seeded_session: tuple[str, str],
+) -> None:
+    """A saved GPT pick cannot leak into a gateway-bound new-session create."""
+    base_url, session_id = seeded_session
+    _run_in_fresh_loop(_drive_hosted_codex_allowlist(base_url, session_id, stale_model=True))
+
+
+async def _drive_hosted_codex_allowlist(
+    base_url: str, session_id: str, *, stale_model: bool = False
+) -> None:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         page = await browser.new_page()
@@ -234,6 +244,13 @@ async def _drive_hosted_codex_allowlist(base_url: str, session_id: str) -> None:
                     JSON.stringify({{ {_HOST_ID}: ["/work/repo"] }})
                 );"""
             )
+            if stale_model:
+                await page.add_init_script(
+                    """window.localStorage.setItem(
+                        "omnigent:last-mode-by-harness",
+                        JSON.stringify({"codex-native": {"model": "gpt-5.6-sol"}})
+                    );"""
+                )
 
             await page.goto(f"{base_url}/")
             await page.get_by_test_id("new-chat-landing-input").wait_for(
@@ -244,12 +261,17 @@ async def _drive_hosted_codex_allowlist(base_url: str, session_id: str) -> None:
                 page.get_by_role("menuitemcheckbox", name="deepseek-flash", exact=True)
             ).to_be_visible()
             assert await page.get_by_role("menuitemcheckbox", name=re.compile("GPT")).count() == 0
-            await page.get_by_role("menuitemcheckbox", name="deepseek-flash", exact=True).click()
+            if not stale_model:
+                await page.get_by_role(
+                    "menuitemcheckbox", name="deepseek-flash", exact=True
+                ).click()
             await _close_entry_models(page)
 
             await page.get_by_test_id("new-chat-landing-input").fill("Say hello")
             await page.get_by_test_id("new-chat-landing-submit").click()
             await _wait_until(lambda: len(create_bodies) == 1)
-            assert create_bodies[0].get("model_override") == "deepseek-flash"
+            assert create_bodies[0].get("model_override") == (
+                None if stale_model else "deepseek-flash"
+            )
         finally:
             await browser.close()
