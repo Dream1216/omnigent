@@ -43,6 +43,8 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
+    "http-cache-semantics@4.3.0",
+    "source-map-js@1.2.2",
     "@moonshot-ai/kimi-code@0.43.1",
     "@qwen-code/audio-capture@0.23.4",
     "@qwen-code/qwen-code@0.23.4",
@@ -1138,7 +1140,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or release_age_exclusions != _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS
     ):
         violations.append(
-            "pnpm minimumReleaseAgeExclude must match the approved exact Harness artifact versions"
+            "pnpm minimumReleaseAgeExclude must match the approved exact release-age exceptions"
         )
     for package, (argument, version) in _APPROVED_HOST_CLI_VERSIONS.items():
         if f"ARG {argument}={version}" not in dockerfile:

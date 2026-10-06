@@ -898,6 +898,8 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
 @pytest.mark.parametrize(
     ("target", "replacement"),
     [
+        ("'http-cache-semantics@4.3.0'", "'http-cache-semantics@*'"),
+        ("'source-map-js@1.2.2'", "'source-map-js@*'"),
         ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
         ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
         ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
@@ -916,7 +918,7 @@ def test_image_material_lock_rejects_release_age_exclusion_drift(
     workspace.write_text(source.replace(target, replacement, 1), encoding="utf-8")
 
     assert (
-        "pnpm minimumReleaseAgeExclude must match the approved exact Harness artifact versions"
+        "pnpm minimumReleaseAgeExclude must match the approved exact release-age exceptions"
         in validate_image_material_lock(repo)
     )
 
