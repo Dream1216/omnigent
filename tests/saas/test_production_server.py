@@ -182,7 +182,16 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
 
 
 def _sessions(*, billing: bool = False) -> RoleSessionFactories:
-    engines = tuple(sa.create_engine("sqlite://") for _ in range(6 if billing else 5))
+    # Readiness probes run in a worker thread; each role's in-memory test
+    # connection must be usable there as well as by the TestClient thread.
+    engines = tuple(
+        sa.create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=sa.pool.StaticPool,
+        )
+        for _ in range(6 if billing else 5)
+    )
     return RoleSessionFactories(
         runtime_engine=engines[0],
         authenticator=sessionmaker(engines[1], expire_on_commit=False),

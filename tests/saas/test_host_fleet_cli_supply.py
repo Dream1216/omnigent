@@ -31,3 +31,11 @@ def test_devin_fleet_cli_is_version_and_hash_pinned() -> None:
     )
     assert 'echo "$sha  $archive" | sha256sum -c -' in script
     assert 'devin@*) install_devin "${spec#*@}" ;;' in script
+
+
+def test_extra_harness_launcher_symlinks_are_timestamp_normalized() -> None:
+    script = (_ROOT / "saas/scripts/install-saas-harness-cli.sh").read_text()
+
+    assert "for launcher in jcode devin; do" in script
+    assert 'if [ -L "$BIN_DIR/$launcher" ]; then' in script
+    assert 'touch -h -d "@${SOURCE_DATE_EPOCH}" "$BIN_DIR/$launcher"' in script

@@ -127,6 +127,60 @@ def test_gateway_projection_routes_codex_without_cli_login(
     assert "session-bound-gateway-token" in rendered
 
 
+@pytest.mark.asyncio
+async def test_platform_codex_picker_uses_declared_models_without_host_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv(PLATFORM_MODEL_CREDENTIAL_ENV, raising=False)
+    (tmp_path / "config.yaml").write_text(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        ),
+        encoding="ascii",
+    )
+    monkeypatch.setattr(
+        "saas.production.platform_model_host._find_codex_cli",
+        lambda: "/test/codex",
+    )
+
+    async def unexpected_probe():
+        raise AssertionError("Host must not probe an account-wide Codex catalog")
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server.codex_launch_catalog",
+        unexpected_probe,
+    )
+    host = object.__new__(PlatformModelHostProcess)
+    result = await host._probed_codex_model_options()
+
+    assert result is not None
+    assert result.routable_models == ["deepseek-flash", "deepseek-v4-pro"]
+    assert [row["id"] for row in result.models] == result.routable_models
+    assert result.models[0]["isDefault"] is True
+
+
+@pytest.mark.asyncio
+async def test_platform_codex_picker_never_falls_back_to_account_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+
+    async def unexpected_probe(_self: object) -> None:
+        raise AssertionError("Managed Host must not expose account-wide Codex models")
+
+    monkeypatch.setattr(
+        "omnigent.host.connect.HostProcess._probed_codex_model_options",
+        unexpected_probe,
+    )
+    host = object.__new__(PlatformModelHostProcess)
+
+    assert await host._probed_codex_model_options() is None
+
+
 def test_gateway_projection_routes_opencode_without_cli_login(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
