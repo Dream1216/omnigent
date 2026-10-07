@@ -215,6 +215,15 @@ cache, exact-retry session idempotency, and Kiro readiness correction against
 the pinned 0.18 upstream revision. Signed-image and online acceptance remain
 separate release requirements.
 
+The `next-018-ci-contract-closure-v29` follow-up aligns the official
+stable-id retry test with the one-dispatch invariant, verifies a truly
+blocked picker row while SDK credential warnings stay advisory, and runs the
+classifier-billing dialog E2E only when the installed Claude binary supports
+that dialog. Two newly divergent official test paths add 24 net lines,
+measuring 167 direct upstream files / 1,443 net lines. The nine-patch ceiling,
+4,568-line ceiling, isolation floor, forbidden paths and reverse-dependency
+check are unchanged; no production gate is waived.
+
 The `next-agent-null-harness-gate-v26` correction rejects unreadable catalog
 Agents before session creation while preserving session-discovered Agents until
 their spec loads. It extends replayable patch 0010 and aligns browser fixtures

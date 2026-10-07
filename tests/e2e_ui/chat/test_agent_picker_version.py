@@ -191,7 +191,7 @@ def test_picker_binds_newest_agent_version(seeded_session: tuple[str, str]) -> N
 
 
 def test_unavailable_agent_requires_setup_before_create(seeded_session: tuple[str, str]) -> None:
-    """A Host's needs-auth report disables launch, but leaves setup reachable."""
+    """A missing SDK binary disables launch, but leaves setup reachable."""
     base_url, session_id = seeded_session
     _run_in_fresh_loop(_drive_unavailable_agent(base_url, session_id))
 
@@ -206,7 +206,7 @@ async def _drive_unavailable_agent(base_url: str, created_session_id: str) -> No
                 page,
                 created_session_id=created_session_id,
                 create_requests=create_requests,
-                configured_harnesses={"claude-sdk": "needs-auth"},
+                configured_harnesses={"claude-sdk": "binary-missing"},
             )
             await _seed_workspace(page)
             await page.goto(f"{base_url}/")

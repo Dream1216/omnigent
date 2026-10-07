@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -40,9 +41,32 @@ from tests.server.integration.mock_llm_server import (
 
 _CLAUDE_BINARY = os.environ.get("OMNIGENT_E2E_CLAUDE_BILLING_NOTICE_BIN") or shutil.which("claude")
 
+
+def _supports_classifier_billing_notice(binary: str | None) -> bool:
+    if binary is None:
+        return False
+    try:
+        result = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", result.stdout + result.stderr)
+    return (
+        result.returncode == 0
+        and match is not None
+        and tuple(map(int, match.groups()))
+        >= (
+            2,
+            1,
+            278,
+        )
+    )
+
+
 pytestmark = [
     pytest.mark.skipif(
-        _CLAUDE_BINARY is None or shutil.which("tmux") is None,
+        not _supports_classifier_billing_notice(_CLAUDE_BINARY) or shutil.which("tmux") is None,
         reason="requires Claude Code 2.1.278+ and tmux",
     ),
     pytest.mark.timeout(120),

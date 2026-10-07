@@ -169,10 +169,10 @@ async def test_web_send_persists_under_its_stable_id_and_dedupes_a_retry(
 
     items = (await client.get(f"/v1/sessions/{session_id}/items")).json()["data"]
     assert [it["id"] for it in items if it["type"] == "message"] == [_STABLE_ID]
-    # The retry is the same send, so it is still dispatched (its first forward
-    # may have died) -- against the one persisted item, never a second copy.
+    # The runner accepted the first send. Replaying its stable id must not
+    # execute a second turn or add another persisted item.
     turns = [turn for turn in forwarded if turn.get("type") == "message"]
-    assert [turn["persisted_item_id"] for turn in turns] == [_STABLE_ID, _STABLE_ID]
+    assert [turn["persisted_item_id"] for turn in turns] == [_STABLE_ID]
 
 
 @pytest.mark.asyncio
