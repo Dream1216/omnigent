@@ -1003,13 +1003,14 @@ async def test_list_sessions_includes_title_and_status(
 ) -> None:
     """Each list item has title, status, labels, and timestamps."""
     agent = await create_test_agent(client)
-    await _create_session(client, agent["id"], title="titled-session")
+    session = await _create_session(client, agent["id"], title="titled-session")
 
     resp = await client.get("/v1/sessions")
     data = resp.json()["data"]
     assert len(data) >= 1
-    item = data[0]
+    item = next(row for row in data if row["id"] == session["id"])
     assert "title" in item
+    assert item["title"] == "titled-session"
     assert "status" in item
     assert "created_at" in item
     assert "updated_at" in item
