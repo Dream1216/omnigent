@@ -205,25 +205,6 @@ net lines, so only those two ceilings rise from v24; the nine-patch ceiling,
 0.85 isolation floor, forbidden paths and reverse-dependency checks remain.
 The 17-Agent and authenticated delivery gates remain separate live checks.
 
-The `next-018-trusted-automation-budget-v28` upgrade keeps the 33 privileged
-GitHub Actions and Workflow paths at the reviewed mainline bytes, rather than
-allowing the untrusted product PR to alter status-minting automation. This
-raises the exact direct-upstream file count to 165 while the net-added line
-count falls to 1,419; the nine-patch ceiling and all other source boundaries
-remain unchanged. Patch 0010 now also replays the bounded committed-message
-cache, exact-retry session idempotency, and Kiro readiness correction against
-the pinned 0.18 upstream revision. Signed-image and online acceptance remain
-separate release requirements.
-
-The `next-018-ci-contract-closure-v29` follow-up aligns the official
-stable-id retry test with the one-dispatch invariant, verifies a truly
-blocked picker row while SDK credential warnings stay advisory, and runs the
-classifier-billing dialog E2E only when the installed Claude binary supports
-that dialog. Two newly divergent official test paths add 24 net lines,
-measuring 167 direct upstream files / 1,443 net lines. The nine-patch ceiling,
-4,568-line ceiling, isolation floor, forbidden paths and reverse-dependency
-check are unchanged; no production gate is waived.
-
 The `next-agent-null-harness-gate-v26` correction rejects unreadable catalog
 Agents before session creation while preserving session-discovered Agents until
 their spec loads. It extends replayable patch 0010 and aligns browser fixtures
