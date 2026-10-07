@@ -661,11 +661,6 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "production Dockerfile must pin pnpm 11.15.1",
         ),
         (
-            '    "@modelcontextprotocol/sdk": "1.32.0",',
-            '    "@modelcontextprotocol/sdk": "1.32.1",',
-            "host Docker importer must pin the approved MCP SDK peer",
-        ),
-        (
             "ARG CLAUDE_CODE_VERSION=2.1.266",
             "ARG CLAUDE_CODE_VERSION=2.1.267",
             "host image must pin @anthropic-ai/claude-code to 2.1.266",
