@@ -1,743 +1,25 @@
-diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index 1915299..60eb840 100644
---- a/omnigent/host/connect.py
-+++ b/omnigent/host/connect.py
-@@ -22 +22 @@ import time
--from collections.abc import Callable, Iterator, Mapping
-+from collections.abc import Callable, Iterable, Iterator, Mapping
-@@ -25 +25 @@ from pathlib import Path
--from typing import Any, Literal, Protocol, SupportsIndex, SupportsInt, cast
-+from typing import Any, Literal, SupportsIndex, SupportsInt, cast
-@@ -27,0 +28 @@ import httpx
-+import psutil
-@@ -176,4 +176,0 @@ _logger = logging.getLogger(__name__)
--class _WaitidInfo(Protocol):
--    si_pid: int
--
--
-@@ -260,7 +257,2 @@ _RUNNER_WATCH_INTERVAL_S = 0.5
--# Cadence of the orphan-reaper sweep. The host installs itself as a child
--# subreaper (Linux — see :func:`_install_child_subreaper`), so a harness's
--# detached tool subprocess (node/npm/chromium/tmux/python) whose runner
--# parent died reparents to the host. With no reaper such an orphan lingers
--# as a ``<defunct>`` zombie; over an overnight blocked run they reached
--# ~900 zombies and OOM'd the box (#1782). A ``WNOHANG`` sweep is a cheap
--# syscall, so 2s keeps zombie lifetime short at negligible cost.
-+# Collect adopted children every two seconds. Process discovery runs off-loop;
-+# exit-status collection uses nonblocking waits.
-@@ -1167,17 +1159,5 @@ class HostProcess:
--        """PIDs of runners this host spawned and still tracks directly.
--
--        The orphan reaper must NOT ``wait()`` these: their exit status is
--        owned by their :class:`subprocess.Popen` (read via ``poll()`` /
--        ``.returncode`` for the ``host.runner_exited`` report). Reaping one
--        out from under ``Popen`` makes ``poll()`` either spin forever
--        (``while poll() is None`` in ``_watch_runner``) or report a bogus
--        exit 0 for a crash — so the reaper skips these and lets
--        ``_watch_runner`` / ``_handle_stop`` own them.
--
--        The runner zygote is included for the same reason: it is a direct
--        ``Popen`` child of the daemon whose status ``ZygoteManager._proc``
--        owns. Reaping it as an "orphan" on an unexpected crash would consume
--        its status out from under the manager, confusing ``is_running()`` /
--        ``stop()``.
--
--        :returns: Set of live tracked pids (runners + the zygote).
-+        """Return child PIDs whose exit status still belongs to a process handle.
-+
-+        Poll direct children through their Popen so their status survives even
-+        without a running watcher. Keep the runner records until the watcher
-+        handles the exit; removing them here would suppress crash reporting.
-@@ -1185,2 +1165,9 @@ class HostProcess:
--        pids = {h.proc.pid for h in self._runners.values()}
--        zygote_pid = self._zygote.pid if self._zygote is not None else None
-+        pids: set[int] = set()
-+        for handle in self._runners.values():
-+            proc = handle.proc
-+            # Forked-runner polling can block on zygote IPC. An unresponsive
-+            # owner protects only its own PID, not the rest of the sweep.
-+            code = proc.returncode if isinstance(proc, ZygoteRunnerProc) else proc.poll()
-+            if code is None:
-+                pids.add(proc.pid)
-+        zygote_pid = self._zygote.unreaped_pid if self._zygote is not None else None
-@@ -1190,0 +1178,9 @@ class HostProcess:
-+    @staticmethod
-+    def _orphan_child_pids() -> list[int]:
-+        """Snapshot direct children without consuming any exit status."""
-+        try:
-+            return [child.pid for child in psutil.Process().children()]
-+        except psutil.Error:
-+            _logger.debug("Could not enumerate host children", exc_info=True)
-+            return []
-+
-@@ -1192,19 +1188 @@ class HostProcess:
--        """Reap orphaned descendant processes reparented to this host.
--
--        A harness spawns its tool subprocesses detached
--        (``start_new_session=True`` — ``omnigent.inner._proc.spawn_kwargs``),
--        so when the runner that owns them dies, those grandchildren
--        (``node`` / ``npm`` / ``chromium`` / ``tmux`` / ``python``) are
--        orphaned and reparented to this host (it is PID 1 in a container, or
--        a child subreaper otherwise — see :func:`_install_child_subreaper`).
--        Nothing ``wait()``s them, so each becomes a permanent ``<defunct>``
--        zombie; a blocked overnight run accumulated ~900 and OOM'd the box
--        (#1782).
--
--        This loop periodically reaps any ready-to-reap child that is NOT a
--        Popen-tracked runner (:meth:`_tracked_runner_pids`), draining zombies
--        without disturbing runner exit reporting. Non-Linux (no reparenting)
--        and the "no orphans yet" case both make this a cheap no-op sweep.
--
--        :returns: None. Runs until cancelled on shutdown.
--        """
-+        """Collect exited descendants adopted by this host until shutdown."""
-@@ -1214 +1192,6 @@ class HostProcess:
--                self._reap_orphans_once()
-+                if self._owned_subprocess_ops or not IS_POSIX:
-+                    continue
-+                # Process discovery may scan a large process table. Only the
-+                # nonblocking, ownership-aware waits run on the event loop.
-+                child_pids = await asyncio.to_thread(self._orphan_child_pids)
-+                self._reap_orphans_once(child_pids)
-@@ -1220,28 +1203,2 @@ class HostProcess:
--    def _reap_orphans_once(self) -> int:
--        """Reap ready orphaned children without corrupting runner exits.
--
--        The hazard: the host reads each runner's exit status through its
--        :class:`subprocess.Popen` (``poll()`` / ``.returncode``) for the
--        ``host.runner_exited`` report. A blind ``waitpid(-1)`` reaper that
--        consumes a just-crashed tracked runner makes ``Popen.poll()`` report
--        a bogus exit 0 (verified) — the crash cause is lost. So the reaper
--        must drain orphans while leaving tracked runners' status intact.
--
--        Two implementations, same guarantee:
--
--        * **Linux/POSIX with** ``os.waitid`` — *peek* at the next reapable
--          child with ``WNOWAIT`` (does not consume). Reap it only if it is
--          not a tracked runner; if it is, stop the sweep and let the runner's
--          own Popen reaper (``_watch_runner``) consume it. Cleanest: a tracked
--          runner's status is never touched.
--        * **Platforms without** ``os.waitid`` **(e.g. macOS)** — ``waitpid``
--          has no peek, so reap with ``WNOHANG`` and, if the reaped pid is a
--          tracked runner, re-inject its exit status onto the ``Popen`` so
--          ``_watch_runner`` still reports the true code. Safe because
--          ``_reap_orphans_once`` runs to completion on the event loop without
--          awaiting, so it cannot interleave with ``_watch_runner`` /
--          ``_handle_stop``.
--
--        This runs only when the host is PID 1 (container) or a child
--        subreaper (:func:`_install_child_subreaper`); otherwise no orphan
--        ever reparents here and every sweep is a no-op.
-+    def _reap_orphans_once(self, child_pids: Iterable[int] | None = None) -> int:
-+        """Reap each unowned child independently, preserving owned exit status.
-@@ -1248,0 +1206,5 @@ class HostProcess:
-+        Targeted waits let a stalled owner coexist with orphan cleanup. A
-+        completed process handle no longer reserves its reusable PID, but its
-+        runner record remains available to the watcher for crash reporting.
-+
-+        :param child_pids: Optional direct-child snapshot collected off-loop.
-@@ -1252,12 +1214,2 @@ class HostProcess:
--            # A host-owned subprocess (e.g. a git worktree command) is running
--            # in a worker thread. Its child is a DIRECT child of this process
--            # but NOT a tracked runner, so it is indistinguishable from an
--            # orphan to the reaper — reaping it would steal it from
--            # ``subprocess.run``'s own ``wait()`` and corrupt that command's
--            # returncode to 0 (CPython swallows the ECHILD and reports 0).
--            # Skip this sweep; a later one drains any real orphans once the op
--            # finishes. A worktree op can hold this off for up to
--            # ``_GIT_TIMEOUT_S`` (120s) per git command, so real orphans can
--            # linger that long in the rare case a runner dies mid-worktree-op —
--            # acceptable, since the leak this guards against accrues over hours,
--            # not a two-minute worst case.
-+            # An unregistered Popen (spawn or host-owned command) must collect
-+            # its own status before orphan cleanup can safely resume.
-@@ -1266,2 +1217,0 @@ class HostProcess:
--            # Windows: no child reparenting to a subreaper and no ``WNOHANG`` /
--            # ``waitpid(-1, ...)`` — nothing to reap and the calls would raise.
-@@ -1269,32 +1219,2 @@ class HostProcess:
--        if hasattr(os, "waitid") and hasattr(os, "P_ALL"):
--            return self._reap_orphans_waitid()
--        return self._reap_orphans_waitpid()
--
--    @contextlib.contextmanager
--    def _host_subprocess_op(self) -> Iterator[None]:
--        """Mark a host-owned ``subprocess`` operation as in flight.
--
--        Wrap any host-owned :mod:`subprocess` call (or the ``to_thread`` that
--        runs it) in this so the orphan reaper pauses and cannot ``wait()`` the
--        child out from under ``subprocess``'s own reaping — see
--        :meth:`_reap_orphans_once` for why that would corrupt the command's
--        exit code (#1782).
--
--        Increment/decrement run on the event loop (the reaper does too), so a
--        plain counter needs no lock. Re-entrant and exception-safe: the
--        decrement is in a ``finally``.
--
--        :returns: A context manager; the body runs with the reaper paused.
--        """
--        self._owned_subprocess_ops += 1
--        try:
--            yield
--        finally:
--            self._owned_subprocess_ops -= 1
--
--    def _reap_orphans_waitid(self) -> int:
--        """Peek-and-reap using ``os.waitid(WNOWAIT)`` (Linux/POSIX).
--
--        :returns: Count of orphan processes reaped.
--        """
--        reaped = 0
-+        if child_pids is None:
-+            child_pids = self._orphan_child_pids()
-@@ -1302,36 +1221,0 @@ class HostProcess:
--        waitid = cast(
--            "Callable[[object, int, int], _WaitidInfo | None]",
--            vars(os)["waitid"],
--        )
--        p_all = vars(os)["P_ALL"]
--        while True:
--            try:
--                info = waitid(p_all, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
--            except (ChildProcessError, OSError):
--                break
--            if info is None:
--                break  # children exist but none ready to reap
--            pid = info.si_pid
--            if pid in tracked:
--                # Leave it for _watch_runner's Popen to reap+report. Break, not
--                # continue: WNOWAIT keeps returning the same head pid, so
--                # continuing would spin. The runner is reaped within ~0.5s and
--                # the next sweep proceeds past it.
--                break
--            try:
--                os.waitpid(pid, 0)  # consume the orphan
--                reaped += 1
--            except ChildProcessError:
--                break
--        if reaped:
--            _logger.debug("orphan reaper reaped %d process(es)", reaped)
--        return reaped
--
--    def _reap_orphans_waitpid(self) -> int:
--        """Reap with ``waitpid(WNOHANG)``, re-injecting tracked-runner status.
--
--        Fallback for platforms without ``os.waitid`` (no peek). See
--        :meth:`_reap_orphans_once` for why re-injection is race-free.
--
--        :returns: Count of orphan (non-runner) processes reaped.
--        """
-@@ -1339 +1223,3 @@ class HostProcess:
--        while True:
-+        for pid in child_pids:
-+            if pid in tracked:
-+                continue
-@@ -1341,12 +1227,3 @@ class HostProcess:
--                pid, status = os.waitpid(-1, os.WNOHANG)
--            except (ChildProcessError, OSError):
--                break
--            if pid == 0:
--                break  # children exist but none ready
--            handle = self._runner_handle_for_pid(pid)
--            if handle is not None:
--                # A tracked runner — do NOT count it as an orphan. Re-inject
--                # the status so its Popen (and thus _watch_runner) reports the
--                # true exit code instead of ECHILD → bogus 0.
--                if handle.proc.returncode is None:
--                    handle.proc.returncode = os.waitstatus_to_exitcode(status)
-+                waited_pid, _status = os.waitpid(pid, os.WNOHANG)
-+            except OSError:
-+                # A watcher may have consumed this exit after the snapshot.
-@@ -1354 +1231 @@ class HostProcess:
--            reaped += 1
-+            reaped += waited_pid > 0
-@@ -1359,2 +1236,3 @@ class HostProcess:
--    def _runner_handle_for_pid(self, pid: int) -> _RunnerHandle | None:
--        """Return the tracked runner handle owning *pid*, or ``None``.
-+    @contextlib.contextmanager
-+    def _host_subprocess_op(self) -> Iterator[None]:
-+        """Pause orphan cleanup while an unregistered subprocess has an owner.
-@@ -1362,3 +1240,2 @@ class HostProcess:
--        :param pid: An OS process id observed by the reaper.
--        :returns: The matching :class:`_RunnerHandle`, or ``None`` if *pid*
--            is not a tracked runner (i.e. an orphan to reap).
-+        Counter updates and reaping run on the event loop. The guarded work
-+        may run in a worker thread, but its entry and exit must not.
-@@ -1366,4 +1243,5 @@ class HostProcess:
--        for handle in self._runners.values():
--            if handle.proc.pid == pid:
--                return handle
--        return None
-+        self._owned_subprocess_ops += 1
-+        try:
-+            yield
-+        finally:
-+            self._owned_subprocess_ops -= 1
-@@ -1825,12 +1703,3 @@ class HostProcess:
--        spawn = asyncio.ensure_future(
--            asyncio.to_thread(self._spawn_runner_proc, env, _session_slug, workspace)
--        )
--        try:
--            proc, log_path = await asyncio.shield(spawn)
--        except asyncio.CancelledError:
--            spawn.add_done_callback(self._discard_abandoned_spawn)
--            raise
--        except OSError as exc:
--            return self._launch_failed(
--                frame,
--                f"failed to spawn runner: {exc}",
-+        with self._host_subprocess_op():
-+            spawn = asyncio.ensure_future(
-+                asyncio.to_thread(self._spawn_runner_proc, env, _session_slug, workspace)
-@@ -1837,0 +1707,10 @@ class HostProcess:
-+            try:
-+                proc, log_path = await asyncio.shield(spawn)
-+            except asyncio.CancelledError:
-+                spawn.add_done_callback(self._discard_abandoned_spawn)
-+                raise
-+            except OSError as exc:
-+                return self._launch_failed(
-+                    frame,
-+                    f"failed to spawn runner: {exc}",
-+                )
-@@ -2213,0 +2093 @@ class HostProcess:
-+        self._runners.pop(runner_id)
-diff --git a/omnigent/host/runner_zygote.py b/omnigent/host/runner_zygote.py
-index e579df5..980f52c 100644
---- a/omnigent/host/runner_zygote.py
-+++ b/omnigent/host/runner_zygote.py
-@@ -157,0 +158,10 @@ class ZygoteManager:
-+    @property
-+    def unreaped_pid(self) -> int | None:
-+        """Return the zygote pid only while its exit status is still pending.
-+
-+        Poll the local Popen without the control lock or a socket round-trip,
-+        retaining any exit code for the manager's other lifecycle operations.
-+        """
-+        proc = self._proc
-+        return proc.pid if proc is not None and proc.poll() is None else None
-+
 diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
-index 19cda97..5c07cae 100644
+index 3b0bffd..1547174 100644
 --- a/omnigent/onboarding/harness_readiness.py
 +++ b/omnigent/onboarding/harness_readiness.py
-@@ -14,9 +14,9 @@ but never ran ``omnigent setup`` to install it" case.
--In-process SDK harnesses (``claude-sdk``, ``openai-agents``) run without
--any CLI and resolve their model credentials at runtime from sources the
--daemon cannot enumerate — environment API keys, a Databricks profile /
--gateway, or the spec's ``executor.auth`` with ``${ENV}`` expansion. The
--daemon has no way to know whether those will resolve, so it never gates
--them (a genuine auth failure surfaces at the first turn via the
--executor's own error). Unknown harnesses fail open for the same reason.
--This keeps the check free of false negatives that would block a launch
--that would actually work.
-+In-process SDK harnesses (``claude-sdk``, ``openai-agents``,
-+``antigravity``) run without any CLI and resolve their model credentials
-+at runtime. The **launch gate** still never blocks them: the spec's
-+``executor.auth`` (with ``${ENV}`` expansion) is invisible here, so a
-+hard gate would break launches that actually work. The **picker map**,
-+however, checks the credential sources the daemon *can* see locally and
-+reports ``"needs-auth"`` when none is visible, so a credential-less host
-+warns before the first turn dies instead of after. Unknown harnesses fail
-+open on both axes.
-@@ -29,0 +30 @@ from collections.abc import Callable
-+from pathlib import Path
-@@ -37,0 +39 @@ from omnigent.harness_availability import (
-+    HARNESS_NEEDS_AUTH,
-@@ -61,0 +64,2 @@ from omnigent.onboarding.provider_config import (
-+    BEDROCK_KIND,
-+    CLI_CONFIG_KIND,
-@@ -65,0 +70 @@ from omnigent.onboarding.provider_config import (
-+    ProviderEntry,
-@@ -70,2 +75,4 @@ from omnigent.onboarding.provider_config import (
--# In-process SDK harnesses: no CLI binary, credentials resolved at runtime
--# from ambient/spec sources the daemon can't see. Never gated. Includes both
-+# In-process SDK harnesses: no CLI binary to gate on. The launch gate never
-+# blocks them (spec-level auth is invisible here), but the picker map reports
-+# ``needs-auth`` when no locally visible credential source could serve them.
-+# Includes both
-@@ -230,0 +238,3 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
-+        # Launch gate only: never block an SDK launch (spec-level auth is
-+        # invisible here). Picker-facing credential checks live in
-+        # :func:`_sdk_harness_availability`.
-@@ -344,0 +355,31 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
-+_SDK_UNUSABLE_PROVIDER_KINDS: frozenset[str] = frozenset(
-+    {SUBSCRIPTION_KIND, CLI_CONFIG_KIND, BEDROCK_KIND}
-+)
-+
-+
-+def _provider_entry_locally_credentialed(
-+    provider: ProviderEntry,
-+    family: str | None,
-+    unusable_kinds: frozenset[str] = frozenset({SUBSCRIPTION_KIND}),
-+) -> bool:
-+    """Return whether a provider is usable and its local secret resolves."""
-+    if provider.kind in unusable_kinds:
-+        return False
-+    candidates = (family,) if family is not None else (ANTHROPIC_FAMILY, OPENAI_FAMILY)
-+    inline = [name for name in candidates if name in provider.families]
-+    if not inline:
-+        return True
-+    for name in inline:
-+        try:
-+            provider.family(name)
-+            return True
-+        except Exception as exc:
-+            # Log only the exception class: resolver errors can contain secret refs.
-+            _logger.debug(
-+                "readiness: provider credential for %r did not resolve (%s)",
-+                name,
-+                type(exc).__name__,
-+            )
-+    return False
-+
-+
-@@ -346,27 +387 @@ def _family_provider_configured(harness: str) -> bool:
--    """Whether a non-subscription default provider ENTRY serves *harness*'s family.
--
--    Reads the local ``providers:`` config the same way the ``omnigent setup``
--    overview does (:func:`surface_default_provider` / :func:`default_provider_for_harness`,
--    which resolve the harness's family and — for ``pi`` — its cross-family
--    fallback). A ``subscription``-kind default is NOT counted here: it lives in
--    the harness CLI's own login, judged separately by :func:`harness_cli_logged_in`,
--    so counting it would double-count the CLI-login path and mask a genuine
--    "installed but no key" state.
--
--    This checks that a default provider *entry* exists — not that its secret
--    actually resolves. An entry whose ``api_key_ref`` points at an unset
--    ``env:``/``$VAR`` or a missing keychain secret still reads configured here
--    (matching the secret-blind ``omnigent setup`` overview), so a harness can
--    report ready while a launch would still fail auth; that surfaces as the
--    executor's first-turn error. The launch gate stays binary-only regardless,
--    and the signal only moves toward green (no configured harness regresses).
--
--    Local, synchronous, side-effect free (config file reads only) and never
--    raises: any resolver/config error fails to ``False`` so a broken config
--    reports "needs-auth" rather than crashing the readiness refresh.
--
--    :param harness: A canonical harness spelling, e.g. ``"claude-native"`` or
--        ``"pi"``.
--    :returns: ``True`` when a non-subscription default provider entry is present
--        for the harness's family, else ``False``.
--    """
-+    """Whether a locally credentialed default provider serves the harness."""
-@@ -375,4 +390,12 @@ def _family_provider_configured(harness: str) -> bool:
--    except Exception:
--        # Readiness must never raise; a broken/unreadable config fails to
--        # "no credential" (yellow) rather than crashing the refresh.
--        _logger.debug("readiness: provider check failed for %r", harness, exc_info=True)
-+        if provider is None:
-+            return False
-+        unusable = (
-+            _SDK_UNUSABLE_PROVIDER_KINDS
-+            if harness in _SDK_HARNESSES
-+            else frozenset({SUBSCRIPTION_KIND})
-+        )
-+        return _provider_entry_locally_credentialed(
-+            provider, _HARNESS_FAMILY.get(harness), unusable
-+        )
-+    except Exception as exc:
-+        _logger.debug("readiness: provider check failed for %r (%s)", harness, type(exc).__name__)
-@@ -380 +403,24 @@ def _family_provider_configured(harness: str) -> bool:
--    return provider is not None and provider.kind != SUBSCRIPTION_KIND
-+
-+
-+def _family_fallback_provider_configured(harness: str) -> bool:
-+    """Whether any locally credentialed provider can serve an SDK family."""
-+    family = _HARNESS_FAMILY.get(harness)
-+    if family is None:
-+        return False
-+    try:
-+        from omnigent.onboarding.detected import effective_config_with_detected
-+        from omnigent.onboarding.provider_config import load_providers, provider_families
-+
-+        config = effective_config_with_detected(load_config())
-+        for entry in load_providers(config).values():
-+            if family not in provider_families(entry):
-+                continue
-+            if _provider_entry_locally_credentialed(entry, family, _SDK_UNUSABLE_PROVIDER_KINDS):
-+                return True
-+    except Exception as exc:
-+        _logger.debug(
-+            "readiness: fallback provider check failed for %r (%s)",
-+            harness,
-+            type(exc).__name__,
-+        )
-+    return False
-@@ -408,0 +455,203 @@ def _claude_managed_gateway_configured() -> bool:
-+def _ambient_family_env_key_configured(family: str) -> bool:
-+    """Whether an ambient vendor API key serving *family* is visible."""
-+    from omnigent.onboarding.ambient import _ENV_KEY_FAMILY
-+    from omnigent.onboarding.providers import PROVIDER_ENV_VARS
-+    from omnigent.util.env_credentials import getenv_nonempty_with_omnigent_prefix
-+
-+    for provider, env_var in PROVIDER_ENV_VARS.items():
-+        if _ENV_KEY_FAMILY.get(provider) != family:
-+            continue
-+        if getenv_nonempty_with_omnigent_prefix(env_var) is not None:
-+            return True
-+    return False
-+
-+
-+def _claude_token_env_configured() -> bool:
-+    """Whether a Claude OAuth or gateway bearer is visible in the environment."""
-+    from omnigent.util.env_credentials import getenv_nonempty_with_omnigent_prefix
-+
-+    return any(
-+        getenv_nonempty_with_omnigent_prefix(var) is not None
-+        for var in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN")
-+    )
-+
-+
-+def _claude_code_login_configured() -> bool:
-+    """Whether Claude Code's own subscription login is present locally."""
-+    try:
-+        from omnigent.onboarding import ambient
-+
-+        return ambient._claude_login_detected()
-+    except Exception:
-+        _logger.debug("readiness: claude login check failed", exc_info=True)
-+        return False
-+
-+
-+def _databricks_file_has_credentialed_profile(path: str) -> bool:
-+    """Whether a Databricks config file has a host and usable auth material."""
-+    import configparser
-+
-+    try:
-+        if not os.path.exists(path):
-+            return False
-+        parser = configparser.ConfigParser()
-+        parser.read(path)
-+        section_names = list(parser.sections())
-+        if parser.defaults():
-+            section_names.append(parser.default_section)
-+        for name in section_names:
-+            section = parser[name]
-+            if not section.get("host", "").strip():
-+                continue
-+            has_pat = bool(section.get("token", "").strip())
-+            has_oauth = bool(
-+                section.get("client_id", "").strip() and section.get("client_secret", "").strip()
-+            )
-+            has_basic = bool(
-+                section.get("username", "").strip() and section.get("password", "").strip()
-+            )
-+            auth_type = section.get("auth_type", "").strip().lower()
-+            if not auth_type:
-+                if has_pat or has_oauth or has_basic:
-+                    return True
-+                continue
-+            if auth_type == "pat":
-+                if has_pat:
-+                    return True
-+                continue
-+            if auth_type == "basic":
-+                if has_basic:
-+                    return True
-+                continue
-+            if auth_type in ("oauth-m2m", "oauth"):
-+                if has_oauth:
-+                    return True
-+                continue
-+            if auth_type == "azure-client-secret":
-+                if (
-+                    section.get("azure_client_id", "").strip()
-+                    and section.get("azure_client_secret", "").strip()
-+                    and section.get("azure_tenant_id", "").strip()
-+                ):
-+                    return True
-+                continue
-+            # Externally resolved methods keep their material outside this file.
-+            return True
-+        return False
-+    except Exception as exc:
-+        _logger.debug("readiness: databricks config parse failed (%s)", type(exc).__name__)
-+        return False
-+
-+
-+def _databricks_workspace_configured() -> bool:
-+    """Whether ambient Databricks credentials are locally resolvable."""
-+    if os.environ.get("DATABRICKS_HOST", "").strip():
-+        if os.environ.get("DATABRICKS_TOKEN", "").strip():
-+            return True
-+        if (
-+            os.environ.get("DATABRICKS_CLIENT_ID", "").strip()
-+            and os.environ.get("DATABRICKS_CLIENT_SECRET", "").strip()
-+        ):
-+            return True
-+    config_override = os.environ.get("DATABRICKS_CONFIG_FILE", "").strip()
-+    if config_override and _databricks_file_has_credentialed_profile(config_override):
-+        return True
-+    try:
-+        from omnigent.onboarding.databricks_config import _DATABRICKSCFG_PATH
-+
-+        return _databricks_file_has_credentialed_profile(str(_DATABRICKSCFG_PATH))
-+    except Exception as exc:
-+        _logger.debug("readiness: databricks profile check failed (%s)", type(exc).__name__)
-+        return False
-+
-+
-+def _adc_file_carries_credentials(path: Path) -> bool:
-+    """Whether a Google ADC file contains credential material."""
-+    import json
-+
-+    try:
-+        data = json.loads(path.read_text(encoding="utf-8"))
-+    except Exception as exc:
-+        _logger.debug("readiness: ADC file parse failed (%s)", type(exc).__name__)
-+        return False
-+    if not isinstance(data, dict):
-+        return False
-+    cred_type = str(data.get("type") or "").strip()
-+    if not cred_type:
-+        return False
-+    if cred_type == "authorized_user":
-+        return bool(data.get("refresh_token"))
-+    if cred_type == "service_account":
-+        return bool(data.get("private_key")) and bool(data.get("client_email"))
-+    return True
-+
-+
-+def _google_adc_configured() -> bool:
-+    """Whether Google Application Default Credentials are visible."""
-+    try:
-+        cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-+        if cred_path and os.path.exists(cred_path):
-+            return _adc_file_carries_credentials(Path(cred_path))
-+        adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-+        return adc.exists() and _adc_file_carries_credentials(adc)
-+    except Exception:
-+        _logger.debug("readiness: ADC check failed", exc_info=True)
-+        return False
-+
-+
-+def _antigravity_credential_configured() -> bool:
-+    """Whether a credential usable by the antigravity SDK is visible."""
-+    try:
-+        from omnigent.onboarding.antigravity_auth import (
-+            ANTIGRAVITY_ENV_VARS,
-+            antigravity_api_key_configured,
-+        )
-+
-+        if antigravity_api_key_configured():
-+            return True
-+        if any(os.environ.get(var) for var in ANTIGRAVITY_ENV_VARS):
-+            return True
-+    except Exception:
-+        _logger.debug("readiness: antigravity credential check failed", exc_info=True)
-+    return _google_adc_configured()
-+
-+
-+def _global_auth_configured() -> bool:
-+    """Whether the global config auth block can serve an SDK executor."""
-+    try:
-+        from omnigent.runtime.workflow import _load_global_auth
-+
-+        return _load_global_auth() is not None
-+    except Exception as exc:
-+        _logger.debug("readiness: global auth check failed (%s)", type(exc).__name__)
-+        return False
-+
-+
-+def _sdk_harness_availability(canonical: str) -> HarnessAvailability:
-+    """Return picker readiness for an in-process SDK harness.
-+
-+    This is advisory only. The launch gate remains open because spec-level
-+    ``executor.auth`` is not visible to the host readiness probe.
-+    """
-+    if canonical == "antigravity":
-+        return True if _antigravity_credential_configured() else HARNESS_NEEDS_AUTH
-+    if _family_provider_configured(canonical):
-+        return True
-+    if _family_fallback_provider_configured(canonical):
-+        return True
-+    if _global_auth_configured():
-+        return True
-+    family = _HARNESS_FAMILY.get(canonical)
-+    if family is not None and _ambient_family_env_key_configured(family):
-+        return True
-+    if family == ANTHROPIC_FAMILY and (
-+        _claude_token_env_configured()
-+        or _claude_managed_gateway_configured()
-+        or _claude_code_login_configured()
-+    ):
-+        return True
-+    if _databricks_workspace_configured():
-+        return True
-+    return HARNESS_NEEDS_AUTH
-+
-+
-@@ -491,16 +741,17 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
-         # warning copy uniform across every CLI-backed native harness.
-         return _cli_family_availability(canonical, install_key)
-     if canonical in _PI_HARNESSES:
--        # pi has no CLI login — its only credential is either an omnigent-managed
--        # provider (an API key / gateway) or a pi-subscription ("Pi original auth",
--        # which signals "use Pi's own ~/.pi/agent as-is"). So the two-step signal
--        # is binary + provider: installed-but-no-provider is the yellow "needs-auth"
--        # state the setup dialog acts on.
-+        # Pi also accepts its own login in ~/.pi/agent. Check the same models
-+        # catalog the unmanaged launch uses before reporting needs-auth.
-         binary_state = _binary_availability_reason(PI_KEY)
-         if binary_state is not True:
-             return binary_state
-         if _family_provider_configured(PI_SURFACE):
-             return True
-+        from omnigent.harnesses.pi_native.credentials import pi_own_login_model_options
-+
-+        if pi_own_login_model_options():
-+            return True
-         # A pi subscription (original auth) is also a valid configured state —
-         # it means Pi will use its own ~/.pi/agent credentials, no omnigent
-         # provider needed.
-@@ -518,0 +769,2 @@ def _harness_availability(canonical: str) -> HarnessAvailability:
-+    if canonical in _SDK_HARNESSES:
-+        return _sdk_harness_availability(canonical)
-@@ -528,4 +780,4 @@ def harness_is_configured(harness: str) -> bool:
--    locally. SDK harnesses and unknown harnesses always return ``True`` —
--    their readiness depends on runtime/ambient credentials the daemon
--    can't enumerate, so blocking them would risk false negatives that
--    break working launches.
-+    locally. SDK harnesses and unknown harnesses always return ``True`` because
-+    spec-level credentials are invisible here. The picker map separately
-+    reports ``"needs-auth"`` for an SDK harness with no locally visible
-+    credential, but that signal warns and never gates a launch.
-@@ -559,4 +811,4 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
--    ``claude`` alias, and ``pi``. SDK and unknown harnesses map to
--    ``True`` (never gated); CLI-wrapping harnesses map to whether their
--    binary is on ``PATH``. Codex entries use a structured string reason when
--    unavailable: ``"binary-missing"`` or ``"needs-auth"``.
-+    ``claude`` alias, and ``pi``. Unknown harnesses map to ``True``;
-+    CLI-wrapping harnesses map to their binary/auth state; SDK harnesses map
-+    to ``True`` when a locally visible credential source could serve them,
-+    otherwise ``"needs-auth"`` (advisory only).
-@@ -566 +818 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
--        "claude-sdk": True, "openai-agents": True, "pi": True, "qwen": True}``.
-+        "claude-sdk": "needs-auth", "pi": True, "qwen": True}``.
+@@ -355,0 +356,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
++    "kiro-native": KIRO_KEY,
++    "native-kiro": KIRO_KEY,
 diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py
-index a085537..4a8f0a8 100644
+index a021c39..8be5e89 100644
 --- a/omnigent/runtime/pending_inputs.py
 +++ b/omnigent/runtime/pending_inputs.py
-@@ -174,0 +175,6 @@ _lock = threading.Lock()
-+# Remember a drained submission long enough for a web client to retry a POST
-+# whose response was lost. Per-conversation insertion order bounds the cache.
+@@ -244,0 +245,7 @@ _lock = threading.Lock()
++# A transcript echo settles the pending entry, but a client may retry the
++# original POST after losing its response. Keep a bounded mapping to the
++# committed item so that retry never pastes the prompt into the TUI again.
 +_COMMITTED_TTL_S: float = 3600.0
 +_COMMITTED_MAX_PER_CONVERSATION = 256
 +_committed: WorkspaceScopedCache[str, dict[str, tuple[str, float]]] = WorkspaceScopedCache()
 +
-@@ -272,0 +279,45 @@ def resolve(conversation_id: str, pending_id: str) -> None:
-+def pending_id_for(conversation_id: str, stable_id: str) -> str | None:
-+    """Return the live pending id recorded for a client ``stable_id``."""
-+    with _lock:
-+        _evict_stale_locked(conversation_id, _now())
-+        for entry in _pending.get(conversation_id, {}).values():
-+            if entry.stable_id == stable_id:
-+                return entry.pending_id
-+    return None
-+
-+
+@@ -370,0 +378,32 @@ def pending_id_for_stable_id(conversation_id: str, stable_id: str) -> str | None
 +def remember_committed(conversation_id: str, stable_id: str, item_id: str) -> None:
-+    """Remember the durable item produced for a client submission."""
++    """Remember the durable item produced by a native web submission."""
 +    now = _now()
 +    with _lock:
 +        entries = _committed.setdefault(conversation_id, {})
@@ -747,97 +29,183 @@ index a085537..4a8f0a8 100644
 +
 +
 +def committed_item_id(conversation_id: str, stable_id: str) -> str | None:
-+    """Return the durable item id remembered for ``stable_id``."""
++    """Return the committed item for a recently settled client stable id."""
 +    with _lock:
 +        _evict_stale_committed_locked(conversation_id, _now())
 +        entries = _committed.get(conversation_id)
-+        if entries is None:
-+            return None
-+        found = entries.get(stable_id)
++        found = None if entries is None else entries.get(stable_id)
 +        return None if found is None else found[0]
 +
 +
 +def _evict_stale_committed_locked(conversation_id: str, now: float) -> None:
-+    """Drop remembered submissions past the TTL or per-session cap."""
 +    entries = _committed.get(conversation_id)
 +    if entries is None:
 +        return
-+    stale = [stable_id for stable_id, (_, at) in entries.items() if now - at > _COMMITTED_TTL_S]
-+    for stable_id in stale:
-+        entries.pop(stable_id, None)
++    for stable_id, (_, at) in list(entries.items()):
++        if now - at > _COMMITTED_TTL_S:
++            entries.pop(stable_id, None)
 +    while len(entries) > _COMMITTED_MAX_PER_CONVERSATION:
 +        entries.pop(next(iter(entries)))
 +    if not entries:
 +        _committed.pop(conversation_id, None)
 +
 +
-@@ -486,0 +538 @@ def reset_for_tests() -> None:
+@@ -738,0 +778 @@ def reset_for_tests() -> None:
 +        _committed.clear()
+diff --git a/omnigent/server/managed_hosts.py b/omnigent/server/managed_hosts.py
+index 5ab8684..2f7bc2d 100644
+--- a/omnigent/server/managed_hosts.py
++++ b/omnigent/server/managed_hosts.py
+@@ -1631,0 +1632 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
++                    "host_command",
+@@ -1657,0 +1659 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
++            host_command=_parse_kubernetes_host_command(raw),
+@@ -3265,0 +3268,34 @@ def _parse_kubernetes_secret_mounts(raw: dict[str, object]) -> list[dict[str, ob
++def _parse_kubernetes_host_command(raw: dict[str, object]) -> list[str] | None:
++    """Parse a bounded operator-supplied Host child argv.
++
++    The launcher always places this argv beneath its PID-1 reaper.  A custom
++    command is useful to start a downstream Host composition (for example one
++    that mints per-session model credentials) without building a second image.
++    The value is deployment authority, like ``image``; it is never accepted
++    from a session request.
++    """
++
++    section = _parse_provider_section(raw, "kubernetes")
++    if section is None or "host_command" not in section:
++        return None
++    value = section["host_command"]
++    if (
++        not isinstance(value, list)
++        or not 1 <= len(value) <= 16
++        or not all(
++            isinstance(argument, str)
++            and argument
++            and argument == argument.strip()
++            and "\x00" not in argument
++            and len(argument) <= 4096
++            for argument in value
++        )
++        or sum(len(argument) for argument in value) > 16 * 1024
++    ):
++        raise ValueError(
++            "server config 'sandbox.kubernetes.host_command' must be a list of "
++            "1-16 non-empty argv strings with bounded length"
++        )
++    return list(value)
++
++
+@@ -3332,0 +3369 @@ def _kubernetes_launcher_factory(
++    host_command: list[str] | None,
+@@ -3373,0 +3411,2 @@ def _kubernetes_launcher_factory(
++    :param host_command: Optional reviewed child argv to run beneath the
++        launcher's PID-1 reaper instead of ``omnigent host``.
+@@ -3407,0 +3447 @@ def _kubernetes_launcher_factory(
++            host_command=host_command,
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index c0cc1c9..1881a1d 100644
+index 95db3dc..91e05f0 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py
 +++ b/omnigent/server/routes/_sessions/orchestration.py
-@@ -2560 +2560,5 @@ async def _persist_external_conversation_item(
--    # Not a duplicate: publish side effects for each skipped Kiro pair.
-+    # Not a duplicate: remember the committed item so a client retry of the
-+    # same stable_id never pastes the prompt into the terminal again.
+@@ -2993,0 +2994,2 @@ async def _persist_external_conversation_item_unlocked(
 +    if drained is not None and drained.stable_id is not None:
 +        pending_inputs.remember_committed(session_id, drained.stable_id, persisted.id)
-+    # Publish side effects for each skipped Kiro pair.
-@@ -2564,0 +2569,2 @@ async def _persist_external_conversation_item(
+@@ -3000,0 +3003,2 @@ async def _persist_external_conversation_item_unlocked(
 +        if skipped.stable_id is not None:
 +            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
-@@ -5293,0 +5300,4 @@ async def _forward_event_to_runner(
-+    web_stable_id = _web_stable_id(body)
-+    if web_stable_id is not None:
-+        # append() deduplicates on stable_id in the same conversation lock.
-+        item = item.model_copy(update={"stable_id": web_stable_id})
-@@ -5298,0 +5309,10 @@ async def _forward_event_to_runner(
-+    if persisted_items[0].deduplicated:
-+        # The first delivery already reached the runner. Re-forwarding a retry
-+        # whose response was lost would execute the same user turn twice.
-+        _logger.info(
-+            "Duplicate message POST for session=%s stable_id=%s; not re-dispatching",
-+            session_id,
-+            web_stable_id,
-+            extra={"session_id": session_id},
-+        )
+@@ -6226,0 +6231,4 @@ async def _forward_event_to_runner(
++    elif item.stable_id is not None and persisted_items[0].deduplicated:
++        # The same logical web submission already reached this persist-before-
++        # forward boundary. Re-dispatching it would execute the turn twice.
 +        return persisted_items[0].id
-@@ -6014,0 +6035,10 @@ def _list_status_with_starting(
-+def _web_stable_id(body: SessionEventInput) -> str | None:
-+    """Return a valid web-client idempotency id for a user message."""
-+    if body.type != "message" or body.data.get("role") != "user":
-+        return None
-+    raw = body.data.get("stable_id")
-+    if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{32}", raw):
-+        return raw
-+    return None
-+
-+
-@@ -6171,0 +6202,10 @@ async def _dispatch_session_event_to_runner_impl(
-+        # A client retry after a lost POST response must resolve to the first
-+        # delivery, never paste the same prompt into the native terminal again.
-+        web_stable_id = _web_stable_id(body)
+@@ -7102,0 +7111,15 @@ async def _dispatch_session_event_to_runner_impl(
++        raw_stable_id = body.data.get("stable_id")
++        web_stable_id = (
++            raw_stable_id
++            if body.data.get("role") == "user"
++            and isinstance(raw_stable_id, str)
++            and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
++            else None
++        )
 +        if web_stable_id is not None:
 +            committed_id = pending_inputs.committed_item_id(session_id, web_stable_id)
 +            if committed_id is not None:
 +                return _SessionEventDispatchResult(item_id=committed_id, pending_id=None)
-+            live_pending_id = pending_inputs.pending_id_for(session_id, web_stable_id)
++            live_pending_id = pending_inputs.pending_id_for_stable_id(session_id, web_stable_id)
 +            if live_pending_id is not None:
 +                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
-@@ -6205,6 +6244,0 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -7137,6 +7159,0 @@ async def _dispatch_session_event_to_runner_impl(
 -        raw_stable_id = body.data.get("stable_id")
 -        web_stable_id = (
 -            raw_stable_id
 -            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
 -            else None
 -        )
-@@ -8694,0 +8729,13 @@ async def _resolve_native_smart_routing(
+@@ -9676 +9693 @@ async def _routing_host_for_create(
+-    body: SessionCreateInput,
++    body: SessionCreateInput | SessionCreateMetadata,
+@@ -9738,0 +9756,56 @@ def _create_resolved_harness(
++def _reported_harness_failure(host: Host, harness: str) -> str | None:
++    """Return an actionable failure only when a Host supplied readiness data."""
++    from omnigent.harness_availability import harness_launch_availability
++
++    available, reason = harness_launch_availability(harness, host.configured_harnesses)
++    if available is not False:
++        return None
++    if reason == HARNESS_VERSION_TOO_LOW:
++        return f"{harness} is too old on {host.name}; upgrade it and retry"
++    return f"{harness} is not configured on {host.name}; run omnigent setup there and retry"
++
++
++async def _reject_unavailable_harness_for_create(
++    body: SessionCreateInput | SessionCreateMetadata,
++    request: Request,
++    user_id: str | None,
++    harness: str | None,
++) -> None:
++    """Reject a known-bad Host/harness before creating a session or worktree.
++
++    An absent readiness report remains unknown. Managed creates use reports
++    from the selected provider, preferring online Hosts; every sampled Host
++    must be able to launch the Agent because the next sandbox may be any one
++    of them.
++    """
++    if harness is None:
++        raise OmnigentError(
++            "Agent configuration is unavailable; repair its bundle and retry",
++            code=ErrorCode.INVALID_INPUT,
++        )
++    if harness == "auto":
++        return
++    if body.host_id is not None:
++        host = await _routing_host_for_create(body, request, user_id)
++        hosts = [host] if host is not None else []
++    elif body.host_type == "managed" and user_id is not None:
++        host_store = getattr(request.app.state, "host_store", None)
++        sandbox_config = getattr(request.app.state, "sandbox_config", None)
++        if host_store is None or sandbox_config is None:
++            return
++        provider = body.sandbox_provider or sandbox_config.default.provider
++        reported = [
++            host
++            for host in await asyncio.to_thread(host_store.list_hosts, user_id)
++            if host.sandbox_provider == provider and host.configured_harnesses
++        ]
++        online = [host for host in reported if host_is_live(host)]
++        hosts = online or reported
++    else:
++        return
++    for host in hosts:
++        failure = _reported_harness_failure(host, harness)
++        if failure is not None:
++            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
++
++
+@@ -10024,0 +10098,13 @@ async def _resolve_native_smart_routing(
 +_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
 +
 +
 +def _client_create_token(body: SessionCreateInput) -> str | None:
-+    """Return the valid top-level web create idempotency token, if present."""
++    """Return a valid top-level web create idempotency token, if present."""
 +    if body.parent_session_id is not None or not body.labels:
 +        return None
 +    token = body.labels.get(_CLIENT_CREATE_TOKEN_LABEL)
@@ -846,22 +214,20 @@ index c0cc1c9..1881a1d 100644
 +    return None
 +
 +
-@@ -9175,0 +9223,5 @@ async def _create_session_from_existing_agent(
-+            # Reuse the client's 128-bit create token as the conversation's
-+            # primary key. The existing (workspace_id, id) uniqueness makes
-+            # create replay atomic across server replicas without a second
-+            # idempotency table or a non-transactional label lookup.
-+            conversation_id=_client_create_token(body),
+@@ -10452,0 +10539 @@ async def _create_session_from_existing_agent(
++    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
+@@ -10646,0 +10734 @@ async def _create_session_from_existing_agent(
++                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index 0c20996..f89b327 100644
+index b43b11a..9cacaf3 100644
 --- a/omnigent/server/routes/sessions/routes_core.py
 +++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -165,0 +166 @@ from omnigent.server.routes._sessions.orchestration import (
+@@ -167,0 +168 @@ from omnigent.server.routes._sessions.orchestration import (
 +    _client_create_token,
-@@ -207,0 +209 @@ from omnigent.stores.conversation_store import (
+@@ -211,0 +213 @@ from omnigent.stores.conversation_store import (
 +    ConversationAlreadyExistsError,
-@@ -604,15 +606,66 @@ def register_core_routes(
--        resp = await _create_session_from_existing_agent(
+@@ -701,15 +703,63 @@ def register_core_routes(
+-        resp, conv = await _create_session_from_existing_agent(
 -            conversation_store,
 -            agent_store,
 -            runner_router,
@@ -877,7 +243,7 @@ index 0c20996..f89b327 100644
 -            project_store=project_store,
 -        )
 +        try:
-+            resp = await _create_session_from_existing_agent(
++            resp, conv = await _create_session_from_existing_agent(
 +                conversation_store,
 +                agent_store,
 +                runner_router,
@@ -893,12 +259,9 @@ index 0c20996..f89b327 100644
 +                project_store=project_store,
 +            )
 +        except ConversationAlreadyExistsError as collision:
-+            # The web client deliberately reuses its 128-bit create token when
-+            # retrying a POST whose response was lost. That token is the row's
-+            # primary key, so a concurrent replay lands here after the winning
-+            # transaction. Wait briefly for its metadata, labels, and owner
-+            # grant, then return the existing snapshot without repeating runner
-+            # launch, worktree, or initial-message side effects.
++            # The create token is the row's primary key, so a concurrent
++            # replay collides atomically. Return the authorized winner without
++            # repeating runner launch or initial-message side effects.
 +            create_token = _client_create_token(body)
 +            if create_token is None:
 +                raise
@@ -942,105 +305,40 @@ index 0c20996..f89b327 100644
 +                "replay of this request",
 +                code=ErrorCode.CONFLICT,
 +            ) from collision
-diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index 1881a1d1c..9d607d384 100644
---- a/omnigent/server/routes/_sessions/orchestration.py
-+++ b/omnigent/server/routes/_sessions/orchestration.py
-@@ -8380 +8380 @@ async def _routing_host_for_create(
--    body: SessionCreateInput,
-+    body: SessionCreateInput | SessionCreateMetadata,
-@@ -8442,0 +8443,54 @@ def _create_resolved_harness(
-+def _reported_harness_failure(host: Host, harness: str) -> str | None:
-+    """Return an actionable failure only when a Host supplied readiness data."""
-+    readiness = host.configured_harnesses
-+    if not readiness:
-+        return None
-+    value = readiness.get(harness, False)
-+    if value is True:
-+        return None
-+    if value == HARNESS_NEEDS_AUTH:
-+        return f"{harness} needs authentication on {host.name}; sign in on that Host and retry"
-+    if value == HARNESS_VERSION_TOO_LOW:
-+        return f"{harness} is too old on {host.name}; upgrade it and retry"
-+    return f"{harness} is not configured on {host.name}; run omnigent setup there and retry"
-+
-+
-+async def _reject_unavailable_harness_for_create(
-+    body: SessionCreateInput | SessionCreateMetadata,
-+    request: Request,
-+    user_id: str | None,
-+    harness: str | None,
-+) -> None:
-+    """Reject a known-bad Host/harness before creating a session or worktree.
-+
-+    An absent readiness report remains unknown. Managed creates use reports
-+    from the selected provider, preferring online Hosts; every sampled Host
-+    must be able to launch the Agent because the next sandbox may be any one
-+    of them.
-+    """
-+    if harness is None or harness == "auto":
-+        return
-+    if body.host_id is not None:
-+        host = await _routing_host_for_create(body, request, user_id)
-+        hosts = [host] if host is not None else []
-+    elif body.host_type == "managed" and user_id is not None:
-+        host_store = getattr(request.app.state, "host_store", None)
-+        sandbox_config = getattr(request.app.state, "sandbox_config", None)
-+        if host_store is None or sandbox_config is None:
-+            return
-+        provider = body.sandbox_provider or sandbox_config.default.provider
-+        reported = [
-+            host
-+            for host in await asyncio.to_thread(host_store.list_hosts, user_id)
-+            if host.sandbox_provider == provider and host.configured_harnesses
-+        ]
-+        online = [host for host in reported if host_is_live(host)]
-+        hosts = online or reported
-+    else:
-+        return
-+    for host in hosts:
-+        failure = _reported_harness_failure(host, harness)
-+        if failure is not None:
-+            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
-+
-+
-@@ -9082,0 +9137,5 @@ async def _create_session_from_existing_agent(
-+    resolved_harness = await asyncio.to_thread(
-+        _create_resolved_harness, agent, harness_override, agent_cache
-+    )
-+    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
-+
-diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index f89b32709..e7aeaaad0 100644
---- a/omnigent/server/routes/sessions/routes_core.py
-+++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -413,7 +413,5 @@ def register_core_routes(
--        Lenient on every launch failure: the picker's readiness data can
--        be stale (the user may have run ``omnigent setup`` since the host
--        last connected), so the create is never blocked. The session
--        keeps the binding; the first message drives the real runner
--        start, and if the host still refuses there, that path consults
--        the daemon and persists a transcript error (see post_event's
--        relaunch branch). No create-time harness gating.
-+        Lenient on launch failure after create-time reported-readiness
-+        admission: the Host may change between its last report and launch.
-+        The session keeps its binding; the first message drives a relaunch,
-+        and if the Host still refuses, that path persists a transcript error
-+        (see post_event's relaunch branch).
-@@ -896,0 +895,16 @@ def register_core_routes(
-+        # An uploaded bundle bypasses the JSON agent-id path. Apply the same
-+        # reported-readiness admission before its agent and session rows exist.
-+        from omnigent.harness_aliases import canonicalize_harness
-+        from omnigent.models.model_catalog import spec_harness
+@@ -996,0 +1047,7 @@ def register_core_routes(
 +        from omnigent.server.routes._sessions.orchestration import (
 +            _reject_unavailable_harness_for_create,
 +        )
 +
-+        raw_harness = spec_harness(spec)
 +        await _reject_unavailable_harness_for_create(
-+            parsed_metadata,
-+            request,
-+            user_id,
-+            canonicalize_harness(raw_harness) or raw_harness,
++            parsed_metadata, request, user_id, spec_harness(spec)
 +        )
-+
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 91e05f0..3d8988d 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -10506,8 +10506,16 @@ async def _create_session_from_existing_agent(
+-        canonical_workspace = await _validate_session_workspace(
+-            user_id=user_id,
+-            host_id=body.host_id,
+-            workspace=body.workspace,
+-            agent=agent,
+-            agent_cache=agent_cache,
+-            request=request,
+-        )
++        try:
++            canonical_workspace = await _validate_session_workspace(
++                user_id=user_id,
++                host_id=body.host_id,
++                workspace=body.workspace,
++                agent=agent,
++                agent_cache=agent_cache,
++                request=request,
++            )
++        except OmnigentError as exc:
++            if isinstance(exc.__cause__, KeyError):
++                raise OmnigentError(
++                    "Agent configuration is unavailable; repair its bundle and retry",
++                    code=ErrorCode.INVALID_INPUT,
++                ) from exc
++            raise

@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -120,6 +121,7 @@ describe("logoutBrowserSession", () => {
       .mockResolvedValueOnce(mockJsonResponse({ user_id: "alice", is_admin: true }))
       .mockResolvedValueOnce(mockJsonResponse(null, { status: 204 }));
     window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-123");
+    window.localStorage.setItem("omnigent.saas.csrf", "csrf-123");
     const { getCurrentUserId, logoutBrowserSession, resolveIdentity } = await import("./identity");
     await resolveIdentity();
 
@@ -132,6 +134,7 @@ describe("logoutBrowserSession", () => {
     expect(new Headers(request.headers).get("X-CSRF-Token")).toBe("csrf-123");
     expect(getCurrentUserId()).toBeNull();
     expect(window.sessionStorage.getItem("omnigent.saas.csrf")).toBeNull();
+    expect(window.localStorage.getItem("omnigent.saas.csrf")).toBeNull();
   });
 
   it("preserves browser state and surfaces a structured logout rejection", async () => {
@@ -190,6 +193,61 @@ describe("getCurrentUserId", () => {
   });
 });
 
+describe("resolveIdentity base-path login redirect", () => {
+  let originalLocation: Location;
+
+  beforeEach(() => {
+    originalLocation = window.location;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+    delete window.__OMNIGENT_BASE_PATH__;
+  });
+
+  function mockLocation(pathname: string): void {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        pathname,
+        search: "",
+        href: "",
+        origin: "http://localhost",
+        host: "localhost",
+        protocol: "http:",
+      },
+    });
+  }
+
+  it("redirects to the base-prefixed login URL on 401", async () => {
+    window.__OMNIGENT_BASE_PATH__ = "/proxy/6767";
+    mockLocation("/proxy/6767/c/abc");
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ user_id: null, login_url: "/login" }, { ok: false, status: 401 }),
+    );
+    const { resolveIdentity } = await import("./identity");
+
+    await resolveIdentity();
+
+    expect(window.location.href).toBe(
+      `/proxy/6767/login?return_to=${encodeURIComponent("/proxy/6767/c/abc")}`,
+    );
+  });
+
+  it("does not redirect when already on the base-prefixed login path", async () => {
+    window.__OMNIGENT_BASE_PATH__ = "/proxy/6767";
+    mockLocation("/proxy/6767/login");
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ user_id: null, login_url: "/login" }, { ok: false, status: 401 }),
+    );
+    const { resolveIdentity } = await import("./identity");
+
+    await resolveIdentity();
+
+    expect(window.location.href).toBe("");
+  });
+});
+
 describe("authenticatedFetch", () => {
   it("injects the SaaS CSRF token on same-origin unsafe requests", async () => {
     window.sessionStorage.setItem("omnigent.saas.csrf", "csrf-test-token");
@@ -206,6 +264,34 @@ describe("authenticatedFetch", () => {
     const headers = new Headers(init.headers);
     expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
     expect(headers.get("Content-Type")).toBe("application/json");
+    expect(window.localStorage.getItem("omnigent.saas.csrf")).toBe("csrf-test-token");
+  });
+
+  it("uses the shared CSRF token when a new tab has no sessionStorage copy", async () => {
+    window.localStorage.setItem("omnigent.saas.csrf", "shared-csrf-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+    expect(headers.get("X-CSRF-Token")).toBe("shared-csrf-token");
+  });
+
+  it("prefers a newly shared token over a stale tab-local token", async () => {
+    window.sessionStorage.setItem("omnigent.saas.csrf", "stale-tab-token");
+    window.localStorage.setItem("omnigent.saas.csrf", "fresh-shared-token");
+    const { authenticatedFetch } = await import("./identity");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+    await authenticatedFetch("/v1/sessions", { method: "POST" });
+
+    const headers = new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers);
+    expect(headers.get("X-CSRF-Token")).toBe("fresh-shared-token");
   });
 
   it("does not leak the SaaS CSRF token to safe or cross-origin requests", async () => {
@@ -467,6 +553,58 @@ describe("authenticatedFetch", () => {
       expect(secondHeaders.get("X-Databricks-Omnigent-Slice-Key")).toBeNull();
       expect(response.status).toBe(200);
     });
+
+    it.each([200, 400, 500, 503])(
+      "only drops the shared parent host key after a successful fallback (HTTP %s)",
+      async (fallbackStatus) => {
+        vi.doUnmock("./sessionHost");
+        const { setSessionHost, setSessionParent } = await import("./sessionHost");
+        setSessionHost("parent", "host_parent");
+        setSessionParent("child", "parent");
+        vi.doMock("./host", () => ({
+          getOmnigentHostConfig: vi.fn(() => ({ fetcher: () => fetch })),
+          hostFetch: fetchMock,
+          isDatabricksWorkspace: vi.fn(() => true),
+        }));
+        const { authenticatedFetch } = await import("./identity");
+        fetchMock
+          .mockResolvedValueOnce(
+            new Response(JSON.stringify({ error: { code: "wrong_replica" } }), { status: 400 }),
+          )
+          .mockResolvedValueOnce(
+            new Response(
+              JSON.stringify(
+                fallbackStatus === 200
+                  ? { queued: true }
+                  : { error: { code: "runner_unavailable" } },
+              ),
+              { status: fallbackStatus },
+            ),
+          )
+          .mockResolvedValue(mockJsonResponse({ queued: true }));
+
+        const response = await authenticatedFetch("/v1/sessions/child/events", {
+          method: "POST",
+          body: JSON.stringify({ type: "message", data: { content: "side question" } }),
+        });
+        expect(response.status).toBe(fallbackStatus);
+        await authenticatedFetch("/v1/sessions/child/events", {
+          method: "POST",
+          body: JSON.stringify({ type: "retry_session" }),
+        });
+        await authenticatedFetch("/v1/sessions/parent/events", {
+          method: "POST",
+          body: JSON.stringify({ type: "message", data: { content: "main question" } }),
+        });
+
+        const subsequentKey = fallbackStatus === 200 ? null : "host_parent";
+        expect(
+          fetchMock.mock.calls.map(([, init]) =>
+            new Headers((init as RequestInit).headers).get("X-Databricks-Omnigent-Slice-Key"),
+          ),
+        ).toEqual(["host_parent", null, subsequentKey, subsequentKey]);
+      },
+    );
 
     it("keys /v1/imports/local by its body host_id, not the modal host", async () => {
       // The import reads the CHOSEN host's transcripts over that host's tunnel,

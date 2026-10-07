@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -25,15 +26,18 @@ from playwright.sync_api import Page, expect
 from tests.e2e_ui.auth._oidc_server import OIDCServer, spawn_oidc_server
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(
+    scope="module", params=[False, True], ids=["discovery-confidential", "explicit-public-ps256"]
+)
 def oidc_server(
     built_spa: None,
     mock_llm_server_url: str,
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> Iterator[OIDCServer]:
     """A dedicated OIDC-mode server wired to a fake IdP."""
     server_tmp = tmp_path_factory.mktemp("e2e_ui_oidc_login")
-    yield from spawn_oidc_server(mock_llm_server_url, server_tmp)
+    yield from spawn_oidc_server(mock_llm_server_url, server_tmp, public_client=request.param)
 
 
 def test_oidc_login_redirects_through_idp_to_authenticated_app(
@@ -66,3 +70,84 @@ def test_oidc_login_redirects_through_idp_to_authenticated_app(
     #    the post-login landing route need not be a chat with a composer.
     expect(page).not_to_have_url(re.compile(r"/authorize|/auth/login"), timeout=15_000)
     expect(page.locator('[data-testid="sidebar-brand"]')).to_be_visible(timeout=15_000)
+
+
+def test_oidc_cli_ticket_completes_through_browser(oidc_server: OIDCServer, page: Page) -> None:
+    """The CLI's browser-ticket flow authenticates against either provider profile."""
+    response = page.request.post(f"{oidc_server.base_url}/auth/cli-login")
+    assert response.status == 200
+    ticket = response.json()
+    page.goto(f"{oidc_server.public_url}{ticket['login_url']}")
+    continue_link = page.locator("#fake-idp-continue")
+    expect(continue_link).to_be_visible(timeout=15_000)
+    continue_link.click()
+    expect(page.get_by_role("heading", name="Login successful")).to_be_visible(timeout=15_000)
+    poll = page.request.get(
+        f"{oidc_server.base_url}/auth/cli-poll", params={"ticket": ticket["ticket"]}
+    )
+    assert poll.status == 200
+    assert poll.json()["user_id"] == oidc_server.idp.email
+    assert poll.json()["token"]
+    replay = page.request.get(
+        f"{oidc_server.base_url}/auth/cli-poll", params={"ticket": ticket["ticket"]}
+    )
+    assert replay.status == 410
+
+
+def test_electron_system_browser_oidc_native_shell_e2e_contract() -> None:
+    """Keep the recorded native-shell OIDC journey attached to this auth lane."""
+    test_source = (
+        Path(__file__).resolve().parents[3]
+        / "web"
+        / "electron"
+        / "e2e"
+        / "desktop_oidc_browser_sign_in.e2e.js"
+    ).read_text()
+
+    assert "OIDC sign-in through the system browser" in test_source
+    assert 'hostname, "127.0.0.1"' in test_source
+    assert "the app window loaded the IdP" in test_source
+    assert "the session cookie was not renewed" in test_source
+    assert "no desktop recording was produced" in test_source
+
+
+def test_electron_local_network_permission_prompt_requires_explicit_user_choice(
+    page: Page,
+) -> None:
+    """The bundled native prompt names the origin and records one decision."""
+    permission_page = (
+        Path(__file__).resolve().parents[3]
+        / "web"
+        / "electron"
+        / "browser-permission"
+        / "index.html"
+    )
+    page.add_init_script(
+        """
+        (() => {
+          const state = { choices: [] };
+          window.__electronPermissionE2E = state;
+          window.omnigentBrowserPermission = {
+            getInfo: () => Promise.resolve({
+              origin: "https://authenticated.workspace.example",
+              reload: true,
+            }),
+            choose: (choice) => {
+              state.choices.push(choice);
+              return Promise.resolve();
+            },
+          };
+        })();
+        """
+    )
+    page.goto(permission_page.as_uri())
+
+    expect(page.get_by_role("heading", name="Allow local network access?")).to_be_visible()
+    expect(page.locator("#origin")).to_have_text("https://authenticated.workspace.example")
+    expect(page.locator("#reload")).to_be_visible()
+    page.locator("#once").click()
+
+    assert page.evaluate("() => window.__electronPermissionE2E.choices") == ["allow-once"]
+    assert page.locator("footer button").evaluate_all(
+        "buttons => buttons.every(button => button.disabled)"
+    )

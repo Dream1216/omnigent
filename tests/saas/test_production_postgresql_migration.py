@@ -525,26 +525,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     current_inventory = {
         (
             16,
-            "hh1b2c3d4e5f",
+            "mm1a2b3c4d5e",
             "p0s000000014",
-        ): "fae976ecc3e6d7cc37461f6e35dbb08df50cb7fd82bf255a6f14b79d9123eb67",
+        ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
         (
             18,
-            "hh1b2c3d4e5f",
+            "mm1a2b3c4d5e",
             "p0s000000014",
-        ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
+        ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
     }
     current_security = {
         (
             16,
-            "hh1b2c3d4e5f",
+            "mm1a2b3c4d5e",
             "p0s000000014",
-        ): "586ea4cd62657c609919fa2c9d72ea83ae72a4c2efa675f9f2a0a8dab28ad569",
+        ): "98d42de6312375303ad20b435b120e0dc5a5a85d0d4cac49db72ac8450372821",
         (
             18,
-            "hh1b2c3d4e5f",
+            "mm1a2b3c4d5e",
             "p0s000000014",
-        ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
+        ): "1f4b459c885578cd5085fb8a41f3f476a356cebbf5dec1890cef5602069ed21d",
     }
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
@@ -579,6 +579,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
             "hh1b2c3d4e5f",
             "p0s000000014",
         ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000014",
+        ): "2a899703b7bf50e645a7ab5c34b7353ff0c4bc3248ae8afa555ed5636030de26",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000014",
+        ): "cec5fec71df099d09537f954181234576961ab39a74724eff00530b680dd8a12",
     }
     assert (
         migration._PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256.items()
@@ -605,6 +615,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
             "hh1b2c3d4e5f",
             "p0s000000014",
         ): "901f8b5e547902df5b9406ee8ed9126ac88973683702af83085c50cfa700aab1",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000014",
+        ): "6d1dda4a40f1bce25219573239e8e8fb619e1e8c9dc5b93d03a5bb7fd6b7ebbe",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000014",
+        ): "12e581474667e90ba95df58943e39c242265c05a8c45421ca770d77fedd819a4",
     }
     assert (
         migration._PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.items()

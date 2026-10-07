@@ -1,217 +1,35 @@
-diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index aa2b4dbf2..19152993f 100644
---- a/omnigent/host/connect.py
-+++ b/omnigent/host/connect.py
-@@ -101,7 +101,11 @@ from omnigent.host.git_worktree import (
-     list_worktrees,
-     remove_worktree,
- )
--from omnigent.host.identity import HostIdentity, load_or_create_host_identity
-+from omnigent.host.identity import (
-+    HostIdentity,
-+    load_host_tunnel_workspace_id,
-+    load_or_create_host_identity,
-+)
- from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
- from omnigent.inner import _proc
- from omnigent.onboarding.harness_auth import (
-@@ -141,6 +145,7 @@ from omnigent.runner.identity import (
-     RUNNER_PARENT_PID_ENV_VAR,
-     RUNNER_SLICE_KEY_ENV_VAR,
-     RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
-+    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
-     RUNNER_WORKSPACE_ENV_VAR,
-     token_bound_runner_id,
- )
-@@ -771,6 +776,7 @@ def _build_runner_env(
-     initial_auth_token: str | None = None,
-     host_id: str | None = None,
-     harness: str | None = None,
-+    workspace_id: int | None = None,
-     interactive_shells: list[str] | None = None,
- ) -> dict[str, str]:
-     """
-@@ -854,6 +860,8 @@ def _build_runner_env(
-         env[RUNNER_SLICE_KEY_ENV_VAR] = host_id
-     if harness:
-         env[RUNNER_LAUNCH_HARNESS_ENV_VAR] = harness
-+    if workspace_id is not None:
-+        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
-     if interactive_shells is not None:
-         env[RUNNER_INTERACTIVE_SHELLS_ENV_VAR] = json.dumps(interactive_shells)
-     return env
-@@ -1780,6 +1788,7 @@ class HostProcess:
-             initial_auth_token=initial_auth_token,
-             host_id=self._identity.host_id,
-             harness=frame.harness,
-+            workspace_id=load_host_tunnel_workspace_id(),
-             interactive_shells=self._interactive_shells,
-         )
-         # The runner serves one primary session (plus any co-located subagents);
-@@ -1914,6 +1923,11 @@ class HostProcess:
-             return None
-         return zygote
- 
-+    def _runner_entry_module(self) -> str:
-+        """Return the installed Runner entrypoint for this Host composition."""
-+
-+        return "omnigent.runner._entry"
-+
-     def _spawn_runner_proc(
-         self,
-         env: dict[str, str],
-@@ -1988,10 +2002,9 @@ class HostProcess:
- 
-             with child_logging_popen_kwargs(env) as logging_kwargs:
-                 proc = subprocess.Popen(
--                    # -P keeps cwd off sys.path: a workspace that is itself an
--                    # omnigent checkout would otherwise shadow the installed
--                    # package. _entry re-adds it for spec-declared local tools.
--                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
-+                    # Keep cwd off sys.path while allowing a reviewed Host
-+                    # composition to select its installed Runner entry module.
-+                    [sys.executable, "-P", "-m", self._runner_entry_module()],
-                     env=env,
-                     # A daemon may outlive the checkout it started from.
-                     cwd=str(workspace),
-@@ -3944,6 +3957,7 @@ class HostProcess:
-             if fatal is not None:
-                 raise fatal from exc
-             raise
-+
-         # An accepted upgrade proves the credentials work: login redirects
-         # from here on are server restarts, not an unauthenticated host.
-         reconnect = self._ever_connected
-@@ -4028,7 +4042,12 @@ class HostProcess:
-             managed-host token header or — only when a token could be
-             minted — ``{"Authorization": "Bearer <token>"}``.
-         """
--        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
-+        from omnigent.host.identity import (
-+            MANAGED_HOST_TOKEN_HEADER,
-+            MANAGED_HOST_WORKSPACE_HEADER,
-+            load_host_tunnel_token,
-+            load_host_tunnel_workspace_id,
-+        )
-         from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
- 
-         # Identify as a first-party client so the server's WebSocket origin
-@@ -4047,9 +4066,15 @@ class HostProcess:
-             databricks_request_headers(self._server_url, host_id=self._identity.host_id)
-         )
- 
--        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
-+        # Re-read the file on each reconnect so atomic Secret rotation takes
-+        # effect without retaining a user bearer or restarting this process.
-+        managed_token = load_host_tunnel_token()
-         if managed_token:
-+            headers.pop("Authorization", None)
-             headers[MANAGED_HOST_TOKEN_HEADER] = managed_token
-+            workspace_id = load_host_tunnel_workspace_id()
-+            if workspace_id is not None:
-+                headers[MANAGED_HOST_WORKSPACE_HEADER] = str(workspace_id)
-             return headers
-         token = self._current_auth_token()
-         if token:
-@@ -4069,9 +4094,9 @@ class HostProcess:
-         :returns: Current bearer token, or ``None`` when credentials are not
-             available or this is a managed host authenticated by launch token.
-         """
--        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
-+        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
- 
--        if os.environ.get(HOST_TOKEN_ENV_VAR):
-+        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
-             return None
-         try:
-             if not self._auth_token_factory_resolved:
-@@ -4468,6 +4493,7 @@ def run_host_process(
-     server_url: str,
-     config_path: Path | None = None,
-     *,
-+    host_factory: Callable[..., HostProcess] = HostProcess,
-     daemon_target: str | None = None,
-     lifecycle_lock: DaemonLifecycleLock | None = None,
-     interactive_shells: list[str] | None = None,
-@@ -4481,6 +4507,7 @@ def run_host_process(
-         ``"https://omnigent-app.databricksapps.com"``.
-     :param config_path: Optional path to ``config.yaml``.
-         Defaults to ``~/.omnigent/config.yaml``.
-+    :param host_factory: Downstream-neutral HostProcess construction seam.
-     :param daemon_target: Normalized registry target this process owns, e.g.
-         ``"local"`` or a server URL. When given, the daemon binds its lifetime
-         to that record (flock + self-terminate on delete/reassign). ``None``
-@@ -4573,7 +4600,7 @@ def run_host_process(
- 
-     if lifecycle_lock is None and daemon_target is not None:
-         lifecycle_lock = DaemonLifecycleLock.for_target(daemon_target)
--    host = HostProcess(
-+    host = host_factory(
-         identity,
-         server_url,
-         lifecycle_lock=lifecycle_lock,
-diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb5..04cd40c0e 100644
---- a/omnigent/llms/_usage_observer.py
-+++ b/omnigent/llms/_usage_observer.py
-@@ -80,6 +80,7 @@ class _UsageBucket(_ModelUsage):
-     by_model: dict[str, _ModelUsage]
- 
- 
-+_REQUIRED_OBSERVERS: list[UsageObserver] = []
- _OBSERVERS: list[UsageObserver] = []
- _RECORDS: dict[str, _UsageBucket] = {}
- _CURRENT_NODEID: str | None = None
-@@ -138,6 +139,22 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
-     return remove
- 
- 
-+def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
-+    """Register a fail-closed usage sink that runs before diagnostics.
-+
-+    Required observers are reserved for durable accounting boundaries.  An
-+    exception propagates to the usage-producing call, unlike diagnostics
-+    registered with :func:`add_observer`.
-+    """
-+    _REQUIRED_OBSERVERS.append(callback)
-+
-+    def remove() -> None:
-+        with contextlib.suppress(ValueError):
-+            _REQUIRED_OBSERVERS.remove(callback)
-+
-+    return remove
-+
-+
- def notify_from_dict(
-     *,
-     model: str | None,
-@@ -173,13 +190,17 @@ def notify(
-     output_tokens: int,
-     total_tokens: int,
- ) -> None:
--    """Dispatch usage to observers and (if enabled) the auto-recorder.
--
--    Never raises: a misbehaving observer is logged and skipped.
--    """
-+    """Dispatch usage to required sinks, diagnostics, and the auto-recorder."""
-     if _ENV_VAR in os.environ and (input_tokens or output_tokens or total_tokens):
-         _record(model, input_tokens, output_tokens, total_tokens)
-         _write_records()
-+    for cb in list(_REQUIRED_OBSERVERS):
-+        cb(
-+            model=model,
-+            input_tokens=input_tokens,
-+            output_tokens=output_tokens,
-+            total_tokens=total_tokens,
-+        )
-     for cb in list(_OBSERVERS):
-         try:
-             cb(
-@@ -335,6 +356,7 @@ def _write_records() -> None:
- __all__ = [
-     "UsageObserver",
-     "add_observer",
-+    "add_required_observer",
-     "notify",
-     "notify_from_dict",
-     "set_current_test",
+diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
+index 9b3cde274..916d1d20e 100644
+--- a/omnigent/stores/host_store.py
++++ b/omnigent/stores/host_store.py
+@@ -21 +21 @@ from typing import cast
+-from sqlalchemy import Engine, or_, select, tuple_, update
++from sqlalchemy import Engine, and_, or_, select, tuple_, update
+@@ -309,3 +309,4 @@ class HostStore:
+-        :param managed_token: Raw launch token for a managed host. When set,
+-            registration atomically revalidates the current credential instead
+-            of performing the external-host upsert path.
++        :param managed_token: Raw launch token for a credentialed host. When
++            set, registration atomically revalidates either an active managed
++            sandbox generation or an explicitly armed external Host instead of
++            performing the user-authenticated external-host upsert path.
+@@ -332,2 +333,14 @@ class HostStore:
+-                            SqlHost.token_expires_at >= now,
+-                            SqlHost.sandbox_id.is_not(None),
++                            SqlHost.token_expires_at > now,
++                            # Accept either a live managed generation or the
++                            # lifecycle-free tuple used by an armed external Host.
++                            or_(
++                                and_(
++                                    SqlHost.sandbox_provider.is_not(None),
++                                    SqlHost.sandbox_id.is_not(None),
++                                ),
++                                and_(
++                                    SqlHost.sandbox_provider.is_(None),
++                                    SqlHost.sandbox_id.is_(None),
++                                    SqlHost.terminating_sandbox_id.is_(None),
++                                ),
++                            ),
+@@ -1077 +1090 @@ class HostStore:
+-            if row.token_expires_at < now_epoch():
++            if row.token_expires_at <= now_epoch():

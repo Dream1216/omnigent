@@ -24,6 +24,7 @@ DECLARE
         'hosts',
         'omnigent_conversation_metadata',
         'policies',
+        'preferences',
         'projects',
         'scheduled_task_runs',
         'scheduled_tasks',
@@ -258,7 +259,7 @@ DECLARE
         'account_tokens', 'agents', 'alembic_version', 'comments',
         'conversation_items', 'conversation_labels', 'conversations',
         'connections', 'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
-        'policies', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
+        'policies', 'preferences', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
         'session_permissions', 'user_daily_cost', 'users'
     ];
     unmanaged_acl_count integer;
@@ -369,6 +370,7 @@ REVOKE ALL PRIVILEGES ON TABLE
     hosts,
     omnigent_conversation_metadata,
     policies,
+    preferences,
     projects,
     scheduled_task_runs,
     scheduled_tasks,
@@ -391,6 +393,7 @@ REVOKE ALL PRIVILEGES ON TABLE
     hosts,
     omnigent_conversation_metadata,
     policies,
+    preferences,
     projects,
     scheduled_task_runs,
     scheduled_tasks,
@@ -412,6 +415,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
     hosts,
     omnigent_conversation_metadata,
     policies,
+    preferences,
     projects,
     scheduled_task_runs,
     scheduled_tasks,
@@ -436,7 +440,7 @@ DECLARE
     expected_tables constant text[] := ARRAY[
         'account_tokens', 'agents', 'comments', 'conversation_items',
         'conversation_labels', 'conversations', 'connections', 'device_grants', 'files',
-        'hosts', 'omnigent_conversation_metadata', 'policies', 'projects',
+        'hosts', 'omnigent_conversation_metadata', 'policies', 'preferences', 'projects',
         'scheduled_task_runs', 'scheduled_tasks', 'session_permissions',
         'user_daily_cost', 'users'
     ];
@@ -444,7 +448,7 @@ DECLARE
         'account_tokens', 'agents', 'alembic_version', 'comments',
         'conversation_items', 'conversation_labels', 'conversations',
         'connections', 'device_grants', 'files', 'hosts', 'omnigent_conversation_metadata',
-        'policies', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
+        'policies', 'preferences', 'projects', 'scheduled_task_runs', 'scheduled_tasks',
         'session_permissions', 'user_daily_cost', 'users'
     ];
     relation_acl_count integer;

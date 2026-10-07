@@ -15,6 +15,7 @@
  * into a login redirect.
  */
 
+import { stripBasePath, withBasePath } from "./basePath";
 import { getCachedServerInfo } from "./capabilities";
 import { getOmnigentHostConfig, hostFetch, isDatabricksWorkspace } from "./host";
 import {
@@ -32,7 +33,9 @@ const RESERVED_USER_LOCAL = "local";
 // The SaaS password/OIDC login page stores the double-submit token here before
 // navigating into the main app. The session cookie is HttpOnly, so unsafe
 // browser requests must echo this companion token in a header for the SaaS
-// middleware to accept them.
+// middleware to accept them. localStorage mirrors the token because the cookie
+// is browser-wide while sessionStorage is tab-local: without the mirror, a new
+// tab is authenticated for reads but its first mutation fails with 401.
 const SAAS_CSRF_STORAGE_KEY = "omnigent.saas.csrf";
 const SAAS_CSRF_HEADER = "X-CSRF-Token";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -295,7 +298,7 @@ function redirectToLogin(loginUrl: string): boolean {
   if (loginRedirectPending) return false;
   loginRedirectPending = true;
   const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-  window.location.href = `${loginUrl}?return_to=${returnTo}`;
+  window.location.href = `${withBasePath(loginUrl)}?return_to=${returnTo}`;
   return true;
 }
 
@@ -325,7 +328,10 @@ export function isLoginRedirectPending(): boolean {
  * every mode.
  */
 function isOnLoginPath(): boolean {
-  const path = window.location.pathname;
+  // Compare against base-relative paths so the guard still recognizes the
+  // login/register pages when served under a subpath proxy (e.g.
+  // `/proxy/6767/login`).
+  const path = stripBasePath(window.location.pathname);
   return path === "/login" || path === "/register" || path.startsWith("/auth/login");
 }
 
@@ -540,14 +546,9 @@ export async function authenticatedFetch(
       headers: retryHeaders,
       cache: "no-store",
     });
-    // Sticky demotion: the keyless re-address PROVED this host routes keyless
-    // (the keyed attempt returned wrong_replica, the keyless one didn't).
-    // Remember it so every later request for this host — including the control
-    // paths with no server-side wrong-replica guard — goes keyless from the
-    // start. Evidence-based: we demote only on a keyless SUCCESS, so a
-    // correctly-keyed host having a transient blip (whose keyless re-address
-    // would also fail) is never stranded.
-    if (derivedHostId && !(await _isWrongReplica(res))) {
+    // Only a successful keyless retry proves this host uses the default replica.
+    // Failed retries must preserve the host key for subsequent requests.
+    if (derivedHostId && res.ok) {
       markHostKeyless(derivedHostId);
     }
   } else if (
@@ -629,19 +630,36 @@ export async function logoutBrowserSession(endpoint: string): Promise<BrowserLog
   identityPromise = null;
   serverLoginUrl = null;
   loginRedirectPending = false;
-  try {
-    window.sessionStorage.removeItem(SAAS_CSRF_STORAGE_KEY);
-  } catch {
-    // Restricted storage contexts still get the server-side revocation.
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.removeItem(SAAS_CSRF_STORAGE_KEY);
+    } catch {
+      // Restricted storage contexts still get the server-side revocation.
+    }
   }
   return { ok: true };
 }
 
 /** Read the browser-only SaaS CSRF token without breaking restricted storage contexts. */
 function readSaasCsrfToken(): string | null {
+  // Prefer the shared copy so a login or token rotation in another tab takes
+  // effect immediately. Fall back to the legacy tab-local copy during rolling
+  // upgrades and promote it for subsequently opened tabs.
   try {
-    const token = window.sessionStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
-    return token || null;
+    const sharedToken = window.localStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
+    if (sharedToken) return sharedToken;
+  } catch {
+    // localStorage can be blocked independently of sessionStorage.
+  }
+  try {
+    const sessionToken = window.sessionStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
+    if (!sessionToken) return null;
+    try {
+      window.localStorage.setItem(SAAS_CSRF_STORAGE_KEY, sessionToken);
+    } catch {
+      // The current tab can still authenticate through sessionStorage.
+    }
+    return sessionToken;
   } catch {
     return null;
   }

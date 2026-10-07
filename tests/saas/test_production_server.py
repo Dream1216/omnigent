@@ -194,6 +194,29 @@ def _sessions(*, billing: bool = False) -> RoleSessionFactories:
     )
 
 
+class _HostStoreStub:
+    def admit_launch(
+        self,
+        host_id: str,
+        session_id: str,
+        owner: str | None,
+        generation: str | None,
+        allow_unbound: bool = False,
+        transfer_from_host_id: str | None = None,
+        *,
+        require_account_owner: bool = False,
+    ) -> None:
+        del (
+            host_id,
+            session_id,
+            owner,
+            generation,
+            allow_unbound,
+            transfer_from_host_id,
+            require_account_owner,
+        )
+
+
 def _official() -> OfficialRuntimeDependencies:
     dependencies: dict[str, Any] = {
         name: object()
@@ -206,13 +229,13 @@ def _official() -> OfficialRuntimeDependencies:
             "comment_store",
             "permission_store",
             "policy_store",
-            "host_store",
             "scheduled_task_store",
             "project_store",
         )
     }
     return OfficialRuntimeDependencies(
         **dependencies,
+        host_store=_HostStoreStub(),
         artifact_readiness_check=lambda: None,
     )
 

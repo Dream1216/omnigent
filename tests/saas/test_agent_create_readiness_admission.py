@@ -8,6 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from omnigent.errors import OmnigentError
+from omnigent.harness_availability import HarnessAvailability
+from omnigent.server.routes._session_harness_readiness import (
+    validate_create_harness_readiness,
+)
 from omnigent.server.routes._sessions.orchestration import (
     _reject_unavailable_harness_for_create,
 )
@@ -15,7 +19,12 @@ from omnigent.server.schemas import SessionCreateRequest
 from omnigent.stores.host_store import Host
 
 
-def _host(name: str, status: str, readiness: dict[str, bool | str] | None) -> Host:
+def _host(
+    readiness: dict[str, HarnessAvailability] | None,
+    *,
+    name: str = "managed-host",
+    status: str = "online",
+) -> Host:
     return Host(
         host_id=name,
         name=name,
@@ -28,12 +37,43 @@ def _host(name: str, status: str, readiness: dict[str, bool | str] | None) -> Ho
     )
 
 
+class _HostStore:
+    def __init__(self, host: Host) -> None:
+        self.host = host
+
+    def get_host(self, host_id: str) -> Host | None:
+        return self.host if host_id == self.host.host_id else None
+
+
+async def _validate(host: Host) -> None:
+    await validate_create_harness_readiness(
+        harness="kiro-native",
+        host_id=host.host_id,
+        parent_session_id=None,
+        inherited_runner_id=None,
+        user_id="alice",
+        conversation_store=object(),  # type: ignore[arg-type]
+        host_store=_HostStore(host),  # type: ignore[arg-type]
+    )
+
+
 @pytest.mark.asyncio
-async def test_managed_create_rejects_any_online_host_reporting_unavailable() -> None:
+async def test_managed_create_rejects_target_host_missing_harness() -> None:
+    with pytest.raises(OmnigentError, match="binary-missing"):
+        await _validate(_host({"kiro-native": "binary-missing"}))
+
+
+@pytest.mark.asyncio
+async def test_managed_create_allows_host_auth_to_be_supplied_by_session() -> None:
+    await _validate(_host({"kiro-native": "needs-auth"}))
+
+
+@pytest.mark.asyncio
+async def test_managed_create_rejects_any_online_host_reporting_missing_binary() -> None:
     hosts = [
-        _host("ready", "online", {"kiro-native": True}),
-        _host("needs-login", "online", {"kiro-native": "needs-auth"}),
-        _host("old", "offline", {"kiro-native": True}),
+        _host({"kiro-native": True}, name="ready"),
+        _host({"kiro-native": "binary-missing"}, name="missing"),
+        _host({"kiro-native": True}, name="old", status="offline"),
     ]
     request = SimpleNamespace(
         app=SimpleNamespace(
@@ -44,15 +84,15 @@ async def test_managed_create_rejects_any_online_host_reporting_unavailable() ->
         )
     )
     body = SessionCreateRequest(agent_id="agent", host_type="managed")
-    with pytest.raises(OmnigentError, match="needs authentication"):
+    with pytest.raises(OmnigentError, match="not configured"):
         await _reject_unavailable_harness_for_create(body, request, "alice", "kiro-native")
 
 
 @pytest.mark.asyncio
 async def test_managed_create_prefers_online_report_over_old_offline_failure() -> None:
     hosts = [
-        _host("ready", "online", {"kiro-native": True}),
-        _host("old", "offline", {"kiro-native": "needs-auth"}),
+        _host({"kiro-native": True}, name="ready"),
+        _host({"kiro-native": "binary-missing"}, name="old", status="offline"),
     ]
     request = SimpleNamespace(
         app=SimpleNamespace(
@@ -64,3 +104,11 @@ async def test_managed_create_prefers_online_report_over_old_offline_failure() -
     )
     body = SessionCreateRequest(agent_id="agent", host_type="managed")
     await _reject_unavailable_harness_for_create(body, request, "alice", "kiro-native")
+
+
+@pytest.mark.asyncio
+async def test_managed_create_rejects_unresolvable_agent_bundle_before_a_session_exists() -> None:
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    body = SessionCreateRequest(agent_id="agent", host_type="managed")
+    with pytest.raises(OmnigentError, match="Agent configuration is unavailable"):
+        await _reject_unavailable_harness_for_create(body, request, "alice", None)

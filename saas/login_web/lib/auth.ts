@@ -1,5 +1,32 @@
 export const CSRF_KEY = "omnigent.saas.csrf";
 
+function clearCsrfToken() {
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.removeItem(CSRF_KEY);
+    } catch {
+      // A restricted storage backend must not hide the actual login error.
+    }
+  }
+}
+
+function persistCsrfToken(token: string) {
+  let persisted = false;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.setItem(CSRF_KEY, token);
+      persisted = true;
+    } catch {
+      // The other browser storage may still be available.
+    }
+  }
+  if (!persisted) {
+    throw new Error(
+      "Browser storage is unavailable. Enable site storage and try again.",
+    );
+  }
+}
+
 export function safeReturnTarget(value: string | null, origin: string): string {
   try {
     const target = new URL(value || "/", origin);
@@ -34,7 +61,7 @@ export async function signIn(
   }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    if (response.status === 401) sessionStorage.removeItem(CSRF_KEY);
+    if (response.status === 401) clearCsrfToken();
     const detail = payload?.detail || payload?.error;
     const message =
       typeof detail?.message === "string"
@@ -52,5 +79,8 @@ export async function signIn(
       "The server returned an invalid response. Please try again.",
     );
   }
-  sessionStorage.setItem(CSRF_KEY, payload.csrf_token);
+  // The HttpOnly session cookie is shared across same-origin tabs, so the
+  // matching double-submit token must be shared too. Keep sessionStorage for
+  // compatibility with existing admin surfaces and localStorage for new tabs.
+  persistCsrfToken(payload.csrf_token);
 }

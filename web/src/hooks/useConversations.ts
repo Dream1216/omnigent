@@ -56,7 +56,7 @@ import {
 } from "@/shell/sidebarNav";
 import { apiErrorFromResponse, stopSession } from "@/lib/sessionsApi";
 import { isStaleCursorError, useRestartOnStaleCursor } from "@/lib/staleCursor";
-import { setSessionHost } from "@/lib/sessionHost";
+import { setSessionHost, setSessionParent } from "@/lib/sessionHost";
 import {
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
@@ -478,6 +478,7 @@ export async function fetchConversationById(id: string): Promise<Conversation | 
   // requests key their slice off this map — so record the host before returning
   // the row, or those requests fall back to the modal and can miss the replica.
   setSessionHost(wire.id, wire.host_id);
+  setSessionParent(wire.id, wire.parent_session_id);
   return {
     id: wire.id,
     object: "conversation",
@@ -527,6 +528,7 @@ export async function fetchConversationsPage({
     order: "desc",
     sort_by: "updated_at",
     limit: String(limit),
+    visibility: visibility ?? "all",
   });
   if (after) params.set("after", after);
   if (searchQuery) params.set("search_query", searchQuery);
@@ -539,10 +541,6 @@ export async function fetchConversationsPage({
   // query key (which drops `project`) and the cache-membership check. This
   // list never requests the server's "unfiled" (`project=`) slice.
   if (project) params.set("project", project);
-  // Server-side ownership filter for the sidebar's My/Shared split. Omitting
-  // the param keeps the legacy "all accessible" behaviour (no regression for
-  // callers that don't pass visibility).
-  if (visibility) params.set("visibility", visibility);
   // Bound search fetches with a client-side deadline (see
   // SEARCH_FETCH_TIMEOUT_MS): a search whose server-side index is missing can
   // hang, and the palette shows "Searching…" for the whole in-flight window.
@@ -562,7 +560,10 @@ export async function fetchConversationsPage({
   // session's own snapshot loads still keys to the right replica instead of
   // falling back to the modal. host_id is fixed for a session's life, so this
   // can't seed a stale value; a hostless row clears any prior mapping.
-  for (const row of page.data) setSessionHost(row.id, row.host_id);
+  for (const row of page.data) {
+    setSessionHost(row.id, row.host_id);
+    setSessionParent(row.id, row.parent_session_id);
+  }
   return applySessionTombstones(
     withRecentlyCreated(
       page,
@@ -736,13 +737,20 @@ export async function renameConversation(id: string, title: string): Promise<Con
  *
  * Exported for direct unit testing. `archived` is sent as the new
  * desired state, so the same helper handles both archive (`true`) and
- * unarchive (`false`).
+ * unarchive (`false`). `deleteWorktree` (archive only) asks the server to
+ * remove the session's worktree directory once its teardown runs.
  */
-export async function archiveConversation(id: string, archived: boolean): Promise<Conversation> {
+export async function archiveConversation(
+  id: string,
+  archived: boolean,
+  deleteWorktree = false,
+): Promise<Conversation> {
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archived }),
+    body: JSON.stringify(
+      archived && deleteWorktree ? { archived, delete_worktree: true } : { archived },
+    ),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as Conversation;
@@ -938,8 +946,15 @@ async function paintConversationsArchived(
 export function useArchiveConversation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
-      archiveConversation(id, archived),
+    mutationFn: ({
+      id,
+      archived,
+      deleteWorktree = false,
+    }: {
+      id: string;
+      archived: boolean;
+      deleteWorktree?: boolean;
+    }) => archiveConversation(id, archived, deleteWorktree),
     onMutate: ({ id, archived }) => paintConversationsArchived(queryClient, [id], archived),
     onError: (_err, { id, archived }, context) => {
       if (archived && context?.marked !== undefined) {
@@ -1281,8 +1296,19 @@ export function useStopSession() {
 export function useBulkArchiveConversations() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ ids, archived }: { ids: string[]; archived: boolean }) => {
-      const results = await Promise.allSettled(ids.map((id) => archiveConversation(id, archived)));
+    mutationFn: async ({
+      ids,
+      archived,
+      deleteWorktreeIds,
+    }: {
+      ids: string[];
+      archived: boolean;
+      /** Archived sessions whose worktree should also be removed. */
+      deleteWorktreeIds?: ReadonlySet<string>;
+    }) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => archiveConversation(id, archived, deleteWorktreeIds?.has(id) === true)),
+      );
       const failed: string[] = [];
       for (let i = 0; i < results.length; i++) {
         if (results[i].status === "rejected") failed.push(ids[i]);
@@ -1919,11 +1945,21 @@ export function useTogglePinnedConversation() {
       // it and need the anchor to suppress that self-bump). Anchoring here would
       // instead mark a session with genuine unread activity as read on pin.
       //
-      // Reconcile with the server-confirmed labels (authoritative pin
-      // timestamp). Don't invalidate the pinned query — the `?pinned=true` label
-      // index lags the write, so a refetch would momentarily revert the toggle;
-      // the query's `staleTime` converges it later.
-      patch(updated.id, updated.labels, pinned);
+      // Reconcile only the pin label (authoritative timestamp) onto the
+      // currently cached labels. Don't invalidate the pinned query — the
+      // `?pinned=true` label index lags the write, so a refetch would
+      // momentarily revert the toggle; the query's `staleTime` converges it
+      // later. And don't write this PATCH snapshot's labels wholesale: a
+      // drag-drop files the row and unpins it in one gesture, and the unpin
+      // usually resolves first — its snapshot predates the move's optimistic
+      // project label, so wholesale it would erase that label and bounce the
+      // row into the flat list until the move landed.
+      const base = findRow(updated.id)?.labels ?? updated.labels;
+      const pinValue = updated.labels[PINNED_LABEL_KEY] ?? base[PINNED_LABEL_KEY];
+      const labels = pinned
+        ? { ...base, ...(pinValue !== undefined ? { [PINNED_LABEL_KEY]: pinValue } : {}) }
+        : Object.fromEntries(Object.entries(base).filter(([k]) => k !== PINNED_LABEL_KEY));
+      patch(updated.id, labels, pinned);
     },
   });
 }
@@ -1992,6 +2028,8 @@ export async function fetchAllArchivedProjectNames(): Promise<string[]> {
       order: "desc",
       sort_by: "updated_at",
       limit: "100",
+      visibility: "archived",
+      // Preserve archive inclusion on older servers that ignore visibility.
       include_archived: "true",
     });
     if (after) params.set("after", after);
@@ -2003,8 +2041,7 @@ export async function fetchAllArchivedProjectNames(): Promise<string[]> {
     // eslint-disable-next-line no-await-in-loop
     const page = (await res.json()) as ConversationsPage;
     for (const conv of page.data) {
-      // include_archived returns archived AND active rows; only archived ones
-      // are filterable on this page, so collect labels from those.
+      // Keep active rows out even if a server ignores the visibility filter.
       if (conv.archived !== true) continue;
       const name = conv.labels?.[PROJECT_LABEL_KEY];
       if (name) names.add(name);
@@ -2110,11 +2147,13 @@ export async function moveConversationToProject(
  * onto every cached copy of the row and it regroups on the next frame — rather
  * than after the PATCH + list refetches round-trip, which parked the row in
  * its old section for the whole request (multi-second against a slow server).
- * The target id is read from the cached `["projects"]` list, the same data the
- * move UI rendered its targets from. A name with no cached first-class id yet
- * (label-only folder or brand-new name) is created over the network inside the
- * mutation, so that path skips the overlay and regroups on the reconcile
- * below, exactly as before.
+ * The target is read from the cached `["projects"]` list, the same data the
+ * move UI rendered its targets from: a first-class target overlays its id, and
+ * a label-only folder (cached with a null id — its first-class row is created
+ * over the network inside the mutation) overlays the legacy label instead,
+ * which the sidebar dual-reads into the same folder. Only a name absent from
+ * the cache (a brand-new project) skips the overlay and regroups on the
+ * reconcile below — there is no folder to regroup into yet.
  *
  * `onSuccess` still invalidates: membership pagination, project counts, and
  * ordering are server-owned, and those refetches start after the PATCH commits
@@ -2200,15 +2239,15 @@ export function useMoveToProject() {
     mutationFn: ({ id, project }: { id: string; project: string }) =>
       moveConversationToProject(id, project),
     onMutate: async ({ id, project }) => {
-      // `""` unfiles (no id needed); a file target must resolve to a cached
-      // first-class id for the overlay to be truthful about the outcome. The
-      // `?? undefined` folds a label-only folder's null id into "unknown".
+      // `""` unfiles (no id needed); a file target must exist in the cached
+      // projects list for the overlay to be truthful about the outcome — an
+      // uncached name (brand-new project) has no folder to regroup into.
       const target =
         project === ""
           ? null
           : (queryClient
               .getQueryData<ProjectSummary[]>(["projects"])
-              ?.find((p) => p.name === project)?.id ?? undefined);
+              ?.find((p) => p.name === project) ?? undefined);
       if (target === undefined) return undefined;
       // Cancel in-flight list refetches so a response that started before the
       // overlay can't resolve after it and snap the row back to its old spot.
@@ -2229,10 +2268,17 @@ export function useMoveToProject() {
         }),
         backfill: queryClient.getQueryData<Conversation | null>(["conversation-backfill", id]),
       };
-      const labels = Object.fromEntries(
+      const baseLabels = Object.fromEntries(
         Object.entries(row.labels).filter(([labelKey]) => labelKey !== PROJECT_LABEL_KEY),
       );
-      overlayMembership(row, target, labels, project === "" ? null : project);
+      // A label-only folder has no first-class id to overlay yet, so its
+      // membership is written through the legacy label — the sidebar
+      // dual-reads it into the same folder the eventual PATCH files into.
+      const labels =
+        target !== null && target.id === null
+          ? { ...baseLabels, [PROJECT_LABEL_KEY]: project }
+          : baseLabels;
+      overlayMembership(row, target?.id ?? null, labels, project === "" ? null : project);
       return previous;
     },
     onError: (_err, { id }, previous) => {
@@ -2244,8 +2290,20 @@ export function useMoveToProject() {
         queryClient.setQueryData(["conversation-backfill", id], previous.backfill);
       }
     },
-    onSuccess: (updated) => {
+    onSuccess: (updated, { project }) => {
       markConversationSeen(updated.id, updated.updated_at);
+      // Filing can promote a label-only folder to first-class inside the
+      // mutation. Seed the confirmed id into the cached projects list before
+      // the refetches race: a conversations refetch can land first with the
+      // row's legacy label already cleared, and an id-less cached folder
+      // couldn't claim that row by `project_id` — it would flash into the
+      // flat list until the projects refetch landed.
+      const confirmedId = updated.project_id;
+      if (project !== "" && confirmedId != null) {
+        queryClient.setQueryData<ProjectSummary[]>(["projects"], (old) =>
+          old?.map((p) => (p.name === project && p.id === null ? { ...p, id: confirmedId } : p)),
+        );
+      }
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
       // Moving into/out of a project changes both folders' paginated lists.
@@ -2270,6 +2328,7 @@ async function fetchAllProjectSessionIds(project: string): Promise<string[]> {
       order: "desc",
       sort_by: "updated_at",
       limit: "100",
+      visibility: "all",
       include_archived: "true",
       project,
     });
@@ -2301,6 +2360,7 @@ export async function fetchProjectSessionIds(project: string, limit = 2): Promis
     sort_by: "updated_at",
     limit: String(limit),
     include_archived: "true",
+    visibility: "all",
     project,
   });
   const res = await authenticatedFetch(`/v1/sessions?${params.toString()}`);
@@ -2309,7 +2369,7 @@ export async function fetchProjectSessionIds(project: string, limit = 2): Promis
   return page.data.map((conv) => conv.id);
 }
 
-/** One page of a project's (non-archived) sessions, newest-first. */
+/** One page of the viewer's active sessions in a project, newest-first. */
 async function fetchProjectSessionsPage(
   project: string,
   after?: string,
@@ -2319,6 +2379,7 @@ async function fetchProjectSessionsPage(
     order: "desc",
     sort_by: "updated_at",
     limit: String(limit),
+    visibility: "mine",
     project,
   });
   if (after) params.set("after", after);

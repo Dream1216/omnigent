@@ -27,12 +27,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import threading
-from collections.abc import Coroutine
 from typing import Any
 
 from playwright.async_api import Route, async_playwright, expect
 
+from tests._helpers.async_thread import run_in_fresh_loop as _run_in_fresh_loop
 from tests.e2e_ui.start_session.helpers import stub_empty_host_picker_data
 
 _HOST_ID = "host_e2e_cfg"
@@ -43,23 +42,6 @@ _CONFIG_WORKSPACE = "/work/configured-repo"
 _SESSIONS_RE = re.compile(r"/v1/sessions(\?.*)?$")
 # One project config endpoint: /v1/projects/<id> (not the bare list).
 _PROJECT_CFG_RE = re.compile(r"/v1/projects/[^/?]+")
-
-
-def _run_in_fresh_loop(coro: Coroutine[Any, Any, None]) -> None:
-    """Run *coro* in a dedicated thread with its own loop (see test_start_session)."""
-    captured: dict[str, Exception] = {}
-
-    def _worker() -> None:
-        try:
-            asyncio.run(coro)
-        except Exception as exc:
-            captured["error"] = exc
-
-    thread = threading.Thread(target=_worker)
-    thread.start()
-    thread.join()
-    if "error" in captured:
-        raise captured["error"]
 
 
 async def _wait_until(predicate, *, timeout_s: float = 15.0) -> None:
@@ -88,7 +70,7 @@ def _agents_body() -> str:
                     "name": "claude-native-ui",
                     "display_name": "Claude Code",
                     "description": "Anthropic's coding agent",
-                    "harness": None,
+                    "harness": "claude-native",
                     "skills": [],
                 },
                 {
@@ -285,6 +267,18 @@ async def _drive_sandbox_prefill(base_url: str, session_id: str) -> None:
                     status=200, content_type="application/json", body=_managed_info_body()
                 )
 
+            async def handle_sandbox_models(route: Route) -> None:
+                await route.fulfill(
+                    json={
+                        "configured": False,
+                        "models": [],
+                        "configuration_revision": None,
+                        "provider_label": None,
+                        "default_model": None,
+                        "status": "unconfigured",
+                    }
+                )
+
             async def handle_hosts(route: Route) -> None:
                 await route.fulfill(
                     status=200, content_type="application/json", body=_hosts_body()
@@ -329,6 +323,9 @@ async def _drive_sandbox_prefill(base_url: str, session_id: str) -> None:
                 )
 
             await page.route("**/v1/info", handle_info)
+            await page.route(
+                "**/v1/sandbox-providers/*/harnesses/*/model-options*", handle_sandbox_models
+            )
             await page.route("**/v1/hosts", handle_hosts)
             await page.route("**/v1/agents", handle_agents)
             await page.route("**/v1/sessions/projects", handle_projects_list)

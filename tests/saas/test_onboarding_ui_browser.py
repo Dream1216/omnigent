@@ -374,6 +374,7 @@ def test_registration_journey_reaches_ready_workspace(
     assert captured.status_calls >= 2
     assert any("omnigent_saas_session=e2e-session" in value for value in captured.status_cookies)
     assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
+    assert page.evaluate("localStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
 
     # URL fragments are browser-local. The token is sent only in the explicit
     # verification body, never in a request URL or Referer, and is removed from
@@ -535,6 +536,7 @@ def test_login_password_toggle_and_account_return_after_retry(
     expect(page).to_have_url(f"{live_server}/settings/account")
     assert captured.login == [{"email": _EMAIL, "password": "correct-horse-battery"}] * 2
     assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
+    assert page.evaluate("localStorage.getItem('omnigent.saas.csrf')") == _CSRF_TOKEN
 
 
 def test_login_pending_submission_is_deduplicated_and_network_error_is_retryable(
@@ -592,6 +594,7 @@ def test_login_handles_invalid_sessions_and_untrusted_error_text(
     )
     page.goto(f"{live_server}/saas/login")
     page.evaluate("sessionStorage.setItem('omnigent.saas.csrf', 'stale')")
+    page.evaluate("localStorage.setItem('omnigent.saas.csrf', 'stale')")
     page.get_by_label("Work email").fill(_EMAIL)
     page.get_by_label("Password", exact=True).fill("correct-horse-battery")
     page.get_by_role("button", name="Sign in", exact=True).click()
@@ -605,6 +608,7 @@ def test_login_handles_invalid_sessions_and_untrusted_error_text(
     expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_enabled()
     if status == 401:
         assert page.evaluate("sessionStorage.getItem('omnigent.saas.csrf')") is None
+        assert page.evaluate("localStorage.getItem('omnigent.saas.csrf')") is None
 
 
 def test_login_without_javascript_explains_why_form_is_disabled(

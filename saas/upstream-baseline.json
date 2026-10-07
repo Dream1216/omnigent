@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "hh1b2c3d4e5f"
+    "mm1a2b3c4d5e"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -38,6 +38,7 @@
     "hosts": ["workspace_id", "host_id"],
     "omnigent_conversation_metadata": ["workspace_id", "id"],
     "policies": ["workspace_id", "id"],
+    "preferences": ["workspace_id", "user_id", "key"],
     "projects": ["workspace_id", "id"],
     "scheduled_task_runs": ["workspace_id", "id"],
     "scheduled_tasks": ["workspace_id", "id"],
@@ -47,11 +48,67 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 126,
-    "max_upstream_net_added_loc": 4396,
+    "max_direct_upstream_files": 144,
+    "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "followup": {
+      "revision": "next-agent-gate-missing-bundle-v28",
+      "approved_at": "2026-10-07",
+      "governance_mode": "single_owner_beta",
+      "previous_max_upstream_net_added_loc": 4568,
+      "measured_upstream_net_added_loc": 4576,
+      "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
+      "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+    },
+    "approved_at": "2026-10-07",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 144,
+    "previous_max_upstream_net_added_loc": 4518,
+    "previous_measured_upstream_net_added_loc": 4518,
+    "reason": "Exact measured follow-up for the merged SaaS CSRF cross-tab repair (#126): two already-divergent official Web files add 50 net lines (identity.ts +19 and identity.test.ts +31), moving the measured total from 144 files / 4,518 lines to 144 files / 4,568 lines. Raise only the LOC ceiling to that exact measurement; retain the 144-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency checks. This Single-Owner Beta record is not production admission or a technical-gate waiver.",
+    "revision": "next-csrf-cross-tab-budget-v27",
+    "scoped_csrf_delta": {
+      "web/src/lib/identity.ts": 19,
+      "web/src/lib/identity.test.ts": 31
+    },
+    "previous_revision": {
+    "approved_at": "2026-10-07",
+    "governance_mode": "single_owner_beta",
+    "previous_max_active_patches": 9,
+    "previous_max_direct_upstream_files": 126,
+    "previous_max_upstream_net_added_loc": 4396,
+    "previous_measured_upstream_net_added_loc": 4396,
+    "reason": "The final 17-Agent candidate exposed an unreadable catalog Agent whose null harness could still be launched, while session-discovered Agents may legitimately have a null harness until their spec loads. Reject unreadable catalog Agents before session creation, keep session-discovered entries usable, and align Web, E2E, visual and REST fixtures with the non-null API contract. The exact measured source delta adds 18 newly divergent official paths and 122 net lines, moving strict ceilings from 126 files / 4,396 lines to 144 files / 4,518 lines. Extend replayable patch 0010 without increasing the nine-patch ceiling; retain the 0.85 isolation floor, forbidden native paths and reverse-dependency checks. CI, signed-image verification, the 17-Agent gate and five authenticated online cases remain required.",
+    "revision": "next-agent-null-harness-gate-v26",
+    "scoped_agent_delta": {
+      "omnigent/server/routes/_sessions/orchestration.py": 5,
+      "tests/e2e_ui/chat/test_hide_unconfigured_harnesses.py": 50,
+      "tests/e2e_ui/sessions/test_initial_prompt_session_switch.py": 0,
+      "tests/e2e_ui/sessions/test_new_session_optimistic_title.py": 0,
+      "tests/e2e_ui/start_session/test_codex_bypass_agent_switch.py": 0,
+      "tests/e2e_ui/start_session/test_create_agent_focus_ring_clipping.py": 0,
+      "tests/e2e_ui/start_session/test_create_custom_agent.py": 0,
+      "tests/e2e_ui/start_session/test_project_config_prefill.py": 0,
+      "tests/e2e_ui/start_session/test_start_session.py": 0,
+      "tests/e2e_ui/visual/test_landing_snapshot.py": 0,
+      "tests/e2e_ui/visual/test_sidebar_flyout_snapshot.py": 0,
+      "tests/e2e_ui/visual/test_sidebar_snapshot.py": 0,
+      "tests/server/routes/test_session_create_project_consistency.py": 6,
+      "tests/server/routes/test_sessions_cost_labels.py": 15,
+      "web/src/lib/harnessSetup.test.ts": 21,
+      "web/src/lib/harnessSetup.ts": 13,
+      "web/src/shell/NewChatDialog.flow.test.tsx": 0,
+      "web/src/shell/NewChatDialog.projectCreate.test.tsx": 7,
+      "web/src/shell/NewChatDialog.projectPrefill.test.tsx": 0,
+      "web/src/shell/NewChatDialog.test.tsx": 0,
+      "web/src/shell/NewChatDialog.tsx": 5,
+      "web/src/shell/NewChatLandingScreen.mobileChrome.test.tsx": 0,
+      "web/src/shell/ProjectSettingsDialog.test.tsx": 0
+    },
+    "previous_revision": {
     "approved_at": "2026-09-29",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,
@@ -461,8 +518,10 @@
     }
     }
   }
+  }
+  }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
-  "upstream_version": "0.15.0.dev0"
+  "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+  "upstream_version": "0.18.0.dev20261006"
 }

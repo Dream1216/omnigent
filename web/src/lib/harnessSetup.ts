@@ -36,9 +36,124 @@ export interface ResolvedSetupStep {
   harness: string;
 }
 
-/** In-process SDK harness spellings whose ``needs-auth`` state is advisory.
- * The host cannot see agent-level ``executor.auth``, so these rows must stay
- * selectable and visible even when the host has no ambient credential. */
+export type HarnessReadinessState = "available" | "unavailable" | "broken" | "setup-required";
+
+export type HarnessReadinessReason =
+  | "ready"
+  | "readiness-unknown"
+  | "harness-unavailable"
+  | "host-unavailable"
+  | "binary-missing"
+  | "needs-auth"
+  | "unconfigured"
+  | "version-too-low"
+  | "readiness-error";
+
+export interface HarnessReadinessExplanation {
+  label: string;
+  description: string;
+}
+
+export interface HarnessReadiness {
+  state: HarnessReadinessState;
+  reason: HarnessReadinessReason;
+  selectable: boolean;
+  /** A different harness on the same host may recover this condition. */
+  fallbackRelevant: boolean;
+  explanation: HarnessReadinessExplanation | null;
+}
+
+function harnessReadinessResult(
+  state: HarnessReadinessState,
+  reason: HarnessReadinessReason,
+  fallbackRelevant: boolean,
+  explanation: HarnessReadinessExplanation | null,
+): HarnessReadiness {
+  return {
+    state,
+    reason,
+    selectable: state === "available",
+    fallbackRelevant,
+    explanation,
+  };
+}
+
+/** Resolve selection and fallback behavior from one host readiness value. */
+export function harnessReadinessOnHost(
+  harness: string | null | undefined,
+  host: Host | undefined | null,
+): HarnessReadiness {
+  if (!harness) {
+    return harnessReadinessResult("unavailable", "harness-unavailable", true, {
+      label: "Harness unavailable",
+      description: "This agent does not resolve to a runnable harness.",
+    });
+  }
+  if (!host || host.status !== "online") {
+    return harnessReadinessResult("unavailable", "host-unavailable", false, {
+      label: "Host unavailable",
+      description: "Connect an online host before starting a session.",
+    });
+  }
+
+  const configured = host.configured_harnesses;
+  if (!configured || !(harness in configured)) {
+    return harnessReadinessResult("available", "readiness-unknown", false, null);
+  }
+
+  const availability = configured[harness];
+  if (availability === true) {
+    return harnessReadinessResult("available", "ready", false, null);
+  }
+  if (availability === "version-too-low") {
+    return harnessReadinessResult("broken", "version-too-low", true, {
+      label: "Harness is outdated",
+      description: "Update this harness before starting a session with it.",
+    });
+  }
+  if (availability === "binary-missing") {
+    return harnessReadinessResult("setup-required", "binary-missing", true, {
+      label: "Harness is not installed",
+      description: "Install this harness on the selected host before using it.",
+    });
+  }
+  if (availability === "needs-auth") {
+    if (isSdkHarness(harness)) {
+      // Advisory only for the in-process SDK harnesses: the host daemon
+      // cannot see agent-level credentials (an agent spec's `executor.auth`),
+      // and the daemon's launch gate stays ungated for them, so a
+      // `needs-auth` SDK agent may still authenticate successfully. Keep the
+      // row selectable; the picker badge and composer notice (driven by
+      // harnessUnavailableReasonOnHost) still warn before launch.
+      return harnessReadinessResult("available", "needs-auth", false, {
+        label: "Authentication may be required",
+        description:
+          "The selected host reports no credentials for this harness. " +
+          "Launching may fail unless the agent supplies its own.",
+      });
+    }
+    return harnessReadinessResult("setup-required", "needs-auth", true, {
+      label: "Authentication required",
+      description: "Sign in or add credentials on the selected host before using this harness.",
+    });
+  }
+  if (availability === false) {
+    return harnessReadinessResult("setup-required", "unconfigured", true, {
+      label: "Setup required",
+      description: "Set up this harness on the selected host before using it.",
+    });
+  }
+  return harnessReadinessResult("broken", "readiness-error", true, {
+    label: "Harness is not working",
+    description: "The selected host reported a harness readiness error.",
+  });
+}
+
+/** The in-process SDK harness spellings the daemon reports readiness for
+ *  (mirrors `_SDK_HARNESSES` + its alias spellings in
+ *  `omnigent/onboarding/harness_readiness.py`). Their launch gate is never
+ *  blocked host-side — agent-level credentials are invisible to the daemon —
+ *  so their `needs-auth` readiness is an advisory warning, not a gate. */
 const SDK_HARNESSES = new Set([
   "claude-sdk",
   "claude_sdk",
@@ -51,6 +166,7 @@ const SDK_HARNESSES = new Set([
   "google-antigravity",
 ]);
 
+/** Whether *harness* is an in-process SDK harness spelling. */
 export function isSdkHarness(harness: string): boolean {
   return SDK_HARNESSES.has(harness);
 }
@@ -62,19 +178,16 @@ export function isCodexHarness(harness: string): boolean {
   return harness === "codex" || harness === "codex-native" || harness === "native-codex";
 }
 
+/** Sigil used to invoke a skill in *harness*: `$` for codex-native, `/` for all others. */
+export function skillInvocationPrefix(harness: string | null | undefined): "$" | "/" {
+  return harness === "codex-native" ? "$" : "/";
+}
+
 export function isNativeCursorHarness(harness: string): boolean {
   return harness === "cursor-native" || harness === "native-cursor";
 }
 
-/** Build the readiness profile for a newly provisioned managed sandbox.
- *
- * Managed hosts are not user-selectable machines, but their connect handshake
- * is the authoritative probe of the image, credentials, and provider config a
- * new sandbox will inherit. Prefer live instances for the selected provider;
- * when an idle-reclaiming provider has none, fall back to its last reports.
- * Conflicting reports fail closed per harness so a mixed rollout never claims
- * an agent is ready until every sampled runtime agrees.
- */
+/** Build a fail-closed readiness profile for a newly provisioned sandbox. */
 export function managedSandboxReadinessHost(
   hosts: readonly Host[],
   provider: string | null | undefined,
@@ -128,8 +241,9 @@ export function managedSandboxReadinessHost(
 }
 
 /**
- * Why *harness* can't run on *host* right now, or ``null`` when it's ready
- * (or readiness is unknown / no host selected). Drives the picker "needs setup"
+ * Why *harness* can't run on *host* right now, including an unresolved
+ * Agent harness even when no host is selected. Otherwise null means ready or
+ * unknown readiness. Drives the picker "needs setup"
  * badge and the composer notice; the setup dialog uses the fuller
  * {@link resolveSetupSteps}.
  */
@@ -137,7 +251,8 @@ export function harnessUnavailableReasonOnHost(
   harness: string | null | undefined,
   host: Host | undefined | null,
 ): string | null {
-  if (!harness || !host?.configured_harnesses) return null;
+  if (!harness) return "agent-unavailable";
+  if (!host?.configured_harnesses) return null;
   const availability = host.configured_harnesses[harness];
   if (availability === false) {
     if (isCodexHarness(harness)) return "binary-missing";
@@ -177,6 +292,16 @@ export function harnessUnavailableReasonOnHost(
   return null;
 }
 
+/** A catalog Agent with no harness has an unreadable bundle; a session-discovered
+ * Agent may simply be waiting for its spec to load from that session. */
+export function agentHarnessUnavailableReasonOnHost(
+  agent: { harness: string | null; sessionId?: string } | null | undefined,
+  host: Host | undefined | null,
+): string | null {
+  if (!agent || (agent.harness === null && agent.sessionId)) return null;
+  return harnessUnavailableReasonOnHost(agent.harness, host);
+}
+
 /**
  * Whether *harness* is reported not-ready on *host*. Gates the "needs setup"
  * badge in the picker rows and the composer notice.
@@ -188,8 +313,7 @@ export function harnessUnconfiguredOnHost(
   return harnessUnavailableReasonOnHost(harness, host) !== null;
 }
 
-/** Whether the opt-in "hide unconfigured" filter should remove a harness.
- * SDK ``needs-auth`` is a warning, not proof the agent cannot authenticate. */
+/** Hide known-bad harnesses while keeping SDK credential warnings advisory. */
 export function harnessHiddenAsUnconfiguredOnHost(
   harness: string | null | undefined,
   host: Host | undefined | null,
@@ -208,6 +332,7 @@ export function harnessHiddenAsUnconfiguredOnHost(
  * flag-off path renders byte-for-byte the original text.
  */
 export function harnessWarningBadgeText(reason: string | null, collapsed = false): string {
+  if (reason === "agent-unavailable") return "agent unavailable";
   if (collapsed) return "needs setup";
   if (reason === "binary-missing") return "binary missing";
   if (reason === "needs-auth") return "needs auth";

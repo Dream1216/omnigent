@@ -51,6 +51,12 @@ def project_create_app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastA
         BUILTIN_AGENT_NAME,
         f"{BUILTIN_AGENT_ID}/bundle",
     )
+    for agent_id, name in (
+        (CUSTOM_AGENT_ID, "project-custom"),
+        (OTHER_AGENT_ID, "explicit-custom"),
+        (BUILTIN_AGENT_ID, BUILTIN_AGENT_NAME),
+    ):
+        artifact_store.put(f"{agent_id}/bundle", build_agent_bundle(name=name))
     return create_app(
         agent_store=agent_store,
         file_store=SqlAlchemyFileStore(db_uri),

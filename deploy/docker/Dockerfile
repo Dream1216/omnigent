@@ -428,6 +428,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       '  "dependencies": {' \
       "    \"@anthropic-ai/claude-code\": \"${CLAUDE_CODE_VERSION}\"," \
       "    \"@earendil-works/pi-coding-agent\": \"${PI_CODING_AGENT_VERSION}\"," \
+      '    "@modelcontextprotocol/sdk": "1.32.0",' \
       "    \"@moonshot-ai/kimi-code\": \"${KIMI_CODE_VERSION}\"," \
       "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"," \
       "    \"@qwen-code/qwen-code\": \"${QWEN_CODE_VERSION}\"," \

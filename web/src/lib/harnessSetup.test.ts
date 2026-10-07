@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentHarnessUnavailableReasonOnHost,
   harnessAuthableOnHost,
   harnessCredentialAdoptFamilies,
   harnessCredentialFamily,
   harnessHiddenAsUnconfiguredOnHost,
   harnessInstallableOnHost,
+  harnessReadinessOnHost,
   harnessUnavailableReasonOnHost,
   harnessUnconfiguredOnHost,
+  harnessWarningBadgeText,
   managedSandboxReadinessHost,
   resolveSetupSteps,
+  skillInvocationPrefix,
 } from "./harnessSetup";
 import type { SetupStepWire } from "@/lib/agentLabels";
 import type { Host } from "@/hooks/useHosts";
@@ -123,7 +127,26 @@ describe("harnessUnavailableReasonOnHost", () => {
       "unconfigured",
     );
     expect(harnessUnavailableReasonOnHost("codex", hostWith(null))).toBe(null);
-    expect(harnessUnavailableReasonOnHost(null, hostWith({ codex: false }))).toBe(null);
+    expect(harnessUnavailableReasonOnHost(null, hostWith({ codex: false }))).toBe(
+      "agent-unavailable",
+    );
+  });
+
+  it("blocks an agent whose bundle has no resolvable harness even without host readiness", () => {
+    expect(harnessUnavailableReasonOnHost(null, hostWith(null))).toBe("agent-unavailable");
+    expect(harnessUnconfiguredOnHost(null, undefined)).toBe(true);
+    expect(harnessHiddenAsUnconfiguredOnHost(null, hostWith({}))).toBe(true);
+    expect(harnessWarningBadgeText("agent-unavailable", true)).toBe("agent unavailable");
+    expect(agentHarnessUnavailableReasonOnHost({ harness: null }, hostWith(null))).toBe(
+      "agent-unavailable",
+    );
+    expect(
+      agentHarnessUnavailableReasonOnHost(
+        { harness: null, sessionId: "conv_existing" },
+        hostWith(null),
+      ),
+    ).toBe(null);
+    expect(agentHarnessUnavailableReasonOnHost(null, hostWith(null))).toBe(null);
   });
 
   it("treats a missing key on a readiness-reporting host as unconfigured", () => {
@@ -155,31 +178,112 @@ describe("harnessUnconfiguredOnHost", () => {
   });
 });
 
-describe("harnessHiddenAsUnconfiguredOnHost", () => {
-  it("keeps SDK needs-auth rows visible while hiding CLI setup failures", () => {
-    for (const harness of [
-      "claude-sdk",
-      "claude",
-      "openai-agents",
-      "openai-agents-sdk",
-      "antigravity",
-    ]) {
-      expect(
-        harnessHiddenAsUnconfiguredOnHost(harness, hostWith({ [harness]: "needs-auth" })),
-      ).toBe(false);
-    }
+describe("harnessReadinessOnHost", () => {
+  it("keeps ready and legacy-unknown harnesses selectable", () => {
+    expect(harnessReadinessOnHost("codex-native", hostWith({ "codex-native": true }))).toEqual({
+      state: "available",
+      reason: "ready",
+      selectable: true,
+      fallbackRelevant: false,
+      explanation: null,
+    });
+    expect(harnessReadinessOnHost("codex-native", hostWith(null))).toMatchObject({
+      state: "available",
+      reason: "readiness-unknown",
+      selectable: true,
+      fallbackRelevant: false,
+    });
+  });
 
+  it("separates setup-required from broken conditions", () => {
     expect(
-      harnessHiddenAsUnconfiguredOnHost(
-        "claude-native",
-        hostWith({
-          "claude-native": "needs-auth",
-        }),
-      ),
-    ).toBe(true);
-    expect(harnessHiddenAsUnconfiguredOnHost("qwen", hostWith({ qwen: "binary-missing" }))).toBe(
-      true,
-    );
+      harnessReadinessOnHost("codex-native", hostWith({ "codex-native": "needs-auth" })),
+    ).toMatchObject({
+      state: "setup-required",
+      reason: "needs-auth",
+      selectable: false,
+      fallbackRelevant: true,
+    });
+    expect(
+      harnessReadinessOnHost("codex-native", hostWith({ "codex-native": "version-too-low" })),
+    ).toMatchObject({
+      state: "broken",
+      reason: "version-too-low",
+      selectable: false,
+      fallbackRelevant: true,
+    });
+    expect(
+      harnessReadinessOnHost("codex-native", hostWith({ "codex-native": "probe-failed" })),
+    ).toMatchObject({
+      state: "broken",
+      reason: "readiness-error",
+    });
+  });
+
+  it("keeps needs-auth SDK harnesses selectable (advisory, not a gate)", () => {
+    // The daemon cannot see agent-level credentials (executor.auth) and its
+    // launch gate stays ungated for SDK harnesses, so needs-auth must warn
+    // without disabling the row.
+    expect(
+      harnessReadinessOnHost("claude-sdk", hostWith({ "claude-sdk": "needs-auth" })),
+    ).toMatchObject({
+      state: "available",
+      reason: "needs-auth",
+      selectable: true,
+      fallbackRelevant: false,
+    });
+    expect(
+      harnessReadinessOnHost("openai-agents", hostWith({ "openai-agents": "needs-auth" })),
+    ).toMatchObject({
+      state: "available",
+      reason: "needs-auth",
+      selectable: true,
+    });
+    // Every SDK spelling the daemon reports readiness for stays selectable,
+    // including the antigravity aliases (specs may use any spelling and the
+    // agents API preserves it).
+    for (const harness of ["antigravity", "agy", "google-antigravity", "openai-agents-sdk"]) {
+      expect(harnessReadinessOnHost(harness, hostWith({ [harness]: "needs-auth" }))).toMatchObject({
+        state: "available",
+        reason: "needs-auth",
+        selectable: true,
+        fallbackRelevant: false,
+      });
+    }
+    // CLI-backed harnesses keep the blocking setup-required mapping: their
+    // launch really is gated on host-side setup. The *native* antigravity
+    // spellings wrap the agy CLI and stay blocking too.
+    for (const harness of ["pi", "agy-native", "native-antigravity"]) {
+      expect(harnessReadinessOnHost(harness, hostWith({ [harness]: "needs-auth" }))).toMatchObject({
+        state: "setup-required",
+        reason: "needs-auth",
+        selectable: false,
+      });
+    }
+  });
+
+  it("marks host-wide unavailability as irrelevant to harness fallback", () => {
+    expect(
+      harnessReadinessOnHost("codex-native", {
+        ...hostWith({ "codex-native": true }),
+        status: "offline",
+      }),
+    ).toMatchObject({
+      state: "unavailable",
+      reason: "host-unavailable",
+      selectable: false,
+      fallbackRelevant: false,
+    });
+  });
+
+  it("provides explanation copy for disabled selection", () => {
+    expect(
+      harnessReadinessOnHost("codex-native", hostWith({ "codex-native": "binary-missing" }))
+        .explanation,
+    ).toEqual({
+      label: "Harness is not installed",
+      description: "Install this harness on the selected host before using it.",
+    });
   });
 });
 
@@ -227,7 +331,7 @@ describe("managedSandboxReadinessHost", () => {
     });
   });
 
-  it("falls back to reclaimed instances without treating their offline state as provider health", () => {
+  it("falls back to reclaimed instances without treating them as provider outages", () => {
     const profile = managedSandboxReadinessHost(
       [
         managedHost(
@@ -279,7 +383,7 @@ describe("managedSandboxReadinessHost", () => {
     expect(profile?.gateway_inference).toEqual({ "codex-native": false });
   });
 
-  it("returns unknown when the selected provider has no managed runtime report", () => {
+  it("returns unknown when the selected provider has no runtime report", () => {
     expect(
       managedSandboxReadinessHost(
         [managedHost("k8s", "kubernetes", "online", { "codex-native": true })],
@@ -447,5 +551,26 @@ describe("resolveSetupSteps", () => {
   it("returns [] with no descriptor or no harness", () => {
     expect(resolveSetupSteps(undefined, "codex", hostWith({ codex: false }))).toEqual([]);
     expect(resolveSetupSteps(CODEX_STEPS, null, hostWith({ codex: false }))).toEqual([]);
+  });
+});
+
+describe("skillInvocationPrefix", () => {
+  it("returns $ for codex-native", () => {
+    expect(skillInvocationPrefix("codex-native")).toBe("$");
+  });
+
+  it("returns / for non-Codex native harnesses", () => {
+    expect(skillInvocationPrefix("claude-native")).toBe("/");
+    expect(skillInvocationPrefix("cursor-native")).toBe("/");
+  });
+
+  it("returns / for SDK and bare harness spellings", () => {
+    expect(skillInvocationPrefix("codex")).toBe("/");
+    expect(skillInvocationPrefix("claude")).toBe("/");
+  });
+
+  it("returns / for null and undefined", () => {
+    expect(skillInvocationPrefix(null)).toBe("/");
+    expect(skillInvocationPrefix(undefined)).toBe("/");
   });
 });
