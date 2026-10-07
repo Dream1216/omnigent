@@ -15,9 +15,9 @@ def test_authenticated_language_switching_persists(page: Page, live_server: str)
     page.get_by_test_id("language-option-zh-CN").click()
 
     expect(page.get_by_role("heading", name="今天想构建什么？", exact=True)).to_be_visible()
-    expect(page.get_by_text("新建会话", exact=True)).to_be_visible()
-    expect(page.get_by_text("自动化", exact=True)).to_be_visible()
-    expect(page.get_by_text("收件箱", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="新建会话", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="自动化", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="收件箱", exact=True)).to_be_visible()
     expect(page.locator("html")).to_have_attribute("lang", "zh-CN")
     assert page.evaluate("() => window.localStorage.getItem('omnigent.locale')") == "zh-CN"
 
