@@ -17,6 +17,7 @@ import pytest
 
 from omnigent.debug_logging import record_to_row
 from omnigent.entities.session_resources import SessionResourceView
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harnesses.codex_native.bridge import CODEX_NATIVE_BRIDGE_ID_LABEL_KEY
 from omnigent.native import native_dispatch
 from omnigent.runner import create_runner_app
@@ -755,6 +756,36 @@ async def test_ensure_native_terminal_builder_error_returns_500(
     # The structured, non-sensitive cause (exception type only, here) still
     # names the failure kind without the free-form message.
     assert "(ImportError)" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_native_terminal_missing_workspace_returns_410_without_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A removed workspace is an expected lifecycle failure, not a startup defect."""
+    from omnigent.runner.native import _ensure_native_terminal
+
+    async def _workspace_missing(ctx: NativeLaunchContext) -> object:
+        raise OmnigentError("workspace gone", code=ErrorCode.WORKSPACE_MISSING)
+
+    monkeypatch.setattr("omnigent.runner.native._launch_goose", _workspace_missing)
+    with caplog.at_level(logging.INFO, logger="omnigent.runner.app"):
+        resp = await _ensure_native_terminal(
+            "goose", _ensure_ctx(_FakeEnsureRegistry(existing=None)), ensure_locks={}
+        )
+
+    assert resp is not None and resp.status_code == 410
+    assert json.loads(bytes(resp.body))["error"]["code"] == ErrorCode.WORKSPACE_MISSING
+    failure_records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "terminal_start_failed"
+    ]
+    assert failure_records == []
+    assert all(record.exc_info is None for record in caplog.records)
+    assert "resource unavailable" in caplog.text
+    assert "agent unavailable" not in caplog.text
 
 
 @pytest.mark.asyncio
