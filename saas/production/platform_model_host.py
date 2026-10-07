@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import stat
 import subprocess
@@ -72,12 +74,24 @@ class PlatformModelHostProcess(HostProcess):
         """
 
         configured = await super()._probe_configured_harnesses(startup=startup)
-        if configured is None or not _platform_codex_provider_configured():
+        if configured is None:
             return configured
         promoted = dict(configured)
-        for harness in ("codex", "codex-native", "native-codex"):
-            if promoted.get(harness) == "needs-auth":
-                promoted[harness] = True
+        if _platform_codex_provider_configured():
+            for harness in ("codex", "codex-native", "native-codex"):
+                if promoted.get(harness) == "needs-auth":
+                    promoted[harness] = True
+        for harnesses, authenticated in (
+            (("jcode",), _jcode_authenticated),
+            (("devin-native", "native-devin"), _devin_authenticated),
+            (("qwen", "qwen-code", "qwen-native", "native-qwen"), _qwen_authenticated),
+        ):
+            if any(
+                promoted.get(harness) is True for harness in harnesses
+            ) and not await asyncio.to_thread(authenticated):
+                for harness in harnesses:
+                    if promoted.get(harness) is True:
+                        promoted[harness] = "needs-auth"
         return promoted
 
     def _spawn_runner_proc(
@@ -165,6 +179,44 @@ def _platform_codex_provider_configured() -> bool:
         and provider.name == "platform-deepseek"
         and provider.kind == "gateway"
     )
+
+
+def _jcode_authenticated() -> bool:
+    try:
+        result = subprocess.run(
+            ["jcode", "auth", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return json.loads(result.stdout).get("any_available") is True
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _devin_authenticated() -> bool:
+    try:
+        result = subprocess.run(
+            ["devin", "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return result.stdout.strip().startswith("Logged in")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _qwen_authenticated() -> bool:
+    if os.environ.get("QWEN_API_KEY") or os.environ.get("OPENAI_API_KEY"):
+        return True
+    credential = Path.home() / ".qwen" / "oauth_creds.json"
+    try:
+        return credential.is_file() and credential.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _secret_file(source: Mapping[str, str], name: str) -> bytes:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+import subprocess
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -20,7 +21,7 @@ from saas.control_plane.isolation import (
     TrustedRunnerLaunchGrant,
 )
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
-from saas.production import platform_model_runtime
+from saas.production import platform_model_host, platform_model_runtime
 from saas.production.platform_model_host import PlatformModelHostProcess
 from saas.production.platform_model_sandbox_host import stage_platform_model_key
 from saas.production.runner_control import RunnerControlError
@@ -191,6 +192,51 @@ async def test_platform_host_promotes_only_codex_auth_readiness(
         "pi": True,
         "claude-native": "needs-auth",
     }
+
+
+@pytest.mark.asyncio
+async def test_platform_host_requires_vendor_auth_for_installed_cli_harnesses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def base_probe(_self: object, *, startup: bool) -> dict[str, bool]:
+        return {
+            "jcode": True,
+            "devin-native": True,
+            "native-devin": True,
+            "qwen": True,
+            "qwen-native": True,
+        }
+
+    monkeypatch.setattr(
+        "omnigent.host.connect.HostProcess._probe_configured_harnesses", base_probe
+    )
+    monkeypatch.setattr("saas.production.platform_model_host._jcode_authenticated", lambda: False)
+    monkeypatch.setattr("saas.production.platform_model_host._devin_authenticated", lambda: False)
+    monkeypatch.setattr("saas.production.platform_model_host._qwen_authenticated", lambda: False)
+    host = object.__new__(PlatformModelHostProcess)
+
+    readiness = await host._probe_configured_harnesses(startup=True)
+
+    assert set(readiness.values()) == {"needs-auth"}
+
+
+def test_platform_host_vendor_auth_probes_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unauthenticated(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == "jcode":
+            return subprocess.CompletedProcess(command, 0, '{"any_available": false}', "")
+        return subprocess.CompletedProcess(command, 0, "Not logged in.", "")
+
+    monkeypatch.setattr(platform_model_host.subprocess, "run", unauthenticated)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert platform_model_host._jcode_authenticated() is False
+    assert platform_model_host._devin_authenticated() is False
+    assert platform_model_host._qwen_authenticated() is False
 
 
 def test_projection_rejects_endpoint_or_default_model_drift() -> None:
