@@ -97,6 +97,17 @@ jobs:
           uv run python -m saas.scripts.run_postgresql_restore_contract
           --allow-disposable-databases
           --output artifacts/postgresql-restore-contract.json
+      - name: Resolve Claude forwarder compatibility suite
+        id: claude_forwarder_suite
+        run: |
+          if [[ -d tests/harnesses/claude_native/forwarder ]]; then
+            echo 'path=tests/harnesses/claude_native/forwarder' >> "$GITHUB_OUTPUT"
+          elif [[ -f tests/test_claude_native_forwarder.py ]]; then
+            echo 'path=tests/test_claude_native_forwarder.py' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Claude forwarder compatibility suite is missing'
+            exit 1
+          fi
       - name: Run official zygote and query-context compatibility tests
         run: >-
           uv run pytest
@@ -116,7 +127,7 @@ jobs:
           tests/runner/test_orchestrator_skill_injection.py
           tests/runtime/test_acp_spawn_env.py
           tests/test_agent_spawn_env_canary.py
-          tests/test_claude_native_forwarder.py
+          ${{ steps.claude_forwarder_suite.outputs.path }}
           tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
           tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
           tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
