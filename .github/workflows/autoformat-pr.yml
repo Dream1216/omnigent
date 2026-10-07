@@ -53,8 +53,7 @@ jobs:
           author=$(jq -r '.author.login' <<<"$pr_json")
           body_file=$(mktemp)
           new_body_file=$(mktemp)
-          # Keep the body exact so an unchanged PR does not get edited again.
-          jq -j '.body // ""' <<<"$pr_json" > "$body_file"
+          jq -r '.body // ""' <<<"$pr_json" > "$body_file"
 
           gh api \
             --method POST \

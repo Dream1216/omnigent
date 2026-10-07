@@ -6,13 +6,6 @@ inputs:
     description: "Node version to use."
     default: "22"
     required: false
-  cache:
-    description: >-
-      Pass "pnpm" to cache the pnpm store; leave empty for jobs that never run
-      pnpm install (setup-node's post-step errors when the store path is absent
-      on a cache miss).
-    default: "pnpm"
-    required: false
 
 runs:
   using: composite
@@ -24,7 +17,7 @@ runs:
     - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.cache }}
+        cache: pnpm
         cache-dependency-path: pnpm-lock.yaml
 
     - name: Ensure pnpm cache directory exists

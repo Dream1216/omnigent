@@ -1,5 +1,59 @@
+diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
+index 3b0bffd..1547174 100644
+--- a/omnigent/onboarding/harness_readiness.py
++++ b/omnigent/onboarding/harness_readiness.py
+@@ -355,0 +356,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
++    "kiro-native": KIRO_KEY,
++    "native-kiro": KIRO_KEY,
+diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py
+index a021c39..8be5e89 100644
+--- a/omnigent/runtime/pending_inputs.py
++++ b/omnigent/runtime/pending_inputs.py
+@@ -244,0 +245,7 @@ _lock = threading.Lock()
++# A transcript echo settles the pending entry, but a client may retry the
++# original POST after losing its response. Keep a bounded mapping to the
++# committed item so that retry never pastes the prompt into the TUI again.
++_COMMITTED_TTL_S: float = 3600.0
++_COMMITTED_MAX_PER_CONVERSATION = 256
++_committed: WorkspaceScopedCache[str, dict[str, tuple[str, float]]] = WorkspaceScopedCache()
++
+@@ -370,0 +378,32 @@ def pending_id_for_stable_id(conversation_id: str, stable_id: str) -> str | None
++def remember_committed(conversation_id: str, stable_id: str, item_id: str) -> None:
++    """Remember the durable item produced by a native web submission."""
++    now = _now()
++    with _lock:
++        entries = _committed.setdefault(conversation_id, {})
++        entries.pop(stable_id, None)
++        entries[stable_id] = (item_id, now)
++        _evict_stale_committed_locked(conversation_id, now)
++
++
++def committed_item_id(conversation_id: str, stable_id: str) -> str | None:
++    """Return the committed item for a recently settled client stable id."""
++    with _lock:
++        _evict_stale_committed_locked(conversation_id, _now())
++        entries = _committed.get(conversation_id)
++        found = None if entries is None else entries.get(stable_id)
++        return None if found is None else found[0]
++
++
++def _evict_stale_committed_locked(conversation_id: str, now: float) -> None:
++    entries = _committed.get(conversation_id)
++    if entries is None:
++        return
++    for stable_id, (_, at) in list(entries.items()):
++        if now - at > _COMMITTED_TTL_S:
++            entries.pop(stable_id, None)
++    while len(entries) > _COMMITTED_MAX_PER_CONVERSATION:
++        entries.pop(next(iter(entries)))
++    if not entries:
++        _committed.pop(conversation_id, None)
++
++
+@@ -738,0 +778 @@ def reset_for_tests() -> None:
++        _committed.clear()
 diff --git a/omnigent/server/managed_hosts.py b/omnigent/server/managed_hosts.py
-index 5ab8684f4..2f7bc2d7c 100644
+index 5ab8684..2f7bc2d 100644
 --- a/omnigent/server/managed_hosts.py
 +++ b/omnigent/server/managed_hosts.py
 @@ -1631,0 +1632 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
@@ -49,13 +103,47 @@ index 5ab8684f4..2f7bc2d7c 100644
 @@ -3407,0 +3447 @@ def _kubernetes_launcher_factory(
 +            host_command=host_command,
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index 95db3dca8..3a3ec7078 100644
+index 95db3dc..91e05f0 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py
 +++ b/omnigent/server/routes/_sessions/orchestration.py
-@@ -9676 +9676 @@ async def _routing_host_for_create(
+@@ -2993,0 +2994,2 @@ async def _persist_external_conversation_item_unlocked(
++    if drained is not None and drained.stable_id is not None:
++        pending_inputs.remember_committed(session_id, drained.stable_id, persisted.id)
+@@ -3000,0 +3003,2 @@ async def _persist_external_conversation_item_unlocked(
++        if skipped.stable_id is not None:
++            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
+@@ -6226,0 +6231,4 @@ async def _forward_event_to_runner(
++    elif item.stable_id is not None and persisted_items[0].deduplicated:
++        # The same logical web submission already reached this persist-before-
++        # forward boundary. Re-dispatching it would execute the turn twice.
++        return persisted_items[0].id
+@@ -7102,0 +7111,15 @@ async def _dispatch_session_event_to_runner_impl(
++        raw_stable_id = body.data.get("stable_id")
++        web_stable_id = (
++            raw_stable_id
++            if body.data.get("role") == "user"
++            and isinstance(raw_stable_id, str)
++            and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
++            else None
++        )
++        if web_stable_id is not None:
++            committed_id = pending_inputs.committed_item_id(session_id, web_stable_id)
++            if committed_id is not None:
++                return _SessionEventDispatchResult(item_id=committed_id, pending_id=None)
++            live_pending_id = pending_inputs.pending_id_for_stable_id(session_id, web_stable_id)
++            if live_pending_id is not None:
++                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
+@@ -7137,6 +7159,0 @@ async def _dispatch_session_event_to_runner_impl(
+-        raw_stable_id = body.data.get("stable_id")
+-        web_stable_id = (
+-            raw_stable_id
+-            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
+-            else None
+-        )
+@@ -9676 +9693 @@ async def _routing_host_for_create(
 -    body: SessionCreateInput,
 +    body: SessionCreateInput | SessionCreateMetadata,
-@@ -9738,0 +9739,56 @@ def _create_resolved_harness(
+@@ -9738,0 +9756,56 @@ def _create_resolved_harness(
 +def _reported_harness_failure(host: Host, harness: str) -> str | None:
 +    """Return an actionable failure only when a Host supplied readiness data."""
 +    from omnigent.harness_availability import harness_launch_availability
@@ -112,13 +200,112 @@ index 95db3dca8..3a3ec7078 100644
 +            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
 +
 +
-@@ -10452,0 +10509 @@ async def _create_session_from_existing_agent(
+@@ -10024,0 +10098,13 @@ async def _resolve_native_smart_routing(
++_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
++
++
++def _client_create_token(body: SessionCreateInput) -> str | None:
++    """Return a valid top-level web create idempotency token, if present."""
++    if body.parent_session_id is not None or not body.labels:
++        return None
++    token = body.labels.get(_CLIENT_CREATE_TOKEN_LABEL)
++    if isinstance(token, str) and re.fullmatch(r"[0-9a-f]{32}", token):
++        return token
++    return None
++
++
+@@ -10452,0 +10539 @@ async def _create_session_from_existing_agent(
 +    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
+@@ -10646,0 +10734 @@ async def _create_session_from_existing_agent(
++                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index b43b11ae3..85f03c3a8 100644
+index b43b11a..9cacaf3 100644
 --- a/omnigent/server/routes/sessions/routes_core.py
 +++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -996,0 +997,7 @@ def register_core_routes(
+@@ -167,0 +168 @@ from omnigent.server.routes._sessions.orchestration import (
++    _client_create_token,
+@@ -211,0 +213 @@ from omnigent.stores.conversation_store import (
++    ConversationAlreadyExistsError,
+@@ -701,15 +703,63 @@ def register_core_routes(
+-        resp, conv = await _create_session_from_existing_agent(
+-            conversation_store,
+-            agent_store,
+-            runner_router,
+-            body,
+-            request,
+-            agent_cache=agent_cache,
+-            user_id=user_id,
+-            permission_store=permission_store,
+-            liveness_lookup=liveness_lookup,
+-            file_store=file_store,
+-            artifact_store=artifact_store,
+-            background_title_coordinator=background_title_coordinator,
+-            project_store=project_store,
+-        )
++        try:
++            resp, conv = await _create_session_from_existing_agent(
++                conversation_store,
++                agent_store,
++                runner_router,
++                body,
++                request,
++                agent_cache=agent_cache,
++                user_id=user_id,
++                permission_store=permission_store,
++                liveness_lookup=liveness_lookup,
++                file_store=file_store,
++                artifact_store=artifact_store,
++                background_title_coordinator=background_title_coordinator,
++                project_store=project_store,
++            )
++        except ConversationAlreadyExistsError as collision:
++            # The create token is the row's primary key, so a concurrent
++            # replay collides atomically. Return the authorized winner without
++            # repeating runner launch or initial-message side effects.
++            create_token = _client_create_token(body)
++            if create_token is None:
++                raise
++            for _attempt in range(200):
++                existing = await asyncio.to_thread(
++                    conversation_store.get_conversation, create_token
++                )
++                if (
++                    existing is not None
++                    and existing.agent_id == body.agent_id
++                    and existing.labels.get("omnigent.client_create_token") == create_token
++                ):
++                    try:
++                        access = await _require_access_and_level(
++                            user_id,
++                            create_token,
++                            LEVEL_READ,
++                            permission_store,
++                            conversation_store,
++                        )
++                    except OmnigentError as exc:
++                        if exc.code != ErrorCode.NOT_FOUND:
++                            raise
++                    else:
++                        return await _get_session_snapshot(
++                            conversation_store,
++                            create_token,
++                            access.level,
++                            agent_store,
++                            agent_cache,
++                            conversation=access.conversation,
++                            liveness_lookup=liveness_lookup,
++                            runner_exit_reports=runner_exit_reports,
++                            host_store=getattr(request.app.state, "host_store", None),
++                            sandbox_config=getattr(request.app.state, "sandbox_config", None),
++                            viewer_id=user_id,
++                        )
++                await asyncio.sleep(0.01)
++            raise OmnigentError(
++                "A session already uses this create token, but it is not an accessible "
++                "replay of this request",
++                code=ErrorCode.CONFLICT,
++            ) from collision
+@@ -996,0 +1047,7 @@ def register_core_routes(
 +        from omnigent.server.routes._sessions.orchestration import (
 +            _reject_unavailable_harness_for_create,
 +        )

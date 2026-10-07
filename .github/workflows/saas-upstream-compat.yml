@@ -116,7 +116,7 @@ jobs:
           tests/runner/test_orchestrator_skill_injection.py
           tests/runtime/test_acp_spawn_env.py
           tests/test_agent_spawn_env_canary.py
-          tests/harnesses/claude_native/forwarder
+          tests/test_claude_native_forwarder.py
           tests/runner/test_runner_entry.py::test_runner_threadpool_defaults_when_config_missing
           tests/runner/test_runner_entry.py::test_runner_threadpool_reads_nested_runner_config
           tests/runner/test_runner_entry.py::test_runner_threadpool_env_overrides_config
