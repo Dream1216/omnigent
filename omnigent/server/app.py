@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from functools import partial
+from html import escape as escape_html
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -402,7 +403,7 @@ def _normalize_base_path(value: str | None) -> str:
     return trimmed
 
 
-def _rewrite_web_ui_index(html: str, base_path: str) -> str:
+def _rewrite_web_ui_index(html: str, base_path: str, app_name: str | None = None) -> str:
     """Rebase the built ``index.html`` for the configured deployment base path.
 
     The standalone build emits relative asset references (``./assets/...``,
@@ -418,9 +419,14 @@ def _rewrite_web_ui_index(html: str, base_path: str) -> str:
 
     :param html: Raw built ``index.html`` contents.
     :param base_path: Normalized base path (``""`` or ``"/proxy/6767"``).
+    :param app_name: Optional configured brand for the initial browser tab title.
     :returns: Rewritten HTML.
     """
     rewritten = html.replace('="./', f'="{base_path}/')
+    if app_name:
+        rewritten = rewritten.replace(
+            "<title>Omnigent</title>", f"<title>{escape_html(app_name)}</title>", 1
+        )
     # Drop the ``<base href="/">`` fallback whenever we rewrite. The asset refs
     # are absolute now, so it is redundant, and keeping it would resolve fragment
     # refs (inline SVG ``url(#id)``, footnote/heading anchors) against the origin
@@ -4087,7 +4093,12 @@ def create_app(
         app.mount(
             "/",
             _RangeAwareGZipMiddleware(
-                _SPAStaticFiles(directory=web_ui_dist, html=True, base_path=resolved_base_path),
+                _SPAStaticFiles(
+                    directory=web_ui_dist,
+                    html=True,
+                    base_path=resolved_base_path,
+                    app_name=branding_snapshot.app_name,
+                ),
                 minimum_size=_WEB_UI_GZIP_MINIMUM_SIZE,
             ),
             name="web-ui",
@@ -4136,13 +4147,17 @@ class _SPAStaticFiles(StaticFiles):
     a content ``etag`` so ``If-None-Match`` revalidation still yields ``304``.
     """
 
-    def __init__(self, *args: Any, base_path: str = "", **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, base_path: str = "", app_name: str | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._index_html: bytes | None = None
         self._index_etag: str | None = None
         index_file = Path(self.directory) / "index.html"  # type: ignore[arg-type]
         if index_file.is_file():
-            html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
+            html = _rewrite_web_ui_index(
+                index_file.read_text(encoding="utf-8"), base_path, app_name
+            )
             self._index_html = html.encode("utf-8")
             self._index_etag = f'"{hashlib.md5(self._index_html).hexdigest()}"'
 

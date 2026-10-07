@@ -298,15 +298,17 @@ def create_onboarding_ui_router() -> APIRouter:
     @router.get("/signup", include_in_schema=False)
     @router.get("/signup/verify", include_in_schema=False)
     @router.get("/signup/status", include_in_schema=False)
-    def onboarding_shell() -> HTMLResponse:
-        return HTMLResponse(
-            files("saas.onboarding_ui").joinpath("onboarding.html").read_text(encoding="utf-8"),
-            headers=_UI_HEADERS,
-        )
+    def onboarding_shell(request: Request) -> HTMLResponse:
+        page = {
+            "/signup": "signup",
+            "/signup/verify": "signup-verify",
+            "/signup/status": "signup-status",
+        }[request.url.path.rstrip("/") or "/signup"]
+        return login_page(_UI_HEADERS, page=page) or _fallback_onboarding_page()
 
     @router.get("/saas/login", include_in_schema=False)
     def login_shell() -> HTMLResponse:
-        return login_page(_UI_HEADERS) or onboarding_shell()
+        return login_page(_UI_HEADERS) or _fallback_onboarding_page()
 
     @router.get("/saas/login-assets/{path:path}", include_in_schema=False)
     def login_static_asset(path: str) -> Response:
@@ -321,6 +323,13 @@ def create_onboarding_ui_router() -> APIRouter:
         return _ui_asset("onboarding.js", "text/javascript")
 
     return router
+
+
+def _fallback_onboarding_page() -> HTMLResponse:
+    return HTMLResponse(
+        files("saas.onboarding_ui").joinpath("onboarding.html").read_text(encoding="utf-8"),
+        headers=_UI_HEADERS,
+    )
 
 
 def _ui_asset(name: str, media_type: str) -> Response:

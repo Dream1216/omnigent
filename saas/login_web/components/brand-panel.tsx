@@ -21,9 +21,7 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
       <span className="brand-icon">
         <Blocks size={22} strokeWidth={2} aria-hidden="true" />
       </span>
-      <span>
-        Omnigent<span className="wordmark-dot">.</span>
-      </span>
+      <span>胜天半子</span>
     </a>
   );
 }
@@ -62,7 +60,7 @@ export function BrandPanel() {
           </svg>
           <div className="diagram-center">
             <Blocks size={36} strokeWidth={1.7} />
-            <span>Omnigent</span>
+            <span>胜天半子</span>
           </div>
           <div className="diagram-node node-agents">
             <span className="node-icon">

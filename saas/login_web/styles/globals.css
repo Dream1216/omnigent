@@ -98,8 +98,9 @@ a {
   color: #162b50;
   font-size: 23px;
   font-weight: 750;
-  letter-spacing: -0.8px;
+  letter-spacing: 0;
   text-decoration: none;
+  white-space: nowrap;
 }
 .brand-icon {
   display: grid;
@@ -110,9 +111,6 @@ a {
   background: #2563eb;
   color: white;
   box-shadow: 0 3px 5px #2563eb15;
-}
-.wordmark-dot {
-  color: #2563eb;
 }
 .brand-story {
   position: relative;
@@ -474,6 +472,237 @@ h1 > span {
   color: #6e83a4;
   text-decoration: none;
 }
+.signup-shell .brand-panel {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  height: calc(100svh - 32px);
+}
+.signup-content {
+  width: min(100%, 680px);
+  margin: auto;
+  padding: 42px 0 54px;
+  animation: enter 0.45s ease-out both;
+}
+.flow-content {
+  width: min(100%, 440px);
+  margin: auto;
+  padding: 52px 0;
+  animation: enter 0.45s ease-out both;
+}
+.flow-intro .login-description {
+  margin-bottom: 22px;
+}
+.flow-intro h1 {
+  max-width: 640px;
+}
+.flow-steps {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 30px;
+  color: #71819a;
+  font-size: 11px;
+}
+.flow-steps b {
+  color: #2563eb;
+  font-size: 12px;
+}
+.flow-steps em {
+  font-style: normal;
+  white-space: nowrap;
+}
+.flow-track {
+  flex: 1;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e4eaf3;
+}
+.flow-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 250ms ease;
+}
+.signup-form {
+  display: grid;
+  gap: 24px;
+}
+.signup-form fieldset {
+  display: grid;
+  gap: 17px;
+  min-width: 0;
+  margin: 0;
+  padding: 22px 0 0;
+  border: 0;
+  border-top: 1px solid #e5eaf2;
+}
+.signup-form fieldset:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.signup-form legend {
+  padding: 0 12px 0 0;
+  color: #2f405c;
+  font-size: 12px;
+  font-weight: 750;
+}
+.signup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.signup-field {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+.signup-field label span {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+.signup-field select {
+  width: 100%;
+  height: 52px;
+  border: 1px solid var(--input);
+  border-radius: 12px;
+  padding: 0 42px 0 16px;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.signup-field select:hover {
+  border-color: #cbd5e1;
+}
+.signup-field select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px #3b82f626;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.plan-option {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 17px 18px;
+  border: 1px solid #dce3ee;
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.plan-option:hover {
+  border-color: #adc6f8;
+}
+.plan-option:has(input:checked) {
+  border-color: #4c83ee;
+  background: #f3f7ff;
+  box-shadow: 0 0 0 3px #3b82f615;
+}
+.plan-option input {
+  position: absolute;
+  opacity: 0;
+}
+.plan-option strong {
+  color: #263a5a;
+  font-size: 14px;
+}
+.plan-option small {
+  color: #71819a;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.catalog-state {
+  display: grid;
+  min-height: 148px;
+  place-items: center;
+  padding: 24px;
+  border: 1px dashed #d8e3f5;
+  border-radius: 14px;
+  background: #f8faff;
+  color: #667892;
+  font-size: 12px;
+  text-align: center;
+}
+.compact-flow-form {
+  display: grid;
+  gap: 20px;
+}
+.flow-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #cfe0fb;
+  border-radius: 10px;
+  background: #f3f7ff;
+  color: #2456ad;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.setup-progress {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.setup-progress li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid #e4eaf3;
+  border-radius: 12px;
+  background: #fbfcff;
+  color: #71819a;
+  font-size: 13px;
+  font-weight: 600;
+}
+.setup-progress li > span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #eef2f8;
+  color: #73839a;
+  font-size: 11px;
+}
+.setup-progress li.done,
+.setup-progress li.active {
+  border-color: #cfe0fb;
+  color: #28466f;
+}
+.setup-progress li.done > span,
+.setup-progress li.active > span {
+  background: #eaf2ff;
+  color: #2563eb;
+}
+.setup-progress li.active {
+  background: #f3f7ff;
+  box-shadow: 0 4px 18px -12px #2563eb55;
+}
+.flow-footer-note {
+  margin: 20px 0 0;
+  color: #71819a;
+  font-size: 11px;
+  text-align: center;
+}
 @keyframes enter {
   from {
     opacity: 0;
@@ -521,6 +750,9 @@ h1 > span {
   .brand-panel {
     display: none;
   }
+  .signup-shell .brand-panel {
+    display: none;
+  }
   .login-stage {
     min-height: 100svh;
     padding: 27px 28px 17px;
@@ -564,8 +796,23 @@ h1 > span {
   .login-content {
     padding: 48px 0;
   }
+  .signup-content,
+  .flow-content {
+    padding: 44px 0;
+  }
   h1 {
     font-size: 37px;
+  }
+}
+@media (max-width: 620px) {
+  .signup-grid {
+    grid-template-columns: 1fr;
+  }
+  .signup-content {
+    padding-top: 36px;
+  }
+  .flow-steps {
+    margin-bottom: 25px;
   }
 }
 @media (max-width: 360px) {

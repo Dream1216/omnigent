@@ -99,6 +99,14 @@ def test_rewrite_web_ui_index_absolute_when_no_base() -> None:
     assert "<base" not in out
 
 
+def test_rewrite_web_ui_index_uses_configured_brand_in_initial_title() -> None:
+    html = "<html><head><title>Omnigent</title></head></html>"
+    assert "<title>Omnigent</title>" in app_module._rewrite_web_ui_index(html, "")
+    out = app_module._rewrite_web_ui_index(html, "", '胜天半子 <script>alert("x")</script>')
+    assert "<title>胜天半子 &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</title>" in out
+    assert "<script>" not in out
+
+
 def test_rewrite_web_ui_index_prefixes_and_injects_with_base() -> None:
     """With a base, asset refs are prefixed and the base path is injected for the SPA."""
     html = (

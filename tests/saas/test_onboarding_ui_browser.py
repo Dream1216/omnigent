@@ -138,7 +138,12 @@ def test_packaged_pages_and_assets_have_locked_down_headers() -> None:
             .headers["content-type"]
             .startswith("text/css")
         )
-        assert "login-assets" not in client.get("/signup").text
+        if "__NEXT_DATA__" in client.get("/saas/login").text:
+            for path in ("/signup", "/signup/verify", "/signup/status"):
+                page = client.get(path).text
+                assert "__NEXT_DATA__" in page
+                assert "login-assets" in page
+                assert "onboarding.js" not in page
         assert (
             client.get("/saas/onboarding-assets/onboarding.js")
             .headers["content-type"]
@@ -421,7 +426,7 @@ def test_login_layout_is_responsive_and_has_no_registration_steps(
         ),
     )
     page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
-    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page).to_have_title("Sign in · 胜天半子")
     expect(page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible()
     expect(page.get_by_label("Work email")).to_be_enabled()
     expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
@@ -433,6 +438,32 @@ def test_login_layout_is_responsive_and_has_no_registration_steps(
     _screenshot(page, f"saas-login-{width}.png")
 
 
+@pytest.mark.parametrize(
+    "width,height", [(1440, 1000), (1024, 768), (768, 1024), (390, 844), (320, 740)]
+)
+def test_signup_matches_login_shell_and_is_responsive(
+    onboarding_ui_page: tuple[Page, str],
+    width: int,
+    height: int,
+) -> None:
+    page, live_server = onboarding_ui_page
+    page.set_viewport_size({"width": width, "height": height})
+    _install_saas_routes(page)
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    page.goto(f"{live_server}/signup")
+    expect(page).to_have_title("Create a workspace · 胜天半子")
+    expect(page.get_by_role("heading", name="Create your organization")).to_be_visible()
+    expect(page.get_by_role("group", name="Change language")).to_be_visible()
+    expect(page.get_by_role("link", name="Sign in")).to_be_visible()
+    expect(page.locator(".login-shell")).to_have_count(1)
+    expect(page.locator(".signup-form")).to_have_count(1)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert errors == []
+    _screenshot(page, f"saas-signup-{width}.png")
+
+
 def test_login_language_switches_immediately_and_persists(
     onboarding_ui_page: tuple[Page, str],
 ) -> None:
@@ -440,7 +471,7 @@ def test_login_language_switches_immediately_and_persists(
     page.goto(f"{live_server}/saas/login?return_to=%2Fsettings%2Faccount")
 
     page.get_by_role("button", name="Chinese").click()
-    expect(page).to_have_title("登录 · Omnigent")
+    expect(page).to_have_title("登录 · 胜天半子")
     expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
     expect(page.get_by_label("工作邮箱")).to_be_enabled()
     expect(page.get_by_role("button", name="登录", exact=True)).to_be_visible()
@@ -452,7 +483,7 @@ def test_login_language_switches_immediately_and_persists(
     page.reload()
     expect(page.get_by_role("heading", name="登录您的 工作空间。")).to_be_visible()
     page.get_by_role("button", name="英文").click()
-    expect(page).to_have_title("Sign in · Omnigent")
+    expect(page).to_have_title("Sign in · 胜天半子")
     expect(page.get_by_role("heading", name="Sign in to your workspace.")).to_be_visible()
     assert page.evaluate("document.documentElement.lang") == "en-US"
     assert page.evaluate("localStorage.getItem('omnigent.locale')") == "en-US"
