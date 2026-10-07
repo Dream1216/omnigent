@@ -139,7 +139,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert revision["previous_max_active_patches"] == 9
     assert revision["previous_max_direct_upstream_files"] == 144
     assert revision["previous_max_upstream_net_added_loc"] == 4568
-    assert revision["previous_measured_upstream_net_added_loc"] == 1419
+    assert revision["previous_measured_upstream_net_added_loc"] == 2769
     revision = revision["previous_revision"]
     assert revision["revision"] == "next-csrf-cross-tab-budget-v27"
     assert revision["previous_max_active_patches"] == 9

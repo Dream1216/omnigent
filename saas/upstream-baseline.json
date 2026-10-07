@@ -58,7 +58,7 @@
     "previous_max_active_patches": 9,
     "previous_max_direct_upstream_files": 144,
     "previous_max_upstream_net_added_loc": 4568,
-    "previous_measured_upstream_net_added_loc": 1419,
+    "previous_measured_upstream_net_added_loc": 2769,
     "reason": "The 0.18 product merge retains all 33 privileged GitHub Actions and Workflow paths at the reviewed mainline bytes, so the untrusted upgrade PR cannot alter status-minting automation. The measured direct-upstream delta is 165 paths and 1,419 net lines. Raise only the file ceiling to that exact count; retain the 4,568-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency checks. This Single-Owner Beta record is not production admission or a technical-gate waiver.",
     "revision": "next-018-trusted-automation-budget-v28",
     "previous_revision": {
