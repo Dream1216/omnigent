@@ -342,3 +342,37 @@ index 91e05f0..3d8988d 100644
 +                    code=ErrorCode.INVALID_INPUT,
 +                ) from exc
 +            raise
+diff --git a/omnigent/server/app.py b/omnigent/server/app.py
+index affa37df3..163560cca 100644
+--- a/omnigent/server/app.py
++++ b/omnigent/server/app.py
+@@ -15,0 +16 @@ from functools import partial
++from html import escape as escape_html
+@@ -405 +406 @@ def _normalize_base_path(value: str | None) -> str:
+-def _rewrite_web_ui_index(html: str, base_path: str) -> str:
++def _rewrite_web_ui_index(html: str, base_path: str, app_name: str | None = None) -> str:
+@@ -420,0 +422 @@ def _rewrite_web_ui_index(html: str, base_path: str) -> str:
++    :param app_name: Optional configured brand for the initial browser tab title.
+@@ -423,0 +426,4 @@ def _rewrite_web_ui_index(html: str, base_path: str) -> str:
++    if app_name:
++        rewritten = rewritten.replace(
++            "<title>Omnigent</title>", f"<title>{escape_html(app_name)}</title>", 1
++        )
+@@ -4090 +4096,6 @@ def create_app(
+-                _SPAStaticFiles(directory=web_ui_dist, html=True, base_path=resolved_base_path),
++                _SPAStaticFiles(
++                    directory=web_ui_dist,
++                    html=True,
++                    base_path=resolved_base_path,
++                    app_name=branding_snapshot.app_name,
++                ),
+@@ -4139 +4150,3 @@ class _SPAStaticFiles(StaticFiles):
+-    def __init__(self, *args: Any, base_path: str = "", **kwargs: Any) -> None:
++    def __init__(
++        self, *args: Any, base_path: str = "", app_name: str | None = None, **kwargs: Any
++    ) -> None:
+@@ -4145 +4158,3 @@ class _SPAStaticFiles(StaticFiles):
+-            html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
++            html = _rewrite_web_ui_index(
++                index_file.read_text(encoding="utf-8"), base_path, app_name
++            )

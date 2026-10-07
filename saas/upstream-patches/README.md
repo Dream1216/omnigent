@@ -219,6 +219,11 @@ since v25. The nine-patch ceiling, 0.85 isolation floor, forbidden paths and
 reverse-dependency checks remain; signed-image, 17-Agent and five authenticated
 online gates are still required.
 
+The `next-brand-initial-tab-title-v27` correction adds the configured brand to
+the initial SPA HTML title while preserving the upstream default and escaping
+the configured value. Patch 0010 now also owns `omnigent/server/app.py`; the
+nine-patch ceiling and existing source-delta ceilings remain unchanged.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
@@ -229,4 +234,4 @@ online gates are still required.
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `825f8500` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, and exact-retry idempotency before session persistence | Managed Host and Agent readiness proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, and replay semantics |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
