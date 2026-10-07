@@ -1,49 +1,8 @@
-diff --git a/omnigent/harnesses/pi_native/credentials.py b/omnigent/harnesses/pi_native/credentials.py
-index 35d95e552..a5d8f771f 100644
---- a/omnigent/harnesses/pi_native/credentials.py
-+++ b/omnigent/harnesses/pi_native/credentials.py
-@@ -1414,11 +1414,19 @@ def _inline_family_pi_provider(
-         # Strip bracket suffixes (e.g. "[1m]") — accepted by the direct
-         # Anthropic API but rejected by the Databricks AI Gateway.
-         resolved_model = re.sub(r"\[.*?\]$", "", resolved_model)
--        model_entry = _gateway_pi_model_entry(
--            resolved_model,
--            configured_context_window=family.context_window,
--            configured_max_output_tokens=family.max_output_tokens,
--        )
-+        configured_models = tuple(dict.fromkeys((resolved_model, *family.models.values())))
-+        model_entries = [
-+            _gateway_pi_model_entry(
-+                configured_model,
-+                configured_context_window=(
-+                    family.context_window if configured_model == resolved_model else None
-+                ),
-+                configured_max_output_tokens=(
-+                    family.max_output_tokens if configured_model == resolved_model else None
-+                ),
-+            )
-+            for configured_model in configured_models
-+        ]
-         return PiProviderConfig(
-             provider_id=_PI_PROVIDER_ID,
-             base_url=family.base_url,
-@@ -1429,7 +1437,7 @@ def _inline_family_pi_provider(
-             # Advisory when the model landed on the other family's wire; a raw
-             # passthrough endpoint rejects it, and silence reads as a hang.
-             credential_warning=_cross_family_routing_warning(entry, family_name, resolved_model),
--            extra_models=[model_entry],
-+            extra_models=model_entries,
-             # Record the endpoint the pre-launch picker can enumerate live; no
-             # I/O happens here so session launch stays off the network.
-             listing_provider=model_catalog.ResolvedModelProvider(
 diff --git a/omnigent/harnesses/pi_native/bridge.py b/omnigent/harnesses/pi_native/bridge.py
-index bc266b1e2..917c4261e 100644
+index 89e10a838..8c40d157e 100644
 --- a/omnigent/harnesses/pi_native/bridge.py
 +++ b/omnigent/harnesses/pi_native/bridge.py
-@@ -316,13 +316,27 @@ def write_extension_files(
-     :returns: ``(extension_path, config_path)``.
-     """
-     bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+@@ -365,0 +366,14 @@ def write_extension_files(
 +    resolved_auth_headers = dict(auth_headers or {})
 +    # Delegated Runner callbacks are routed through a physical workspace
 +    # partition in multi-tenant deployments.  The Pi extension runs outside
@@ -58,14 +17,31 @@ index bc266b1e2..917c4261e 100644
 +    workspace_id = load_runner_tunnel_workspace_id()
 +    if workspace_id is not None:
 +        resolved_auth_headers.setdefault(RUNNER_TUNNEL_WORKSPACE_HEADER, str(workspace_id))
-     payload: _JsonObject = {
-         "sessionId": session_id,
-         "serverUrl": server_url.rstrip("/"),
-         "conversationUrl": conversation_url,
-         "bridgeDir": str(bridge_dir),
-         "inboxDir": str(bridge_dir / _INBOX_DIR),
+@@ -372 +386 @@ def write_extension_files(
 -        "authHeaders": auth_headers or {},
 +        "authHeaders": resolved_auth_headers,
-         "tools": tools or [],
-     }
-     _atomic_json(config_path(bridge_dir), payload)
+diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
+index 9d23287a5..4aef8b2f3 100644
+--- a/omnigent/onboarding/provider_config.py
++++ b/omnigent/onboarding/provider_config.py
+@@ -181,0 +182,5 @@ _HARNESS_FAMILY: dict[str, str] = {
++    # OpenCode accepts an OpenAI-compatible provider block in its per-session
++    # opencode.json. The native adapter synthesizes that block from the same
++    # default family Provider used by Codex/Qwen, so it is provider-routed
++    # rather than permanently tied to a separate `opencode auth login`.
++    "opencode-native": OPENAI_FAMILY,
+@@ -186,4 +191,7 @@ _HARNESS_FAMILY: dict[str, str] = {
+-    # NB: ``kimi`` is intentionally absent. Upstream Kimi Code CLI has no
+-    # per-spawn provider override flag, so Omnigent cannot thread a generic
+-    # provider through. Provider routing for kimi lives in ``~/.kimi-code/config.toml``
+-    # and is managed out-of-band via ``kimi provider add``.
++    # Kimi Code supports an in-memory OpenAI-compatible provider through the
++    # KIMI_MODEL_* environment family. Both the headless and native adapters
++    # synthesize those values per session, so no upstream key is persisted in
++    # ~/.kimi-code/config.toml.
++    "kimi": OPENAI_FAMILY,
++    "kimi-native": OPENAI_FAMILY,
++    "native-kimi": OPENAI_FAMILY,
+@@ -1563 +1571 @@ def harness_owns_its_credential(harness: str) -> bool:
+-    (e.g. qwen consumes the openai family via its gateway env) even when its
++    (e.g. qwen and opencode-native consume the openai family) even when its

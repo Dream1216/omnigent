@@ -14,6 +14,15 @@ minimumReleaseAge: 10080
 # fleet update. Keep the exception version-scoped so later releases still wait
 # for the full cooldown; remove entries after their seven-day window has elapsed.
 minimumReleaseAgeExclude:
+  # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
+  # exact artifact remains integrity-locked and policy-verified.
+  - 'http-cache-semantics@4.3.0'
+  # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
+  # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
+  - 'source-map-js@1.2.2'
+  # Security-only exception: fixes MCP OAuth credential redirection and
+  # cross-session task exposure (GHSA-6qxp-vccf-f47h, GHSA-22jm-h49p-29qw).
+  - '@modelcontextprotocol/sdk@1.32.0'
   - '@moonshot-ai/kimi-code@0.43.1'
   - '@qwen-code/audio-capture@0.23.4'
   - '@qwen-code/qwen-code@0.23.4'
@@ -63,7 +72,7 @@ overrides:
   lightningcss: 1.32.0
   postcss: 8.5.23
   browserslist: 4.28.8
-  fast-uri: 3.1.6
+  fast-uri: 3.1.8
   '@xmldom/xmldom': 0.8.15
   qs: 6.16.0
   query-string: 9.5.0
@@ -76,11 +85,16 @@ overrides:
   dompurify: 3.4.14
   mermaid: 11.16.1
   tar: 7.5.21
-  'node-gyp>undici': 6.28.0
-  'undici@>=7.0.0 <8.0.0': 7.29.0
-  'brace-expansion@>=1.0.0 <2.0.0': 1.1.18
-  'brace-expansion@>=2.0.0 <3.0.0': 2.1.4
-  'brace-expansion@>=5.0.0 <6.0.0': 5.0.9
+  'node-gyp>undici': 6.28.1
+  'undici@>=7.0.0 <8.0.0': 7.29.1
+  'undici@>=8.0.0 <9.0.0': 8.10.2
+  proxy-addr: 2.0.8
+  'brace-expansion@>=1.0.0 <2.0.0': 1.1.20
+  'brace-expansion@>=2.0.0 <3.0.0': 2.1.6
+  'brace-expansion@>=5.0.0 <6.0.0': 5.0.12
+  source-map-js: 1.2.2
+  prosemirror-view: 1.42.3
+  http-cache-semantics: 4.3.0
   '@shikijs/core': 4.2.0
   '@shikijs/engine-javascript': 4.2.0
   '@shikijs/engine-oniguruma': 4.2.0
@@ -120,7 +134,8 @@ overrides:
   '@tiptap/react': 3.30.5
   '@tiptap/starter-kit': 3.30.5
   express-rate-limit>ip-address: 10.3.1
-  sharp: 0.35.4
+  sharp: 0.35.5
+  '@modelcontextprotocol/sdk': 1.32.0
 
 allowBuilds:
   '@anthropic-ai/claude-code': true
@@ -155,3 +170,5 @@ allowBuilds:
   protobufjs: true
   sharp: true
   workerd: true
+
+auditConfig: {}

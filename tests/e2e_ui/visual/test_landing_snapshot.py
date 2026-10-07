@@ -56,7 +56,15 @@ _AGENTS_BODY = {
     ]
 }
 _HOSTS_BODY = {
-    "hosts": [{"host_id": _HOST_ID, "name": "e2e-host", "owner": "e2e", "status": "online"}]
+    "hosts": [
+        {
+            "host_id": _HOST_ID,
+            "name": "e2e-host",
+            "owner": "e2e",
+            "status": "online",
+            "configured_harnesses": {"claude-native": "binary-missing"},
+        }
+    ]
 }
 _EMPTY_LIST_BODY = {"object": "list", "data": [], "has_more": False}
 
@@ -106,8 +114,8 @@ def test_empty_landing_matches_baseline(
     # Wait for the async-populated regions to settle into their loaded state: the
     # agent picker (catalog resolved) and the sidebar session list.
     expect(page.get_by_test_id("new-chat-landing-agent-select")).to_be_visible(timeout=30_000)
-    expect(page.get_by_test_id("new-chat-landing-agent-select")).to_contain_text(
-        "Models unavailable", timeout=30_000
+    expect(page.get_by_test_id("new-chat-landing-agent-select")).to_have_attribute(
+        "aria-label", "Claude Code, unavailable", timeout=30_000
     )
     expect(page.get_by_test_id("new-chat-landing-workspace-chip")).to_be_visible()
     # `.first`: an expanded project with no chats renders the same empty-state
