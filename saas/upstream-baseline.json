@@ -48,10 +48,19 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 144,
-    "max_upstream_net_added_loc": 4568,
+    "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "followup": {
+      "revision": "next-agent-gate-missing-bundle-v28",
+      "approved_at": "2026-10-07",
+      "governance_mode": "single_owner_beta",
+      "previous_max_upstream_net_added_loc": 4568,
+      "measured_upstream_net_added_loc": 4576,
+      "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
+      "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+    },
     "approved_at": "2026-10-07",
     "governance_mode": "single_owner_beta",
     "previous_max_active_patches": 9,

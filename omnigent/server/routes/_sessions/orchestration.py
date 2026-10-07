@@ -9121,11 +9121,6 @@ async def _create_session_from_existing_agent(
                 if runner_owner is not None and runner_owner != user_id:
                     inherited_runner_id = None
 
-    resolved_harness = await asyncio.to_thread(
-        _create_resolved_harness, agent, harness_override, agent_cache
-    )
-    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
-
     # Workspace validation: if the caller is binding to a host,
     # they must also pass a workspace, and the workspace must
     # satisfy the agent's os_env.cwd boundary on that host (per
@@ -9135,14 +9130,27 @@ async def _create_session_from_existing_agent(
     # repo; the worktree it produces becomes the stored workspace.
     canonical_workspace: str | None = body.workspace
     if body.host_id is not None:
-        canonical_workspace = await _validate_session_workspace(
-            user_id=user_id,
-            host_id=body.host_id,
-            workspace=body.workspace,
-            agent=agent,
-            agent_cache=agent_cache,
-            request=request,
-        )
+        try:
+            canonical_workspace = await _validate_session_workspace(
+                user_id=user_id,
+                host_id=body.host_id,
+                workspace=body.workspace,
+                agent=agent,
+                agent_cache=agent_cache,
+                request=request,
+            )
+        except OmnigentError as exc:
+            if isinstance(exc.__cause__, KeyError):
+                raise OmnigentError(
+                    "Agent configuration is unavailable; repair its bundle and retry",
+                    code=ErrorCode.INVALID_INPUT,
+                ) from exc
+            raise
+
+    resolved_harness = await asyncio.to_thread(
+        _create_resolved_harness, agent, harness_override, agent_cache
+    )
+    await _reject_unavailable_harness_for_create(body, request, user_id, resolved_harness)
 
     # Git worktree options (optional). Two modes on body.git:
     #  - create (default): make a worktree; it becomes the stored

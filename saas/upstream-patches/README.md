@@ -15,10 +15,9 @@ Runner-entry changes are additive composition seams that preserve the existing
 Runtime Partition wire protocol, receipt schema, and persisted compatibility
 fields. A future wire or receipt change must bump the contract independently.
 
-Patch 0010 checks Host harness availability before workspace validation. An
-Agent whose bundle is absent is rejected as invalid input before artifact
-loading can raise a server error. The change moves the existing guard without
-adding a direct upstream file or changing the source budget.
+Patch 0010 preserves host ownership and workspace validation order. An Agent
+whose bundle is absent is rejected as invalid input rather than returning a
+server error. This stays in an existing direct upstream file.
 
 This baseline includes the upstream `c90e5de4` AgentSpec tool-grant enforcement
 and `f754c140` sidecar MCP allow-list enforcement. The downstream queue does
