@@ -192,12 +192,47 @@ jobs:
             echo "error: no baseline archive in the render artifact." >&2
             exit 1
           fi
-          # The archive holds the full tests/e2e_ui/visual/snapshots tree, so
-          # extracting it over the checkout replaces EVERY baseline at its
-          # committed path (a removed baseline drops out too). git add below
-          # then stages whatever actually changed.
-          rm -rf tests/e2e_ui/visual/snapshots
-          tar -xzf "$tgz"
+          # The artifact is produced by PR code. Accept only regular PNG files
+          # below the snapshot root before replacing any checked-out baselines.
+          python - "$tgz" <<'PY'
+          import pathlib
+          import shutil
+          import sys
+          import tarfile
+          import tempfile
+
+          root = pathlib.Path("tests/e2e_ui/visual/snapshots")
+          prefix = pathlib.PurePosixPath(root.as_posix())
+          with tarfile.open(sys.argv[1], "r:gz") as archive:
+              files = []
+              total_bytes = 0
+              for member in archive:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts or path.parts[: len(prefix.parts)] != prefix.parts:
+                      raise ValueError(f"invalid snapshot path: {member.name}")
+                  if member.isdir():
+                      continue
+                  if not member.isfile() or path.suffix != ".png" or member.size > 25_000_000:
+                      raise ValueError(f"invalid snapshot member: {member.name}")
+                  total_bytes += member.size
+                  if total_bytes > 1_000_000_000 or len(files) >= 5000:
+                      raise ValueError("snapshot archive exceeds limits")
+                  files.append((member, path.relative_to(prefix)))
+              if not files:
+                  raise ValueError("snapshot archive contains no PNG files")
+              with tempfile.TemporaryDirectory() as staging:
+                  staged_root = pathlib.Path(staging) / "snapshots"
+                  for member, relative in files:
+                      target = staged_root.joinpath(*relative.parts)
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      source = archive.extractfile(member)
+                      if source is None:
+                          raise ValueError(f"missing snapshot payload: {member.name}")
+                      with source, target.open("wb") as output:
+                          shutil.copyfileobj(source, output)
+                  shutil.rmtree(root)
+                  shutil.move(str(staged_root), root)
+          PY
           rm -rf _ui_snapshot_artifact
 
       # Mint the App token in this no-PR-code job. Skipped when the App isn't
