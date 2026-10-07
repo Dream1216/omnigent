@@ -42,9 +42,11 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
+_APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "http-cache-semantics@4.3.0",
     "source-map-js@1.2.2",
+    "@modelcontextprotocol/sdk@1.32.0",
     "@moonshot-ai/kimi-code@0.43.1",
     "@qwen-code/audio-capture@0.23.4",
     "@qwen-code/qwen-code@0.23.4",
@@ -1109,8 +1111,20 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     expected_dependencies = {
         package: version for package, (_, version) in _APPROVED_HOST_CLI_VERSIONS.items()
     }
+    # Pi's optional MCP peer must be installed explicitly at the security-fixed
+    # version; autoInstallPeers is disabled, so an override alone drops it.
+    expected_dependencies["@modelcontextprotocol/sdk"] = _APPROVED_MCP_SDK_VERSION
     if cli_dependencies != expected_dependencies:
         violations.append("host CLI dependency manifest does not match approved direct versions")
+    mcp_lock_binding = re.compile(
+        r"'@modelcontextprotocol/sdk':\n"
+        rf"\s+specifier: {re.escape(_APPROVED_MCP_SDK_VERSION)}\n"
+        rf"\s+version: {re.escape(_APPROVED_MCP_SDK_VERSION)}(?:\n|\()"
+    )
+    if mcp_lock_binding.search(pnpm_lock) is None:
+        violations.append("pnpm-lock.yaml must bind the MCP SDK to the approved fixed version")
+    if f"'@modelcontextprotocol/sdk': {_APPROVED_MCP_SDK_VERSION}" not in pnpm_workspace:
+        violations.append("pnpm override must pin the MCP SDK to the approved fixed version")
     required_host_cli_builds = {
         "'@moonshot-ai/kimi-code': true",
         "'@qwen-code/audio-capture': true",

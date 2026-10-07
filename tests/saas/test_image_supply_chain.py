@@ -879,6 +879,41 @@ def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) 
     assert "pnpm-lock.yaml must bind @openai/codex to 0.139.0" in violations
 
 
+@pytest.mark.parametrize(
+    ("relative", "old", "new", "violation"),
+    [
+        (
+            ".github/ci-deps/package.json",
+            '"@modelcontextprotocol/sdk": "1.32.0"',
+            '"@modelcontextprotocol/sdk": "1.29.0"',
+            "host CLI dependency manifest does not match approved direct versions",
+        ),
+        (
+            "pnpm-lock.yaml",
+            "'@modelcontextprotocol/sdk':\n        specifier: 1.32.0\n        version: 1.32.0",
+            "'@modelcontextprotocol/sdk':\n        specifier: 1.29.0\n        version: 1.29.0",
+            "pnpm-lock.yaml must bind the MCP SDK to the approved fixed version",
+        ),
+        (
+            "pnpm-workspace.yaml",
+            "'@modelcontextprotocol/sdk': 1.32.0",
+            "'@modelcontextprotocol/sdk': 1.29.0",
+            "pnpm override must pin the MCP SDK to the approved fixed version",
+        ),
+    ],
+)
+def test_image_material_lock_rejects_mcp_sdk_drift(
+    tmp_path: Path, relative: str, old: str, new: str, violation: str
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    target = repo / relative
+    source = target.read_text(encoding="utf-8")
+    assert old in source
+    target.write_text(source.replace(old, new, 1), encoding="utf-8")
+
+    assert violation in validate_image_material_lock(repo)
+
+
 def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     tmp_path: Path,
 ) -> None:
@@ -900,6 +935,7 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     [
         ("'http-cache-semantics@4.3.0'", "'http-cache-semantics@*'"),
         ("'source-map-js@1.2.2'", "'source-map-js@*'"),
+        ("'@modelcontextprotocol/sdk@1.32.0'", "'@modelcontextprotocol/sdk@*'"),
         ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
         ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
         ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
