@@ -2991,6 +2991,8 @@ async def _persist_external_conversation_item_unlocked(
     # go back into play.
     _release_drained_inputs(session_id, [*skipped_pending, *uncertain_pending, drained])
     _restore_drained_inputs(session_id, held_older, None)
+    if drained is not None and drained.stable_id is not None:
+        pending_inputs.remember_committed(session_id, drained.stable_id, persisted.id)
     # Not a duplicate: publish side effects for each skipped pair. Items are
     # [user0, error0, user1, error1, ...]; 2 per skipped entry. The consumed
     # event names each skipped entry so clients settle those bubbles in order
@@ -2998,6 +3000,8 @@ async def _persist_external_conversation_item_unlocked(
     for i, skipped in enumerate(skipped_pending):
         persisted_user = persisted_items[i * 2]
         persisted_error = persisted_items[i * 2 + 1]
+        if skipped.stable_id is not None:
+            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
         if not persisted_user.deduplicated:
             _publish_input_consumed(
                 session_id, persisted_user, cleared_pending_id=skipped.pending_id
@@ -6224,6 +6228,10 @@ async def _forward_event_to_runner(
             session_id,
             [item],
         )
+    elif item.stable_id is not None and persisted_items[0].deduplicated:
+        # The same logical web submission already reached this persist-before-
+        # forward boundary. Re-dispatching it would execute the turn twice.
+        return persisted_items[0].id
     await _seed_missing_title_from_user_message(
         conv,
         item,
@@ -7100,6 +7108,21 @@ async def _dispatch_session_event_to_runner_impl(
         # for syntactically valid user messages; assistant/system-shaped
         # inputs should still fail locally without creating terminals.
         _build_native_terminal_message_event(conv, body)
+        raw_stable_id = body.data.get("stable_id")
+        web_stable_id = (
+            raw_stable_id
+            if body.data.get("role") == "user"
+            and isinstance(raw_stable_id, str)
+            and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
+            else None
+        )
+        if web_stable_id is not None:
+            committed_id = pending_inputs.committed_item_id(session_id, web_stable_id)
+            if committed_id is not None:
+                return _SessionEventDispatchResult(item_id=committed_id, pending_id=None)
+            live_pending_id = pending_inputs.pending_id_for_stable_id(session_id, web_stable_id)
+            if live_pending_id is not None:
+                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
         ensure_outcome = (
             _NativeTerminalEnsureOutcome(error=None)
             if native_terminal_ready
@@ -7134,12 +7157,6 @@ async def _dispatch_session_event_to_runner_impl(
         # back on any failure/cancellation so a message the TUI never
         # received doesn't replay as a ghost.
         content = body.data.get("content")
-        raw_stable_id = body.data.get("stable_id")
-        web_stable_id = (
-            raw_stable_id
-            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
-            else None
-        )
         # A codex /side command never reaches the main thread — the executor
         # forks it into a side chat — so the transcript forwarder never mirrors
         # it back and this bubble would sit in the parent chat forever.
@@ -10078,6 +10095,19 @@ async def _resolve_native_smart_routing(
     return native_agent.agent_name, model, verdict, None
 
 
+_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
+
+
+def _client_create_token(body: SessionCreateInput) -> str | None:
+    """Return a valid top-level web create idempotency token, if present."""
+    if body.parent_session_id is not None or not body.labels:
+        return None
+    token = body.labels.get(_CLIENT_CREATE_TOKEN_LABEL)
+    if isinstance(token, str) and re.fullmatch(r"[0-9a-f]{32}", token):
+        return token
+    return None
+
+
 async def _create_session_from_existing_agent(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -10701,6 +10731,7 @@ async def _create_session_from_existing_agent(
                 workspace=canonical_workspace,
                 git_branch=git_branch,
                 terminal_launch_args=validated_launch_args,
+                conversation_id=_client_create_token(body),
                 project_id=project_resolution.project_id,
                 labels=initial_labels or None,
                 model_override=model_override,

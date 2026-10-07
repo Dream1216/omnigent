@@ -242,6 +242,13 @@ class _Entry:
 _pending: WorkspaceScopedCache[str, dict[str, _Entry]] = WorkspaceScopedCache()
 _lock = threading.Lock()
 
+# A transcript echo settles the pending entry, but a client may retry the
+# original POST after losing its response. Keep a bounded mapping to the
+# committed item so that retry never pastes the prompt into the TUI again.
+_COMMITTED_TTL_S: float = 3600.0
+_COMMITTED_MAX_PER_CONVERSATION = 256
+_committed: WorkspaceScopedCache[str, dict[str, tuple[str, float]]] = WorkspaceScopedCache()
+
 
 def _evict_stale_locked(conversation_id: str, now: float) -> None:
     """
@@ -366,6 +373,38 @@ def pending_id_for_stable_id(conversation_id: str, stable_id: str) -> str | None
             if entry.stable_id == stable_id:
                 return entry.pending_id
     return None
+
+
+def remember_committed(conversation_id: str, stable_id: str, item_id: str) -> None:
+    """Remember the durable item produced by a native web submission."""
+    now = _now()
+    with _lock:
+        entries = _committed.setdefault(conversation_id, {})
+        entries.pop(stable_id, None)
+        entries[stable_id] = (item_id, now)
+        _evict_stale_committed_locked(conversation_id, now)
+
+
+def committed_item_id(conversation_id: str, stable_id: str) -> str | None:
+    """Return the committed item for a recently settled client stable id."""
+    with _lock:
+        _evict_stale_committed_locked(conversation_id, _now())
+        entries = _committed.get(conversation_id)
+        found = None if entries is None else entries.get(stable_id)
+        return None if found is None else found[0]
+
+
+def _evict_stale_committed_locked(conversation_id: str, now: float) -> None:
+    entries = _committed.get(conversation_id)
+    if entries is None:
+        return
+    for stable_id, (_, at) in list(entries.items()):
+        if now - at > _COMMITTED_TTL_S:
+            entries.pop(stable_id, None)
+    while len(entries) > _COMMITTED_MAX_PER_CONVERSATION:
+        entries.pop(next(iter(entries)))
+    if not entries:
+        _committed.pop(conversation_id, None)
 
 
 def resolve(conversation_id: str, pending_id: str) -> DrainedInput | None:
@@ -736,3 +775,4 @@ def reset_for_tests() -> None:
     """
     with _lock:
         _pending.clear()
+        _committed.clear()

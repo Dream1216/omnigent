@@ -165,6 +165,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _build_session_list_item,
     _build_session_response,
     _cancel_pending_archive_stop,
+    _client_create_token,
     _create_session_from_bundle,
     _create_session_from_existing_agent,
     _ensure_native_terminal_ready,
@@ -209,6 +210,7 @@ from omnigent.stores.conversation_store import (
     PROJECT_LABEL_KEY,
     RUNNER_LIVENESS_TTL_S,
     SIDE_CHAT_LABEL_KEY,
+    ConversationAlreadyExistsError,
     ConversationNotFoundError,
     pinned_label_key,
     runner_seen_is_fresh,
@@ -698,21 +700,69 @@ def register_core_routes(
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
         creation_metadata(parent_session_id=body.parent_session_id, host_type=body.host_type)
-        resp, conv = await _create_session_from_existing_agent(
-            conversation_store,
-            agent_store,
-            runner_router,
-            body,
-            request,
-            agent_cache=agent_cache,
-            user_id=user_id,
-            permission_store=permission_store,
-            liveness_lookup=liveness_lookup,
-            file_store=file_store,
-            artifact_store=artifact_store,
-            background_title_coordinator=background_title_coordinator,
-            project_store=project_store,
-        )
+        try:
+            resp, conv = await _create_session_from_existing_agent(
+                conversation_store,
+                agent_store,
+                runner_router,
+                body,
+                request,
+                agent_cache=agent_cache,
+                user_id=user_id,
+                permission_store=permission_store,
+                liveness_lookup=liveness_lookup,
+                file_store=file_store,
+                artifact_store=artifact_store,
+                background_title_coordinator=background_title_coordinator,
+                project_store=project_store,
+            )
+        except ConversationAlreadyExistsError as collision:
+            # The create token is the row's primary key, so a concurrent
+            # replay collides atomically. Return the authorized winner without
+            # repeating runner launch or initial-message side effects.
+            create_token = _client_create_token(body)
+            if create_token is None:
+                raise
+            for _attempt in range(200):
+                existing = await asyncio.to_thread(
+                    conversation_store.get_conversation, create_token
+                )
+                if (
+                    existing is not None
+                    and existing.agent_id == body.agent_id
+                    and existing.labels.get("omnigent.client_create_token") == create_token
+                ):
+                    try:
+                        access = await _require_access_and_level(
+                            user_id,
+                            create_token,
+                            LEVEL_READ,
+                            permission_store,
+                            conversation_store,
+                        )
+                    except OmnigentError as exc:
+                        if exc.code != ErrorCode.NOT_FOUND:
+                            raise
+                    else:
+                        return await _get_session_snapshot(
+                            conversation_store,
+                            create_token,
+                            access.level,
+                            agent_store,
+                            agent_cache,
+                            conversation=access.conversation,
+                            liveness_lookup=liveness_lookup,
+                            runner_exit_reports=runner_exit_reports,
+                            host_store=getattr(request.app.state, "host_store", None),
+                            sandbox_config=getattr(request.app.state, "sandbox_config", None),
+                            viewer_id=user_id,
+                        )
+                await asyncio.sleep(0.01)
+            raise OmnigentError(
+                "A session already uses this create token, but it is not an accessible "
+                "replay of this request",
+                code=ErrorCode.CONFLICT,
+            ) from collision
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
         # Without this, the runner doesn't know this session exists

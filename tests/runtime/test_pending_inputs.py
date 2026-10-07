@@ -602,3 +602,24 @@ def test_mark_uncertain_keeps_jumped_over_entries_out_of_the_undelivered_set() -
     assert matched.skipped == []
     assert [entry.pending_id for entry in matched.uncertain] == [second]
     assert pending_inputs.snapshot_for("conv_a") == []
+
+
+def test_committed_submission_is_scoped_bounded_and_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(pending_inputs, "_now", lambda: clock["t"])
+    stable = "c" * 32
+
+    assert pending_inputs.committed_item_id("conv_a", stable) is None
+    pending_inputs.remember_committed("conv_a", stable, "item_1")
+    assert pending_inputs.committed_item_id("conv_a", stable) == "item_1"
+    assert pending_inputs.committed_item_id("conv_b", stable) is None
+
+    for number in range(pending_inputs._COMMITTED_MAX_PER_CONVERSATION):
+        pending_inputs.remember_committed("conv_a", f"{number:032x}", f"item_{number}")
+    assert pending_inputs.committed_item_id("conv_a", stable) is None
+    assert pending_inputs.committed_item_id("conv_a", f"{255:032x}") == "item_255"
+
+    clock["t"] += pending_inputs._COMMITTED_TTL_S + 0.1
+    assert pending_inputs.committed_item_id("conv_a", f"{255:032x}") is None
