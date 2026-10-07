@@ -1116,6 +1116,11 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     expected_dependencies["@modelcontextprotocol/sdk"] = _APPROVED_MCP_SDK_VERSION
     if cli_dependencies != expected_dependencies:
         violations.append("host CLI dependency manifest does not match approved direct versions")
+    if not any(
+        "@modelcontextprotocol/sdk" in line and f'"{_APPROVED_MCP_SDK_VERSION}"' in line
+        for line in host_stage.splitlines()
+    ):
+        violations.append("host Docker importer must pin the approved MCP SDK peer")
     mcp_lock_binding = re.compile(
         r"'@modelcontextprotocol/sdk':\n"
         rf"\s+specifier: {re.escape(_APPROVED_MCP_SDK_VERSION)}\n"
