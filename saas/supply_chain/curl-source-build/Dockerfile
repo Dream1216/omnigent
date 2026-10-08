@@ -4,7 +4,7 @@ FROM ${SOURCE_BASE_IMAGE} AS compile
 ARG SOURCE_DATE_EPOCH
 ENV DEBIAN_FRONTEND=noninteractive \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
-ENV BUILD_PACKAGES="build-essential autoconf automake libtool pkgconf perl git abigail-tools openssl openssh-server stunnel4 gnutls-bin python3-impacket libgnutls28-dev libkrb5-dev libnghttp2-dev libnghttp3-dev libngtcp2-dev libngtcp2-crypto-gnutls-dev libpsl-dev libbrotli-dev libzstd-dev libidn2-dev libssh2-1-dev libldap2-dev librtmp-dev zlib1g-dev"
+ENV BUILD_PACKAGES="build-essential autoconf automake libtool pkgconf perl git abigail-tools openssl openssh-server stunnel4 gnutls-bin python3-impacket nghttp2-proxy libgnutls28-dev libkrb5-dev libnghttp2-dev libnghttp3-dev libngtcp2-dev libngtcp2-crypto-gnutls-dev libpsl-dev libbrotli-dev libzstd-dev libidn2-dev libssh2-1-dev libldap2-dev librtmp-dev zlib1g-dev"
 WORKDIR /work
 COPY replay_debian_source_backports.py /work/replay.py
 COPY materialize_debian_snapshot_packages.py /work/prefetch.py

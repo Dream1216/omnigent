@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "distribution": "debian",
+  "codename": "trixie",
+  "component": "glibc",
+  "source_version": "2.41-12+deb13u4",
+  "production_admission": false,
+  "extraction_contract": "dpkg-source --require-valid-signature --require-strong-checksums",
+  "source_authentication": {
+    "kind": "signed-debian-dsc",
+    "primary_fingerprint": "77462642A9EF94FD0F77196DBA9C78061DDD8C9B",
+    "signing_fingerprint": "52BC8695BE34F90AD7D40CB81388C0F899E8336B",
+    "key_source": "https://keyring.debian.org/pks/lookup?op=get&search=0x52BC8695BE34F90AD7D40CB81388C0F899E8336B"
+  },
+  "artifacts": [
+    {
+      "name": "glibc_2.41-12+deb13u4.dsc",
+      "role": "dsc",
+      "size": 7576,
+      "sha256": "0915324aa646bb99abfaa9aa6ecb734b30babd28454a3e51f3152912370fbd3e"
+    },
+    {
+      "name": "glibc_2.41.orig.tar.xz",
+      "role": "upstream",
+      "size": 20323540,
+      "sha256": "f24aa441021121a79266f0d75242706cab8843a47901fefe74527491807f1998"
+    },
+    {
+      "name": "glibc_2.41-12+deb13u4.debian.tar.xz",
+      "role": "debian",
+      "size": 499524,
+      "sha256": "dda4153511bfd543502d18e5bc9323110996fe9c531f14ae3fad6eb17f027c7d"
+    },
+    {
+      "name": "glibc-debian-signer.gpg",
+      "role": "keyring",
+      "size": 79513,
+      "sha256": "01fa010a9c814aadecff4f7dc3700613ed56882b8906db0d1d4b3d4ff339854b"
+    },
+    {
+      "name": "glibc-5435-debian241.patch",
+      "role": "reviewed-backport",
+      "size": 3777,
+      "sha256": "84480129060bbed3656c9aa273777220989d0c23281aa822cb3c03c93f7c67e3",
+      "upstream_commit": "ca44a6609c29a683b03575fa035c6d17aa591e72",
+      "review_scope": "final hunk context only; identical 95 deleted formatter lines",
+      "removed_lines": 95,
+      "removed_lines_sha256": "67062ba4601e874dfc37e3e9e338c98f64fc5eacda9e7125e3ed0dd584dcbfdc"
+    }
+  ],
+  "patches": [
+    {
+      "name": "glibc-5435.patch",
+      "cve": "CVE-2026-5435",
+      "commit": "ca44a6609c29a683b03575fa035c6d17aa591e72",
+      "sha256": "69c72861f5ae95e625cad532a4a93ad3ce95921da32936a77712992c33ad0c81"
+    },
+    {
+      "name": "glibc-19499.patch",
+      "cve": "CVE-2026-19499",
+      "commit": "b090cf226ff65b913e41536f1f573f500855615c",
+      "sha256": "d02811ff0ae63d1bd0bfe5be00c1e6788417b1bd17504dbfa11635ca5cf9f856"
+    }
+  ],
+  "required_followup": [
+    "Debian-patch-replay-and-reviewed-security-backports",
+    "full-glibc-build-and-regression-suite",
+    "ABI-and-linked-runtime-consumer-verification",
+    "both-architectures-full-image-scans"
+  ]
+}
