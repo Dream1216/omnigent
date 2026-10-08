@@ -286,12 +286,20 @@ jobs:
           --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/saas-image-candidate.json
+      - name: Scan exact OCI candidates on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --image server=${{ runner.temp }}/server-1.tar
+          --image host=${{ runner.temp }}/host-1.tar
+          --output artifacts/grype
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
-          path: artifacts/saas-image-candidate.json
+          path: |
+            artifacts/saas-image-candidate.json
+            artifacts/grype/*.json
           if-no-files-found: error
           retention-days: 30
 
