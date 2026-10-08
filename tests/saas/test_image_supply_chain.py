@@ -249,9 +249,13 @@ def _material_lock_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     for relative in (
         "deploy/docker/Dockerfile",
+        "deploy/docker/Dockerfile.dockerignore",
         "uv.lock",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
+        "saas/login_web/package.json",
+        "saas/login_web/package-lock.json",
+        "saas/supply_chain/npm-122-security-lock.json",
         ".github/ci-deps/package.json",
         "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
@@ -308,6 +312,46 @@ def test_image_material_lock_contract_is_valid() -> None:
     assert validate_image_material_lock(_repo()) == []
 
 
+def test_image_material_lock_rejects_nested_host_node_modules(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerignore = repo / "deploy/docker/Dockerfile.dockerignore"
+    source = dockerignore.read_text(encoding="utf-8")
+    assert "**/node_modules/" in source
+    dockerignore.write_text(
+        source.replace("**/node_modules/", "# recursive exclusion removed", 1),
+        encoding="utf-8",
+    )
+
+    assert (
+        "production Docker context must recursively exclude host node_modules"
+        in validate_image_material_lock(repo)
+    )
+
+
+def test_image_material_lock_rejects_login_dependency_regression(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    lock_path = repo / "saas/login_web/package-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["packages"]["node_modules/source-map-js"]["version"] = "1.2.1"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+
+    assert any(
+        violation.startswith("login Web security dependency closure is invalid:")
+        for violation in validate_image_material_lock(repo)
+    )
+
+
+def test_host_npm_version_probe_does_not_retain_wall_clock_cache() -> None:
+    dockerfile = (_repo() / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "npm_config_cache=/tmp/npm-version-cache npm --version" in dockerfile
+    assert "rm -rf /tmp/npm-version-cache" in dockerfile
+
+
 def test_image_material_lock_rejects_missing_runtime_revision_binding(
     tmp_path: Path,
 ) -> None:
@@ -360,7 +404,10 @@ def test_host_pnpm_normalizer_canonicalizes_json_wall_clock(tmp_path: Path) -> N
     assert (second / "node_modules/.modules.yaml").read_text(encoding="utf-8") == expected
     assert not (first / "node_modules/.pnpm-workspace-state-v1.json").exists()
     assert not (second / "node_modules/.pnpm-workspace-state-v1.json").exists()
-    assert first_result.stdout.strip() == "pnpm prunedAt fields normalized: 1"
+    assert first_result.stdout.strip().splitlines() == [
+        "pnpm prunedAt fields normalized: 1",
+        "pnpm workspace state normalized: present",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -392,6 +439,31 @@ def test_host_pnpm_normalizer_rejects_invalid_workspace_timestamp(
     )
 
     assert result.returncode != 0
+
+
+def test_host_pnpm_normalizer_accepts_absent_workspace_state(tmp_path: Path) -> None:
+    node_modules = tmp_path / "node_modules"
+    node_modules.mkdir()
+    (node_modules / ".modules.yaml").write_text(
+        '{\n  "prunedAt": "Mon, 31 Aug 2026 20:35:21 GMT"\n}\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", _host_pnpm_normalizer()],
+        cwd=tmp_path,
+        env={**os.environ, "SOURCE_DATE_EPOCH": "0"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == [
+        "pnpm prunedAt fields normalized: 1",
+        "pnpm workspace state normalized: absent",
+    ]
+    assert not (node_modules / ".pnpm-workspace-state-v1.json").exists()
 
 
 def test_host_cli_hardlink_normalizer_detaches_all_regular_file_links(
@@ -632,6 +704,23 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
     )
 
 
+def test_image_material_lock_rejects_unbounded_gh_download(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    dockerfile.write_text(
+        source.replace("for attempt in 1 2 3 4 5", "for attempt in 1", 1),
+        encoding="utf-8",
+    )
+
+    assert (
+        "GitHub CLI must come from a canonical verified export layer"
+        in validate_image_material_lock(repo)
+    )
+
+
 @pytest.mark.parametrize(
     ("target", "replacement", "expected"),
     [
@@ -656,9 +745,9 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "server image must frozen-sync saas and assert psycopg 3.3.4",
         ),
         (
-            "ARG PNPM_VERSION=11.15.1",
+            "ARG PNPM_VERSION=12.10.1",
             "ARG PNPM_VERSION=11.15.2",
-            "production Dockerfile must pin pnpm 11.15.1",
+            "production Dockerfile must pin pnpm 12.10.1",
         ),
         (
             "ARG CLAUDE_CODE_VERSION=2.1.266",
@@ -783,8 +872,13 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
-            "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpx",
+            "--allow-scripts=pnpm",
+            "--allow-scripts=*",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "ln -s ../lib/node_modules/pnpm/pnpx /usr/local/bin/pnpx",
+            "ln -s ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpx",
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
@@ -823,7 +917,27 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "state.unlink()",
+            "npm_config_fetch_retries=5",
+            "npm_config_fetch_retries=0",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "--network-concurrency=4",
+            "--network-concurrency=64",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build/Release/pty.node",
+            "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build/Release/missing.node",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "apt-get purge -y --auto-remove make g++",
+            "true # transient native build toolchain retained",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
+            "state.unlink(missing_ok=True)",
             'state_data["lastValidatedTimestamp"]=epoch*1000',
             "host CLI layer must normalize and remove volatile installer state",
         ),

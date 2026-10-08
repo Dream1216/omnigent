@@ -242,6 +242,8 @@ jobs:
         run: |
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
           source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
           source_revision="$CANDIDATE_REVISION"
@@ -249,6 +251,8 @@ jobs:
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
           schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
           echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
+          echo "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
+          echo "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
           echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"
@@ -400,6 +404,8 @@ jobs:
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           prefix="ghcr.io/${owner}"
           python_digest=$(crane digest python:3.12-slim)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
@@ -408,6 +414,8 @@ jobs:
           echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
+          printf '%s\n' "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
+          printf '%s\n' "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
           printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_REVISION=${PRODUCT_REVISION}" >> "$GITHUB_ENV"
@@ -430,6 +438,8 @@ jobs:
           cache-to: type=gha,scope=saas-server-release,mode=max
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+            RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
+            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
@@ -453,6 +463,8 @@ jobs:
           cache-to: type=gha,scope=saas-host-release,mode=max
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
+            RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
+            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
@@ -481,6 +493,72 @@ jobs:
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'from omnigent.onboarding.harness_install import harness_cli_installed; keys=("anthropic", "openai", "pi", "kiro", "kimi", "qwen", "opencode", "gemini", "devin", "jcode"); failed=[key for key in keys if not harness_cli_installed(key)]; assert not failed, f"published Host image has missing or unsupported harness CLIs: {failed}"'
+      - name: Install hash-pinned Syft and Grype
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/supply-chain-tools"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "${RUNNER_TEMP}/syft.tar.gz" \
+            https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "${RUNNER_TEMP}/grype.tar.gz" \
+            https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz
+          printf '%s  %s\n' \
+            c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "${RUNNER_TEMP}/syft.tar.gz" \
+            0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d "${RUNNER_TEMP}/grype.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/syft.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" syft
+          tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" grype
+          "${RUNNER_TEMP}/supply-chain-tools/syft" version
+          "${RUNNER_TEMP}/supply-chain-tools/grype" version
+      - name: Generate per-architecture SBOMs and fail-closed scans
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/supply-chain
+          scan_timestamp=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)
+          for artifact in server host; do
+            case "$artifact" in
+              server) image="$SERVER_IMAGE" ;;
+              host) image="$HOST_IMAGE" ;;
+              *) exit 2 ;;
+            esac
+            for arch in amd64 arm64; do
+              prefix="artifacts/supply-chain/${artifact}-${arch}"
+              docker run --rm --pull always --platform "linux/${arch}" --network none \
+                --entrypoint /usr/local/bin/python "$image" -B -I -c \
+                'import pyexpat, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0"; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2"'
+              docker run --rm --pull always --platform "linux/${arch}" --network none \
+                --entrypoint /usr/bin/perl "$image" -MPod::Text -e \
+                'die unless $Pod::Text::VERSION eq q(v6.1.1)'
+              "${RUNNER_TEMP}/supply-chain-tools/syft" "$image" \
+                --platform "linux/${arch}" \
+                -o "spdx-json=${prefix}.spdx.json" \
+                -o "cyclonedx-json=${prefix}.cyclonedx.json"
+              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
+                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
+              uv run python -m saas.scripts.render_runtime_security_vex \
+                --grype-report "${prefix}.raw.grype.json" \
+                --architecture "$arch" \
+                --timestamp "$scan_timestamp" \
+                --output "${prefix}.openvex.json"
+              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
+                --platform "linux/${arch}" \
+                --vex "${prefix}.openvex.json" \
+                -o json > "${prefix}.admitted.grype.json"
+              jq -e '
+                ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
+                ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
+                ([.ignoredMatches[]? | select(.vulnerability.severity == "High")] | length) == 11
+              ' "${prefix}.admitted.grype.json" >/dev/null
+            done
+          done
+          "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
+            > artifacts/supply-chain/grype-database.json
+          find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > artifacts/supply-chain/SHA256SUMS
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
@@ -560,7 +638,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signed-release-candidate-${{ inputs.product_revision }}
-          path: artifacts/signed-release-candidate.json
+          path: |
+            artifacts/signed-release-candidate.json
+            artifacts/supply-chain/
           if-no-files-found: error
           retention-days: 90
 

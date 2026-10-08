@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "distribution": "debian",
+  "suite": "sid",
+  "snapshot": "20261009T000000Z",
+  "image": "debian:sid-slim",
+  "manifest_digest": "sha256:1f11c32b03195c1b28c55e4579755659edae5c76dd76a69b4e4fb34c58fa8744",
+  "production_admission": true,
+  "runtime_contract": {
+    "architectures": ["amd64", "arm64"],
+    "apt_sources": 1,
+    "suite": "sid",
+    "python_source_image": "python:3.12-slim",
+    "required_packages": {
+      "acl": "2.4.0-1",
+      "curl": "8.23.0~rc3-1",
+      "expat": "2.9.0-1",
+      "glibc": "2.43-7",
+      "ncurses": "6.6+20260608-2",
+      "openssl": "3.6.5-1",
+      "util-linux": "2.42.4-1",
+      "zlib": "1:1.3.dfsg+really1.3.2-3"
+    }
+  },
+  "required_evidence": [
+    "digest-pinned-build-argument",
+    "single-snapshot-source-enforcement",
+    "both-architectures-runtime-probes",
+    "raw-and-vex-aware-complete-scans"
+  ]
+}

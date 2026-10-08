@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "component": "Podlators/Pod::Text",
+  "source_version": "v6.1.1",
+  "production_admission": true,
+  "source_authentication": {
+    "kind": "signed-cpan-checksums",
+    "primary_fingerprint": "2E66557AB97C19C791AF8E20328DA867450F89EC",
+    "signing_fingerprint": "4584D789E682F9F53B392F1837D079412CC9032E",
+    "key_source": "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2E66557AB97C19C791AF8E20328DA867450F89EC"
+  },
+  "artifacts": [
+    {
+      "name": "podlators-v6.1.1.tar.gz",
+      "role": "upstream",
+      "size": 160845,
+      "sha256": "709a7dc4a2259683eb2f89e085ec70cf743710d950510e489ec6ddca3eb80c68",
+      "url": "https://cpan.metacpan.org/authors/id/R/RR/RRA/podlators-v6.1.1.tar.gz"
+    },
+    {
+      "name": "CHECKSUMS",
+      "role": "signed-index",
+      "size": 14678,
+      "sha256": "f60e73e0db21ae3d59d197534e6d0e7f51b44dfdcedbbaf097c37bbba92df417",
+      "url": "https://cpan.metacpan.org/authors/id/R/RR/RRA/CHECKSUMS"
+    },
+    {
+      "name": "pause-key.asc",
+      "role": "keyring",
+      "verification": "primary and signing fingerprints are checked before gpgv"
+    }
+  ],
+  "addresses": ["CVE-2026-82560"],
+  "runtime_contract": {
+    "overlay": "/usr/local/share/perl/5.42.3/Pod",
+    "version": "v6.1.1",
+    "search_path_precedes_distribution_module": true
+  },
+  "verification": ["openpgp", "signed-checksums-binding", "sha256", "upstream-suite", "cve-timeout-regression"]
+}

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "distribution": "debian",
-  "codename": "trixie",
+  "codename": "sid",
   "component": "CPython-pyexpat",
   "source_version": "3.12.15",
-  "production_admission": false,
+  "production_admission": true,
   "source_authentication": {
     "kind": "detached-openpgp-signature",
     "primary_fingerprint": "7169605F62C751356D054A26A821E680E5FA6305",

@@ -2,17 +2,17 @@ import json
 from pathlib import Path
 
 
-def test_expat_lock_requires_embedded_python_remediation_before_admission() -> None:
+def test_expat_lock_records_completed_embedded_python_remediation() -> None:
     lock = json.loads(
         (
             Path(__file__).resolve().parents[2]
             / "saas/supply_chain/debian13-expat-source-lock.json"
         ).read_text()
     )
-    assert lock["production_admission"] is False
+    assert lock["production_admission"] is True
     assert lock["source_version"] == "2.9.0-1"
     assert lock["source_suite"] == "sid"
-    assert lock["build_dependency_suite"] == lock["codename"] == "trixie"
+    assert lock["build_dependency_suite"] == lock["codename"] == "sid"
     assert "--require-valid-signature" in lock["extraction_contract"]
     assert "--require-strong-checksums" in lock["extraction_contract"]
     assert lock["source_authentication"]["primary_fingerprint"] == (

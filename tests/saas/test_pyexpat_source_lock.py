@@ -5,7 +5,7 @@ from pathlib import Path
 def test_pyexpat_lock_binds_same_python_version_and_shared_fixed_expat() -> None:
     directory = Path(__file__).resolve().parents[2] / "saas/supply_chain"
     lock = json.loads((directory / "python312-pyexpat-source-lock.json").read_text())
-    assert lock["production_admission"] is False
+    assert lock["production_admission"] is True
     assert lock["source_authentication"]["primary_fingerprint"] == (
         "7169605F62C751356D054A26A821E680E5FA6305"
     )

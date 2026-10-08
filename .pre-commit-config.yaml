@@ -205,8 +205,13 @@ repos:
       - id: check-yaml
         name: check yaml syntax
         # docker-compose override files use non-standard tags
-        # (`!reset`, `!override`) that PyYAML can't parse.
-        exclude: ^deploy/docker/docker-compose\.[a-z]+\.yaml$
+        # (`!reset`, `!override`) that PyYAML can't parse. pnpm 12 writes a
+        # valid multi-document lockfile, checked by the dedicated hook below.
+        exclude: ^(deploy/docker/docker-compose\.[a-z]+\.yaml|pnpm-lock\.yaml)$
+      - id: check-yaml
+        name: check pnpm multi-document lock yaml syntax
+        args: [--allow-multiple-documents]
+        files: ^pnpm-lock\.yaml$
       - id: check-merge-conflict
         name: check for merge conflicts
       - id: check-added-large-files
