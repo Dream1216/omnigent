@@ -63,9 +63,7 @@ def render(report: dict[str, Any], *, architecture: str, timestamp: str) -> dict
         if key not in _EXPECTED:
             raise ValueError(f"unexpected Critical/High finding: {key!r}")
         if artifact.get("version") != _EXPECTED[key]:
-            raise ValueError(
-                f"unexpected version for {key!r}: {artifact.get('version')!r}"
-            )
+            raise ValueError(f"unexpected version for {key!r}: {artifact.get('version')!r}")
         purl = artifact.get("purl")
         if not isinstance(purl, str) or not purl.startswith("pkg:deb/debian/"):
             raise ValueError(f"missing Debian purl for {key!r}")
@@ -81,7 +79,11 @@ def render(report: dict[str, Any], *, architecture: str, timestamp: str) -> dict
     statements: list[dict[str, Any]] = []
     for vulnerability_id, (justification, impact) in _STATEMENTS.items():
         products = sorted(
-            {artifact["purl"] for (cve, _), artifact in observed.items() if cve == vulnerability_id}
+            {
+                artifact["purl"]
+                for (cve, _), artifact in observed.items()
+                if cve == vulnerability_id
+            }
         )
         statements.append(
             {
@@ -114,9 +116,7 @@ def main() -> None:
     report = json.loads(args.grype_report.read_text(encoding="utf-8"))
     document = render(report, architecture=args.architecture, timestamp=args.timestamp)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

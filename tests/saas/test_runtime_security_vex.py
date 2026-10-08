@@ -23,9 +23,7 @@ def _report(architecture: str = "amd64") -> dict[str, object]:
 
 
 def test_vex_is_exact_and_architecture_bound() -> None:
-    document = render(
-        _report("arm64"), architecture="arm64", timestamp="2026-10-09T00:00:00Z"
-    )
+    document = render(_report("arm64"), architecture="arm64", timestamp="2026-10-09T00:00:00Z")
     assert document["@context"] == "https://openvex.dev/ns/v0.2.0"
     statements = document["statements"]
     assert isinstance(statements, list)

@@ -16,9 +16,7 @@ def test_sid_runtime_and_overlay_materials_are_closed_and_pinned() -> None:
     supply_chain = _root() / "saas/supply_chain"
     runtime = json.loads((supply_chain / "debian-sid-runtime-lock.json").read_text())
     zlib = json.loads((supply_chain / "zlib-132-security-lock.json").read_text())
-    podlators = json.loads(
-        (supply_chain / "podlators-611-security-lock.json").read_text()
-    )
+    podlators = json.loads((supply_chain / "podlators-611-security-lock.json").read_text())
     gcc = json.loads((supply_chain / "gcc16-runtime-vex-lock.json").read_text())
 
     assert runtime["production_admission"] is True
@@ -59,14 +57,19 @@ def test_dockerfile_builds_and_rechecks_narrow_runtime_overlays() -> None:
     assert "work=/tmp/runtime-security-build" in script
     assert "work=$(mktemp -d)" not in script
     workflow = (_root() / ".github/workflows/saas-image-candidate.yml").read_text()
-    assert workflow.count(
-        "runtime_digest=$(jq -er .manifest_digest "
-        "saas/supply_chain/debian-sid-runtime-lock.json)"
-    ) == 2
-    assert workflow.count(
-        "runtime_snapshot=$(jq -er .snapshot "
-        "saas/supply_chain/debian-sid-runtime-lock.json)"
-    ) == 2
+    assert (
+        workflow.count(
+            "runtime_digest=$(jq -er .manifest_digest "
+            "saas/supply_chain/debian-sid-runtime-lock.json)"
+        )
+        == 2
+    )
+    assert (
+        workflow.count(
+            "runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)"
+        )
+        == 2
+    )
     assert "runtime_digest=$(crane digest debian:sid-slim)" not in workflow
     assert dockerfile.count("FROM secured-python-runtime AS ") == 2
     assert dockerfile.count("activate_debian_sid_snapshot.py --snapshot") == 2
