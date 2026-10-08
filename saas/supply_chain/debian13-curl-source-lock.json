@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "component": "curl",
+  "distribution": "debian",
+  "codename": "trixie",
+  "source_version": "8.14.1-2+deb13u5",
+  "source_root": "curl-8.14.1",
+  "production_admission": false,
+  "artifacts": [
+    {
+      "name": "curl_8.14.1-2+deb13u5.dsc",
+      "role": "dsc",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.14.1-2%2Bdeb13u5.dsc",
+      "sha256": "9a9a2c95cdc8b5d76892c70858f25eaf2dc0b0a475a1e43e0b4ad428414752df"
+    },
+    {
+      "name": "curl_8.14.1.orig.tar.gz",
+      "role": "upstream",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.14.1.orig.tar.gz",
+      "sha256": "6766ada7101d292b42b8b15681120acd68effa4a9660935853cf6d61f0d984d4"
+    },
+    {
+      "name": "curl_8.14.1.orig.tar.gz.asc",
+      "role": "signature",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.14.1.orig.tar.gz.asc",
+      "sha256": "39cc2ec8ddc39d04e3e7101bbed46d858d0875cbb297a6bfa20959fa2bc7d5c7"
+    },
+    {
+      "name": "curl_8.14.1-2+deb13u5.debian.tar.xz",
+      "role": "debian",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.14.1-2%2Bdeb13u5.debian.tar.xz",
+      "sha256": "ebdfcfab1c2001c7a539fe2a4044dbf666a544393f191bedce9ee2d07c4ea925"
+    }
+  ],
+  "patches": [
+    {
+      "name": "CVE-2026-10536.patch",
+      "cve": "CVE-2026-10536",
+      "commit": "bfbff7852f050232edd3e5ca5c6bf2021c340f5a",
+      "url": "https://api.github.com/repos/curl/curl/commits/bfbff7852f050232edd3e5ca5c6bf2021c340f5a",
+      "sha256": "62a479a39018c6bd23e1e79947841ff453f0ec89203a6e94a799ea920118b683",
+      "advisory": "https://curl.se/docs/CVE-2026-10536.json"
+    },
+    {
+      "name": "CVE-2026-11856.patch",
+      "cve": "CVE-2026-11856",
+      "commit": "5c6b4880357ab3e72967c1c45cae0f96ffabc535",
+      "url": "https://api.github.com/repos/curl/curl/commits/5c6b4880357ab3e72967c1c45cae0f96ffabc535",
+      "sha256": "ea7d5bfc62d599c216af7a6ce01ff0e458533c67cb859dedaf6fde3eaa7e5afb",
+      "advisory": "https://curl.se/docs/CVE-2026-11856.json"
+    },
+    {
+      "name": "CVE-2026-12064.patch",
+      "cve": "CVE-2026-12064",
+      "commit": "ab3bb8cd8be8f9d4acb97da0418abc279182041e",
+      "url": "https://api.github.com/repos/curl/curl/commits/ab3bb8cd8be8f9d4acb97da0418abc279182041e",
+      "sha256": "06c79b02cb496e51228353bafd165217aea52146a85047b2c94e217ff8cf37cc",
+      "advisory": "https://curl.se/docs/CVE-2026-12064.json"
+    },
+    {
+      "name": "CVE-2026-13608.patch",
+      "cve": "CVE-2026-13608",
+      "commit": "ea71c3b6b60e563651ea8596a975aef0c8199519",
+      "url": "https://api.github.com/repos/curl/curl/commits/ea71c3b6b60e563651ea8596a975aef0c8199519",
+      "sha256": "524d18f9f2fe84d40bb37d2294d4cf6584a59ee9dc60e6537bd02cfa6affc5f1",
+      "advisory": "https://curl.se/docs/CVE-2026-13608.json"
+    },
+    {
+      "name": "CVE-2026-18924.patch",
+      "cve": "CVE-2026-18924",
+      "commit": "90325ff0444cbdff368bda5d26d6405a0bb6ee43",
+      "url": "https://api.github.com/repos/curl/curl/commits/90325ff0444cbdff368bda5d26d6405a0bb6ee43",
+      "sha256": "d40e6ee1f68094ba9ba3e1d78dd52aa07ae2bcd57825b9282edde62a436af0a0",
+      "advisory": "https://curl.se/docs/CVE-2026-18924.json"
+    },
+    {
+      "name": "CVE-2026-19931.patch",
+      "cve": "CVE-2026-19931",
+      "commit": "7103a93b05bc69ea98ed9d05d02fa9eeba533f2f",
+      "url": "https://api.github.com/repos/curl/curl/commits/7103a93b05bc69ea98ed9d05d02fa9eeba533f2f",
+      "sha256": "91f8d06a151d8c1290fe42b43bd92e87bb5254e1575f10663698dff96282892e",
+      "advisory": "https://curl.se/docs/CVE-2026-19931.json"
+    },
+    {
+      "name": "CVE-2026-80229.patch",
+      "cve": "CVE-2026-80229",
+      "commit": "7ea37abc6ac0120ba5f6d94be8d196f7cf1506bb",
+      "url": "https://api.github.com/repos/curl/curl/commits/7ea37abc6ac0120ba5f6d94be8d196f7cf1506bb",
+      "sha256": "f7c68366939d6604fdc4ced32c85ecc76edbfa583d427c7f46d8cd8fdcc93a22",
+      "advisory": "https://curl.se/docs/CVE-2026-80229.json"
+    },
+    {
+      "name": "CVE-2026-80230.patch",
+      "cve": "CVE-2026-80230",
+      "commit": "5267ed859d545534d0c21675a2b70af5a3b6e3ef",
+      "url": "https://api.github.com/repos/curl/curl/commits/5267ed859d545534d0c21675a2b70af5a3b6e3ef",
+      "sha256": "825d87ee126c6901d4f3694664a7a47c37840764057e25c9741b157ee7344c8c",
+      "advisory": "https://curl.se/docs/CVE-2026-80230.json"
+    },
+    {
+      "name": "CVE-2026-80255.patch",
+      "cve": "CVE-2026-80255",
+      "commit": "4f6aa41a0145e930e766775dbe860883d350aa0a",
+      "url": "https://api.github.com/repos/curl/curl/commits/4f6aa41a0145e930e766775dbe860883d350aa0a",
+      "sha256": "c2ed345f28729601e006c591c514a94245a406392f8e5aae73897aaeecbb0fdf",
+      "advisory": "https://curl.se/docs/CVE-2026-80255.json"
+    },
+    {
+      "name": "CVE-2026-82209.patch",
+      "cve": "CVE-2026-82209",
+      "commit": "95c1e8915dce64606bd753fd47fc0bd236e31cd6",
+      "url": "https://api.github.com/repos/curl/curl/commits/95c1e8915dce64606bd753fd47fc0bd236e31cd6",
+      "sha256": "99b9b4b94361d1fab81e669b5b9804a20af5cc3250a9947771760cec4fd23bd4",
+      "advisory": "https://curl.se/docs/CVE-2026-82209.json"
+    },
+    {
+      "name": "CVE-2026-8286.patch",
+      "cve": "CVE-2026-8286",
+      "commit": "a86efdd7ca5433de9231e650f18247de8319ad16",
+      "url": "https://api.github.com/repos/curl/curl/commits/a86efdd7ca5433de9231e650f18247de8319ad16",
+      "sha256": "f110054260ef2e2fa5540b045fdce75ce8da2883d62838531165825c13c5496a",
+      "advisory": "https://curl.se/docs/CVE-2026-8286.json"
+    },
+    {
+      "name": "CVE-2026-8924.patch",
+      "cve": "CVE-2026-8924",
+      "commit": "51beed175dbfc37da3113f6acce60c630c070ce8",
+      "url": "https://api.github.com/repos/curl/curl/commits/51beed175dbfc37da3113f6acce60c630c070ce8",
+      "sha256": "3b3a052b4476d21a7789e626b8d445dd32257df97d7c9edac6599229d135b931",
+      "advisory": "https://curl.se/docs/CVE-2026-8924.json"
+    },
+    {
+      "name": "CVE-2026-8926.patch",
+      "cve": "CVE-2026-8926",
+      "commit": "4ae1d7cc2643e4773a136395f12bc02fc6867854",
+      "url": "https://api.github.com/repos/curl/curl/commits/4ae1d7cc2643e4773a136395f12bc02fc6867854",
+      "sha256": "7a71792bbf3d27daca17b41ff2e33a12dd0e9cea4c49e2b957eef21503a9b28c",
+      "advisory": "https://curl.se/docs/CVE-2026-8926.json"
+    },
+    {
+      "name": "CVE-2026-8927.patch",
+      "cve": "CVE-2026-8927",
+      "commit": "5c225384b8d52c67ce8259c6e4203bc57aacb567",
+      "url": "https://api.github.com/repos/curl/curl/commits/5c225384b8d52c67ce8259c6e4203bc57aacb567",
+      "sha256": "ef42214f4e830d7cd7d4636ae667855493473451901ca1dcd99bee1f3f19b5c1",
+      "advisory": "https://curl.se/docs/CVE-2026-8927.json"
+    },
+    {
+      "name": "CVE-2026-8932.patch",
+      "cve": "CVE-2026-8932",
+      "commit": "7541ae569d82fb308a5e2d94916027da4fa3ba3e",
+      "url": "https://api.github.com/repos/curl/curl/commits/7541ae569d82fb308a5e2d94916027da4fa3ba3e",
+      "sha256": "5c81b452b748796d2c4a7977b1c8228e2a4402683af4e4dba98d9aee2f87ee07",
+      "advisory": "https://curl.se/docs/CVE-2026-8932.json"
+    },
+    {
+      "name": "CVE-2026-9079.patch",
+      "cve": "CVE-2026-9079",
+      "commit": "88c7e16cceec816a2df45c899d49b1e85513f193",
+      "url": "https://api.github.com/repos/curl/curl/commits/88c7e16cceec816a2df45c899d49b1e85513f193",
+      "sha256": "83d9bc6cc972e7fd8cfc78a83fc3e64a7263c8aa556bda863dd971b662dc7fe6",
+      "advisory": "https://curl.se/docs/CVE-2026-9079.json"
+    },
+    {
+      "name": "CVE-2026-9080.patch",
+      "cve": "CVE-2026-9080",
+      "commit": "5ab34cba42e4ee4282fe8bab43f311d51b9bf9bd",
+      "url": "https://api.github.com/repos/curl/curl/commits/5ab34cba42e4ee4282fe8bab43f311d51b9bf9bd",
+      "sha256": "bcb8b9d9926c587b6df2a3f4252e482c5390dd86edff330b35a2c9802e5b1f63",
+      "advisory": "https://curl.se/docs/CVE-2026-9080.json"
+    },
+    {
+      "name": "CVE-2026-9545.patch",
+      "cve": "CVE-2026-9545",
+      "commit": "7b9613fa9b1a5e04301a3920eef58e8138dad05e",
+      "url": "https://api.github.com/repos/curl/curl/commits/7b9613fa9b1a5e04301a3920eef58e8138dad05e",
+      "sha256": "b9c071058743441b89bfec57a7b071dd2ab89a1abec7ab6aec19067d2fe8fd7e",
+      "advisory": "https://curl.se/docs/CVE-2026-9545.json"
+    }
+  ]
+}
