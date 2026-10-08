@@ -12,10 +12,18 @@ import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import TypedDict
 
 
-def parse_inputs(text: str) -> list[dict[str, str | int]]:
-    inputs: list[dict[str, str | int]] = []
+class AptPackageInput(TypedDict):
+    uri: str
+    name: str
+    size: int
+    sha256: str
+
+
+def parse_inputs(text: str) -> list[AptPackageInput]:
+    inputs: list[AptPackageInput] = []
     names: set[str] = set()
     for line in text.splitlines():
         if not line.startswith("'"):
@@ -52,7 +60,7 @@ def parse_inputs(text: str) -> list[dict[str, str | int]]:
     return inputs
 
 
-def fetch(item: dict[str, str | int], output: Path) -> dict[str, str | int]:
+def fetch(item: AptPackageInput, output: Path) -> AptPackageInput:
     target = output / str(item["name"])
     if target.exists() or target.is_symlink():
         if target.is_symlink() or not target.is_file():
