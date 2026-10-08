@@ -16,6 +16,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane import (
+    ExecutionControlPlane,
     OutboxClaimRoute,
     OutboxDispatcher,
     RunDispatchRecord,
@@ -891,7 +892,7 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims(
             connection_generation=runner.connection_generation,
             connection_token=runner.connection_token,
             lease_duration=timedelta(minutes=5),
-            capability_actions=["worktree.read"],
+            capability_actions=["run.execute", "worktree.read"],
             capability_resource_scope={"worktree_id": f"wt-{index}"},
             now=now + timedelta(seconds=1),
         )
@@ -920,6 +921,36 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims(
             {"pool_id": pool_id},
         ).one()
         assert counters == (2, 2)
+
+    transitioned_lease = leases[0]
+    assert transitioned_lease is not None
+    transitioned_runner = next(
+        runner for runner in runners if runner.runner_id == transitioned_lease.runner_id
+    )
+    mutation = scheduler_a.authenticated_run_transition(
+        ExecutionControlPlane(executor_factory),
+        runner_id=transitioned_runner.runner_id,
+        connection_generation=transitioned_runner.connection_generation,
+        connection_token=transitioned_runner.connection_token,
+        run_id=transitioned_lease.run_id,
+        lease_token=transitioned_lease.lease_token,
+        fence_token=transitioned_lease.fence_token,
+        capability_token=transitioned_lease.capability_token,
+        target_status="starting",
+        trace_id="postgresql:authenticated-transition",
+        now=now + timedelta(seconds=2),
+    )
+    assert mutation.status == "starting"
+    with platform_factory() as db:
+        persisted_transition = db.scalar(
+            sa.text(
+                "SELECT count(*) FROM saas_control_plane_outbox "
+                "WHERE aggregate_type = 'run' AND aggregate_key = :run "
+                "AND event_type = 'run.event.persisted'"
+            ),
+            {"run": str(transitioned_lease.run_id)},
+        )
+        assert persisted_transition == 2
 
     # Reconnect and expired-dispatch recovery contend on the same pool/Runner.
     # Their shared pool -> Runner lock order must serialize without a deadlock.
