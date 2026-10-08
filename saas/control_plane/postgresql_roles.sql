@@ -210,7 +210,8 @@ BEGIN
         'p0s000000011',
         'p0s000000012',
         'p0s000000013',
-        'p0s000000014'
+        'p0s000000014',
+        'p0s000000015'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -647,6 +648,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000014' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000015' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -733,7 +736,7 @@ BEGIN
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
               'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-              'p0s000000014'
+              'p0s000000014', 'p0s000000015'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1106,12 +1109,12 @@ BEGIN
     FROM public.saas_alembic_version;
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
-        IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014') THEN
+        IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015') THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
-    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013', 'p0s000000014')
+    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015')
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -1166,7 +1169,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision = 'p0s000000014' THEN
+    IF schema_revision IN ('p0s000000014', 'p0s000000015') THEN
         IF to_regclass('public.saas_platform_password_credentials') IS NULL THEN
             RAISE EXCEPTION 'P0S14 Staff password authority object contract rejected';
         END IF;
@@ -1257,7 +1260,8 @@ BEGIN
     IF schema_revision NOT IN (
         'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
         'p0s000000013',
-        'p0s000000014'
+        'p0s000000014',
+        'p0s000000015'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -4102,7 +4106,8 @@ BEGIN
     );
     IF schema_revision NOT IN (
         'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-        'p0s000000014'
+        'p0s000000014',
+        'p0s000000015'
     ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
@@ -4624,7 +4629,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014') THEN
+    IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015') THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -4655,7 +4660,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000013', 'p0s000000014') THEN
+    IF schema_revision IN ('p0s000000013', 'p0s000000014', 'p0s000000015') THEN
         IF to_regclass('public.saas_model_provider_configurations') IS NULL
            OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
            OR to_regclass('public.saas_model_provider_monthly_budgets') IS NULL

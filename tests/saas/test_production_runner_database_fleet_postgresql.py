@@ -519,7 +519,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
                 "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
                 "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
-                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000014",
+                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000015",
                 RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
             }
         )
