@@ -239,7 +239,7 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000014"
+        assert revision == "p0s000000015"
         assert {
             "saas_model_provider_configurations",
             "saas_model_provider_configuration_receipts",
@@ -1867,7 +1867,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000014"
+                == "p0s000000015"
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -4337,7 +4337,7 @@ def test_real_postgresql_p0s11_policy_role_scope_round_trip(
             command.upgrade(config, "head")
             assert _p0s11_policy_projection(connection) == successor
             assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-                "p0s000000014"
+                "p0s000000015"
             )
     finally:
         engine.dispose()

@@ -15,7 +15,7 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 2. Require a valid local Staff username/password. Do not configure TOTP, Passkey,
    WebAuthn or an enterprise IdP for Staff. Bearer tokens, a Tenant session, mixed
    Staff/Tenant cookies, an incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `p0s000000014`, then apply
+3. Migrate through `p0s000000015`, then apply
    `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 119 control-plane
    tables and 19 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:

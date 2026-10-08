@@ -147,7 +147,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "region": "cn-east-1",
             "store_uri": store_uri,
         },
-        "control_plane_schema_revision": "p0s000000014",
+        "control_plane_schema_revision": "p0s000000015",
         "image_digest": "sha256:" + ("3" * 64),
         "ingress": {"namespace": "kube-system", "workload": "traefik"},
         "mode": mode,

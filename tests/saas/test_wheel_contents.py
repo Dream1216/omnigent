@@ -109,6 +109,10 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
         "saas/control_plane/migrations/versions/"
         "p0s000000014_local_staff_password.py" in REQUIRED_WHEEL_PATHS
     )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000015_preview_tunnel_reconnect.py" in REQUIRED_WHEEL_PATHS
+    )
     assert "saas/admin_ui/platform_login.html" in REQUIRED_WHEEL_PATHS
     assert "saas/admin_ui/platform_login.css" in REQUIRED_WHEEL_PATHS
     assert "saas/admin_ui/platform_login.js" in REQUIRED_WHEEL_PATHS

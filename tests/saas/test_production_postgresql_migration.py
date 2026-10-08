@@ -526,6 +526,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         (
             16,
             "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
+        (
+            16,
+            "mm1a2b3c4d5e",
             "p0s000000014",
         ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
         (
@@ -535,6 +545,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
     }
     current_security = {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "9033a4d3e71a7745753e75dfb065f02812cb7a84cf2c551b74338ea38e18a663",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "8843b7fb17e25bdf02473f07b2a615f0ae48f24e9857a2f9113520ec00db7ada",
         (
             16,
             "mm1a2b3c4d5e",
@@ -549,6 +569,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
     platform_model_security = {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "61239caab9e58b03e93f9ee59a59f05c83ce28326c97d5580f275d47777660eb",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "5d92ba82a410c8b01c3f7e0c464286bdd2796ce2a61570f09adacdd88c23470e",
         (
             16,
             "ge1b2c3d4e5f",
@@ -595,6 +625,16 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         >= platform_model_security.items()
     )
     platform_admin_security = {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "fb328b45607f5117d72c3fcafabb9997ee9e33c18e3fe4334254546ffe875de4",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000015",
+        ): "da5d23cd334a6c42fd0f44cf1d4f6d26d665454d777d483ec0459e3949a90119",
         (
             16,
             "ge1b2c3d4e5f",
