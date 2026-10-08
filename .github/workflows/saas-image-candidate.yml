@@ -563,3 +563,69 @@ jobs:
           path: artifacts/signed-release-candidate.json
           if-no-files-found: error
           retention-days: 90
+
+  verify-published-source:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_signed &&
+      github.ref == 'refs/heads/main'
+    needs: publish-signed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - name: Download immutable signed release facts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-release-candidate-${{ inputs.product_revision }}
+          path: release-facts
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to image registry for independent readback
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Independently verify registry digests, source labels and signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCT_REVISION: ${{ inputs.product_revision }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+        run: |
+          set -euo pipefail
+          facts=release-facts/signed-release-candidate.json
+          jq -e --arg revision "$PRODUCT_REVISION" \
+            '.schema_version == 1 and .product_revision == $revision and (.images | length) == 2' \
+            "$facts" >/dev/null
+          server_seen=0
+          host_seen=0
+          while IFS=$'\t' read -r name digest; do
+            case "$name" in
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-saas-server")
+                [[ "$server_seen" == 0 ]]; server_seen=1 ;;
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-saas-host")
+                [[ "$host_seen" == 0 ]]; host_seen=1 ;;
+              *) exit 2 ;;
+            esac
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            image="${name}@${digest}"
+            [[ "$(crane digest "$image")" == "$digest" ]]
+            for platform in linux/amd64 linux/arm64; do
+              crane config --platform "$platform" "$image" |
+                jq -e --arg revision "$PRODUCT_REVISION" \
+                  '.config.Labels["org.opencontainers.image.revision"] == $revision' >/dev/null
+            done
+            gh attestation verify "oci://${image}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref refs/heads/main \
+              --source-digest "$PRODUCT_REVISION" \
+              --deny-self-hosted-runners
+          done < <(jq -r '.images[] | [.name, .digest] | @tsv' "$facts")
+          [[ "$server_seen" == 1 && "$host_seen" == 1 ]]
