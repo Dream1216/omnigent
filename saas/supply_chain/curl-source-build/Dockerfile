@@ -26,12 +26,15 @@ ENV CFLAGS="-O2 -g -fstack-protector-strong -Wformat -Werror=format-security -ff
     LDFLAGS="-Wl,-z,relro,-z,now,-z,noexecstack -Wl,--as-needed"
 RUN autoreconf -fi \
  && ./configure --prefix=/usr --libdir="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" \
-      --enable-symbol-hiding --enable-versioned-symbols --enable-threaded-resolver \
+      --enable-symbol-hiding --enable-versioned-symbols --enable-threaded-resolver --enable-ntlm \
       --with-gnutls --with-nghttp2 --with-ngtcp2 --with-nghttp3 --with-gssapi=/usr \
       --without-libssh --with-libssh2 --with-ca-path=/etc/ssl/certs \
       --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
  && make -j2 \
- && make test-nonflaky TFLAGS='-n -j2' \
+ && useradd --create-home --shell /bin/sh curltest \
+ && mkdir -p /run/sshd \
+ && chown -R curltest:curltest /work/src/curl-8.22.0 \
+ && su -s /bin/sh curltest -c "make test-nonflaky TFLAGS='-n -j2'" \
  && make DESTDIR=/out install
 
 FROM scratch AS artifacts
