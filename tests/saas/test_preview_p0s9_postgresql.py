@@ -4,6 +4,8 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from queue import Queue
+from time import monotonic, sleep
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -736,6 +738,53 @@ def test_preview_tunnel_registration_is_one_use_generation_and_owner_bound(
             )
             is True
         )
+        # A new one-use grant for the same Runner incarnation must retire the
+        # earlier redeemed grant before the partial unique index is checked.
+        new_registration_hash = "9" * 64
+        reconnected_placement_id = uuid4()
+        connection.exec_driver_sql("SET LOCAL ROLE NONE")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_preview_tunnel_registrations ("
+                "id, runner_id, placement_id, connection_generation, "
+                "gateway_instance_id, certificate_fingerprint_sha256, audience, "
+                "jti_hash, token_hash, official_runner_id, status, expires_at, "
+                "created_at, updated_at) VALUES ("
+                ":id, :runner_id, :placement_id, 4, :gateway_id, :fingerprint, "
+                "'preview-owner.example.test', :jti_hash, :token_hash, "
+                ":official_runner_id, 'issued', :expires_at, :now, :now)"
+            ),
+            {
+                **facts,
+                "id": uuid4(),
+                "fingerprint": fingerprint,
+                "jti_hash": "8" * 64,
+                "token_hash": new_registration_hash,
+                "official_runner_id": official_runner_id,
+            },
+        )
+        connection.exec_driver_sql("SET LOCAL ROLE saas_preview_owner")
+        reconnected = (
+            connection.execute(
+                sa.text(
+                    "SELECT * FROM public.saas_preview_redeem_tunnel_v1("
+                    ":registration_hash, :official_runner_id, :gateway_id, "
+                    ":gateway_token, :new_placement_id, :ownership_hash, :now)"
+                ),
+                {
+                    **facts,
+                    "registration_hash": new_registration_hash,
+                    "official_runner_id": official_runner_id,
+                    "new_placement_id": reconnected_placement_id,
+                    "ownership_hash": "e" * 64,
+                    "now": facts["now"] + timedelta(seconds=2),
+                },
+            )
+            .mappings()
+            .one()
+        )
+        assert reconnected["tunnel_placement_id"] == reconnected_placement_id
+        assert reconnected["routing_generation"] > redeemed["routing_generation"]
         assert (
             connection.scalar(
                 sa.text(
@@ -747,7 +796,23 @@ def test_preview_tunnel_registration_is_one_use_generation_and_owner_bound(
                     **facts,
                     "registration_hash": registration_hash,
                     "official_runner_id": official_runner_id,
-                    "disconnected_at": facts["now"] + timedelta(seconds=2),
+                    "disconnected_at": facts["now"] + timedelta(seconds=3),
+                },
+            )
+            is False
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT public.saas_preview_disconnect_tunnel_v1("
+                    ":registration_hash, :official_runner_id, :gateway_id, "
+                    ":gateway_token, :disconnected_at)"
+                ),
+                {
+                    **facts,
+                    "registration_hash": new_registration_hash,
+                    "official_runner_id": official_runner_id,
+                    "disconnected_at": facts["now"] + timedelta(seconds=4),
                 },
             )
             is True
@@ -771,6 +836,180 @@ def test_preview_tunnel_registration_is_one_use_generation_and_owner_bound(
                 {"token_hash": registration_hash},
             )
             == "disconnected"
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT status FROM saas_preview_tunnel_registrations "
+                    "WHERE token_hash = :token_hash"
+                ),
+                {"token_hash": new_registration_hash},
+            )
+            == "disconnected"
+        )
+    engine.dispose()
+
+
+def test_preview_reconnect_and_prior_disconnect_use_consistent_lock_order(
+    isolated_postgres_url: str,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    engine = sa.create_engine(isolated_postgres_url)
+    official_runner_id = "runner_preview_concurrent_disconnect"
+    old_hash, new_hash = "6" * 64, "5" * 64
+    new_placement_id = uuid4()
+    with engine.begin() as connection:
+        command.upgrade(_migration_config(connection), "head")
+        connection.exec_driver_sql(
+            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+        )
+        facts = _seed_ready_preview(connection)
+        connection.exec_driver_sql("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_runner_certificates ("
+                "id, runner_id, runner_connection_generation, purpose, "
+                "fingerprint_sha256, spki_sha256, serial_hex, spiffe_id, "
+                "trust_bundle_version, rotation_generation, certificate_not_before, "
+                "certificate_not_after, status, activated_at, created_at, updated_at) "
+                "VALUES (:id, :runner_id, 4, 'runner_control', :fingerprint, :spki, "
+                "'01', :spiffe, 'bundle-v1', 1, :not_before, :not_after, 'active', "
+                ":now, :now, :now)"
+            ),
+            {
+                **facts,
+                "id": uuid4(),
+                "fingerprint": "a" * 64,
+                "spki": "b" * 64,
+                "spiffe": f"spiffe://omnigent/runner/{facts['runner_id']}",
+                "not_before": facts["now"] - timedelta(minutes=1),
+                "not_after": facts["expires_at"],
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_preview_tunnel_registrations ("
+                "id, runner_id, placement_id, connection_generation, "
+                "gateway_instance_id, certificate_fingerprint_sha256, audience, "
+                "jti_hash, token_hash, official_runner_id, status, expires_at, "
+                "created_at, updated_at) VALUES ("
+                ":id, :runner_id, :placement_id, 4, :gateway_id, :fingerprint, "
+                "'preview-owner.example.test', :jti_hash, :token_hash, "
+                ":official_runner_id, 'issued', :expires_at, :now, :now)"
+            ),
+            [
+                {
+                    **facts,
+                    "id": uuid4(),
+                    "fingerprint": "a" * 64,
+                    "jti_hash": jti_hash,
+                    "token_hash": token_hash,
+                    "official_runner_id": official_runner_id,
+                }
+                for jti_hash, token_hash in (("4" * 64, old_hash), ("5" * 64, new_hash))
+            ],
+        )
+        connection.exec_driver_sql("SET LOCAL session_replication_role = origin")
+        connection.exec_driver_sql("SET LOCAL ROLE saas_preview_owner")
+        assert (
+            connection.execute(
+                sa.text(
+                    "SELECT * FROM public.saas_preview_redeem_tunnel_v1("
+                    ":registration_hash, :official_runner_id, :gateway_id, "
+                    ":gateway_token, :new_placement_id, :ownership_hash, :now)"
+                ),
+                {
+                    **facts,
+                    "registration_hash": old_hash,
+                    "official_runner_id": official_runner_id,
+                    "new_placement_id": uuid4(),
+                    "ownership_hash": "d" * 64,
+                },
+            ).one_or_none()
+            is not None
+        )
+
+    worker_pid: Queue[int] = Queue(maxsize=1)
+
+    def reconnect() -> bool:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL lock_timeout = '5s'")
+            connection.exec_driver_sql("SET LOCAL ROLE saas_preview_owner")
+            worker_pid.put(connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one())
+            return (
+                connection.execute(
+                    sa.text(
+                        "SELECT * FROM public.saas_preview_redeem_tunnel_v1("
+                        ":registration_hash, :official_runner_id, :gateway_id, "
+                        ":gateway_token, :new_placement_id, :ownership_hash, :now)"
+                    ),
+                    {
+                        **facts,
+                        "registration_hash": new_hash,
+                        "official_runner_id": official_runner_id,
+                        "new_placement_id": new_placement_id,
+                        "ownership_hash": "e" * 64,
+                        "now": facts["now"] + timedelta(seconds=1),
+                    },
+                ).one_or_none()
+                is not None
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with engine.begin() as blocker:
+            blocker.exec_driver_sql("SET LOCAL lock_timeout = '2s'")
+            blocker.execute(
+                sa.text(
+                    "SELECT 1 FROM saas_preview_tunnel_registrations "
+                    "WHERE token_hash = :old_hash FOR UPDATE"
+                ),
+                {"old_hash": old_hash},
+            ).one()
+            future = pool.submit(reconnect)
+            pid = worker_pid.get(timeout=5)
+            deadline = monotonic() + 5
+            while monotonic() < deadline:
+                if blocker.scalar(
+                    sa.text(
+                        "SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = :pid"
+                    ),
+                    {"pid": pid},
+                ):
+                    break
+                sleep(0.02)
+            else:
+                pytest.fail("reconnect did not wait on the prior registration")
+            assert blocker.scalar(
+                sa.text(
+                    "SELECT public.saas_preview_disconnect_tunnel_v1("
+                    ":registration_hash, :official_runner_id, :gateway_id, "
+                    ":gateway_token, :now)"
+                ),
+                {
+                    **facts,
+                    "registration_hash": old_hash,
+                    "official_runner_id": official_runner_id,
+                },
+            )
+        # The blocker commits before waiting for the reconnect worker.
+        assert future.result(timeout=10) is True
+    with engine.begin() as connection:
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT status FROM saas_preview_tunnel_registrations "
+                    "WHERE token_hash = :token_hash"
+                ),
+                {"token_hash": new_hash},
+            )
+            == "redeemed"
+        )
+        assert (
+            connection.scalar(
+                sa.text("SELECT status FROM saas_runner_tunnel_placements WHERE id = :id"),
+                {"id": new_placement_id},
+            )
+            == "active"
         )
     engine.dispose()
 

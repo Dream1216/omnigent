@@ -5,7 +5,7 @@
   "revision_contract": {
   "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000014"
+    "control_plane_schema_revision": "p0s000000015"
   },
   "evidence_directory": "saas/production/deployment-evidence",
   "max_evidence_age_days": 30,
