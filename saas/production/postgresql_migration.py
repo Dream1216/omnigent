@@ -480,10 +480,25 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         18,
         "hh1b2c3d4e5f",
+        "p0s000000015",
+    ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
+    (
+        18,
+        "hh1b2c3d4e5f",
         "p0s000000014",
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Derived from the observed 2026-10-06 Preview authority projection
+    # (P0S14 digest 9839f65f...) by advancing only saas_head. P0S15 replaces
+    # a function body without changing its identity, ACL, owner or public
+    # inventory. The isolated source-clone rehearsal must still verify this
+    # projection before production admission.
+    (
+        18,
+        "hh1b2c3d4e5f",
+        "p0s000000015",
+    ): "71d3bad161d93049a1702ed2e8f2c17833e2aecc1fca48ea3e77c9a50404fe1a",
     (
         18,
         "hh1b2c3d4e5f",
