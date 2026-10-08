@@ -11,14 +11,21 @@ is covered without paying the server-boot cost.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
 from typing import cast
 
 import httpx
 import pytest
 
+from dev.benchmarks.omnigent import journeys as bench_journeys
 from dev.benchmarks.omnigent import run as bench_run
-from dev.benchmarks.omnigent.environment import BenchEnvironment, _sse_session_status
+from dev.benchmarks.omnigent.environment import (
+    BenchEnvironment,
+    GatedTurn,
+    _close_reader,
+    _sse_session_status,
+)
 from dev.benchmarks.omnigent.journeys import ALL_JOURNEYS, Journey, run_latency, run_throughput
 from dev.benchmarks.omnigent.measure import RunResult, aggregate, check_thresholds
 from dev.benchmarks.omnigent.schema import SCHEMA_VERSION, build_report
@@ -347,6 +354,287 @@ async def test_latency_prepare_runs_before_warmup_and_timed_operations() -> None
         "measure",
         "teardown",
     ]
+
+
+@pytest.mark.asyncio
+async def test_latency_max_warmup_clamps_requested_warmup() -> None:
+    """``max_warmup`` lowers ``--warmup`` for journeys where repeats warm nothing."""
+    calls: list[str] = []
+
+    async def _measure(_env: BenchEnvironment, _ctx: object) -> None:
+        calls.append("measure")
+
+    journey = Journey(name="cold", kind="latency", measure=_measure, max_warmup=1)
+    result = await run_latency(journey, cast(BenchEnvironment, object()), iterations=3, warmup=10)
+
+    assert result.n_success == 3
+    assert len(calls) == 4  # 1 warmup + 3 timed
+
+
+@pytest.mark.asyncio
+async def test_latency_validate_runs_off_the_clock() -> None:
+    """Slow per-sample cleanup in ``validate`` (e.g. killing a CLI) is not timed."""
+
+    async def _measure(_env: BenchEnvironment, _ctx: object) -> None:
+        return None
+
+    async def _validate(_env: BenchEnvironment, _ctx: object) -> None:
+        await asyncio.sleep(0.5)
+
+    journey = Journey(name="cleanup", kind="latency", measure=_measure, validate=_validate)
+    result = await run_latency(journey, cast(BenchEnvironment, object()), iterations=2, warmup=0)
+
+    assert result.n_success == 2
+    assert max(result.latencies_ms) < 250  # timing validate's 0.5s sleep would exceed this
+
+
+@pytest.mark.asyncio
+async def test_turn_session_rotates_every_n_samples() -> None:
+    """Turn journeys move to a fresh warmed session so history stays bounded."""
+    created: list[str] = []
+    warmed: list[str] = []
+
+    class _Env:
+        async def create_bound_session(self, agent_id: str) -> str:
+            created.append(agent_id)
+            return f"s{len(created)}"
+
+        async def drive_turn(self, session_id: str, _text: str) -> None:
+            warmed.append(session_id)
+
+    ctx = bench_journeys._TurnSession(agent_id="a", session_id="s0")
+    every = bench_journeys._TURN_SESSION_SAMPLES
+    for _ in range(2 * every + 1):
+        await bench_journeys._rotate_turn_session(cast(BenchEnvironment, _Env()), ctx)
+
+    assert created == ["a", "a"]
+    assert warmed == ["s1", "s2"]  # each fresh session gets its warm-up turn
+    assert ctx.session_id == "s2"
+    assert ctx.samples == 1
+
+
+@pytest.mark.asyncio
+async def test_interrupt_moves_to_a_fresh_session_after_a_failed_sample() -> None:
+    """A parked turn left by a failed op could land its marker on the next sample."""
+    calls: list[str] = []
+
+    class _Env:
+        async def finish_gated_turn(self, _turn: object) -> None:
+            calls.append("finish")
+
+        async def create_bound_session(self, _agent_id: str) -> str:
+            calls.append("create")
+            return "fresh"
+
+        async def drive_turn(self, _session_id: str, _text: str) -> None:
+            calls.append("warm")
+
+        async def cancellation_markers(self, session_id: str) -> int:
+            calls.append(f"markers:{session_id}")
+            return 0
+
+        async def start_gated_turn(self, session_id: str) -> str:
+            calls.append(f"gate:{session_id}")
+            return "turn"
+
+    ctx = bench_journeys._TurnSession(agent_id="a", session_id="old", samples=3)
+    ctx.gated = cast(GatedTurn, object())
+    await bench_journeys._prepare_interrupt(cast(BenchEnvironment, _Env()), ctx)
+
+    assert calls == ["finish", "create", "warm", "markers:fresh", "gate:fresh"]
+
+
+def _status_line(status: str) -> bytes:
+    return f'data: {{"type": "session.status", "status": "{status}"}}\n\n'.encode()
+
+
+def _gated_env(statuses: list[str], end_stream: asyncio.Event) -> BenchEnvironment:
+    """A runner-mode env whose SSE stream emits *statuses*, then ends on *end_stream*."""
+
+    async def _stream():
+        for status in statuses:
+            yield _status_line(status)
+        await end_stream.wait()
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_stream())
+        return httpx.Response(202)
+
+    env = BenchEnvironment(with_runner=True)
+    env.client = httpx.AsyncClient(
+        base_url="http://bench", transport=httpx.MockTransport(_handler)
+    )
+
+    async def _no_mock(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    env.configure_mock = _no_mock  # type: ignore[method-assign]
+    env._wait_gate_pending = _no_mock  # type: ignore[method-assign]
+    return env
+
+
+@pytest.mark.asyncio
+async def test_interrupt_fails_when_the_stream_ends_without_idle() -> None:
+    """A stream closing after the interrupt is not a cancel: the sample must fail."""
+    end_stream = asyncio.Event()
+    env = _gated_env(["running"], end_stream)
+    assert env.client is not None
+    try:
+        turn = await env.start_gated_turn("s1", timeout=5)
+        end_stream.set()  # EOF with no idle status
+        with pytest.raises(RuntimeError, match="did not settle cleanly"):
+            await env.interrupt_gated_turn(turn, timeout=5)
+        await env.finish_gated_turn(turn)
+    finally:
+        await env.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gated_turn_fails_promptly_when_the_turn_settles_before_the_gate() -> None:
+    """A turn that fails before calling the LLM must not wait out the gate timeout."""
+    env = _gated_env(["running", "failed"], asyncio.Event())
+    assert env.client is not None
+
+    async def _never_pending(*, timeout: float) -> None:
+        await asyncio.Event().wait()
+
+    env._wait_gate_pending = _never_pending  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError, match="settled before it was interrupted"):
+            await asyncio.wait_for(env.start_gated_turn("s1", timeout=60), timeout=5)
+    finally:
+        await env.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_sample_ends_at_idle_not_after_stream_cleanup() -> None:
+    """Closing the session stream after ``idle`` must not count toward the sample."""
+    interrupted, release = asyncio.Event(), asyncio.Event()
+
+    class _SlowCloseStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[override]
+            yield _status_line("running")
+            await interrupted.wait()
+            yield _status_line("idle")
+            await asyncio.Event().wait()
+
+        async def aclose(self) -> None:
+            await release.wait()  # response cleanup blocks until released
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, stream=_SlowCloseStream())
+        if b'"interrupt"' in request.content:
+            interrupted.set()
+        return httpx.Response(202)
+
+    env = _gated_env([], asyncio.Event())
+    assert env.client is not None
+    await env.client.aclose()
+    env.client = httpx.AsyncClient(
+        base_url="http://bench", transport=httpx.MockTransport(_handler)
+    )
+    try:
+        turn = await env.start_gated_turn("s1", timeout=5)
+        await asyncio.wait_for(env.interrupt_gated_turn(turn, timeout=5), timeout=2)
+        release.set()
+        await env.finish_gated_turn(turn)
+    finally:
+        release.set()
+        await env.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_cli_startup_terminates_the_stashed_child_once() -> None:
+    terminated: list[bool] = []
+
+    class _Child:
+        def terminate(self, force: bool) -> None:
+            terminated.append(force)
+
+    ctx: dict[str, object] = {"child": _Child()}
+    env = cast(BenchEnvironment, object())
+    await bench_journeys._close_cli_startup(env, ctx)
+    await bench_journeys._close_cli_startup(env, ctx)  # a second cleanup is harmless
+
+    assert terminated == [True]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_refuses_a_turn_that_already_settled() -> None:
+    """Timing an interrupt on a settled turn would measure nothing; it must fail."""
+    posted: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.url.path)
+        return httpx.Response(202)
+
+    env = BenchEnvironment(with_runner=True)
+    env.client = httpx.AsyncClient(
+        base_url="http://bench", transport=httpx.MockTransport(_handler)
+    )
+    idle = asyncio.Event()
+    idle.set()
+    turn = GatedTurn("s1", asyncio.create_task(asyncio.sleep(0)), idle, {})
+    try:
+        with pytest.raises(RuntimeError, match="settled before the interrupt"):
+            await env.interrupt_gated_turn(turn)
+    finally:
+        await env.client.aclose()
+        await turn.reader
+
+    assert posted == []
+
+
+@pytest.mark.asyncio
+async def test_interrupt_returns_when_the_gated_turn_settles() -> None:
+    idle = asyncio.Event()
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/sessions/s1/events"
+        idle.set()  # the stream reader would see the turn go idle
+        return httpx.Response(202)
+
+    env = BenchEnvironment(with_runner=True)
+    env.client = httpx.AsyncClient(
+        base_url="http://bench", transport=httpx.MockTransport(_handler)
+    )
+    turn = GatedTurn("s1", asyncio.create_task(asyncio.sleep(0)), idle, {})
+    try:
+        await env.interrupt_gated_turn(turn, timeout=5)
+    finally:
+        await env.client.aclose()
+        await turn.reader
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finished", [True, False])
+async def test_close_reader_lets_a_finished_reader_close_its_stream(finished: bool) -> None:
+    """Cancelling a reader mid-close leaked a pooled connection per turn."""
+    saw_terminal = asyncio.Event()
+    closed: list[bool] = []
+
+    async def _reader() -> None:
+        try:
+            if not finished:
+                await asyncio.Event().wait()  # still waiting on the stream
+            saw_terminal.set()
+            await asyncio.sleep(0.01)  # stands in for ``response.aclose()``
+            closed.append(True)
+        except asyncio.CancelledError:
+            closed.append(False)
+            raise
+
+    reader = asyncio.create_task(_reader())
+    if finished:
+        await saw_terminal.wait()
+    else:
+        await asyncio.sleep(0)
+    await _close_reader(reader, finished=finished)
+
+    assert reader.done()
+    assert closed == [finished]
 
 
 def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
