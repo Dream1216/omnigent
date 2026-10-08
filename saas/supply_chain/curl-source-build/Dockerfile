@@ -34,7 +34,7 @@ RUN autoreconf -fi \
  && useradd --create-home --shell /bin/sh curltest \
  && mkdir -p /run/sshd \
  && chown -R curltest:curltest /work/src/curl-8.22.0 \
- && su -s /bin/sh curltest -c "make test-nonflaky TFLAGS='-n -j2'" \
+ && su -s /bin/sh curltest -c "ulimit -n 65536 && make test-nonflaky TFLAGS='-n -j2'" \
  && make DESTDIR=/out install
 
 FROM scratch AS artifacts
