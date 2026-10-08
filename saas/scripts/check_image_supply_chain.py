@@ -826,7 +826,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "> /tmp/venv-seed-pyc.sha256": 1,
         "> /tmp/venv-core-pyc.sha256": 1,
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256": 1,
-        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 1,
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 2,
         '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"': 1,
         'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"': 2,
         "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv": 1,
@@ -843,6 +843,22 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or dockerfile.count("python -B -I -c") < 3
     ):
         violations.append("production venv and build tree must reject volatile installer metadata")
+    npm_export_contract = {
+        "ARG NPM_VERSION=12.2.0",
+        "ARG NPM_INTEGRITY=sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/"
+        "cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==",
+        "FROM builder AS npm-builder",
+        "python -B -I /build/saas/scripts/materialize_npm_release.py",
+        '--version "${NPM_VERSION}" --integrity "${NPM_INTEGRITY}"',
+        "--destination /opt/npm-export",
+        '--root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        "COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm",
+        'test "$(npm --version)" = "${NPM_VERSION}"',
+    }
+    if any(fragment not in dockerfile for fragment in npm_export_contract) or (
+        "COPY --from=node-runtime /usr/local/lib/node_modules" in dockerfile
+    ):
+        violations.append("Host npm must use the normalized integrity-pinned release export")
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",

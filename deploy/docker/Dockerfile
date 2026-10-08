@@ -64,6 +64,7 @@ ARG PYTHON_VERSION=3.12
 ARG NODE_VERSION=22
 ARG UV_VERSION=0.12.1
 ARG PNPM_VERSION=11.15.1
+ARG NPM_VERSION=12.2.0
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
 ARG SOURCE_DATE_EPOCH=1580601600
@@ -270,14 +271,25 @@ RUN set -eu; \
 # image; contributes no layers of its own.
 FROM ${NODE_IMAGE} AS node-runtime
 
+# Replace the base image's bundled npm graph with a content-pinned release.
+FROM builder AS npm-builder
+ARG NPM_VERSION
+ARG NPM_INTEGRITY=sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==
+ARG SOURCE_DATE_EPOCH
+RUN python -B -I /build/saas/scripts/materialize_npm_release.py \
+      --version "${NPM_VERSION}" --integrity "${NPM_INTEGRITY}" \
+      --destination /opt/npm-export \
+ && python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
+      --root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"
+
 # Materialize the pinned GitHub CLI outside the host rootfs. The final host
 # receives only this fixed-content, fixed-mode file through a COPY layer.
 FROM builder AS gh-builder
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
-ARG GH_VERSION=2.100.0
-ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
-ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
+ARG GH_VERSION=2.102.0
+ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
+ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
 RUN python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}" \
  && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
  && [ "$installed" = "$GH_VERSION" ] \
@@ -312,6 +324,7 @@ RUN python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pat
 FROM ${PYTHON_IMAGE} AS host
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
+ARG NPM_VERSION
 ARG SOURCE_DATE_EPOCH
 ARG CLAUDE_CODE_VERSION=2.1.266
 ARG CODEX_CLI_VERSION=0.139.0
@@ -382,9 +395,11 @@ RUN git config --system credential.helper \
 # (`node-runtime` is the alias stage below — COPY --from does not
 # expand build args, so the FROM line resolves ${NODE_IMAGE}.)
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
- && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]!==22 || v[1]<22 || (v[1]===22 && v[2]<2)) throw Error("npm requires Node >=22.22.2 in the pinned Node 22 image")' \
+ && test "$(npm --version)" = "${NPM_VERSION}"
 
 # The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
 # repository's ``.github/ci-deps`` importer already records the independently
