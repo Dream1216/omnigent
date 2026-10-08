@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "distribution": "debian",
+  "codename": "trixie",
+  "component": "expat",
+  "source_version": "2.9.0-1",
+  "source_suite": "sid",
+  "build_dependency_suite": "trixie",
+  "production_admission": false,
+  "extraction_contract": "dpkg-source --require-valid-signature --require-strong-checksums",
+  "source_authentication": {
+    "kind": "signed-debian-dsc",
+    "primary_fingerprint": "A0DF7E0D3851E0EE45C00BC8ACE1F33CB933BBBB",
+    "signing_fingerprint": "7D887DC8BA7BBBA7B835E3BADCE310E7864CC8BF",
+    "key_source": "https://keyring.debian.org/pks/lookup?op=get&search=0x7D887DC8BA7BBBA7B835E3BADCE310E7864CC8BF"
+  },
+  "artifacts": [
+    {
+      "name": "expat_2.9.0-1.dsc",
+      "role": "dsc",
+      "size": 1970,
+      "sha256": "b5ad165baca0f2f2ac2a02b6b4b66d68ee890f582df398da9f86399679ca9c29"
+    },
+    {
+      "name": "expat_2.9.0.orig.tar.gz",
+      "role": "upstream",
+      "size": 8488503,
+      "sha256": "6e8ce7b52ebbaa423c59becc7cf1e6875c42e49228c062ac8123c10e700cec27"
+    },
+    {
+      "name": "expat_2.9.0-1.debian.tar.xz",
+      "role": "debian",
+      "size": 14360,
+      "sha256": "d23e632b05f10e269ee5426ff1ea962b4aec17fcd179c4dec14390a6793da764"
+    },
+    {
+      "name": "expat-debian-signer.gpg",
+      "role": "keyring",
+      "size": 14125,
+      "sha256": "38ead01d85cc57fd75a07c1ea4ffcad736be6fb4c006f0cf7f029dda1472041f"
+    }
+  ],
+  "patches": [],
+  "addresses": [
+    "CVE-2026-66046",
+    "CVE-2026-76956",
+    "CVE-2026-76957",
+    "CVE-2026-77214",
+    "CVE-2026-93990"
+  ],
+  "required_followup": [
+    "narrow-and-wide-character-build-and-regressions",
+    "live-baseline-ELF-and-typed-ABI-comparison",
+    "feature-parity-and-python-linked-consumer-regressions",
+    "Python-bundled-expat-remediation-and-extension-ABI-verification",
+    "canonical-hardening-and-reproducibility",
+    "both-architectures-full-image-scans"
+  ]
+}
