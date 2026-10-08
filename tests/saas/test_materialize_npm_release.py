@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from saas.scripts.check_image_supply_chain import validate_image_material_lock
 from saas.scripts.materialize_npm_release import materialize
 
 
@@ -54,3 +55,31 @@ def test_invalid_export_does_not_create_destination(tmp_path: Path, case: str) -
             destination=destination,
         )
     assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ("ARG NPM_VERSION=12.2.0", "ARG NPM_VERSION=latest"),
+        ("ARG NPM_INTEGRITY=sha512-", "ARG NPM_INTEGRITY=untrusted-"),
+        (
+            "COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm",
+            "COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules",
+        ),
+    ],
+)
+def test_npm_material_policy_rejects_pin_or_export_drift(
+    monkeypatch: pytest.MonkeyPatch, original: str, replacement: str
+) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    read_text = Path.read_text
+
+    def mutated_read(path: Path, *args: object, **kwargs: object) -> str:
+        content = read_text(path, *args, **kwargs)
+        return content.replace(original, replacement) if path == dockerfile else content
+
+    monkeypatch.setattr(Path, "read_text", mutated_read)
+    assert "Host npm must use the normalized integrity-pinned release export" in (
+        validate_image_material_lock(repo)
+    )
