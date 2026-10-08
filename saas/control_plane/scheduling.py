@@ -806,7 +806,7 @@ class SchedulingControlPlane:
         _validate_time(checked_at)
         with self._session_factory.begin() as db:
             _pool, runner = self._lock_pool_then_runner(db, runner_id)
-            self._require_authenticated_run(
+            capability = self._require_authenticated_run(
                 db,
                 runner=runner,
                 connection_generation=connection_generation,
@@ -814,6 +814,14 @@ class SchedulingControlPlane:
                 run_id=run_id,
                 capability_token=capability_token,
                 checked_at=checked_at,
+            )
+            apply_rls_context(
+                db,
+                RlsContext(
+                    tenant_id=capability.tenant_id,
+                    space_id=capability.space_id,
+                    project_id=capability.project_id,
+                ),
             )
             return execution.transition_run_in_transaction(
                 db,
