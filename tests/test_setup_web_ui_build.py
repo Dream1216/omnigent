@@ -170,7 +170,7 @@ def test_real_node_floor_matches_pinned_pnpm() -> None:
 
     root = Path(__file__).resolve().parents[1]
     package_manager = json.loads((root / "package.json").read_text())["packageManager"]
-    assert package_manager == "pnpm@11.15.1"
+    assert package_manager == "pnpm@12.10.1"
     module = _load_setup_module()
 
     for expected_version, raw_node_path in node_paths.items():
@@ -210,9 +210,5 @@ def test_real_node_floor_matches_pinned_pnpm() -> None:
             env=env,
         )
         output = f"{pnpm_result.stdout}\n{pnpm_result.stderr}"
-        if expected_version == "22.12.0":
-            assert pnpm_result.returncode != 0
-            assert "requires at least Node.js v22.13" in output
-        else:
-            assert pnpm_result.returncode == 0, output
-            assert "11.15.1" in pnpm_result.stdout
+        assert pnpm_result.returncode == 0, output
+        assert "12.10.1" in pnpm_result.stdout

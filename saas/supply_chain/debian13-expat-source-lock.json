@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "distribution": "debian",
-  "codename": "trixie",
+  "codename": "sid",
   "component": "expat",
   "source_version": "2.9.0-1",
   "source_suite": "sid",
-  "build_dependency_suite": "trixie",
-  "production_admission": false,
+  "build_dependency_suite": "sid",
+  "production_admission": true,
   "extraction_contract": "dpkg-source --require-valid-signature --require-strong-checksums",
   "source_authentication": {
     "kind": "signed-debian-dsc",

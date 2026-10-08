@@ -133,7 +133,9 @@ install_goose() { # <version|"">
         "GOOSE_VERSION=$version"
     )
     echo ">> installing goose $version via aaif-goose/goose installer"
-    curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 30 --max-time 300 \
+        https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
         | env "${install_env[@]}" bash
     verify goose
 }
@@ -160,7 +162,8 @@ install_agy() {
         *) die "unsupported arch '$(uname -m)' for agy" ;;
     esac
     echo ">> installing agy $AGY_VERSION (sha256 verified)"
-    curl -fsSL -o /tmp/agy.tar.gz \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 30 --max-time 300 -o /tmp/agy.tar.gz \
         "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}"
     echo "${sha} /tmp/agy.tar.gz" | sha256sum -c - \
         || die "agy sha256 mismatch for ${asset}"
@@ -190,7 +193,9 @@ install_jcode() { # <version|"">
     fi
     echo ">> installing jcode ${version:-<latest>} via 1jehuang/jcode installer"
     mkdir -p "$JCODE_HOME"
-    curl -fsSL https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/install.sh \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 30 --max-time 300 \
+        https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/install.sh \
         | env "${install_env[@]}" bash
     chmod -R a+rX "$JCODE_HOME"
     verify jcode
@@ -204,7 +209,9 @@ install_cursor() {
     # only cursor-agent is linked.
     mkdir -p "$CURSOR_HOME"
     echo ">> installing cursor-agent <latest> via cursor.com installer"
-    curl -fsSL https://cursor.com/install | HOME="$CURSOR_HOME" bash
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 30 --max-time 300 https://cursor.com/install \
+        | HOME="$CURSOR_HOME" bash
     chmod -R a+rX "$CURSOR_HOME"
     ln -sf "$CURSOR_HOME/.local/bin/cursor-agent" "$BIN_DIR/cursor-agent"
     verify cursor-agent

@@ -33,7 +33,7 @@ NODE_IMAGE="node:20-bookworm"
 # arm64 this runs under emulation (slower; needs Docker's binfmt/qemu).
 PLATFORM="linux/amd64"
 # Match the workspace package-manager pin used by CI.
-PNPM_VERSION="11.15.1"
+PNPM_VERSION="12.10.1"
 BUILD_OUTPUT="omnigent/server/static/web-ui"
 STORYBOOK_OUTPUT="web/storybook-static"
 SNAP_ROOT="tests/e2e_ui/visual/snapshots"

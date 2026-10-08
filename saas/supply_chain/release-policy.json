@@ -27,9 +27,18 @@
     "clean_tree_required": true,
     "repeat_builds": 2,
     "matching_platform_manifest_and_config_required": true,
-    "dependency_locks": ["uv.lock", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+    "dependency_locks": [
+      "package.json",
+      "uv.lock",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "saas/login_web/package-lock.json",
+      "saas/supply_chain/npm-122-security-lock.json"
+    ],
     "required_build_args": [
       "PYTHON_IMAGE",
+      "RUNTIME_IMAGE",
+      "RUNTIME_APT_SNAPSHOT",
       "NODE_IMAGE",
       "SOURCE_DATE_EPOCH",
       "SOURCE_REVISION",

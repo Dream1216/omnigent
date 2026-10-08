@@ -35,7 +35,8 @@ install_devin() {
         *) die "unsupported architecture '$(uname -m)' for devin" ;;
     esac
     archive="/tmp/devin-${DEVIN_VERSION}.tar.gz"
-    curl -fsSL -o "$archive" \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 30 --max-time 300 -o "$archive" \
         "https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-${target}.tar.gz"
     echo "$sha  $archive" | sha256sum -c -
     rm -rf /opt/devin
