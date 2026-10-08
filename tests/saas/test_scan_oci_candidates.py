@@ -1,8 +1,10 @@
 """Safety checks for exact OCI candidate scan receipts."""
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
+import yaml
 
 from saas.scripts.scan_oci_candidates import parse_database_status, scan_report
 
@@ -40,3 +42,20 @@ def test_report_keeps_each_high_finding_and_rejects_ignores() -> None:
         scan_report({"matches": [], "ignoredMatches": [match]})
     with pytest.raises(ValueError, match="incomplete"):
         scan_report({"matches": "not-a-list"})
+
+
+def test_signed_release_checks_raw_findings_before_signing() -> None:
+    workflow_path = (
+        Path(__file__).resolve().parents[2] / ".github/workflows/saas-image-candidate.yml"
+    )
+    workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["publish-signed"]["steps"]
+    names = [step["name"] for step in steps]
+    scan_index = names.index("Generate per-architecture SBOMs and check raw findings")
+    sign_index = names.index("Sign server image provenance with GitHub OIDC")
+    assert scan_index < sign_index
+    command = steps[scan_index]["run"]
+    assert "${prefix}.raw.grype.json" in command
+    assert ".ignoredMatches // []) == []" in command
+    assert "--vex" not in command
+    assert "admitted.grype.json" not in command

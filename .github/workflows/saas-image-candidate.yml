@@ -511,14 +511,13 @@ jobs:
           tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" grype
           "${RUNNER_TEMP}/supply-chain-tools/syft" version
           "${RUNNER_TEMP}/supply-chain-tools/grype" version
-      - name: Generate per-architecture SBOMs and fail-closed scans
+      - name: Generate per-architecture SBOMs and check raw findings
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
           HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/supply-chain
-          scan_timestamp=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)
           for artifact in server host; do
             case "$artifact" in
               server) image="$SERVER_IMAGE" ;;
@@ -539,20 +538,11 @@ jobs:
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
-              uv run python -m saas.scripts.render_runtime_security_vex \
-                --grype-report "${prefix}.raw.grype.json" \
-                --architecture "$arch" \
-                --timestamp "$scan_timestamp" \
-                --output "${prefix}.openvex.json"
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
-                --platform "linux/${arch}" \
-                --vex "${prefix}.openvex.json" \
-                -o json > "${prefix}.admitted.grype.json"
               jq -e '
                 ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
                 ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
-                ([.ignoredMatches[]? | select(.vulnerability.severity == "High")] | length) == 11
-              ' "${prefix}.admitted.grype.json" >/dev/null
+                (.ignoredMatches // []) == []
+              ' "${prefix}.raw.grype.json" >/dev/null
             done
           done
           "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
