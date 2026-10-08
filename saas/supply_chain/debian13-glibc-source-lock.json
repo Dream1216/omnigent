@@ -40,8 +40,8 @@
     {
       "name": "glibc-5435-debian241.patch",
       "role": "reviewed-backport",
-      "size": 3777,
-      "sha256": "84480129060bbed3656c9aa273777220989d0c23281aa822cb3c03c93f7c67e3",
+      "size": 3844,
+      "sha256": "776811540112b3783f172cb2f11a095fd7a26538f4460d533299d7b85c588f3a",
       "upstream_commit": "ca44a6609c29a683b03575fa035c6d17aa591e72",
       "review_scope": "final hunk context only; identical 95 deleted formatter lines",
       "removed_lines": 95,

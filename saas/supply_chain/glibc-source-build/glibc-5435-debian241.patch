@@ -118,7 +118,7 @@ index e58df5f35a..ab68bf2cb7 100644
  	case ns_t_a6: {
  		struct in6_addr a;
  		int pbyte, pbit;
-@@ -557,10 +467,5 @@ ns_sprintrrf(const u_char *msg, size_t msglen,
+@@ -557,11 +467,6 @@ ns_sprintrrf(const u_char *msg, size_t msglen,
  		break;
  	    }
  
@@ -129,5 +129,6 @@ index e58df5f35a..ab68bf2cb7 100644
 -	    }
  
  	default:
+ 		snprintf (errbuf, sizeof (errbuf), "unknown RR type %d", type);
 -- 
 2.43.7
