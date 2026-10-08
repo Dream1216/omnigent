@@ -510,6 +510,28 @@ jobs:
               --source-digest "$PRODUCT_REVISION" \
               --deny-self-hosted-runners
           done
+      - name: Pull signed images by digest as exact OCI archives
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          crane pull --format=oci --platform=all "$SERVER_IMAGE" "${RUNNER_TEMP}/server-signed.tar"
+          crane pull --format=oci --platform=all "$HOST_IMAGE" "${RUNNER_TEMP}/host-signed.tar"
+      - name: Scan signed image digests on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --image server=${{ runner.temp }}/server-signed.tar
+          --image host=${{ runner.temp }}/host-signed.tar
+          --output artifacts/signed-grype
+      - name: Upload exact signed-image scan reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-image-scans-${{ inputs.product_revision }}
+          path: artifacts/signed-grype/*.json
+          if-no-files-found: warn
+          retention-days: 90
       - name: Record signed candidate facts
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
