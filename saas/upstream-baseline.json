@@ -48,19 +48,37 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 144,
+    "max_direct_upstream_files": 148,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "followup": {
-      "revision": "next-agent-gate-missing-bundle-v28",
-      "approved_at": "2026-10-07",
+      "revision": "runtime-security-dependency-budget-v29",
+      "approved_at": "2026-10-09",
       "governance_mode": "single_owner_beta",
-      "previous_max_upstream_net_added_loc": 4568,
-      "measured_upstream_net_added_loc": 4576,
-      "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
-      "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+      "previous_max_direct_upstream_files": 144,
+      "previous_measured_direct_upstream_files": 143,
+      "measured_direct_upstream_files": 148,
+      "previous_max_upstream_net_added_loc": 4576,
+      "measured_upstream_net_added_loc": 3221,
+      "scoped_paths": [
+        ".github/workflows/ui-snapshot.yml",
+        "deploy/docker/Dockerfile.ubi",
+        "package.json",
+        "tests/e2e_ui/visual/regen_baseline_docker.sh",
+        "tests/test_setup_web_ui_build.py"
+      ],
+      "reason": "The reviewed runtime dependency remediation moves the release toolchain to pnpm 12.10.1 and must keep the root package-manager contract, UBI build, UI snapshot runner, deterministic baseline regeneration, and real Node boundary test in lockstep. These five previously unmodified official paths move the measured count from 143 to 148 while reducing the measured upstream net-added LOC to 3,221. Raise only the direct-file ceiling from 144 to the exact 148-file measurement; retain the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta record does not waive CI, image admission, signing, restore, deployment, or production acceptance gates.",
+      "previous_revision": {
+        "revision": "next-agent-gate-missing-bundle-v28",
+        "approved_at": "2026-10-07",
+        "governance_mode": "single_owner_beta",
+        "previous_max_upstream_net_added_loc": 4568,
+        "measured_upstream_net_added_loc": 4576,
+        "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
+        "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+      }
     },
     "approved_at": "2026-10-07",
     "governance_mode": "single_owner_beta",
