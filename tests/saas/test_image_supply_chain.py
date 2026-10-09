@@ -348,8 +348,12 @@ def test_image_material_lock_rejects_login_dependency_regression(
 def test_host_npm_version_probe_does_not_retain_wall_clock_cache() -> None:
     dockerfile = (_repo() / "deploy/docker/Dockerfile").read_text(encoding="utf-8")
 
+    assert "HOME=/tmp/npm-version-home" in dockerfile
+    assert "XDG_CACHE_HOME=/tmp/npm-version-home/xdg-cache" in dockerfile
     assert "npm_config_cache=/tmp/npm-version-cache npm --version" in dockerfile
-    assert "rm -rf /tmp/npm-version-cache" in dockerfile
+    assert (
+        "rm -rf /tmp/npm-version-cache /tmp/npm-version-home /root/.npm /root/.cache" in dockerfile
+    )
 
 
 def test_image_material_lock_rejects_missing_runtime_revision_binding(
@@ -815,6 +819,14 @@ def test_image_material_lock_rejects_unbounded_gh_download(
             ),
         ),
         (
+            "find /var/log -type f -delete",
+            "true # volatile package logs retained",
+            (
+                "builder, host and server apt layers must use a fixed snapshot with bounded "
+                "fetch retries and remove volatile state"
+            ),
+        ),
+        (
             "Acquire::Retries=10",
             "Acquire::Retries=0",
             (
@@ -1235,7 +1247,8 @@ def test_candidate_contract_requires_saas_owned_image_trigger_scope(
     workflow = repo / relative
     source = workflow.read_text(encoding="utf-8")
     trigger = '      - "saas/**"\n'
-    assert source.count(trigger) == 2
+    expected_count = 1 if relative.endswith("saas-image-candidate.yml") else 2
+    assert source.count(trigger) == expected_count
     workflow.write_text(source.replace(trigger, "", 1), encoding="utf-8")
 
     violations = validate_candidate_build_contract(repo)

@@ -153,6 +153,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
       build-essential \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
@@ -290,6 +291,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
       libtool patch perl pkg-config xz-utils \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
@@ -326,6 +328,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
  && perl -MPod::Text -e 'die unless $Pod::Text::VERSION eq q(v6.1.1)' \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /opt/runtime-security \
+ && find /var/log -type f -delete \
  && rm -f /tmp/activate_debian_sid_snapshot.py \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
@@ -443,6 +446,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
       iproute2 nftables \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
@@ -474,11 +478,16 @@ RUN git config --system credential.helper \
 # expand build args, so the FROM line resolves ${NODE_IMAGE}.)
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm
-RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+RUN export HOME=/tmp/npm-version-home \
+           XDG_CACHE_HOME=/tmp/npm-version-home/xdg-cache \
+           XDG_CONFIG_HOME=/tmp/npm-version-home/xdg-config \
+           XDG_STATE_HOME=/tmp/npm-version-home/xdg-state; \
+    install -d "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]!==22 || v[1]<22 || (v[1]===22 && v[2]<2)) throw Error("npm requires Node >=22.22.2 in the pinned Node 22 image")' \
  && test "$(npm_config_cache=/tmp/npm-version-cache npm --version)" = "${NPM_VERSION}" \
- && rm -rf /tmp/npm-version-cache
+ && rm -rf /tmp/npm-version-cache /tmp/npm-version-home /root/.npm /root/.cache
 
 # The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
 # repository's ``.github/ci-deps`` importer already records the independently
@@ -587,6 +596,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && ! command -v g++ \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log \
@@ -755,6 +765,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
  && test -x /usr/bin/git \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log

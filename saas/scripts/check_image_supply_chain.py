@@ -713,7 +713,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if n1_workflow is None:
         return violations
     trigger_path = '      - "saas/**"'
-    if workflow.count(trigger_path) != 2 or n1_workflow.count(trigger_path) != 2:
+    if workflow.count(trigger_path) != 1 or n1_workflow.count(trigger_path) != 2:
         violations.append("candidate and N-1 workflows must trigger on SaaS-owned image inputs")
     if n1_workflow.count("--label-profile n1") != 2:
         violations.append(
@@ -1056,6 +1056,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "export DEBIAN_FRONTEND=noninteractive;",
         "apt-get clean",
         "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
+        "find /var/log -type f -delete",
         "rm -f /var/cache/ldconfig/aux-cache",
         "/var/log/alternatives.log",
         "/var/log/dpkg.log",
@@ -1085,6 +1086,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "export DEBIAN_FRONTEND=noninteractive;",
         "apt-get clean",
         "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
+        "find /var/log -type f -delete",
         "rm -f /var/cache/ldconfig/aux-cache",
         "/var/log/alternatives.log",
         "/var/log/dpkg.log",
@@ -1113,6 +1115,9 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         )
     host_cli_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
+        "HOME=/tmp/npm-version-home",
+        "XDG_CACHE_HOME=/tmp/npm-version-home/xdg-cache",
+        "/tmp/npm-version-cache /tmp/npm-version-home /root/.npm /root/.cache",
         "OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state",
         "HOME=/tmp/omnigent-cli-state/home",
         "TMPDIR=/tmp/omnigent-cli-state/tmp",

@@ -49,7 +49,9 @@ def test_layer_diagnostics_reject_blob_digest_mismatch(tmp_path: Path) -> None:
     first = tmp_path / "first.tar"
     second = tmp_path / "second.tar"
     first_digest = _archive(first, b"first")
-    second_digest = _archive(second, b"second", declared_digest=first_digest.removeprefix("sha256:"))
+    second_digest = _archive(
+        second, b"second", declared_digest=first_digest.removeprefix("sha256:")
+    )
 
     with pytest.raises(ValueError, match="blob digest mismatch"):
         diagnose_layer_pair(first, second, first_digest, first_digest)

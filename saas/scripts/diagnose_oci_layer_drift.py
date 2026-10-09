@@ -80,7 +80,9 @@ def diagnose_layer_pair(
 ) -> dict[str, Any]:
     left = _layer_entries(first_archive, first_digest)
     right = _layer_entries(second_archive, second_digest)
-    changed = [path for path in sorted(left.keys() | right.keys()) if left.get(path) != right.get(path)]
+    changed = [
+        path for path in sorted(left.keys() | right.keys()) if left.get(path) != right.get(path)
+    ]
     return {
         "changed_entry_count": len(changed),
         "changed_entries": [
@@ -113,7 +115,7 @@ def main() -> int:
                 changed_layers[platform] = {"layer_count": [len(left), len(right)]}
                 continue
             platform_diffs = {}
-            for index, (left_layer, right_layer) in enumerate(zip(left, right)):
+            for index, (left_layer, right_layer) in enumerate(zip(left, right, strict=True)):
                 if left_layer["digest"] == right_layer["digest"]:
                     continue
                 platform_diffs[str(index)] = diagnose_layer_pair(
