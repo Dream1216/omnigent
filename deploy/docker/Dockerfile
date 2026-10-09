@@ -447,6 +447,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
  && find /var/log -type f -delete \
+ && : > /etc/machine-id \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
@@ -487,7 +488,8 @@ RUN export HOME=/tmp/npm-version-home \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]!==22 || v[1]<22 || (v[1]===22 && v[2]<2)) throw Error("npm requires Node >=22.22.2 in the pinned Node 22 image")' \
  && test "$(npm_config_cache=/tmp/npm-version-cache npm --version)" = "${NPM_VERSION}" \
- && rm -rf /tmp/npm-version-cache /tmp/npm-version-home /root/.npm /root/.cache
+ && rm -rf /tmp/npm-version-cache /tmp/npm-version-home /tmp/node-compile-cache \
+      /root/.npm /root/.cache
 
 # The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
 # repository's ``.github/ci-deps`` importer already records the independently

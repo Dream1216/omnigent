@@ -1115,9 +1115,11 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         )
     host_cli_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
+        ": > /etc/machine-id",
         "HOME=/tmp/npm-version-home",
         "XDG_CACHE_HOME=/tmp/npm-version-home/xdg-cache",
-        "/tmp/npm-version-cache /tmp/npm-version-home /root/.npm /root/.cache",
+        "/tmp/npm-version-cache /tmp/npm-version-home /tmp/node-compile-cache",
+        "/root/.npm /root/.cache",
         "OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state",
         "HOME=/tmp/omnigent-cli-state/home",
         "TMPDIR=/tmp/omnigent-cli-state/tmp",
