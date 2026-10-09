@@ -11,11 +11,17 @@ import tempfile
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
+
+
+class ScanReport(TypedDict):
+    counts: dict[str, int]
+    findings: list[dict[str, object]]
 
 
 def parse_database_status(data: dict[str, object], *, now: datetime) -> str:
@@ -33,13 +39,13 @@ def parse_database_status(data: dict[str, object], *, now: datetime) -> str:
     return built
 
 
-def scan_report(data: dict[str, object]) -> dict[str, object]:
+def scan_report(data: dict[str, object]) -> ScanReport:
     matches = data.get("matches")
     ignored = data.get("ignoredMatches", [])
     if not isinstance(matches, list) or ignored != []:
         raise ValueError("Grype report is incomplete or contains ignored findings")
     counts = dict.fromkeys(SEVERITIES, 0)
-    findings = []
+    findings: list[dict[str, object]] = []
     for match in matches:
         if not isinstance(match, dict):
             raise ValueError("Grype match is malformed")
