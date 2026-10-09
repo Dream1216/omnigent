@@ -152,11 +152,8 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
 
     candidate_path = _repo() / ".github/workflows/saas-image-candidate.yml"
     candidate = yaml.load(candidate_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    assert "push" not in candidate["on"]
-    assert (
-        ".github/workflows/saas-production-admission.yml"
-        in candidate["on"]["pull_request"]["paths"]
-    )
+    assert candidate["on"]["push"]["branches"] == ["main"]
+    assert ".github/workflows/saas-production-admission.yml" in candidate["on"]["push"]["paths"]
 
 
 def test_image_candidate_composite_preserves_reproducible_build_contract() -> None:

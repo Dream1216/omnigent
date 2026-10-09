@@ -713,7 +713,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if n1_workflow is None:
         return violations
     trigger_path = '      - "saas/**"'
-    if workflow.count(trigger_path) != 1 or n1_workflow.count(trigger_path) != 2:
+    if workflow.count(trigger_path) != 2 or n1_workflow.count(trigger_path) != 2:
         violations.append("candidate and N-1 workflows must trigger on SaaS-owned image inputs")
     if n1_workflow.count("--label-profile n1") != 2:
         violations.append(
