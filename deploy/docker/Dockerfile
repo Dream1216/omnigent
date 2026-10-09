@@ -279,6 +279,11 @@ RUN set -eu; \
 FROM ${RUNTIME_IMAGE} AS runtime-security-builder
 ARG SOURCE_DATE_EPOCH
 ARG RUNTIME_APT_SNAPSHOT
+# Bind the parent layer to this revision before any COPY. A cached COPY from a
+# previous revision otherwise retains that revision's rewritten OCI mtime.
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    install -d /opt /runtime-security-input \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /runtime-security-input
 COPY --from=python-runtime /usr/local /usr/local
 COPY saas/scripts/activate_debian_sid_snapshot.py /runtime-security-input/activate_debian_sid_snapshot.py
 RUN export DEBIAN_FRONTEND=noninteractive; \
@@ -305,6 +310,10 @@ RUN /runtime-security-input/build.sh /opt/runtime-security \
 FROM ${RUNTIME_IMAGE} AS secured-python-runtime
 ARG SOURCE_DATE_EPOCH
 ARG RUNTIME_APT_SNAPSHOT
+# Invalidate cached COPY layers when the source revision's epoch changes.
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    install -d /opt /tmp \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 COPY --from=python-runtime /usr/local /usr/local
 COPY --from=runtime-security-builder /opt/runtime-security /opt/runtime-security
 COPY saas/scripts/activate_debian_sid_snapshot.py /tmp/activate_debian_sid_snapshot.py

@@ -1017,20 +1017,27 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     host_marker = "FROM secured-python-runtime AS host"
     runtime_marker = "FROM secured-python-runtime AS runtime"
     builder_marker = "FROM python-runtime AS builder"
+    runtime_security_builder_marker = "FROM ${RUNTIME_IMAGE} AS runtime-security-builder"
     runtime_security_marker = "FROM ${RUNTIME_IMAGE} AS secured-python-runtime"
     server_builder_marker = "FROM builder AS server-builder"
     stage_markers = (
         builder_marker,
         server_builder_marker,
+        runtime_security_builder_marker,
         runtime_security_marker,
         host_marker,
         runtime_marker,
     )
     if any(dockerfile.count(marker) != 1 for marker in stage_markers):
         violations.append("production Dockerfile must retain the approved executable stages")
-        builder_stage = runtime_security_stage = host_stage = runtime_stage = ""
+        builder_stage = runtime_security_builder_stage = runtime_security_stage = host_stage = (
+            runtime_stage
+        ) = ""
     else:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
+        runtime_security_builder_stage = dockerfile.split(runtime_security_builder_marker, 1)[
+            1
+        ].split(runtime_security_marker, 1)[0]
         runtime_security_stage = dockerfile.split(runtime_security_marker, 1)[1].split(
             host_marker, 1
         )[0]
@@ -1038,6 +1045,15 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         runtime_stage = dockerfile.split(runtime_marker, 1)[1]
     if "COPY --from=builder /build /build" in host_stage:
         violations.append("host image must not retain the non-runtime build tree")
+    epoch_bound_copy_parent = "RUN case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;"
+    if (
+        epoch_bound_copy_parent not in runtime_security_builder_stage
+        or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /runtime-security-input'
+        not in runtime_security_builder_stage
+        or epoch_bound_copy_parent not in runtime_security_stage
+        or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp' not in runtime_security_stage
+    ):
+        violations.append("runtime security COPY parents must bind the source date epoch")
     if (
         "git curl ca-certificates" not in runtime_stage
         or "test -x /usr/bin/git" not in runtime_stage
