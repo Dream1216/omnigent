@@ -284,12 +284,21 @@ jobs:
           target: host
           attempt: "2"
       - name: Compare repeated executable image facts
+        id: compare
         run: >-
           uv run python -m saas.scripts.compare_oci_rebuilds
           --label-profile executable
           --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/saas-image-candidate.json
+      - name: Diagnose changed OCI layer files
+        if: ${{ failure() && steps.compare.outcome == 'failure' }}
+        run: >-
+          python -m saas.scripts.diagnose_oci_layer_drift
+          --report artifacts/saas-image-candidate.json
+          --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
+          --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
+          --output artifacts/oci-layer-drift.json
       - name: Scan exact OCI candidates on both architectures
         run: >-
           python -m saas.scripts.scan_oci_candidates
@@ -303,6 +312,7 @@ jobs:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
             artifacts/saas-image-candidate.json
+            artifacts/oci-layer-drift.json
             artifacts/grype/*.json
           if-no-files-found: error
           retention-days: 30
