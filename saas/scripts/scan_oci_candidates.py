@@ -17,6 +17,7 @@ GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
+SCAN_SCOPES = {"complete": {"server", "host"}, "server-preflight": {"server"}}
 
 
 class ScanReport(TypedDict):
@@ -67,6 +68,12 @@ def scan_report(data: dict[str, object]) -> ScanReport:
     return {"counts": counts, "findings": findings}
 
 
+def validate_image_scope(images: dict[str, Path], scope: str) -> None:
+    expected = SCAN_SCOPES[scope]
+    if set(images) != expected:
+        raise ValueError(f"{scope} scan requires exactly: {', '.join(sorted(expected))}")
+
+
 def install_grype(destination: Path) -> Path:
     url = (
         f"https://github.com/anchore/grype/releases/download/v{GRYPE_VERSION}/"
@@ -100,6 +107,7 @@ def file_sha256(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", action="append", required=True, metavar="NAME=OCI_ARCHIVE")
+    parser.add_argument("--scope", choices=tuple(SCAN_SCOPES), default="complete")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     images = {}
@@ -111,8 +119,10 @@ def main() -> int:
         if not archive.is_file():
             parser.error(f"OCI archive is missing: {archive}")
         images[name] = archive
-    if set(images) != {"server", "host"}:
-        parser.error("both server and host OCI archives are required")
+    try:
+        validate_image_scope(images, args.scope)
+    except ValueError as error:
+        parser.error(str(error))
 
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="omnigent-grype-") as temporary:
@@ -177,9 +187,12 @@ def main() -> int:
         "exceptions": [],
         "images": summaries,
     }
-    (args.output / "candidate-scan-summary.json").write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+    summary_name = (
+        "server-preflight-scan-summary.json"
+        if args.scope == "server-preflight"
+        else "candidate-scan-summary.json"
     )
+    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return 2 if blocked else 0
 
 

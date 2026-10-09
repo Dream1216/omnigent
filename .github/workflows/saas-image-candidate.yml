@@ -303,6 +303,12 @@ jobs:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Preflight scan exact server candidate on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --scope server-preflight
+          --image server=${{ runner.temp }}/server-1.tar
+          --output artifacts/grype-preflight
       - name: Build server candidate attempt 2
         uses: ./saas/actions/build-oci-candidate
         with:
@@ -351,6 +357,7 @@ jobs:
           path: |
             artifacts/saas-image-candidate.json
             artifacts/oci-layer-drift.json
+            artifacts/grype-preflight/*.json
             artifacts/grype/*.json
           if-no-files-found: error
           retention-days: 30
