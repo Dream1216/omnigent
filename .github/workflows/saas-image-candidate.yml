@@ -82,12 +82,48 @@ permissions:
 
 concurrency:
   group: saas-image-candidate-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer pull-request head invalidates every artifact produced for the old
+  # head. Protected main and manual release runs must still run to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  verify-candidate-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable preflight candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          persist-credentials: false
+      - name: Verify exact preflight revision
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked preflight dependencies
+        run: uv sync --frozen --extra all --group dev --extra saas
+      - name: Type-check SaaS compatibility code
+        run: uv run pyrefly check saas
+      - name: Verify image supply-chain policy contracts
+        run: >-
+          uv run pytest
+          tests/saas/test_image_supply_chain.py
+          tests/saas/test_scan_oci_candidates.py
+          tests/saas/test_oci_candidate_build_capacity.py
+          -q
+      - name: Verify image supply-chain policy
+        run: uv run python -m saas.scripts.check_image_supply_chain
+
   verify-production-migration-replay:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -145,7 +181,9 @@ jobs:
           if-no-files-found: error
 
   build-candidate:
-    needs: verify-production-migration-replay
+    needs:
+      - verify-candidate-preflight
+      - verify-production-migration-replay
     runs-on: ubuntu-latest
     timeout-minutes: 240
     services:
@@ -199,6 +237,17 @@ jobs:
             --file saas/control_plane/postgresql_principals.psql
           psql --host localhost --username postgres --dbname postgres \
             --file saas/control_plane/postgresql_database.psql
+      - name: Verify migrations and downstream compatibility
+        env:
+          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
+        run: |
+          uv run alembic -c saas/control_plane/alembic.ini upgrade head
+          uv run alembic -c saas/control_plane/alembic.ini check
+          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_patch_queue
+          uv run python -m saas.scripts.check_upstream_delta
+          uv run python -m saas.scripts.check_production_baseline
+          uv run python -m saas.scripts.check_image_supply_chain
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
       - name: Set up login UI build runtime
@@ -219,17 +268,6 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
-      - name: Verify migrations and downstream compatibility
-        env:
-          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
-        run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
-          uv run python -m saas.scripts.check_patch_queue
-          uv run python -m saas.scripts.check_upstream_delta
-          uv run python -m saas.scripts.check_production_baseline
-          uv run python -m saas.scripts.check_image_supply_chain
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx

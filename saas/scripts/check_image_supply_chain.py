@@ -517,6 +517,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             _named_workflow_step(workflow, verification),
         )
         for checkout, verification in (
+            (
+                "Checkout immutable preflight candidate",
+                "Verify exact preflight revision",
+            ),
             ("Checkout immutable candidate", "Verify exact candidate revision"),
             (
                 "Checkout immutable migration replay candidate",

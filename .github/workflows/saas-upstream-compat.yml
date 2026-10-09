@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - "codex/**"
+      - "main"
   workflow_dispatch:
 
 permissions:
@@ -49,6 +49,8 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked dependencies
         run: uv sync --frozen --extra all --group dev --extra saas
+      - name: Type-check SaaS compatibility code
+        run: uv run pyrefly check saas
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -143,8 +145,6 @@ jobs:
           tests/inner/egress/test_proxy.py::test_s2_dns_rebinding_fail_then_loopback_is_blocked_e2e
           tests/inner/egress/test_proxy.py::test_s5_connect_rejects_unsafe_host_before_dns
           tests/inner/egress/test_proxy.py::test_s5_http_rejects_unsafe_host_before_dns
-      - name: Type-check SaaS compatibility code
-        run: uv run pyrefly check saas
       - name: Verify SaaS migration CLI
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
