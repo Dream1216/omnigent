@@ -1051,6 +1051,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /runtime-security-input'
         not in runtime_security_builder_stage
         or epoch_bound_copy_parent not in runtime_security_stage
+        or "install -d /opt /tmp" in runtime_security_stage
+        or 'test "$(stat -c %a /tmp)" = 1777' not in runtime_security_stage
         or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp' not in runtime_security_stage
     ):
         violations.append("runtime security COPY parents must bind the source date epoch")

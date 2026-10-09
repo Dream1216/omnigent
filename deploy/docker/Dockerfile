@@ -312,7 +312,8 @@ ARG SOURCE_DATE_EPOCH
 ARG RUNTIME_APT_SNAPSHOT
 # Invalidate cached COPY layers when the source revision's epoch changes.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    install -d /opt /tmp \
+    install -d /opt \
+ && test "$(stat -c %a /tmp)" = 1777 \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 COPY --from=python-runtime /usr/local /usr/local
 COPY --from=runtime-security-builder /opt/runtime-security /opt/runtime-security
