@@ -256,6 +256,7 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         "saas/login_web/package.json",
         "saas/login_web/package-lock.json",
         "saas/supply_chain/npm-122-security-lock.json",
+        "saas/supply_chain/wolfi-runtime-lock.json",
         ".github/ci-deps/package.json",
         "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
@@ -810,40 +811,40 @@ def test_image_material_lock_rejects_unbounded_gh_download(
             "rm -f /var/cache/ldconfig/aux-cache",
             "true # volatile apt state retained",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "Acquire::Retries=10",
             "Acquire::Retries=0",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "Acquire::http::Timeout=30",
             "Acquire::http::Timeout=0",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "unexpected additional apt sources",
             "extra apt sources ignored",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "expected two Debian snapshot sources",
             "rolling Debian mirrors are allowed",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
@@ -932,7 +933,7 @@ def test_image_material_lock_rejects_unbounded_gh_download(
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "apt-get purge -y --auto-remove make g++",
+            "apk del --purge make gcc",
             "true # transient native build toolchain retained",
             "host CLI layer must normalize and remove volatile installer state",
         ),

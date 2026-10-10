@@ -31,7 +31,7 @@ runs:
           1|2) ;;
           *) echo "attempt must be 1 or 2" >&2; exit 2 ;;
         esac
-        for name in PYTHON_IMAGE RUNTIME_IMAGE RUNTIME_APT_SNAPSHOT NODE_IMAGE \
+        for name in PYTHON_IMAGE RUNTIME_IMAGE NODE_IMAGE \
           SOURCE_DATE_EPOCH SOURCE_REVISION \
           UPSTREAM_REVISION CONTROL_PLANE_SCHEMA_REVISION ADAPTER_CONTRACT_VERSION; do
           [[ -n "${!name:-}" ]] || { echo "missing build material: ${name}" >&2; exit 2; }
@@ -54,7 +54,6 @@ runs:
         build-args: |
           PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
           RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-          RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
           NODE_IMAGE=${{ env.NODE_IMAGE }}
           SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
           SOURCE_REVISION=${{ env.SOURCE_REVISION }}

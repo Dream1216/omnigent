@@ -280,8 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
-          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
-          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
           source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
           source_revision="$CANDIDATE_REVISION"
@@ -289,8 +288,7 @@ jobs:
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
           schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
           echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          echo "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
-          echo "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
+          echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"
@@ -459,8 +457,7 @@ jobs:
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           prefix="ghcr.io/${owner}"
           python_digest=$(crane digest python:3.12-slim)
-          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
-          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
@@ -469,8 +466,7 @@ jobs:
           echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
+          printf '%s\n' "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_REVISION=${PRODUCT_REVISION}" >> "$GITHUB_ENV"
@@ -494,7 +490,6 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
             RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
@@ -519,7 +514,6 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
             RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}

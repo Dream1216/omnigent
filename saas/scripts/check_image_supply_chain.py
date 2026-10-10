@@ -29,6 +29,7 @@ _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
+_WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _APPROVED_UV_VERSION = "0.12.1"
@@ -67,7 +68,6 @@ _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "RUNTIME_IMAGE",
-    "RUNTIME_APT_SNAPSHOT",
     "NODE_IMAGE",
     "SOURCE_DATE_EPOCH",
     "SOURCE_REVISION",
@@ -88,6 +88,7 @@ _REQUIRED_LOCKFILES = {
     "pnpm-workspace.yaml",
     "saas/login_web/package-lock.json",
     "saas/supply_chain/npm-122-security-lock.json",
+    _WOLFI_RUNTIME_LOCK,
 }
 _NPM_SECURITY_OVERLAY_LOCK = "saas/supply_chain/npm-122-security-lock.json"
 _APPROVED_NPM_SECURITY_OVERLAYS = {
@@ -555,8 +556,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     material_sources = {
         "python_digest=$(crane digest python:3.12-slim)",
-        "runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)",
-        "runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)",
+        "runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)",
         "node_digest=$(crane digest node:22-slim)",
         'source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")',
         'source_revision="$CANDIDATE_REVISION"',
@@ -572,8 +572,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     material_exports = {
         'echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"',
-        'echo "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"',
-        'echo "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"',
+        'echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"',
         'echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"',
         'echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"',
         'echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"',
@@ -817,6 +816,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="npm security overlay lock",
         violations=violations,
     )
+    wolfi_runtime_lock = _read_repository_contract(
+        repo,
+        _WOLFI_RUNTIME_LOCK,
+        label="Wolfi runtime lock",
+        violations=violations,
+    )
     cli_manifest = _read_repository_contract(
         repo,
         ".github/ci-deps/package.json",
@@ -839,6 +844,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         login_manifest,
         login_lock,
         npm_security_overlay_lock,
+        wolfi_runtime_lock,
         cli_manifest,
         host_cli_normalizer,
     ):
@@ -852,6 +858,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     assert login_manifest is not None
     assert login_lock is not None
     assert npm_security_overlay_lock is not None
+    assert wolfi_runtime_lock is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
 
@@ -885,6 +892,46 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             raise ValueError("content does not match the approved patch closure")
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         violations.append(f"npm security overlay lock is invalid: {exc}")
+
+    wolfi_contract: dict[str, Any] = {}
+    try:
+        wolfi_data = json.loads(wolfi_runtime_lock)
+        wolfi_contract = wolfi_data["runtime_contract"]
+        if wolfi_data.get("schema_version") != 1:
+            raise ValueError("schema_version must be 1")
+        if wolfi_data.get("distribution") != "wolfi":
+            raise ValueError("distribution must be wolfi")
+        if wolfi_data.get("image") != "cgr.dev/chainguard/wolfi-base:latest":
+            raise ValueError("image coordinate is not approved")
+        if _SHA256.fullmatch(str(wolfi_data.get("manifest_digest", ""))) is None:
+            raise ValueError("manifest digest is invalid")
+        if wolfi_data.get("production_admission") is not True:
+            raise ValueError("production admission must be true")
+        if wolfi_contract.get("architectures") != ["amd64", "arm64"]:
+            raise ValueError("runtime architectures must be amd64 and arm64")
+        if wolfi_contract.get("venv_builder_image") != "python:3.12-slim":
+            raise ValueError("venv builder image is not approved")
+        for group in (
+            "common_packages",
+            "server_packages",
+            "host_packages",
+            "transient_host_packages",
+        ):
+            packages = wolfi_contract.get(group)
+            if not isinstance(packages, dict) or not packages:
+                raise ValueError(f"{group} must be a non-empty object")
+            if any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(version, str)
+                or not version
+                or version in {"latest", "edge"}
+                for name, version in packages.items()
+            ):
+                raise ValueError(f"{group} contains an invalid package pin")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        violations.append(f"Wolfi runtime lock is invalid: {exc}")
+        wolfi_contract = {}
 
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
@@ -1021,27 +1068,20 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     host_marker = "FROM secured-python-runtime AS host"
     runtime_marker = "FROM secured-python-runtime AS runtime"
     builder_marker = "FROM python-runtime AS builder"
-    runtime_security_builder_marker = "FROM ${RUNTIME_IMAGE} AS runtime-security-builder"
     runtime_security_marker = "FROM ${RUNTIME_IMAGE} AS secured-python-runtime"
     server_builder_marker = "FROM builder AS server-builder"
     stage_markers = (
         builder_marker,
         server_builder_marker,
-        runtime_security_builder_marker,
         runtime_security_marker,
         host_marker,
         runtime_marker,
     )
     if any(dockerfile.count(marker) != 1 for marker in stage_markers):
         violations.append("production Dockerfile must retain the approved executable stages")
-        builder_stage = runtime_security_builder_stage = runtime_security_stage = host_stage = (
-            runtime_stage
-        ) = ""
+        builder_stage = runtime_security_stage = host_stage = runtime_stage = ""
     else:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
-        runtime_security_builder_stage = dockerfile.split(runtime_security_builder_marker, 1)[
-            1
-        ].split(runtime_security_marker, 1)[0]
         runtime_security_stage = dockerfile.split(runtime_security_marker, 1)[1].split(
             host_marker, 1
         )[0]
@@ -1051,17 +1091,14 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         violations.append("host image must not retain the non-runtime build tree")
     epoch_bound_copy_parent = "RUN case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;"
     if (
-        epoch_bound_copy_parent not in runtime_security_builder_stage
-        or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /runtime-security-input'
-        not in runtime_security_builder_stage
-        or epoch_bound_copy_parent not in runtime_security_stage
+        epoch_bound_copy_parent not in runtime_security_stage
         or "install -d /opt /tmp" in runtime_security_stage
         or 'test "$(stat -c %a /tmp)" = 1777' not in runtime_security_stage
         or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp' not in runtime_security_stage
     ):
-        violations.append("runtime security COPY parents must bind the source date epoch")
+        violations.append("Wolfi runtime COPY parents must bind the source date epoch")
     if (
-        "git curl ca-certificates" not in runtime_stage
+        "apk add --no-cache git=2.56.0-r0" not in runtime_stage
         or "test -x /usr/bin/git" not in runtime_stage
     ):
         violations.append(
@@ -1094,47 +1131,58 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "VERSION_CODENAME",
         "Debian snapshot coordinates",
     }
-    runtime_snapshot_contract = {
-        "ARG RUNTIME_APT_SNAPSHOT",
-        "activate_debian_sid_snapshot.py",
-        '--snapshot "${RUNTIME_APT_SNAPSHOT}"',
-        "unexpected additional apt sources",
-        "rolling Debian mirror remains enabled",
-    }
-    inherited_apt_contract = {
-        "ARG SOURCE_DATE_EPOCH",
-        "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
-        "Acquire::Check-Valid-Until=false",
-        "export DEBIAN_FRONTEND=noninteractive;",
-        "apt-get clean",
-        "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
-        "find /var/log -type f -delete",
-        "rm -f /var/cache/ldconfig/aux-cache",
-        "/var/log/alternatives.log",
-        "/var/log/dpkg.log",
-        "/var/log/apt/eipp.log.xz",
-        "/var/log/apt/history.log",
-        "/var/log/apt/term.log",
-    }
     if (
         any(fragment not in builder_stage for fragment in apt_reproducibility_contract)
         or any(fragment not in builder_stage for fragment in builder_snapshot_contract)
-        or any(fragment not in runtime_security_stage for fragment in runtime_snapshot_contract)
         or any(
-            fragment not in stage
-            for stage in (runtime_security_stage, host_stage, runtime_stage)
-            for fragment in inherited_apt_contract
-        )
-        or any(
-            stage.count(fragment) != 2
-            for stage in (builder_stage, runtime_security_stage, host_stage, runtime_stage)
+            builder_stage.count(fragment) != 2
             for fragment in ("Acquire::Retries=10", "Acquire::http::Timeout=30")
         )
     ):
         violations.append(
-            "builder, host and server apt layers must use a fixed snapshot "
-            "with bounded fetch retries and remove volatile state"
+            "builder apt layers must use fixed snapshots with bounded fetch retries "
+            "and remove volatile state"
         )
+    if any(
+        forbidden in stage
+        for stage in (runtime_security_stage, host_stage, runtime_stage)
+        for forbidden in ("apt-get", "debian:sid", "activate_debian_sid_snapshot.py")
+    ):
+        violations.append("final Wolfi stages must not use Debian runtime package material")
+    package_stage_contracts = (
+        ("common_packages", runtime_security_stage),
+        ("server_packages", runtime_stage),
+        ("host_packages", host_stage),
+        ("transient_host_packages", host_stage),
+    )
+    for group, stage in package_stage_contracts:
+        packages = wolfi_contract.get(group, {})
+        if not isinstance(packages, dict) or any(
+            f"{name}={version}" not in stage for name, version in packages.items()
+        ):
+            violations.append(f"Wolfi {group} pins must be installed exactly")
+    wolfi_runtime_contract = {
+        "ARG RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base:latest",
+        "FROM ${RUNTIME_IMAGE} AS secured-python-runtime",
+        "apk add --no-cache",
+        "python-3.12=3.12.15-r3",
+        "ln -s /usr/bin/python3.12 /usr/local/bin/python",
+        "ln -s /usr/bin/python3.12 /usr/local/bin/python3",
+        "ln -s /usr/bin/python3.12 /usr/local/bin/python3.12",
+        "rm -rf /var/cache/apk/*",
+        "import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib",
+        'pyexpat.EXPAT_VERSION == "expat_2.9.0"',
+        'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"',
+        "test ! -d /usr/include/c++",
+    }
+    if (
+        any(fragment not in dockerfile for fragment in wolfi_runtime_contract)
+        or "FROM ${RUNTIME_IMAGE} AS runtime-security-builder" in dockerfile
+        or "COPY --from=runtime-security-builder" in dockerfile
+        or dockerfile.count("FROM secured-python-runtime AS ") != 2
+        or "apk del --purge make gcc" not in host_stage
+    ):
+        violations.append("final images must use the approved locked Wolfi runtime contract")
     host_cli_reproducibility_contract = {
         "ARG SOURCE_DATE_EPOCH",
         ": > /etc/machine-id",
@@ -1177,7 +1225,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "--package-import-method=copy",
         "--network-concurrency=4",
         "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build/Release/pty.node",
-        "apt-get purge -y --auto-remove make g++",
+        "apk del --purge make gcc",
         "! command -v make",
         "! command -v g++",
         'modules=Path("node_modules/.modules.yaml")',
