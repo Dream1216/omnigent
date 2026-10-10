@@ -31,3 +31,16 @@ def test_devin_fleet_cli_is_version_and_hash_pinned() -> None:
     )
     assert 'echo "$sha  $archive" | sha256sum -c -' in script
     assert 'devin@*) install_devin "${spec#*@}" ;;' in script
+
+
+def test_extra_cli_failures_are_fatal_and_sandbox_probe_is_portable() -> None:
+    dockerfile = (_ROOT / "deploy/docker/Dockerfile").read_text()
+    shared_installer = (_ROOT / "deploy/docker/install-harness-cli.sh").read_text()
+    fleet_installer = (_ROOT / "saas/scripts/install-saas-harness-cli.sh").read_text()
+
+    assert 'RUN set -eu; \\\n    if [ -n "${EXTRA_HARNESS_CLIS}" ]' in dockerfile
+    assert "command -v runuser" in shared_installer
+    assert "command -v su" in shared_installer
+    assert "command -v runuser" in fleet_installer
+    assert "command -v su" in fleet_installer
+    assert "setpriv --reuid=sandbox" not in shared_installer

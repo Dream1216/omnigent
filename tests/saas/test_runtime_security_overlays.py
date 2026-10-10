@@ -56,6 +56,9 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "git=2.56.0-r0" in dockerfile
     assert "gcc=16.2.0-r1" in dockerfile
     assert "apk del --purge make gcc" in dockerfile
+    assert "sandbox:x:1000660000:1000660000::/sandbox:/bin/sh" in dockerfile
+    assert 'pwd.getpwnam("sandbox")' in dockerfile
+    assert "--connect-timeout 30 --max-time 900 -o /tmp/kiro.zip" in dockerfile
     assert "test ! -d /usr/include/c++" in dockerfile
     assert 'pyexpat.EXPAT_VERSION == "expat_2.9.0"' in dockerfile
     assert 'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"' in dockerfile

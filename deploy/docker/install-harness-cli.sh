@@ -90,7 +90,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 # again as the non-root sandbox user when the image has one — the two ways a
 # managed-sandbox session (possibly a different user) would invoke it.
 verify() {
-    local binary="$1" out scratch
+    local binary="$1" binary_path out scratch
     command -v "$binary" >/dev/null 2>&1 \
         || die "$binary was installed but is not on PATH"
     scratch="$(mktemp -d)"
@@ -102,9 +102,17 @@ verify() {
     # image has one: a binary reachable only through the build user's home
     # would pass the root check above yet fail the first managed-sandbox
     # session. UBI has no sandbox user, so guard on `id sandbox`.
-    if [ "$(id -u)" = 0 ] && id sandbox >/dev/null 2>&1 && command -v setpriv >/dev/null 2>&1; then
-        out="$(HOME=/sandbox setpriv --reuid=sandbox --regid=sandbox --clear-groups "$binary" --version 2>&1 | tail -n1)" \
-            || die "$binary --version failed as the non-root sandbox user"
+    if [ "$(id -u)" = 0 ] && id sandbox >/dev/null 2>&1; then
+        binary_path="$(command -v "$binary")"
+        if command -v runuser >/dev/null 2>&1; then
+            out="$(runuser -u sandbox -- env HOME=/sandbox "$binary_path" --version 2>&1 | tail -n1)" \
+                || die "$binary --version failed as the non-root sandbox user"
+        elif command -v su >/dev/null 2>&1; then
+            out="$(su -s /bin/sh -c "HOME=/sandbox exec '$binary_path' --version" sandbox 2>&1 | tail -n1)" \
+                || die "$binary --version failed as the non-root sandbox user"
+        else
+            die "cannot verify $binary as the non-root sandbox user: runuser/su missing"
+        fi
         echo ">> $binary OK as sandbox: ${out:-<no version output>}"
     fi
 }

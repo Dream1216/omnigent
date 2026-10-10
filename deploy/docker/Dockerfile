@@ -439,8 +439,10 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
 # range per OpenShell's bring-your-own-container guidance, so that without
 # user-namespace remapping the sandbox user maps to an unprivileged, unused
 # host id. Unused by the root-based providers.
-RUN addgroup -g 1000660000 -S sandbox \
- && adduser -D -h /sandbox -u 1000660000 -G sandbox -s /bin/sh sandbox
+RUN printf '%s\n' 'sandbox:x:1000660000:' >> /etc/group \
+ && printf '%s\n' 'sandbox:x:1000660000:1000660000::/sandbox:/bin/sh' >> /etc/passwd \
+ && install -d -m 0755 -o 1000660000 -g 1000660000 /sandbox \
+ && python -B -I -c 'import grp, pwd; user=pwd.getpwnam("sandbox"); group=grp.getgrnam("sandbox"); assert (user.pw_uid, user.pw_gid, user.pw_dir, user.pw_shell) == (1000660000, 1000660000, "/sandbox", "/bin/sh"); assert group.gr_gid == 1000660000'
 
 # Git credential helper for private repositories over HTTPS: answers
 # `git credential get` from GIT_TOKEN / GIT_USERNAME in the
@@ -610,7 +612,7 @@ RUN set -eu; \
       *) echo "ERROR: unsupported arch '$(uname -m)' for kiro-cli" >&2; exit 1 ;; \
     esac; \
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
-      --connect-timeout 30 --max-time 300 -o /tmp/kiro.zip \
+      --connect-timeout 30 --max-time 900 -o /tmp/kiro.zip \
       "https://prod.download.cli.kiro.dev/stable/${KIRO_CLI_VERSION}/${asset}"; \
     echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
     unzip -q /tmp/kiro.zip -d /tmp/kiro; \
@@ -703,7 +705,8 @@ RUN echo 'export PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:
 # arg list (npm specs may contain *). The script is removed after use.
 ARG EXTRA_HARNESS_CLIS=
 COPY deploy/docker/install-harness-cli.sh saas/scripts/install-saas-harness-cli.sh saas/scripts/normalize_host_cli_tree.py /tmp/
-RUN if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
+RUN set -eu; \
+    if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
         set -f; \
         bash /tmp/install-saas-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
     fi; \
