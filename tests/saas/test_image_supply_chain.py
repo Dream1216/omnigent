@@ -256,6 +256,7 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         "saas/login_web/package.json",
         "saas/login_web/package-lock.json",
         "saas/supply_chain/npm-122-security-lock.json",
+        "saas/supply_chain/github-cli-source-lock.json",
         "saas/supply_chain/wolfi-runtime-lock.json",
         ".github/ci-deps/package.json",
         "saas/scripts/bind_runtime_build_revision.py",
@@ -712,7 +713,32 @@ def test_image_material_lock_rejects_unbounded_gh_download(
     dockerfile = repo / "deploy/docker/Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
     dockerfile.write_text(
-        source.replace("for attempt in 1 2 3 4 5", "for attempt in 1", 1),
+        source.replace(
+            "downloaded=; \\\n    for attempt in 1 2 3 4 5; do",
+            "downloaded=; \\\n    for attempt in 1; do",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        "GitHub CLI must come from a canonical verified export layer"
+        in validate_image_material_lock(repo)
+    )
+
+
+def test_image_material_lock_rejects_unbounded_gh_module_download(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    dockerfile.write_text(
+        source.replace(
+            "modules_downloaded= \\\n && for attempt in 1 2 3 4 5; do",
+            "modules_downloaded= \\\n && for attempt in 1; do",
+            1,
+        ),
         encoding="utf-8",
     )
 

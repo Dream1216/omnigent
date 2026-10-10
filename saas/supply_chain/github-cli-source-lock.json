@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "tool": "github-cli",
+  "version": "2.102.0",
+  "upstream_repository": "https://github.com/cli/cli",
+  "source_revision": "31778eb069e08d3a4087a1693cda6d9c9ef4aa09",
+  "source_archive": "https://github.com/cli/cli/archive/31778eb069e08d3a4087a1693cda6d9c9ef4aa09.tar.gz",
+  "source_sha256": "32c147c1f8f8afd9c3606c632d80f895ebe4d1830dc464a251de1b2db85d5da1",
+  "builder_image": "golang:1.27.2-trixie",
+  "builder_manifest_digest": "sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d",
+  "runtime_contract": {
+    "architectures": [
+      "amd64",
+      "arm64"
+    ],
+    "go_toolchain": "go1.27.2",
+    "modules": {
+      "golang.org/x/net": "v0.60.0"
+    }
+  },
+  "resolved_vulnerabilities": [
+    "GO-2026-6603",
+    "GO-2026-6604",
+    "GO-2026-6605",
+    "GO-2026-6607",
+    "GO-2026-6608",
+    "GO-2026-6610",
+    "GO-2026-6611",
+    "GO-2026-6612",
+    "GO-2026-6613"
+  ]
+}

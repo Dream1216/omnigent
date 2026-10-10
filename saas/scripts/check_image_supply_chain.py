@@ -30,6 +30,7 @@ _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
 _WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
+_GITHUB_CLI_SOURCE_LOCK = "saas/supply_chain/github-cli-source-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _APPROVED_UV_VERSION = "0.12.1"
@@ -69,6 +70,7 @@ _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
     "RUNTIME_IMAGE",
     "NODE_IMAGE",
+    "GO_IMAGE",
     "SOURCE_DATE_EPOCH",
     "SOURCE_REVISION",
     "UPSTREAM_REVISION",
@@ -88,6 +90,7 @@ _REQUIRED_LOCKFILES = {
     "pnpm-workspace.yaml",
     "saas/login_web/package-lock.json",
     "saas/supply_chain/npm-122-security-lock.json",
+    _GITHUB_CLI_SOURCE_LOCK,
     _WOLFI_RUNTIME_LOCK,
 }
 _NPM_SECURITY_OVERLAY_LOCK = "saas/supply_chain/npm-122-security-lock.json"
@@ -558,6 +561,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "python_digest=$(crane digest python:3.12-slim)",
         "runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)",
         "node_digest=$(crane digest node:22-slim)",
+        (
+            "go_digest=$(jq -er .builder_manifest_digest "
+            "saas/supply_chain/github-cli-source-lock.json)"
+        ),
         'source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")',
         'source_revision="$CANDIDATE_REVISION"',
         "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
@@ -574,6 +581,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         'echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"',
         'echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"',
         'echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"',
+        'echo "GO_IMAGE=golang:1.27.2-trixie@${go_digest}" >> "$GITHUB_ENV"',
         'echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"',
         'echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"',
         'echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"',
@@ -822,6 +830,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="Wolfi runtime lock",
         violations=violations,
     )
+    github_cli_source_lock = _read_repository_contract(
+        repo,
+        _GITHUB_CLI_SOURCE_LOCK,
+        label="GitHub CLI source lock",
+        violations=violations,
+    )
     cli_manifest = _read_repository_contract(
         repo,
         ".github/ci-deps/package.json",
@@ -845,6 +859,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         login_lock,
         npm_security_overlay_lock,
         wolfi_runtime_lock,
+        github_cli_source_lock,
         cli_manifest,
         host_cli_normalizer,
     ):
@@ -859,6 +874,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     assert login_lock is not None
     assert npm_security_overlay_lock is not None
     assert wolfi_runtime_lock is not None
+    assert github_cli_source_lock is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
 
@@ -932,6 +948,47 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         violations.append(f"Wolfi runtime lock is invalid: {exc}")
         wolfi_contract = {}
+
+    github_cli_lock: dict[str, Any] = {}
+    try:
+        github_cli_lock = json.loads(github_cli_source_lock)
+        expected_github_cli_lock = {
+            "schema_version": 1,
+            "tool": "github-cli",
+            "version": "2.102.0",
+            "upstream_repository": "https://github.com/cli/cli",
+            "source_revision": "31778eb069e08d3a4087a1693cda6d9c9ef4aa09",
+            "source_archive": (
+                "https://github.com/cli/cli/archive/"
+                "31778eb069e08d3a4087a1693cda6d9c9ef4aa09.tar.gz"
+            ),
+            "source_sha256": ("32c147c1f8f8afd9c3606c632d80f895ebe4d1830dc464a251de1b2db85d5da1"),
+            "builder_image": "golang:1.27.2-trixie",
+            "builder_manifest_digest": (
+                "sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d"
+            ),
+            "runtime_contract": {
+                "architectures": ["amd64", "arm64"],
+                "go_toolchain": "go1.27.2",
+                "modules": {"golang.org/x/net": "v0.60.0"},
+            },
+            "resolved_vulnerabilities": [
+                "GO-2026-6603",
+                "GO-2026-6604",
+                "GO-2026-6605",
+                "GO-2026-6607",
+                "GO-2026-6608",
+                "GO-2026-6610",
+                "GO-2026-6611",
+                "GO-2026-6612",
+                "GO-2026-6613",
+            ],
+        }
+        if github_cli_lock != expected_github_cli_lock:
+            raise ValueError("content does not match the approved upstream fix closure")
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        violations.append(f"GitHub CLI source lock is invalid: {exc}")
+        github_cli_lock = {}
 
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
@@ -1348,17 +1405,32 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if any(fragment not in host_stage for fragment in standalone_cli_timestamp_contract):
         violations.append("standalone host CLI install layers must normalize executable mtimes")
     gh_export_contract = {
-        "FROM builder AS gh-builder",
+        "ARG GO_IMAGE=golang:1.27.2-trixie",
+        "FROM ${GO_IMAGE} AS gh-go-toolchain",
+        "FROM python-runtime AS gh-builder",
+        "COPY --from=gh-go-toolchain /usr/local/go /usr/local/go",
+        "GOTOOLCHAIN=local",
         "ARG TARGETARCH",
-        "for attempt in 1 2 3 4 5",
+        "RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked",
+        "--mount=type=cache,target=/root/.cache/go-build,sharing=locked",
+        "downloaded=; \\\n    for attempt in 1 2 3 4 5; do",
         "urllib.request.urlopen",
         "hashlib.sha256(data).hexdigest()",
-        'archive.getmember(f"gh_{version}_linux_{arch}/bin/gh")',
-        'out=Path("/opt/gh-export/gh")',
-        "out.write_bytes(binary)",
-        "out.chmod(0o755)",
-        "os.utime(out, (epoch, epoch))",
+        'url=f"https://github.com/cli/cli/archive/{revision}.tar.gz"',
+        "unexpected gh source archive path",
+        "unsafe gh source archive member",
+        'archive.extractall(parent, members=members, filter="data")',
         '[ "$downloaded" = 1 ]',
+        "modules_downloaded= \\\n && for attempt in 1 2 3 4 5; do",
+        "timeout 300s env",
+        "GOPROXY='https://proxy.golang.org|direct' GOSUMDB=sum.golang.org",
+        '[ "$modules_downloaded" = 1 ]',
+        "GOPROXY=off GOFLAGS='-mod=readonly -buildvcs=false'",
+        "GOFLAGS='-mod=readonly -buildvcs=false'",
+        "GO_LDFLAGS='-buildid='",
+        "go run ./script/build.go bin/gh",
+        "install -m 0755 bin/gh /opt/gh-export/gh",
+        "go version -m /opt/gh-export/gh",
         'installed="$(/opt/gh-export/gh --version',
         "COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin/gh",
     }

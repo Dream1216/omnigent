@@ -179,6 +179,7 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
         "PYTHON_IMAGE",
         "RUNTIME_IMAGE",
         "NODE_IMAGE",
+        "GO_IMAGE",
         "SOURCE_DATE_EPOCH",
         "SOURCE_REVISION",
         "UPSTREAM_REVISION",

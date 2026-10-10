@@ -34,12 +34,14 @@
       "pnpm-workspace.yaml",
       "saas/login_web/package-lock.json",
       "saas/supply_chain/npm-122-security-lock.json",
+      "saas/supply_chain/github-cli-source-lock.json",
       "saas/supply_chain/wolfi-runtime-lock.json"
     ],
     "required_build_args": [
       "PYTHON_IMAGE",
       "RUNTIME_IMAGE",
       "NODE_IMAGE",
+      "GO_IMAGE",
       "SOURCE_DATE_EPOCH",
       "SOURCE_REVISION",
       "UPSTREAM_REVISION",

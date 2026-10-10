@@ -32,6 +32,24 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     }
 
 
+def test_github_cli_security_fix_source_is_closed_and_pinned() -> None:
+    path = _root() / "saas/supply_chain/github-cli-source-lock.json"
+    source = json.loads(path.read_text())
+
+    assert source["version"] == "2.102.0"
+    assert source["source_revision"] == "31778eb069e08d3a4087a1693cda6d9c9ef4aa09"
+    assert len(source["source_sha256"]) == 64
+    assert source["builder_image"] == "golang:1.27.2-trixie"
+    assert source["builder_manifest_digest"].startswith("sha256:")
+    assert len(source["builder_manifest_digest"]) == 71
+    assert source["runtime_contract"] == {
+        "architectures": ["amd64", "arm64"],
+        "go_toolchain": "go1.27.2",
+        "modules": {"golang.org/x/net": "v0.60.0"},
+    }
+    assert "GO-2026-6612" in source["resolved_vulnerabilities"]
+
+
 def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     dockerfile = (_root() / "deploy/docker/Dockerfile").read_text()
 
@@ -47,6 +65,14 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
         == 2
     )
     assert workflow.count("RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}") == 2
+    assert (
+        workflow.count(
+            "go_digest=$(jq -er .builder_manifest_digest "
+            "saas/supply_chain/github-cli-source-lock.json)"
+        )
+        == 2
+    )
+    assert workflow.count("GO_IMAGE=golang:1.27.2-trixie@${go_digest}") == 2
     assert "RUNTIME_APT_SNAPSHOT" not in workflow
     assert dockerfile.count("FROM secured-python-runtime AS ") == 2
     assert "activate_debian_sid_snapshot.py --snapshot" not in dockerfile
@@ -59,6 +85,13 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "sandbox:x:1000660000:1000660000::/sandbox:/bin/sh" in dockerfile
     assert 'pwd.getpwnam("sandbox")' in dockerfile
     assert "--connect-timeout 30 --max-time 900 -o /tmp/kiro.zip" in dockerfile
+    assert "FROM ${GO_IMAGE} AS gh-go-toolchain" in dockerfile
+    assert "GOTOOLCHAIN=local" in dockerfile
+    assert "RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked" in dockerfile
+    assert "GOPROXY='https://proxy.golang.org|direct' GOSUMDB=sum.golang.org" in dockerfile
+    assert "CGO_ENABLED=0 GOPROXY=off" in dockerfile
+    assert "GOFLAGS='-mod=readonly -buildvcs=false'" in dockerfile
+    assert "go version -m /opt/gh-export/gh" in dockerfile
     assert "test ! -d /usr/include/c++" in dockerfile
     assert 'pyexpat.EXPAT_VERSION == "expat_2.9.0"' in dockerfile
     assert 'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"' in dockerfile

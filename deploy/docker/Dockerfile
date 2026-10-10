@@ -68,6 +68,7 @@ ARG NPM_VERSION=12.2.0
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
 ARG RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base:latest
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
+ARG GO_IMAGE=golang:1.27.2-trixie
 ARG SOURCE_DATE_EPOCH=1580601600
 ARG SOURCE_REVISION=unknown
 ARG UPSTREAM_REVISION=unknown
@@ -325,29 +326,65 @@ RUN python -B -I /build/saas/scripts/materialize_npm_release.py \
  && python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
       --root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
-# Materialize the pinned GitHub CLI outside the host rootfs. The final host
-# receives only this fixed-content, fixed-mode file through a COPY layer.
-FROM builder AS gh-builder
+# Build the GitHub CLI from the exact upstream security-fix revision outside
+# the host rootfs. The latest upstream release (2.102.0) predates the Go 1.27.2
+# and x/net 0.60.0 fixes, so the final host receives a reproducible source build
+# instead of the vulnerable release binary. The source archive, toolchain image,
+# revision, and required module versions are all locked and fail closed.
+FROM ${GO_IMAGE} AS gh-go-toolchain
+FROM python-runtime AS gh-builder
+COPY --from=gh-go-toolchain /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOTOOLCHAIN=local
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
 ARG GH_VERSION=2.102.0
-ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
-ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
-RUN set -eu; \
+ARG GH_SOURCE_REVISION=31778eb069e08d3a4087a1693cda6d9c9ef4aa09
+ARG GH_SOURCE_SHA256=32c147c1f8f8afd9c3606c632d80f895ebe4d1830dc464a251de1b2db85d5da1
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    set -eu; \
     downloaded=; \
     for attempt in 1 2 3 4 5; do \
-      if python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}"; then \
+      rm -rf /build/gh-extract /build/gh-source; \
+      if python -B -c 'import hashlib, io, sys, tarfile, urllib.request; from pathlib import Path; revision, expected=sys.argv[1:]; url=f"https://github.com/cli/cli/archive/{revision}.tar.gz"; data=urllib.request.urlopen(url, timeout=300).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh source sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); members=archive.getmembers(); prefix=f"cli-{revision}"; assert members and all(member.name == prefix or member.name.startswith(prefix + "/") for member in members), "unexpected gh source archive path"; assert not any(member.issym() or member.islnk() or member.isdev() for member in members), "unsafe gh source archive member"; parent=Path("/build/gh-extract"); parent.mkdir(parents=True); archive.extractall(parent, members=members, filter="data"); archive.close(); (parent / prefix).rename("/build/gh-source")' "${GH_SOURCE_REVISION}" "${GH_SOURCE_SHA256}"; then \
         downloaded=1; \
         break; \
       fi; \
-      rm -rf /opt/gh-export; \
       [ "$attempt" -lt 5 ] || break; \
       sleep "$((attempt * 2))"; \
     done; \
     [ "$downloaded" = 1 ] \
+ && cd /build/gh-source \
+ && grep -Fx 'toolchain go1.27.2' go.mod \
+ && grep -E '^[[:space:]]*golang[.]org/x/net[[:space:]]+v0[.]60[.]0[[:space:]]+// indirect$' go.mod \
+ && [ "$(go env GOVERSION)" = "go1.27.2" ] \
+ && [ "$(go env GOARCH)" = "${TARGETARCH}" ] \
+ && modules_downloaded= \
+ && for attempt in 1 2 3 4 5; do \
+      if timeout 300s env \
+          GOPROXY='https://proxy.golang.org|direct' GOSUMDB=sum.golang.org \
+          GOFLAGS='-mod=readonly' go mod download all; then \
+        modules_downloaded=1; \
+        break; \
+      fi; \
+      [ "$attempt" -lt 5 ] || break; \
+      sleep "$((attempt * 3))"; \
+    done \
+ && [ "$modules_downloaded" = 1 ] \
+ && install -d /opt/gh-export \
+ && CGO_ENABLED=0 GOPROXY=off GOFLAGS='-mod=readonly -buildvcs=false' \
+      GH_VERSION="${GH_VERSION}-omnigent.${GH_SOURCE_REVISION}" \
+      GO_LDFLAGS='-buildid=' SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+      go run ./script/build.go bin/gh \
+ && install -m 0755 bin/gh /opt/gh-export/gh \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt/gh-export /opt/gh-export/gh \
+ && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*build[[:space:]]+CGO_ENABLED=0$' \
+ && go version -m /opt/gh-export/gh | grep -E ': go1[.]27[.]2$' \
+ && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*dep[[:space:]]+golang[.]org/x/net[[:space:]]+v0[.]60[.]0' \
  && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
  && [ "$installed" = "$GH_VERSION" ] \
- && echo "gh ${GH_VERSION} pinned (sha256 verified)"
+ && echo "gh ${GH_VERSION} built from verified upstream ${GH_SOURCE_REVISION}"
 
 # ── Host runtime (`--target host`) ──────────────────────
 # Prebaked Omnigent host for remote sandboxes: full omnigent install,
