@@ -32,7 +32,7 @@ _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
 _APPROVED_UV_VERSION = "0.12.1"
-_APPROVED_PNPM_VERSION = "11.15.1"
+_APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
     "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
@@ -66,6 +66,8 @@ _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
 }
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
+    "RUNTIME_IMAGE",
+    "RUNTIME_APT_SNAPSHOT",
     "NODE_IMAGE",
     "SOURCE_DATE_EPOCH",
     "SOURCE_REVISION",
@@ -79,7 +81,48 @@ _REQUIRED_LABELS = {
     "ai.omnigent.saas.schema-revision",
     "ai.omnigent.saas.adapter-contract-version",
 }
-_REQUIRED_LOCKFILES = {"uv.lock", "pnpm-lock.yaml", "pnpm-workspace.yaml"}
+_REQUIRED_LOCKFILES = {
+    "package.json",
+    "uv.lock",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "saas/login_web/package-lock.json",
+    "saas/supply_chain/npm-122-security-lock.json",
+}
+_NPM_SECURITY_OVERLAY_LOCK = "saas/supply_chain/npm-122-security-lock.json"
+_APPROVED_NPM_SECURITY_OVERLAYS = {
+    "schema_version": 1,
+    "npm_version": "12.2.0",
+    "overlays": [
+        {
+            "name": "brace-expansion",
+            "version": "5.0.12",
+            "tarball": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz",
+            "integrity": (
+                "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZ"
+                "THWogWktgwVDhU09iNEimQ=="
+            ),
+        },
+        {
+            "name": "http-cache-semantics",
+            "version": "4.3.0",
+            "tarball": "https://registry.npmjs.org/http-cache-semantics/-/http-cache-semantics-4.3.0.tgz",
+            "integrity": (
+                "sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0"
+                "BDcGW8kapxMKTvwlqrNkHkA=="
+            ),
+        },
+        {
+            "name": "undici",
+            "version": "6.28.1",
+            "tarball": "https://registry.npmjs.org/undici/-/undici-6.28.1.tgz",
+            "integrity": (
+                "sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5Co"
+                "DcO53J4Pu5uXp7lNfjc6DRA=="
+            ),
+        },
+    ],
+}
 _REQUIRED_IMAGES = {
     "omnigent-saas-server": {
         "target": "runtime",
@@ -508,6 +551,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     material_sources = {
         "python_digest=$(crane digest python:3.12-slim)",
+        "runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)",
+        "runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)",
         "node_digest=$(crane digest node:22-slim)",
         'source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")',
         'source_revision="$CANDIDATE_REVISION"',
@@ -523,6 +568,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
 
     material_exports = {
         'echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"',
+        'echo "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"',
+        'echo "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"',
         'echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"',
         'echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"',
         'echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"',
@@ -718,6 +765,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="production Dockerfile",
         violations=violations,
     )
+    dockerignore = _read_repository_contract(
+        repo,
+        "deploy/docker/Dockerfile.dockerignore",
+        label="production Docker build ignore policy",
+        violations=violations,
+    )
     runtime_revision_binder = _read_repository_contract(
         repo,
         _RUNTIME_REVISION_BINDER,
@@ -742,6 +795,24 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         label="pnpm workspace policy",
         violations=violations,
     )
+    login_manifest = _read_repository_contract(
+        repo,
+        "saas/login_web/package.json",
+        label="login Web dependency manifest",
+        violations=violations,
+    )
+    login_lock = _read_repository_contract(
+        repo,
+        "saas/login_web/package-lock.json",
+        label="login Web dependency lock",
+        violations=violations,
+    )
+    npm_security_overlay_lock = _read_repository_contract(
+        repo,
+        _NPM_SECURITY_OVERLAY_LOCK,
+        label="npm security overlay lock",
+        violations=violations,
+    )
     cli_manifest = _read_repository_contract(
         repo,
         ".github/ci-deps/package.json",
@@ -756,21 +827,60 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     )
     if None in (
         dockerfile,
+        dockerignore,
         runtime_revision_binder,
         uv_lock,
         pnpm_lock,
         pnpm_workspace,
+        login_manifest,
+        login_lock,
+        npm_security_overlay_lock,
         cli_manifest,
         host_cli_normalizer,
     ):
         return violations
     assert dockerfile is not None
+    assert dockerignore is not None
     assert runtime_revision_binder is not None
     assert uv_lock is not None
     assert pnpm_lock is not None
     assert pnpm_workspace is not None
+    assert login_manifest is not None
+    assert login_lock is not None
+    assert npm_security_overlay_lock is not None
     assert cli_manifest is not None
     assert host_cli_normalizer is not None
+
+    if "**/node_modules/" not in dockerignore:
+        violations.append("production Docker context must recursively exclude host node_modules")
+    try:
+        login_manifest_data = json.loads(login_manifest)
+        login_lock_data = json.loads(login_lock)
+        login_packages = login_lock_data["packages"]
+        login_versions = {
+            "next": login_packages["node_modules/next"]["version"],
+            "sharp": login_packages["node_modules/sharp"]["version"],
+            "source-map-js": login_packages["node_modules/source-map-js"]["version"],
+        }
+        if login_manifest_data["dependencies"].get("next") != "16.3.8" or (
+            login_packages[""]["dependencies"].get("next") != "16.3.8"
+        ):
+            raise ValueError("Next.js manifest and lock root are not fixed")
+        if login_versions != {
+            "next": "16.3.8",
+            "sharp": "0.35.5",
+            "source-map-js": "1.2.2",
+        }:
+            raise ValueError(f"unexpected login dependency versions: {login_versions}")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        violations.append(f"login Web security dependency closure is invalid: {exc}")
+
+    try:
+        npm_security_overlay_data = json.loads(npm_security_overlay_lock)
+        if npm_security_overlay_data != _APPROVED_NPM_SECURITY_OVERLAYS:
+            raise ValueError("content does not match the approved patch closure")
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        violations.append(f"npm security overlay lock is invalid: {exc}")
 
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
@@ -826,7 +936,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "> /tmp/venv-seed-pyc.sha256": 1,
         "> /tmp/venv-core-pyc.sha256": 1,
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-core-pyc.sha256": 1,
-        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 1,
+        "python -B -I /build/saas/scripts/normalize_host_cli_tree.py": 2,
         '--root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"': 1,
         'tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}"': 2,
         "--owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/venv.tar venv": 1,
@@ -843,6 +953,24 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or dockerfile.count("python -B -I -c") < 3
     ):
         violations.append("production venv and build tree must reject volatile installer metadata")
+    npm_export_contract = {
+        "ARG NPM_VERSION=12.2.0",
+        "ARG NPM_INTEGRITY=sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/"
+        "cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==",
+        "FROM builder AS npm-builder",
+        "python -B -I /build/saas/scripts/materialize_npm_release.py",
+        '--version "${NPM_VERSION}" --integrity "${NPM_INTEGRITY}"',
+        f"--security-lock /build/{_NPM_SECURITY_OVERLAY_LOCK}",
+        "--destination /opt/npm-export",
+        '--root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        "COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm",
+        'test "$(npm_config_cache=/tmp/npm-version-cache npm --version)" = "${NPM_VERSION}"',
+        "rm -rf /tmp/npm-version-cache",
+    }
+    if any(fragment not in dockerfile for fragment in npm_export_contract) or (
+        "COPY --from=node-runtime /usr/local/lib/node_modules" in dockerfile
+    ):
+        violations.append("Host npm must use the normalized integrity-pinned release export")
     server_bytecode_contract = {
         "> /tmp/venv-server-pyc.sha256",
         "cmp -s /tmp/venv-seed-pyc.sha256 /tmp/venv-server-pyc.sha256",
@@ -879,21 +1007,33 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if f"ARG PNPM_VERSION={_APPROVED_PNPM_VERSION}" not in dockerfile or not re.search(
         r'npm install -g[^\n]*"pnpm@\$\{PNPM_VERSION\}"', dockerfile
     ):
-        violations.append("production Dockerfile must pin pnpm 11.15.1")
-    if "COPY pnpm-workspace.yaml pnpm-lock.yaml ./" not in dockerfile:
-        violations.append("host image must copy the committed pnpm lock")
+        violations.append(f"production Dockerfile must pin pnpm {_APPROVED_PNPM_VERSION}")
+    if dockerfile.count("COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./") != 2:
+        violations.append(
+            "web and host images must copy the committed pnpm root manifest and lock"
+        )
     if "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps" not in dockerfile:
         violations.append("host CLI dependency graph must install from pnpm-lock.yaml")
-    host_marker = "FROM ${PYTHON_IMAGE} AS host"
-    runtime_marker = "FROM ${PYTHON_IMAGE} AS runtime"
-    builder_marker = "FROM ${PYTHON_IMAGE} AS builder"
+    host_marker = "FROM secured-python-runtime AS host"
+    runtime_marker = "FROM secured-python-runtime AS runtime"
+    builder_marker = "FROM python-runtime AS builder"
+    runtime_security_marker = "FROM ${RUNTIME_IMAGE} AS secured-python-runtime"
     server_builder_marker = "FROM builder AS server-builder"
-    stage_markers = (builder_marker, server_builder_marker, host_marker, runtime_marker)
+    stage_markers = (
+        builder_marker,
+        server_builder_marker,
+        runtime_security_marker,
+        host_marker,
+        runtime_marker,
+    )
     if any(dockerfile.count(marker) != 1 for marker in stage_markers):
         violations.append("production Dockerfile must retain the approved executable stages")
-        builder_stage = host_stage = runtime_stage = ""
+        builder_stage = runtime_security_stage = host_stage = runtime_stage = ""
     else:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
+        runtime_security_stage = dockerfile.split(runtime_security_marker, 1)[1].split(
+            host_marker, 1
+        )[0]
         host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
         runtime_stage = dockerfile.split(runtime_marker, 1)[1]
     if "COPY --from=builder /build /build" in host_stage:
@@ -910,14 +1050,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
         "/etc/apt/sources.list.d/debian.sources",
         "snapshot[.]debian[.]org/archive/",
-        "expected two Debian snapshot sources",
         "unexpected additional apt sources",
         "rolling Debian mirror remains enabled",
-        "len(uris) == 2",
-        "all(re.fullmatch",
-        'sum("/archive/debian/" in uri for uri in uris) == 1',
-        "VERSION_CODENAME",
-        "Debian snapshot coordinates",
         "Acquire::Check-Valid-Until=false",
         "export DEBIAN_FRONTEND=noninteractive;",
         "apt-get clean",
@@ -929,14 +1063,49 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "/var/log/apt/history.log",
         "/var/log/apt/term.log",
     }
-    if any(
-        fragment not in stage
-        for stage in (builder_stage, host_stage, runtime_stage)
-        for fragment in apt_reproducibility_contract
-    ) or any(
-        stage.count(fragment) != 2
-        for stage in (builder_stage, host_stage, runtime_stage)
-        for fragment in ("Acquire::Retries=10", "Acquire::http::Timeout=30")
+    builder_snapshot_contract = {
+        "expected two Debian snapshot sources",
+        "len(uris) == 2",
+        "all(re.fullmatch",
+        'sum("/archive/debian/" in uri for uri in uris) == 1',
+        "VERSION_CODENAME",
+        "Debian snapshot coordinates",
+    }
+    runtime_snapshot_contract = {
+        "ARG RUNTIME_APT_SNAPSHOT",
+        "activate_debian_sid_snapshot.py",
+        '--snapshot "${RUNTIME_APT_SNAPSHOT}"',
+        "unexpected additional apt sources",
+        "rolling Debian mirror remains enabled",
+    }
+    inherited_apt_contract = {
+        "ARG SOURCE_DATE_EPOCH",
+        "case \"${SOURCE_DATE_EPOCH}\" in *[!0-9]*|'') exit 2 ;; esac;",
+        "Acquire::Check-Valid-Until=false",
+        "export DEBIAN_FRONTEND=noninteractive;",
+        "apt-get clean",
+        "rm -rf /var/lib/apt/lists/* /var/cache/apt/*",
+        "rm -f /var/cache/ldconfig/aux-cache",
+        "/var/log/alternatives.log",
+        "/var/log/dpkg.log",
+        "/var/log/apt/eipp.log.xz",
+        "/var/log/apt/history.log",
+        "/var/log/apt/term.log",
+    }
+    if (
+        any(fragment not in builder_stage for fragment in apt_reproducibility_contract)
+        or any(fragment not in builder_stage for fragment in builder_snapshot_contract)
+        or any(fragment not in runtime_security_stage for fragment in runtime_snapshot_contract)
+        or any(
+            fragment not in stage
+            for stage in (runtime_security_stage, host_stage, runtime_stage)
+            for fragment in inherited_apt_contract
+        )
+        or any(
+            stage.count(fragment) != 2
+            for stage in (builder_stage, runtime_security_stage, host_stage, runtime_stage)
+            for fragment in ("Acquire::Retries=10", "Acquire::http::Timeout=30")
+        )
     ):
         violations.append(
             "builder, host and server apt layers must use a fixed snapshot "
@@ -956,32 +1125,45 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude",
         "PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi",
         "npm_config_cache=/tmp/omnigent-cli-state/npm-cache",
+        "npm_config_fetch_retries=5",
+        "npm_config_fetch_retry_factor=2",
+        "npm_config_fetch_retry_mintimeout=1000",
+        "npm_config_fetch_retry_maxtimeout=120000",
         'export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"',
         'install -d -m 0700 "$XDG_RUNTIME_DIR"',
         'npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global',
+        '--no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}"',
         'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
-        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
-        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm",
-        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx",
-        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
-        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
-        'test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
-        'test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
-        'test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs"',
+        "ln -s ../lib/node_modules/pnpm/pn /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpm",
+        "ln -s ../lib/node_modules/pnpm/pnx /usr/local/bin/pnx",
+        "ln -s ../lib/node_modules/pnpm/pnpx /usr/local/bin/pnpx",
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/pn"',
+        'test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/pnpm"',
+        'test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/pnx"',
+        'test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/pnpx"',
         "test -x /usr/local/bin/pnpm",
         'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
         "--store-dir /tmp/pnpm-store",
         "--package-import-method=copy",
+        "--network-concurrency=4",
+        "node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build/Release/pty.node",
+        "apt-get purge -y --auto-remove make g++",
+        "! command -v make",
+        "! command -v g++",
         'modules=Path("node_modules/.modules.yaml")',
         r'r"(?m)^\s*\"prunedAt\"\s*:"',
         "count == 1",
         'type(data.get("prunedAt")) is str',
         'json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\\n"',
         "pnpm prunedAt fields normalized: 1",
+        "pnpm workspace state normalized:",
         'state=Path("node_modules/.pnpm-workspace-state-v1.json")',
+        'state_data=json.loads(state.read_text(encoding="utf-8")) if state.exists() else None',
+        "state_data is None or",
         'type(state_data.get("lastValidatedTimestamp")) is int',
         'state_data["lastValidatedTimestamp"] >= 0',
-        "state.unlink()",
+        "state.unlink(missing_ok=True)",
         'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
         'test ! -e "$OMNIGENT_CLI_STATE"',
         "/root/.npm /root/.cache /root/.local/share/pnpm",
@@ -1018,17 +1200,20 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py"
     host_cli_order_contract = {
         "pnpm install --frozen-lockfile",
-        "test -x .github/ci-deps/node_modules/.bin/claude",
+        "for cli in claude codex pi kimi qwen opencode",
+        'test -x ".github/ci-deps/node_modules/.bin/$cli"',
+        'echo "ERROR: host CLI executable missing: $cli"',
+        'echo "ERROR: node-pty native module missing"',
         'case "$(claude --version 2>&1)"',
         'case "$(codex --version 2>&1)"',
         'case "$(pi --version 2>&1)"',
         'case "$(qwen --version 2>&1)"',
         'case "$(opencode --version 2>&1)"',
         'cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"',
-        "ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn",
-        "ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx",
+        "ln -s ../lib/node_modules/pnpm/pn /usr/local/bin/pn",
+        "ln -s ../lib/node_modules/pnpm/pnpx /usr/local/bin/pnpx",
         'rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store',
-        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"',
+        'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/pn"',
         'test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"',
         'test ! -e "$OMNIGENT_CLI_STATE"',
         "rm -f /tmp/normalize_host_cli_tree.py",
@@ -1045,18 +1230,18 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or host_stage.count('rm -rf "$OMNIGENT_CLI_STATE"') != 2
         or not (
             host_stage.index("pnpm install --frozen-lockfile")
-            < host_stage.index("test -x .github/ci-deps/node_modules/.bin/claude")
+            < host_stage.index("for cli in claude codex pi kimi qwen opencode")
             < host_stage.index('case "$(claude --version 2>&1)"')
             < host_stage.index('case "$(codex --version 2>&1)"')
             < host_stage.index('case "$(pi --version 2>&1)"')
             < host_stage.index('case "$(qwen --version 2>&1)"')
             < host_stage.index('case "$(opencode --version 2>&1)"')
             < host_stage.index('cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm"')
-            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn")
-            < host_stage.index("ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx")
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/pn /usr/local/bin/pn")
+            < host_stage.index("ln -s ../lib/node_modules/pnpm/pnpx /usr/local/bin/pnpx")
             < host_stage.index('rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store')
             < host_stage.index(
-                'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs"'
+                'test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/pn"'
             )
             < host_stage.index('test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION"')
             < host_stage.rindex('rm -rf "$OMNIGENT_CLI_STATE"')
@@ -1081,6 +1266,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     gh_export_contract = {
         "FROM builder AS gh-builder",
         "ARG TARGETARCH",
+        "for attempt in 1 2 3 4 5",
         "urllib.request.urlopen",
         "hashlib.sha256(data).hexdigest()",
         'archive.getmember(f"gh_{version}_linux_{arch}/bin/gh")',
@@ -1088,6 +1274,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "out.write_bytes(binary)",
         "out.chmod(0o755)",
         "os.utime(out, (epoch, epoch))",
+        '[ "$downloaded" = 1 ]',
         'installed="$(/opt/gh-export/gh --version',
         "COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin/gh",
     }

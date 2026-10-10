@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "component": "ngtcp2",
+  "version": "1.25.0",
+  "production_admission": false,
+  "upstream_repository": "https://github.com/ngtcp2/ngtcp2",
+  "upstream_release_commit": "f9e9ff01ad2c8116bc09de4f644b0028a61486a6",
+  "upstream_tag_object": "843aa72100b508e192f119439a943028b0c6f030",
+  "release_tag_signature_verified_by_github": true,
+  "artifact": {
+    "name": "ngtcp2-1.25.0.tar.xz",
+    "url": "https://github.com/ngtcp2/ngtcp2/releases/download/v1.25.0/ngtcp2-1.25.0.tar.xz",
+    "asset_id": 490189407,
+    "size": 709136,
+    "sha256": "2a34d2484ba17847a5d11965704e9dd0fac4c6d8efc75ffe1ec7de66d8c6b6fb"
+  },
+  "required_followup": [
+    "source-build-and-upstream-tests",
+    "OpenSSL-crypto-adapter-verification",
+    "curl-HTTP3-regression",
+    "ABI-and-ELF-comparison",
+    "both-architectures-full-image-scans"
+  ]
+}

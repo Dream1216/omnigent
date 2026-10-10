@@ -30,7 +30,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
 COPY web/electron/package.json ./web/electron/
 
-RUN npm install -g pnpm@11.15.1
+RUN npm install -g pnpm@12.10.1
 RUN pnpm install --frozen-lockfile --filter web
 
 COPY web/ ./web/

@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "component": "curl",
+  "distribution": "debian",
+  "codename": "trixie",
+  "source_version": "8.22.0-1",
+  "source_root": "curl-8.22.0",
+  "production_admission": false,
+  "artifacts": [
+    {
+      "name": "curl_8.22.0-1.dsc",
+      "role": "dsc",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.22.0-1.dsc",
+      "sha256": "b4872ef4875931c852f0a919db53481395fad36a9c39c0a20917b8abfae9f10a"
+    },
+    {
+      "name": "curl_8.22.0.orig.tar.gz",
+      "role": "upstream",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.22.0.orig.tar.gz",
+      "sha256": "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1"
+    },
+    {
+      "name": "curl_8.22.0.orig.tar.gz.asc",
+      "role": "signature",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.22.0.orig.tar.gz.asc",
+      "sha256": "fcd906e7d7a370e5079206b365b229fffc54b8fe311f60179ff7412e2cf77d5c"
+    },
+    {
+      "name": "curl_8.22.0-1.debian.tar.xz",
+      "role": "debian",
+      "url": "https://deb.debian.org/debian/pool/main/c/curl/curl_8.22.0-1.debian.tar.xz",
+      "sha256": "5c20c1b4eab8a991d1a4a543d36c96c56291bf36337452756796765506b8821c"
+    }
+  ],
+  "patches": [],
+  "upstream_release_commit": "01346829096c61b372692f6dc43ffa778c6caccd",
+  "upstream_release_signer": "27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2",
+  "security_fix_review": [
+    {
+      "cve": "CVE-2026-10536",
+      "commit": "bfbff7852f050232edd3e5ca5c6bf2021c340f5a",
+      "advisory": "https://curl.se/docs/CVE-2026-10536.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-11856",
+      "commit": "5c6b4880357ab3e72967c1c45cae0f96ffabc535",
+      "advisory": "https://curl.se/docs/CVE-2026-11856.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-12064",
+      "commit": "ab3bb8cd8be8f9d4acb97da0418abc279182041e",
+      "advisory": "https://curl.se/docs/CVE-2026-12064.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-13608",
+      "commit": "ea71c3b6b60e563651ea8596a975aef0c8199519",
+      "advisory": "https://curl.se/docs/CVE-2026-13608.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-18924",
+      "commit": "90325ff0444cbdff368bda5d26d6405a0bb6ee43",
+      "advisory": "https://curl.se/docs/CVE-2026-18924.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-19931",
+      "commit": "7103a93b05bc69ea98ed9d05d02fa9eeba533f2f",
+      "advisory": "https://curl.se/docs/CVE-2026-19931.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-80229",
+      "commit": "7ea37abc6ac0120ba5f6d94be8d196f7cf1506bb",
+      "advisory": "https://curl.se/docs/CVE-2026-80229.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-80230",
+      "commit": "5267ed859d545534d0c21675a2b70af5a3b6e3ef",
+      "advisory": "https://curl.se/docs/CVE-2026-80230.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-80255",
+      "commit": "4f6aa41a0145e930e766775dbe860883d350aa0a",
+      "advisory": "https://curl.se/docs/CVE-2026-80255.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-82209",
+      "commit": "95c1e8915dce64606bd753fd47fc0bd236e31cd6",
+      "advisory": "https://curl.se/docs/CVE-2026-82209.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-8286",
+      "commit": "a86efdd7ca5433de9231e650f18247de8319ad16",
+      "advisory": "https://curl.se/docs/CVE-2026-8286.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-8924",
+      "commit": "51beed175dbfc37da3113f6acce60c630c070ce8",
+      "advisory": "https://curl.se/docs/CVE-2026-8924.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-8926",
+      "commit": "4ae1d7cc2643e4773a136395f12bc02fc6867854",
+      "advisory": "https://curl.se/docs/CVE-2026-8926.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-8927",
+      "commit": "5c225384b8d52c67ce8259c6e4203bc57aacb567",
+      "advisory": "https://curl.se/docs/CVE-2026-8927.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-8932",
+      "commit": "7541ae569d82fb308a5e2d94916027da4fa3ba3e",
+      "advisory": "https://curl.se/docs/CVE-2026-8932.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-9079",
+      "commit": "88c7e16cceec816a2df45c899d49b1e85513f193",
+      "advisory": "https://curl.se/docs/CVE-2026-9079.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-9080",
+      "commit": "5ab34cba42e4ee4282fe8bab43f311d51b9bf9bd",
+      "advisory": "https://curl.se/docs/CVE-2026-9080.json",
+      "ancestor_verification_required": true
+    },
+    {
+      "cve": "CVE-2026-9545",
+      "commit": "7b9613fa9b1a5e04301a3920eef58e8138dad05e",
+      "advisory": "https://curl.se/docs/CVE-2026-9545.json",
+      "ancestor_verification_required": true
+    }
+  ]
+}

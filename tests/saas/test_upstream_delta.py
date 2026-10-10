@@ -131,14 +131,29 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 144
+    assert budget["max_direct_upstream_files"] == 148
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
-    assert revision["followup"]["revision"] == "next-agent-gate-missing-bundle-v28"
-    assert revision["followup"]["previous_max_upstream_net_added_loc"] == 4568
-    assert revision["followup"]["measured_upstream_net_added_loc"] == 4576
-    assert revision["followup"]["scoped_delta"] == {
+    followup = revision["followup"]
+    assert followup["revision"] == "runtime-security-dependency-budget-v29"
+    assert followup["previous_max_direct_upstream_files"] == 144
+    assert followup["previous_measured_direct_upstream_files"] == 143
+    assert followup["measured_direct_upstream_files"] == 148
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3221
+    assert followup["scoped_paths"] == [
+        ".github/workflows/ui-snapshot.yml",
+        "deploy/docker/Dockerfile.ubi",
+        "package.json",
+        "tests/e2e_ui/visual/regen_baseline_docker.sh",
+        "tests/test_setup_web_ui_build.py",
+    ]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "next-agent-gate-missing-bundle-v28"
+    assert followup["previous_max_upstream_net_added_loc"] == 4568
+    assert followup["measured_upstream_net_added_loc"] == 4576
+    assert followup["scoped_delta"] == {
         "omnigent/server/routes/_sessions/orchestration.py": 8,
     }
     assert revision["revision"] == "next-csrf-cross-tab-budget-v27"

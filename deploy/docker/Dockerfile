@@ -63,8 +63,11 @@
 ARG PYTHON_VERSION=3.12
 ARG NODE_VERSION=22
 ARG UV_VERSION=0.12.1
-ARG PNPM_VERSION=11.15.1
+ARG PNPM_VERSION=12.10.1
+ARG NPM_VERSION=12.2.0
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
+ARG RUNTIME_IMAGE=debian:sid-slim
+ARG RUNTIME_APT_SNAPSHOT=20261009T000000Z
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
 ARG SOURCE_DATE_EPOCH=1580601600
 ARG SOURCE_REVISION=unknown
@@ -91,7 +94,7 @@ WORKDIR /web
 # Workspace manifests + lockfile first so the install layer caches across pure
 # source edits. The electron package JSON is included so the root workspace is
 # structurally complete, but we --filter web to avoid downloading Electron.
-COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
 COPY web/electron/package.json ./web/electron/
 
@@ -124,7 +127,9 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
 # out of the shipped images. Deliberately SPA-free and psycopg-free so
 # the host target can build without node; the server-only additions
 # live in server-builder below.
-FROM ${PYTHON_IMAGE} AS builder
+FROM ${PYTHON_IMAGE} AS python-runtime
+
+FROM python-runtime AS builder
 
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_DATE_EPOCH
@@ -265,20 +270,104 @@ RUN set -eu; \
       --root=/opt/venv --source-date-epoch="${SOURCE_DATE_EPOCH}"; \
     find /opt/venv /build -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +; tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/server-venv.tar venv; mkdir /opt/server-venv-export; tar -C /opt/server-venv-export --strip-components=1 -xf /tmp/server-venv.tar; rm -f /tmp/server-venv.tar
 
+# ── Authenticated runtime security overlays ──────────────
+# Build the narrow remediations against the same Sid runtime used by the final
+# images. Every source artifact is hash-pinned, upstream keys are fingerprint-
+# bound, and signatures are verified before compilation; the build script also
+# runs each upstream suite.
+FROM ${RUNTIME_IMAGE} AS runtime-security-builder
+ARG SOURCE_DATE_EPOCH
+ARG RUNTIME_APT_SNAPSHOT
+COPY --from=python-runtime /usr/local /usr/local
+COPY saas/scripts/activate_debian_sid_snapshot.py /runtime-security-input/activate_debian_sid_snapshot.py
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B /runtime-security-input/activate_debian_sid_snapshot.py --snapshot "${RUNTIME_APT_SNAPSHOT}" \
+ && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+      autoconf automake build-essential ca-certificates curl dpkg-dev gnupg gpgv \
+      libtool patch perl pkg-config xz-utils \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
+COPY saas/scripts/build_runtime_security_overlays.sh /runtime-security-input/build.sh
+COPY saas/supply_chain/gcc-aligned-new-runtime-boundary.cc /runtime-security-input/gcc-aligned-new-runtime-boundary.cc
+RUN /runtime-security-input/build.sh /opt/runtime-security \
+ && rm -rf /runtime-security-input
+
+# Runtime-only base. Python comes from the immutable official Python image;
+# distro packages and all security overlays come from the immutable Sid image.
+FROM ${RUNTIME_IMAGE} AS secured-python-runtime
+ARG SOURCE_DATE_EPOCH
+ARG RUNTIME_APT_SNAPSHOT
+COPY --from=python-runtime /usr/local /usr/local
+COPY --from=runtime-security-builder /opt/runtime-security /opt/runtime-security
+COPY saas/scripts/activate_debian_sid_snapshot.py /tmp/activate_debian_sid_snapshot.py
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    python -B /tmp/activate_debian_sid_snapshot.py --snapshot "${RUNTIME_APT_SNAPSHOT}" \
+ && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+      ca-certificates curl libbz2-1.0 libexpat1 libffi8 liblzma5 \
+      libreadline8t64 libsqlite3-0 libstdc++6 perl zlib1g \
+ && multiarch="$(python -B -c 'import sysconfig; print(sysconfig.get_config_var("MULTIARCH"))')" \
+ && install -m 0644 /opt/runtime-security/zlib/libz.so.1.3.2 "/usr/lib/${multiarch}/libz.so.1.3.2" \
+ && install -d /usr/local/share/perl/5.42.3/Pod \
+ && cp -a /opt/runtime-security/perl/Pod/. /usr/local/share/perl/5.42.3/Pod/ \
+ && cp /opt/runtime-security/pyexpat/pyexpat*.so /usr/local/lib/python3.12/lib-dynload/ \
+ && ldconfig \
+ && test ! -d /usr/include/c++ \
+ && /opt/runtime-security/gcc/aligned-new-runtime-boundary \
+ && python -B -I -c 'import bz2, ctypes, lzma, pyexpat, readline, sqlite3, ssl, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2", zlib.ZLIB_RUNTIME_VERSION' \
+ && perl -MPod::Text -e 'die unless $Pod::Text::VERSION eq q(v6.1.1)' \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /opt/runtime-security \
+ && rm -f /tmp/activate_debian_sid_snapshot.py \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
+
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
 # image; contributes no layers of its own.
 FROM ${NODE_IMAGE} AS node-runtime
+
+# Replace the base image's bundled npm graph with a content-pinned release.
+FROM builder AS npm-builder
+ARG NPM_VERSION
+ARG NPM_INTEGRITY=sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==
+ARG SOURCE_DATE_EPOCH
+RUN python -B -I /build/saas/scripts/materialize_npm_release.py \
+      --version "${NPM_VERSION}" --integrity "${NPM_INTEGRITY}" \
+      --security-lock /build/saas/supply_chain/npm-122-security-lock.json \
+      --destination /opt/npm-export \
+ && python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
+      --root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
 # Materialize the pinned GitHub CLI outside the host rootfs. The final host
 # receives only this fixed-content, fixed-mode file through a COPY layer.
 FROM builder AS gh-builder
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
-ARG GH_VERSION=2.100.0
-ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
-ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
-RUN python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}" \
+ARG GH_VERSION=2.102.0
+ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
+ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
+RUN set -eu; \
+    downloaded=; \
+    for attempt in 1 2 3 4 5; do \
+      if python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}"; then \
+        downloaded=1; \
+        break; \
+      fi; \
+      rm -rf /opt/gh-export; \
+      [ "$attempt" -lt 5 ] || break; \
+      sleep "$((attempt * 2))"; \
+    done; \
+    [ "$downloaded" = 1 ] \
  && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
  && [ "$installed" = "$GH_VERSION" ] \
  && echo "gh ${GH_VERSION} pinned (sha256 verified)"
@@ -309,9 +398,10 @@ RUN python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pat
 #     literally named `sandbox` before running the agent (defense in depth)
 #     and fails closed if it is absent. The other providers run as root and
 #     never reference it.
-FROM ${PYTHON_IMAGE} AS host
+FROM secured-python-runtime AS host
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
+ARG NPM_VERSION
 ARG SOURCE_DATE_EPOCH
 ARG CLAUDE_CODE_VERSION=2.1.266
 ARG CODEX_CLI_VERSION=0.139.0
@@ -341,14 +431,15 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     IS_SANDBOX=1
 
-# bzip2 is required for optional goose CLI archives (.tar.bz2).
+# bzip2 is required for optional goose CLI archives (.tar.bz2). make/g++ are
+# transient build inputs for the locked node-pty fallback when its package has
+# no prebuild for the selected Node/architecture; they are purged in the same
+# later layer that installs and verifies the Host CLI graph.
 RUN export DEBIAN_FRONTEND=noninteractive; \
     case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
- && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
  && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      git tmux procps lsof bubblewrap curl ca-certificates unzip bzip2 \
+      git tmux procps lsof bubblewrap curl ca-certificates unzip bzip2 make g++ \
       iproute2 nftables \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
@@ -382,9 +473,12 @@ RUN git config --system credential.helper \
 # (`node-runtime` is the alias stage below — COPY --from does not
 # expand build args, so the FROM line resolves ${NODE_IMAGE}.)
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
- && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]!==22 || v[1]<22 || (v[1]===22 && v[2]<2)) throw Error("npm requires Node >=22.22.2 in the pinned Node 22 image")' \
+ && test "$(npm_config_cache=/tmp/npm-version-cache npm --version)" = "${NPM_VERSION}" \
+ && rm -rf /tmp/npm-version-cache
 
 # The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
 # repository's ``.github/ci-deps`` importer already records the independently
@@ -394,7 +488,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 # fails closed if either the importer or any transitive material drifts.
 WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
-COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
 # npm/pnpm installers and CLI probes may write wall-clock or reify metadata.
 # Keep all installer state under one disposable prefix, retain only the pinned
@@ -410,14 +504,19 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
            CODEX_HOME=/tmp/omnigent-cli-state/codex \
            CLAUDE_CONFIG_DIR=/tmp/omnigent-cli-state/claude \
            PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi \
-           npm_config_cache=/tmp/omnigent-cli-state/npm-cache; \
+           npm_config_cache=/tmp/omnigent-cli-state/npm-cache \
+           npm_config_fetch_retries=5 \
+           npm_config_fetch_retry_factor=2 \
+           npm_config_fetch_retry_mintimeout=1000 \
+           npm_config_fetch_retry_maxtimeout=120000 \
+           DEBIAN_FRONTEND=noninteractive; \
     export PATH="$OMNIGENT_CLI_STATE/pnpm-prefix/bin:$PATH"; \
     install -d "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" \
       "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$CODEX_HOME" \
       "$CLAUDE_CONFIG_DIR" "$PI_CODING_AGENT_DIR" \
  && install -d -m 0700 "$XDG_RUNTIME_DIR" \
  && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
-      --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+      --no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \
@@ -437,13 +536,16 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       '}' > .github/ci-deps/package.json \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
       --store-dir /tmp/pnpm-store --package-import-method=copy \
- && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); source=modules.read_text(encoding="utf-8"); count=len(re.findall(r"(?m)^\s*\"prunedAt\"\s*:", source)); assert count == 1, f"expected exactly one pnpm JSON prunedAt field, found {count}"; data=json.loads(source); assert type(data) is dict and type(data.get("prunedAt")) is str and data["prunedAt"], "pnpm JSON prunedAt field missing or invalid"; data["prunedAt"]=email.utils.formatdate(epoch, usegmt=True); modules.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8"); print("pnpm prunedAt fields normalized: 1"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")); assert type(state_data.get("lastValidatedTimestamp")) is int and state_data["lastValidatedTimestamp"] >= 0, "pnpm validation timestamp missing or invalid"; state.unlink()' \
- && test -x .github/ci-deps/node_modules/.bin/claude \
- && test -x .github/ci-deps/node_modules/.bin/codex \
- && test -x .github/ci-deps/node_modules/.bin/pi \
- && test -x .github/ci-deps/node_modules/.bin/kimi \
- && test -x .github/ci-deps/node_modules/.bin/qwen \
- && test -x .github/ci-deps/node_modules/.bin/opencode \
+      --network-concurrency=4 \
+ && SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" python -B -c 'import email.utils, json, os, re; from pathlib import Path; epoch=int(os.environ["SOURCE_DATE_EPOCH"]); assert epoch >= 0; modules=Path("node_modules/.modules.yaml"); source=modules.read_text(encoding="utf-8"); count=len(re.findall(r"(?m)^\s*\"prunedAt\"\s*:", source)); assert count == 1, f"expected exactly one pnpm JSON prunedAt field, found {count}"; data=json.loads(source); assert type(data) is dict and type(data.get("prunedAt")) is str and data["prunedAt"], "pnpm JSON prunedAt field missing or invalid"; data["prunedAt"]=email.utils.formatdate(epoch, usegmt=True); modules.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8"); print("pnpm prunedAt fields normalized: 1"); state=Path("node_modules/.pnpm-workspace-state-v1.json"); state_data=json.loads(state.read_text(encoding="utf-8")) if state.exists() else None; assert state_data is None or (type(state_data.get("lastValidatedTimestamp")) is int and state_data["lastValidatedTimestamp"] >= 0), f"pnpm validation timestamp missing or invalid: {state_data!r}"; state.unlink(missing_ok=True); state_status="present" if state_data is not None else "absent"; print(f"pnpm workspace state normalized: {state_status}")' \
+ && for cli in claude codex pi kimi qwen opencode; do \
+      test -x ".github/ci-deps/node_modules/.bin/$cli" || { \
+        echo "ERROR: host CLI executable missing: $cli" >&2; exit 1; \
+      }; \
+    done \
+ && if [ ! -f node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build/Release/pty.node ]; then \
+      echo "ERROR: node-pty native module missing" >&2; exit 1; \
+    fi \
  && case "$(claude --version 2>&1)" in *"${CLAUDE_CODE_VERSION}"*) ;; \
       *) echo "ERROR: claude CLI version mismatch" >&2; exit 1 ;; esac \
  && case "$(codex --version 2>&1)" in *"${CODEX_CLI_VERSION}"*) ;; \
@@ -459,16 +561,16 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && mkdir -p /usr/local/lib/node_modules \
  && cp -a "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm" \
       /usr/local/lib/node_modules/pnpm \
- && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pn \
- && ln -s ../lib/node_modules/pnpm/bin/pnpm.mjs /usr/local/bin/pnpm \
- && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnx \
- && ln -s ../lib/node_modules/pnpm/bin/pnpx.mjs /usr/local/bin/pnpx \
+ && ln -s ../lib/node_modules/pnpm/pn /usr/local/bin/pn \
+ && ln -s ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpm \
+ && ln -s ../lib/node_modules/pnpm/pnx /usr/local/bin/pnx \
+ && ln -s ../lib/node_modules/pnpm/pnpx /usr/local/bin/pnpx \
  && rm -rf "$OMNIGENT_CLI_STATE" /tmp/pnpm-store \
       /root/.npm /root/.cache /root/.local/share/pnpm \
- && test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
- && test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/bin/pnpm.mjs" \
- && test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
- && test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/bin/pnpx.mjs" \
+ && test "$(readlink /usr/local/bin/pn)" = "../lib/node_modules/pnpm/pn" \
+ && test "$(readlink /usr/local/bin/pnpm)" = "../lib/node_modules/pnpm/pnpm" \
+ && test "$(readlink /usr/local/bin/pnx)" = "../lib/node_modules/pnpm/pnx" \
+ && test "$(readlink /usr/local/bin/pnpx)" = "../lib/node_modules/pnpm/pnpx" \
  && test -x /usr/local/bin/pnpm \
  && test "$(/usr/local/bin/pnpm --version)" = "$PNPM_VERSION" \
  && rm -rf "$OMNIGENT_CLI_STATE" \
@@ -480,6 +582,14 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       --source-date-epoch "$SOURCE_DATE_EPOCH" \
       --root /opt/omnigent-host-cli \
       --root /usr/local/lib/node_modules/pnpm \
+ && apt-get purge -y --auto-remove make g++ \
+ && ! command -v make \
+ && ! command -v g++ \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
+      /var/log/alternatives.log /var/log/dpkg.log \
+      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log \
  && rm -f /tmp/normalize_host_cli_tree.py \
  && find /tmp -mindepth 1 -depth -delete && find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + && touch -h -d "@${SOURCE_DATE_EPOCH}" \
       /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
@@ -509,7 +619,9 @@ RUN set -eu; \
       aarch64) asset="kirocli-aarch64-linux.zip"; sha="$KIRO_CLI_SHA256_ARM64" ;; \
       *) echo "ERROR: unsupported arch '$(uname -m)' for kiro-cli" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/kiro.zip "https://prod.download.cli.kiro.dev/stable/${KIRO_CLI_VERSION}/${asset}"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+      --connect-timeout 30 --max-time 300 -o /tmp/kiro.zip \
+      "https://prod.download.cli.kiro.dev/stable/${KIRO_CLI_VERSION}/${asset}"; \
     echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
     unzip -q /tmp/kiro.zip -d /tmp/kiro; \
     KIRO_CLI_SKIP_SETUP=1 sh /tmp/kiro/kirocli/install.sh; \
@@ -560,7 +672,8 @@ RUN set -eu; \
       *) echo "ERROR: unsupported arch '$arch' for agy" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}"; \
-    curl -fsSL -o /tmp/agy.tar.gz "$url"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+      --connect-timeout 30 --max-time 300 -o /tmp/agy.tar.gz "$url"; \
     echo "${sha}  /tmp/agy.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
     install -m 0755 /tmp/antigravity /usr/local/bin/agy; touch -h -d "@${SOURCE_DATE_EPOCH}" /usr/local/bin/agy /usr/local/bin; \
@@ -615,7 +728,7 @@ WORKDIR /root
 CMD ["sleep", "infinity"]
 
 # ── Server runtime (default target) ─────────────────────
-FROM ${PYTHON_IMAGE} AS runtime
+FROM secured-python-runtime AS runtime
 
 ARG SOURCE_DATE_EPOCH
 ARG SOURCE_REVISION
@@ -636,9 +749,7 @@ ENV PYTHONUNBUFFERED=1 \
 # ca-certificates serve the health check and outbound HTTPS integrations.
 RUN export DEBIAN_FRONTEND=noninteractive; \
     case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    python -B -c 'import platform, re; from pathlib import Path; path=Path("/etc/apt/sources.list.d/debian.sources"); source=path.read_text(encoding="utf-8"); pattern=re.compile(r"(?m)^# (http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z)\nURIs: http://deb[.]debian[.]org/(?:debian|debian-security)$"); normalized,count=pattern.subn(lambda match: f"# {match.group(1)}\nURIs: {match.group(1)}", source); assert count == 2, f"expected two Debian snapshot sources, found {count}"; uris=re.findall(r"(?m)^URIs: (\S+)$", normalized); assert len(uris) == 2 and all(re.fullmatch(r"http://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z", uri) for uri in uris), uris; assert sum("/archive/debian/" in uri for uri in uris) == 1 and sum("/archive/debian-security/" in uri for uri in uris) == 1, uris; codename=platform.freedesktop_os_release()["VERSION_CODENAME"]; suites=re.findall(r"(?m)^Suites: (.+)$", normalized); assert len(suites) == 2 and set(suites) == {f"{codename} {codename}-updates", f"{codename}-security"}, suites; path.write_text(normalized, encoding="utf-8"); print(f"Debian snapshot coordinates ({codename}): {uris}")' \
- && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
  && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
       git curl ca-certificates \
  && test -x /usr/bin/git \

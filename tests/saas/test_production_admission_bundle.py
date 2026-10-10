@@ -176,6 +176,8 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
     assert "inputs.attempt == '1'" in options["cache-to"]
     for name in (
         "PYTHON_IMAGE",
+        "RUNTIME_IMAGE",
+        "RUNTIME_APT_SNAPSHOT",
         "NODE_IMAGE",
         "SOURCE_DATE_EPOCH",
         "SOURCE_REVISION",

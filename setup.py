@@ -108,7 +108,7 @@ class _GenerateBuildInfo(build_py):
 
         ``web/`` is a package in a pnpm workspace (``pnpm-workspace.yaml``
         and ``pnpm-lock.yaml`` at the repo root, ``packageManager:
-        pnpm@11.15.1`` in the root ``package.json``), so the install and
+        pnpm@12.10.1`` in the root ``package.json``), so the install and
         build run against the **workspace root** with ``--filter web``,
         matching ``deploy/databricks/build.sh`` and the CI workflows.
         Running ``pnpm install`` from inside ``web/`` would miss the
@@ -171,8 +171,8 @@ class _GenerateBuildInfo(build_py):
         )
         if bundle.is_file() and not force:
             return
-        # pnpm 11.15.1 requires Node 22.13 and is stricter than Vite 8 and
-        # oxlint. Enforce the effective toolchain floor before invoking pnpm.
+        # Keep the release-supported Node 22.13 floor independent of pnpm's
+        # broader engine range so all build paths use the same Node runtime.
         node_version = _require_supported_node()
 
         # pnpm first; fall back to corepack (bundled with Node 22+),
@@ -277,8 +277,8 @@ class _GenerateBuildInfo(build_py):
 def _require_supported_node() -> str:
     """Return the Node.js version or abort when it is older than 22.13.
 
-    The pinned pnpm 11.15.1 requires Node 22.13. Newer Node releases
-    remain valid.
+    The release-supported frontend toolchain starts at Node 22.13. Newer Node
+    releases remain valid even when pnpm itself supports older Node versions.
 
     :returns: The normalized Node.js version string.
     :raises SystemExit: If ``node`` is missing, ``node --version`` fails,

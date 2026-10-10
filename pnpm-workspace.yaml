@@ -40,9 +40,8 @@ minimumReleaseAgeExclude:
   - 'opencode-windows-x64-baseline@1.18.31'
   - 'opencode-windows-x64@1.18.31'
 
-settings:
-  autoInstallPeers: false
-  strictPeerDependencies: false
+autoInstallPeers: false
+strictPeerDependencies: false
 
 # jest-dom doesn't declare vitest as a (peer) dependency, so under pnpm's store
 # layout its `declare module "vitest"` matcher-type augmentation can't resolve
