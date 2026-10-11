@@ -102,6 +102,8 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert 'pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION' in workflow
     assert ('zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION') in workflow
     assert 'zlib.ZLIB_RUNTIME_VERSION == "1.3.2"' not in workflow
+    assert "'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'" in workflow
+    assert "--entrypoint /usr/bin/perl" not in workflow
     assert (
         "vulnerability_policy" in (_root() / "saas/supply_chain/release-policy.json").read_text()
     )
