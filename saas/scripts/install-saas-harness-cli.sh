@@ -67,8 +67,11 @@ for spec in "$@"; do
     esac
 done
 
-# Version probing writes a time-varying log; only executable state belongs in the image.
+# Version probes can write logs and a background session-pruning marker.
+# Remove probe state before normalizing the retained executable tree.
 rm -rf -- /opt/jcode/.jcode/logs
+rm -f -- /opt/jcode/.jcode/sessions-bak-prune.stamp
+test ! -e /opt/jcode/.jcode/sessions-bak-prune.stamp
 
 # Installer-created hard links and timestamps must be stable across rebuilds.
 roots=()
