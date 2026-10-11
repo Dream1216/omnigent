@@ -1125,11 +1125,13 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     host_marker = "FROM secured-python-runtime AS host"
     runtime_marker = "FROM secured-python-runtime AS runtime"
     builder_marker = "FROM python-runtime AS builder"
-    runtime_security_marker = "FROM ${RUNTIME_IMAGE} AS secured-python-runtime"
+    runtime_security_rootfs_marker = "FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs"
+    runtime_security_marker = "FROM scratch AS secured-python-runtime"
     server_builder_marker = "FROM builder AS server-builder"
     stage_markers = (
         builder_marker,
         server_builder_marker,
+        runtime_security_rootfs_marker,
         runtime_security_marker,
         host_marker,
         runtime_marker,
@@ -1139,7 +1141,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         builder_stage = runtime_security_stage = host_stage = runtime_stage = ""
     else:
         builder_stage = dockerfile.split(builder_marker, 1)[1].split(server_builder_marker, 1)[0]
-        runtime_security_stage = dockerfile.split(runtime_security_marker, 1)[1].split(
+        runtime_security_stage = dockerfile.split(runtime_security_rootfs_marker, 1)[1].split(
             host_marker, 1
         )[0]
         host_stage = dockerfile.split(host_marker, 1)[1].split(runtime_marker, 1)[0]
@@ -1220,7 +1222,10 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             violations.append(f"Wolfi {group} pins must be installed exactly")
     wolfi_runtime_contract = {
         "ARG RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base:latest",
-        "FROM ${RUNTIME_IMAGE} AS secured-python-runtime",
+        "FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs",
+        "FROM scratch AS secured-python-runtime",
+        "COPY --from=secured-python-runtime-rootfs / /",
+        "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
         "apk add --no-cache",
         "python-3.12=3.12.15-r3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python",
@@ -1242,6 +1247,9 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         any(fragment not in dockerfile for fragment in wolfi_runtime_contract)
         or "FROM ${RUNTIME_IMAGE} AS runtime-security-builder" in dockerfile
         or "COPY --from=runtime-security-builder" in dockerfile
+        or dockerfile.count("FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs") != 1
+        or dockerfile.count("FROM scratch AS secured-python-runtime") != 1
+        or dockerfile.count("COPY --from=secured-python-runtime-rootfs / /") != 1
         or dockerfile.count("FROM secured-python-runtime AS ") != 2
         or "apk del --purge make gcc" not in host_stage
     ):

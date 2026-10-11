@@ -275,7 +275,7 @@ RUN set -eu; \
 # Python image, while the executable runtime and linked libraries come from the
 # digest-pinned Wolfi image and exact packages in wolfi-runtime-lock.json. The
 # release workflow still requires raw zero-High/zero-Critical scans on both arches.
-FROM ${RUNTIME_IMAGE} AS secured-python-runtime
+FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs
 ARG SOURCE_DATE_EPOCH
 # Invalidate cached COPY layers when the source revision's epoch changes.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
@@ -308,6 +308,17 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && test ! -d /usr/include/c++ \
  && rm -rf /var/cache/apk/* \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
+
+# Rebase the complete, package-pinned Wolfi filesystem onto a clean image
+# configuration.  Wolfi's own OCI labels describe the upstream base rather
+# than this executable release; retaining them would make the final image
+# identity ambiguous and violate the exact four-label release contract.  A
+# scratch rebase removes inherited configuration without deleting provenance:
+# BuildKit still records the digest-pinned rootfs stage as a build material.
+FROM scratch AS secured-python-runtime
+COPY --from=secured-python-runtime-rootfs / /
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin" \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned

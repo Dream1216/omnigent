@@ -54,7 +54,10 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     dockerfile = (_root() / "deploy/docker/Dockerfile").read_text()
 
     assert "ARG RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base:latest" in dockerfile
-    assert "FROM ${RUNTIME_IMAGE} AS secured-python-runtime" in dockerfile
+    assert "FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs" in dockerfile
+    assert "FROM scratch AS secured-python-runtime" in dockerfile
+    assert "COPY --from=secured-python-runtime-rootfs / /" in dockerfile
+    assert "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" in dockerfile
     assert "FROM ${RUNTIME_IMAGE} AS runtime-security-builder" not in dockerfile
     assert "COPY --from=runtime-security-builder" not in dockerfile
     workflow = (_root() / ".github/workflows/saas-image-candidate.yml").read_text()
