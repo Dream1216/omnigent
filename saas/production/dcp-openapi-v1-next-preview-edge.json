@@ -2194,7 +2194,7 @@
             "type": "string"
           },
           "health_path": {
-            "default": "/",
+            "default": "/health",
             "maxLength": 512,
             "pattern": "^/[^\\r\\n]*$",
             "title": "Health Path",
