@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import ssl
 import threading
@@ -22,6 +23,32 @@ from tests.saas.test_billing_metering_transport import _certificate_fixture
 from tests.saas.test_delivery_config import delivery_config as _delivery_config
 
 delivery_config = _delivery_config
+
+
+def test_current_preview_contract_pins_health_path_and_rejects_unreviewed_drift():
+    document = json.loads(
+        Path("saas/production/dcp-openapi-v1-next-preview-edge.json").read_bytes()
+    )
+    delivery_health = document["components"]["schemas"]["DeliverySpec"]["properties"][
+        "health_path"
+    ]
+    assert delivery_health["default"] == "/health"
+    assert (
+        document["components"]["schemas"]["DomainBindingSpec"]["properties"]["health_path"][
+            "default"
+        ]
+        == "/health"
+    )
+    canonical = (
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode()
+    assert hashlib.sha256(canonical).hexdigest() == (
+        "d03672b84c3bf636ea5aaada9f7366d7b1a1e11ce16cc3f8cb317a018675149b"
+    )
+    DeliveryClient._assert_contract(document)
+    delivery_health["default"] = "/unreviewed-health"
+    with pytest.raises(ValueError, match="contract revisions differ"):
+        DeliveryClient._assert_contract(document)
 
 
 @pytest.mark.parametrize(
