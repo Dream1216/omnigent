@@ -1208,6 +1208,15 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         for forbidden in ("apt-get", "debian:sid", "activate_debian_sid_snapshot.py")
     ):
         violations.append("final Wolfi stages must not use Debian runtime package material")
+    volatile_ldconfig_cache_cleanup = "rm -f /var/cache/ldconfig/aux-cache"
+    if (
+        runtime_security_stage.count(volatile_ldconfig_cache_cleanup) != 1
+        or host_stage.count(volatile_ldconfig_cache_cleanup) != 2
+        or runtime_stage.count(volatile_ldconfig_cache_cleanup) != 1
+    ):
+        violations.append(
+            "every Wolfi apk mutation must remove the nondeterministic ldconfig cache"
+        )
     package_stage_contracts = (
         ("common_packages", runtime_security_stage),
         ("server_packages", runtime_stage),

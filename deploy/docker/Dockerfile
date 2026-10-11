@@ -307,6 +307,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
  && test ! -d /usr/include/c++ \
  && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 
 # Rebase the complete, package-pinned Wolfi filesystem onto a clean image
@@ -481,7 +482,8 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       tmux=3.8-r0 \
       unzip=6.0-r8 \
  && : > /etc/machine-id \
- && rm -rf /var/cache/apk/*
+ && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache
 
 # OpenShell-required non-root user (see the header note). UID/GID in the high
 # range per OpenShell's bring-your-own-container guidance, so that without
@@ -630,6 +632,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && ! command -v make \
  && ! command -v g++ \
  && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache \
  && rm -f /tmp/normalize_host_cli_tree.py \
  && find /tmp -mindepth 1 -depth -delete && find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + && touch -h -d "@${SOURCE_DATE_EPOCH}" \
       /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
@@ -791,7 +794,8 @@ ENV PYTHONUNBUFFERED=1 \
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache git=2.56.0-r0 \
  && test -x /usr/bin/git \
- && rm -rf /var/cache/apk/*
+ && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache
 
 # Copy the canonical venv export and preserve /build/ — editable-install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute

@@ -706,6 +706,36 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
     )
 
 
+def test_image_material_lock_rejects_volatile_wolfi_ldconfig_cache(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    rootfs_cleanup = (
+        " && rm -rf /var/cache/apk/* \\\n"
+        " && rm -f /var/cache/ldconfig/aux-cache \\\n"
+        ' && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp'
+    )
+    assert rootfs_cleanup in source
+    dockerfile.write_text(
+        source.replace(
+            rootfs_cleanup,
+            rootfs_cleanup.replace(
+                "rm -f /var/cache/ldconfig/aux-cache",
+                "true # volatile ldconfig cache retained",
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        "every Wolfi apk mutation must remove the nondeterministic ldconfig cache"
+        in validate_image_material_lock(repo)
+    )
+
+
 def test_image_material_lock_rejects_unbounded_gh_download(
     tmp_path: Path,
 ) -> None:

@@ -80,6 +80,7 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert dockerfile.count("FROM secured-python-runtime AS ") == 2
     assert "activate_debian_sid_snapshot.py --snapshot" not in dockerfile
     assert "apk add --no-cache" in dockerfile
+    assert dockerfile.count("rm -f /var/cache/ldconfig/aux-cache") == 5
     assert "ca-certificates-bundle=20260909-r2" in dockerfile
     assert "libstdc++=16.2.0-r1" in dockerfile
     assert "git=2.56.0-r0" in dockerfile
