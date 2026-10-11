@@ -66,9 +66,9 @@ ARG UV_VERSION=0.12.1
 ARG PNPM_VERSION=12.10.1
 ARG NPM_VERSION=12.2.0
 ARG PYTHON_IMAGE=python:${PYTHON_VERSION}-slim
-ARG RUNTIME_IMAGE=debian:sid-slim
-ARG RUNTIME_APT_SNAPSHOT=20261009T000000Z
+ARG RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base:latest
 ARG NODE_IMAGE=node:${NODE_VERSION}-slim
+ARG GO_IMAGE=golang:1.27.2-trixie
 ARG SOURCE_DATE_EPOCH=1580601600
 ARG SOURCE_REVISION=unknown
 ARG UPSTREAM_REVISION=unknown
@@ -153,6 +153,7 @@ RUN export DEBIAN_FRONTEND=noninteractive; \
       build-essential \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && find /var/log -type f -delete \
  && rm -f /var/cache/ldconfig/aux-cache \
       /var/log/alternatives.log /var/log/dpkg.log \
       /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
@@ -270,66 +271,55 @@ RUN set -eu; \
       --root=/opt/venv --source-date-epoch="${SOURCE_DATE_EPOCH}"; \
     find /opt/venv /build -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +; tar --sort=name --format=gnu --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -C /opt -cf /tmp/server-venv.tar venv; mkdir /opt/server-venv-export; tar -C /opt/server-venv-export --strip-components=1 -xf /tmp/server-venv.tar; rm -f /tmp/server-venv.tar
 
-# ── Authenticated runtime security overlays ──────────────
-# Build the narrow remediations against the same Sid runtime used by the final
-# images. Every source artifact is hash-pinned, upstream keys are fingerprint-
-# bound, and signatures are verified before compilation; the build script also
-# runs each upstream suite.
-FROM ${RUNTIME_IMAGE} AS runtime-security-builder
+# Runtime-only base. The application venv is built with the immutable official
+# Python image, while the executable runtime and linked libraries come from the
+# digest-pinned Wolfi image and exact packages in wolfi-runtime-lock.json. The
+# release workflow still requires raw zero-High/zero-Critical scans on both arches.
+FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs
 ARG SOURCE_DATE_EPOCH
-ARG RUNTIME_APT_SNAPSHOT
-COPY --from=python-runtime /usr/local /usr/local
-COPY saas/scripts/activate_debian_sid_snapshot.py /runtime-security-input/activate_debian_sid_snapshot.py
-RUN export DEBIAN_FRONTEND=noninteractive; \
-    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    python -B /runtime-security-input/activate_debian_sid_snapshot.py --snapshot "${RUNTIME_APT_SNAPSHOT}" \
- && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      autoconf automake build-essential ca-certificates curl dpkg-dev gnupg gpgv \
-      libtool patch perl pkg-config xz-utils \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
- && rm -f /var/cache/ldconfig/aux-cache \
-      /var/log/alternatives.log /var/log/dpkg.log \
-      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
-COPY saas/scripts/build_runtime_security_overlays.sh /runtime-security-input/build.sh
-COPY saas/supply_chain/gcc-aligned-new-runtime-boundary.cc /runtime-security-input/gcc-aligned-new-runtime-boundary.cc
-RUN /runtime-security-input/build.sh /opt/runtime-security \
- && rm -rf /runtime-security-input
-
-# Runtime-only base. Python comes from the immutable official Python image;
-# distro packages and all security overlays come from the immutable Sid image.
-FROM ${RUNTIME_IMAGE} AS secured-python-runtime
-ARG SOURCE_DATE_EPOCH
-ARG RUNTIME_APT_SNAPSHOT
-COPY --from=python-runtime /usr/local /usr/local
-COPY --from=runtime-security-builder /opt/runtime-security /opt/runtime-security
-COPY saas/scripts/activate_debian_sid_snapshot.py /tmp/activate_debian_sid_snapshot.py
-RUN export DEBIAN_FRONTEND=noninteractive; \
-    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    python -B /tmp/activate_debian_sid_snapshot.py --snapshot "${RUNTIME_APT_SNAPSHOT}" \
- && python -B -c 'from pathlib import Path; primary=Path("/etc/apt/sources.list.d/debian.sources"); root=primary.parent; candidates=[Path("/etc/apt/sources.list"), *sorted(root.glob("*.list")), *sorted(root.glob("*.sources"))]; unexpected=[str(candidate) for candidate in candidates if candidate != primary and candidate.is_file() and any(line.strip() and not line.lstrip().startswith("#") for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines())]; assert not unexpected, f"unexpected additional apt sources: {unexpected}"; assert "deb.debian.org" not in primary.read_text(encoding="utf-8"), "rolling Debian mirror remains enabled"' \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      ca-certificates curl libbz2-1.0 libexpat1 libffi8 liblzma5 \
-      libreadline8t64 libsqlite3-0 libstdc++6 perl zlib1g \
- && multiarch="$(python -B -c 'import sysconfig; print(sysconfig.get_config_var("MULTIARCH"))')" \
- && install -m 0644 /opt/runtime-security/zlib/libz.so.1.3.2 "/usr/lib/${multiarch}/libz.so.1.3.2" \
- && install -d /usr/local/share/perl/5.42.3/Pod \
- && cp -a /opt/runtime-security/perl/Pod/. /usr/local/share/perl/5.42.3/Pod/ \
- && cp /opt/runtime-security/pyexpat/pyexpat*.so /usr/local/lib/python3.12/lib-dynload/ \
- && ldconfig \
+# Invalidate cached COPY layers when the source revision's epoch changes.
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    install -d /opt /usr/local/bin \
+ && test "$(stat -c %a /tmp)" = 1777 \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    apk add --no-cache \
+      ca-certificates-bundle=20260909-r2 \
+      gdbm=1.26-r7 \
+      libbz2-1=1.0.8-r25 \
+      libexpat1=2.9.0-r0 \
+      libffi=3.8.0-r2 \
+      libstdc++=16.2.0-r1 \
+      libuuid=2.42.4-r0 \
+      mpdecimal=4.0.1-r4 \
+      ncurses=6.6.20260926-r0 \
+      ncurses-terminfo-base=6.6.20260926-r0 \
+      py3-pip-wheel=26.2.1-r3 \
+      python-3.12=3.12.15-r3 \
+      python-3.12-base=3.12.15-r3 \
+      readline=8.3-r3 \
+      sqlite-libs=3.53.4-r2 \
+      xz=5.8.4-r0 \
+      zlib=1.3.2.1_rc20260917-r0 \
+ && ln -s /usr/bin/python3.12 /usr/local/bin/python \
+ && ln -s /usr/bin/python3.12 /usr/local/bin/python3 \
+ && ln -s /usr/bin/python3.12 /usr/local/bin/python3.12 \
+ && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
  && test ! -d /usr/include/c++ \
- && /opt/runtime-security/gcc/aligned-new-runtime-boundary \
- && python -B -I -c 'import bz2, ctypes, lzma, pyexpat, readline, sqlite3, ssl, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2", zlib.ZLIB_RUNTIME_VERSION' \
- && perl -MPod::Text -e 'die unless $Pod::Text::VERSION eq q(v6.1.1)' \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /opt/runtime-security \
- && rm -f /tmp/activate_debian_sid_snapshot.py \
+ && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache \
-      /var/log/alternatives.log /var/log/dpkg.log \
-      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
+
+# Rebase the complete, package-pinned Wolfi filesystem onto a clean image
+# configuration.  Wolfi's own OCI labels describe the upstream base rather
+# than this executable release; retaining them would make the final image
+# identity ambiguous and violate the exact four-label release contract.  A
+# scratch rebase removes inherited configuration without deleting provenance:
+# BuildKit still records the digest-pinned rootfs stage as a build material.
+FROM scratch AS secured-python-runtime
+COPY --from=secured-python-runtime-rootfs / /
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin" \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned
@@ -348,29 +338,65 @@ RUN python -B -I /build/saas/scripts/materialize_npm_release.py \
  && python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
       --root /opt/npm-export --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
-# Materialize the pinned GitHub CLI outside the host rootfs. The final host
-# receives only this fixed-content, fixed-mode file through a COPY layer.
-FROM builder AS gh-builder
+# Build the GitHub CLI from the exact upstream security-fix revision outside
+# the host rootfs. The latest upstream release (2.102.0) predates the Go 1.27.2
+# and x/net 0.60.0 fixes, so the final host receives a reproducible source build
+# instead of the vulnerable release binary. The source archive, toolchain image,
+# revision, and required module versions are all locked and fail closed.
+FROM ${GO_IMAGE} AS gh-go-toolchain
+FROM python-runtime AS gh-builder
+COPY --from=gh-go-toolchain /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOTOOLCHAIN=local
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
 ARG GH_VERSION=2.102.0
-ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
-ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
-RUN set -eu; \
+ARG GH_SOURCE_REVISION=31778eb069e08d3a4087a1693cda6d9c9ef4aa09
+ARG GH_SOURCE_SHA256=32c147c1f8f8afd9c3606c632d80f895ebe4d1830dc464a251de1b2db85d5da1
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    set -eu; \
     downloaded=; \
     for attempt in 1 2 3 4 5; do \
-      if python -B -c 'import hashlib, io, os, sys, tarfile, urllib.request; from pathlib import Path; arch, version, amd64_sha, arm64_sha, epoch_raw=sys.argv[1:]; expected={"amd64": amd64_sha, "arm64": arm64_sha}[arch]; asset=f"gh_{version}_linux_{arch}.tar.gz"; data=urllib.request.urlopen(f"https://github.com/cli/cli/releases/download/v{version}/{asset}", timeout=120).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh archive sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); member=archive.getmember(f"gh_{version}_linux_{arch}/bin/gh"); assert member.isfile(); stream=archive.extractfile(member); assert stream is not None; binary=stream.read(); archive.close(); out=Path("/opt/gh-export/gh"); out.parent.mkdir(parents=True); out.write_bytes(binary); out.chmod(0o755); epoch=int(epoch_raw); os.utime(out, (epoch, epoch)); os.utime(out.parent, (epoch, epoch))' "${TARGETARCH}" "${GH_VERSION}" "${GH_SHA256_AMD64}" "${GH_SHA256_ARM64}" "${SOURCE_DATE_EPOCH}"; then \
+      rm -rf /build/gh-extract /build/gh-source; \
+      if python -B -c 'import hashlib, io, sys, tarfile, urllib.request; from pathlib import Path; revision, expected=sys.argv[1:]; url=f"https://github.com/cli/cli/archive/{revision}.tar.gz"; data=urllib.request.urlopen(url, timeout=300).read(); actual=hashlib.sha256(data).hexdigest(); assert actual == expected, f"gh source sha256 {actual} does not match {expected}"; archive=tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"); members=archive.getmembers(); prefix=f"cli-{revision}"; assert members and all(member.name == prefix or member.name.startswith(prefix + "/") for member in members), "unexpected gh source archive path"; assert not any(member.issym() or member.islnk() or member.isdev() for member in members), "unsafe gh source archive member"; parent=Path("/build/gh-extract"); parent.mkdir(parents=True); archive.extractall(parent, members=members, filter="data"); archive.close(); (parent / prefix).rename("/build/gh-source")' "${GH_SOURCE_REVISION}" "${GH_SOURCE_SHA256}"; then \
         downloaded=1; \
         break; \
       fi; \
-      rm -rf /opt/gh-export; \
       [ "$attempt" -lt 5 ] || break; \
       sleep "$((attempt * 2))"; \
     done; \
     [ "$downloaded" = 1 ] \
+ && cd /build/gh-source \
+ && grep -Fx 'toolchain go1.27.2' go.mod \
+ && grep -E '^[[:space:]]*golang[.]org/x/net[[:space:]]+v0[.]60[.]0[[:space:]]+// indirect$' go.mod \
+ && [ "$(go env GOVERSION)" = "go1.27.2" ] \
+ && [ "$(go env GOARCH)" = "${TARGETARCH}" ] \
+ && modules_downloaded= \
+ && for attempt in 1 2 3 4 5; do \
+      if timeout 300s env \
+          GOPROXY='https://proxy.golang.org|direct' GOSUMDB=sum.golang.org \
+          GOFLAGS='-mod=readonly' go mod download all; then \
+        modules_downloaded=1; \
+        break; \
+      fi; \
+      [ "$attempt" -lt 5 ] || break; \
+      sleep "$((attempt * 3))"; \
+    done \
+ && [ "$modules_downloaded" = 1 ] \
+ && install -d /opt/gh-export \
+ && CGO_ENABLED=0 GOPROXY=off GOFLAGS='-mod=readonly -buildvcs=false' \
+      GH_VERSION="${GH_VERSION}-omnigent.${GH_SOURCE_REVISION}" \
+      GO_LDFLAGS='-buildid=' SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+      go run ./script/build.go bin/gh \
+ && install -m 0755 bin/gh /opt/gh-export/gh \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt/gh-export /opt/gh-export/gh \
+ && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*build[[:space:]]+CGO_ENABLED=0$' \
+ && go version -m /opt/gh-export/gh | grep -E ': go1[.]27[.]2$' \
+ && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*dep[[:space:]]+golang[.]org/x/net[[:space:]]+v0[.]60[.]0' \
  && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
  && [ "$installed" = "$GH_VERSION" ] \
- && echo "gh ${GH_VERSION} pinned (sha256 verified)"
+ && echo "gh ${GH_VERSION} built from verified upstream ${GH_SOURCE_REVISION}"
 
 # ── Host runtime (`--target host`) ──────────────────────
 # Prebaked Omnigent host for remote sandboxes: full omnigent install,
@@ -435,24 +461,38 @@ ENV PYTHONUNBUFFERED=1 \
 # transient build inputs for the locked node-pty fallback when its package has
 # no prebuild for the selected Node/architecture; they are purged in the same
 # later layer that installs and verifies the Host CLI graph.
-RUN export DEBIAN_FRONTEND=noninteractive; \
-    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      git tmux procps lsof bubblewrap curl ca-certificates unzip bzip2 make g++ \
-      iproute2 nftables \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
- && rm -f /var/cache/ldconfig/aux-cache \
-      /var/log/alternatives.log /var/log/dpkg.log \
-      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    apk add --no-cache \
+      bash=5.3-r14 \
+      bubblewrap=0.13.0-r0 \
+      bzip2=1.0.8-r25 \
+      coreutils=9.12-r4 \
+      curl=8.22.0-r4 \
+      findutils=4.11.0-r3 \
+      gcc=16.2.0-r1 \
+      git=2.56.0-r0 \
+      grep=3.12-r9 \
+      gzip=1.14-r10 \
+      iproute2=7.2.0-r1 \
+      lsof=4.99.7-r3 \
+      make=4.4.1-r15 \
+      nftables=1.1.7-r0 \
+      procps=4.0.7-r1 \
+      sed=4.10-r3 \
+      tmux=3.8-r0 \
+      unzip=6.0-r8 \
+ && : > /etc/machine-id \
+ && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache
 
 # OpenShell-required non-root user (see the header note). UID/GID in the high
 # range per OpenShell's bring-your-own-container guidance, so that without
 # user-namespace remapping the sandbox user maps to an unprivileged, unused
 # host id. Unused by the root-based providers.
-RUN groupadd -g 1000660000 sandbox \
- && useradd -m -d /sandbox -u 1000660000 -g sandbox sandbox
+RUN printf '%s\n' 'sandbox:x:1000660000:' >> /etc/group \
+ && printf '%s\n' 'sandbox:x:1000660000:1000660000::/sandbox:/bin/sh' >> /etc/passwd \
+ && install -d -m 0755 -o 1000660000 -g 1000660000 /sandbox \
+ && python -B -I -c 'import grp, pwd; user=pwd.getpwnam("sandbox"); group=grp.getgrnam("sandbox"); assert (user.pw_uid, user.pw_gid, user.pw_dir, user.pw_shell) == (1000660000, 1000660000, "/sandbox", "/bin/sh"); assert group.gr_gid == 1000660000'
 
 # Git credential helper for private repositories over HTTPS: answers
 # `git credential get` from GIT_TOKEN / GIT_USERNAME in the
@@ -466,19 +506,25 @@ RUN groupadd -g 1000660000 sandbox \
 RUN git config --system credential.helper \
       '!f() { [ "$1" = get ] || return 0; [ -n "$GIT_TOKEN" ] || return 0; printf "username=%s\npassword=%s\n" "${GIT_USERNAME:-x-access-token}" "$GIT_TOKEN"; }; f'
 
-# Node runtime for the harness CLIs, copied from the official image
-# (same Debian base as python-slim, so the binary is ABI-compatible)
-# rather than apt — keeps the version pinned to NODE_IMAGE and skips
-# nodesource setup. npm/npx are symlinks into npm's node_modules.
+# Node runtime for the harness CLIs, copied from the official image. Wolfi's
+# glibc runtime remains ABI-compatible with this binary, while the immutable
+# NODE_IMAGE coordinate pins its version and avoids a second package source.
+# npm/npx are symlinks into npm's node_modules.
 # (`node-runtime` is the alias stage below — COPY --from does not
 # expand build args, so the FROM line resolves ${NODE_IMAGE}.)
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=npm-builder /opt/npm-export/package /usr/local/lib/node_modules/npm
-RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+RUN export HOME=/tmp/npm-version-home \
+           XDG_CACHE_HOME=/tmp/npm-version-home/xdg-cache \
+           XDG_CONFIG_HOME=/tmp/npm-version-home/xdg-config \
+           XDG_STATE_HOME=/tmp/npm-version-home/xdg-state; \
+    install -d "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]!==22 || v[1]<22 || (v[1]===22 && v[2]<2)) throw Error("npm requires Node >=22.22.2 in the pinned Node 22 image")' \
  && test "$(npm_config_cache=/tmp/npm-version-cache npm --version)" = "${NPM_VERSION}" \
- && rm -rf /tmp/npm-version-cache
+ && rm -rf /tmp/npm-version-cache /tmp/npm-version-home /tmp/node-compile-cache \
+      /root/.npm /root/.cache
 
 # The harness CLI set mirrors omnigent/onboarding/harness_install.py. The
 # repository's ``.github/ci-deps`` importer already records the independently
@@ -582,14 +628,11 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       --source-date-epoch "$SOURCE_DATE_EPOCH" \
       --root /opt/omnigent-host-cli \
       --root /usr/local/lib/node_modules/pnpm \
- && apt-get purge -y --auto-remove make g++ \
+ && apk del --purge make gcc \
  && ! command -v make \
  && ! command -v g++ \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache \
-      /var/log/alternatives.log /var/log/dpkg.log \
-      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log \
  && rm -f /tmp/normalize_host_cli_tree.py \
  && find /tmp -mindepth 1 -depth -delete && find /root -depth -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + && touch -h -d "@${SOURCE_DATE_EPOCH}" \
       /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnx /usr/local/bin/pnpx \
@@ -620,7 +663,7 @@ RUN set -eu; \
       *) echo "ERROR: unsupported arch '$(uname -m)' for kiro-cli" >&2; exit 1 ;; \
     esac; \
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
-      --connect-timeout 30 --max-time 300 -o /tmp/kiro.zip \
+      --connect-timeout 30 --max-time 900 -o /tmp/kiro.zip \
       "https://prod.download.cli.kiro.dev/stable/${KIRO_CLI_VERSION}/${asset}"; \
     echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
     unzip -q /tmp/kiro.zip -d /tmp/kiro; \
@@ -665,10 +708,10 @@ ENV AGY_VERSION=${AGY_VERSION} \
     AGY_SHA256_AMD64=${AGY_SHA256_AMD64} \
     AGY_SHA256_ARM64=${AGY_SHA256_ARM64}
 RUN set -eu; \
-    arch="$(dpkg --print-architecture)"; \
+    arch="$(uname -m)"; \
     case "$arch" in \
-      amd64) asset="agy_cli_linux_x64.tar.gz"; sha="$AGY_SHA256_AMD64" ;; \
-      arm64) asset="agy_cli_linux_arm64.tar.gz"; sha="$AGY_SHA256_ARM64" ;; \
+      x86_64) asset="agy_cli_linux_x64.tar.gz"; sha="$AGY_SHA256_AMD64" ;; \
+      aarch64) asset="agy_cli_linux_arm64.tar.gz"; sha="$AGY_SHA256_ARM64" ;; \
       *) echo "ERROR: unsupported arch '$arch' for agy" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}"; \
@@ -713,7 +756,8 @@ RUN echo 'export PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:
 # arg list (npm specs may contain *). The script is removed after use.
 ARG EXTRA_HARNESS_CLIS=
 COPY deploy/docker/install-harness-cli.sh saas/scripts/install-saas-harness-cli.sh saas/scripts/normalize_host_cli_tree.py /tmp/
-RUN if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
+RUN set -eu; \
+    if [ -n "${EXTRA_HARNESS_CLIS}" ]; then \
         set -f; \
         bash /tmp/install-saas-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
     fi; \
@@ -745,19 +789,13 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:${PATH}"
 
-# Git provisions the sealed repository mirrors used by Runner agents. Curl and
-# ca-certificates serve the health check and outbound HTTPS integrations.
-RUN export DEBIAN_FRONTEND=noninteractive; \
-    case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 update \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=10 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-      git curl ca-certificates \
+# Git provisions the sealed repository mirrors used by Runner agents. The
+# Python standard library performs the health check and outbound HTTPS probes.
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
+    apk add --no-cache git=2.56.0-r0 \
  && test -x /usr/bin/git \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
- && rm -f /var/cache/ldconfig/aux-cache \
-      /var/log/alternatives.log /var/log/dpkg.log \
-      /var/log/apt/eipp.log.xz /var/log/apt/history.log /var/log/apt/term.log
+ && rm -rf /var/cache/apk/* \
+ && rm -f /var/cache/ldconfig/aux-cache
 
 # Copy the canonical venv export and preserve /build/ — editable-install
 # .pth files reference /build/omnigent and /build/sdks/* by absolute
@@ -782,6 +820,6 @@ ENV PORT=8000 \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
+    CMD python -c 'import os, urllib.request; port=os.environ["PORT"]; urllib.request.urlopen("http://127.0.0.1:"+port+"/health", timeout=4).read()' || exit 1
 
 CMD ["python", "/app/entrypoint.py"]

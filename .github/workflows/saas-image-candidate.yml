@@ -34,7 +34,7 @@ on:
       - "tests/saas/test_image_supply_chain.py"
   push:
     branches:
-      - "codex/**"
+      - "main"
     paths:
       - ".dockerignore"
       - ".github/workflows/saas-image-candidate.yml"
@@ -82,12 +82,48 @@ permissions:
 
 concurrency:
   group: saas-image-candidate-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer pull-request head invalidates every artifact produced for the old
+  # head. Protected main and manual release runs must still run to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  verify-candidate-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable preflight candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          persist-credentials: false
+      - name: Verify exact preflight revision
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked preflight dependencies
+        run: uv sync --frozen --extra all --group dev --extra saas
+      - name: Type-check SaaS compatibility code
+        run: uv run pyrefly check saas
+      - name: Verify image supply-chain policy contracts
+        run: >-
+          uv run pytest
+          tests/saas/test_image_supply_chain.py
+          tests/saas/test_scan_oci_candidates.py
+          tests/saas/test_oci_candidate_build_capacity.py
+          -q
+      - name: Verify image supply-chain policy
+        run: uv run python -m saas.scripts.check_image_supply_chain
+
   verify-production-migration-replay:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -145,7 +181,9 @@ jobs:
           if-no-files-found: error
 
   build-candidate:
-    needs: verify-production-migration-replay
+    needs:
+      - verify-candidate-preflight
+      - verify-production-migration-replay
     runs-on: ubuntu-latest
     timeout-minutes: 240
     services:
@@ -199,6 +237,17 @@ jobs:
             --file saas/control_plane/postgresql_principals.psql
           psql --host localhost --username postgres --dbname postgres \
             --file saas/control_plane/postgresql_database.psql
+      - name: Verify migrations and downstream compatibility
+        env:
+          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
+        run: |
+          uv run alembic -c saas/control_plane/alembic.ini upgrade head
+          uv run alembic -c saas/control_plane/alembic.ini check
+          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_patch_queue
+          uv run python -m saas.scripts.check_upstream_delta
+          uv run python -m saas.scripts.check_production_baseline
+          uv run python -m saas.scripts.check_image_supply_chain
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
       - name: Set up login UI build runtime
@@ -219,17 +268,6 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
-      - name: Verify migrations and downstream compatibility
-        env:
-          OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
-        run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
-          uv run python -m saas.scripts.check_patch_queue
-          uv run python -m saas.scripts.check_upstream_delta
-          uv run python -m saas.scripts.check_production_baseline
-          uv run python -m saas.scripts.check_image_supply_chain
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
@@ -242,18 +280,18 @@ jobs:
         run: |
           set -euo pipefail
           python_digest=$(crane digest python:3.12-slim)
-          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
-          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
+          go_digest=$(jq -er .builder_manifest_digest saas/supply_chain/github-cli-source-lock.json)
           source_epoch=$(git show -s --format=%ct "$CANDIDATE_REVISION")
           source_revision="$CANDIDATE_REVISION"
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
           schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
           echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          echo "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
-          echo "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
+          echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
+          echo "GO_IMAGE=golang:1.27.2-trixie@${go_digest}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           echo "SOURCE_REVISION=${source_revision}" >> "$GITHUB_ENV"
           echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
@@ -265,6 +303,12 @@ jobs:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Preflight scan exact server candidate on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --scope server-preflight
+          --image server=${{ runner.temp }}/server-1.tar
+          --output artifacts/grype-preflight
       - name: Build server candidate attempt 2
         uses: ./saas/actions/build-oci-candidate
         with:
@@ -284,18 +328,37 @@ jobs:
           target: host
           attempt: "2"
       - name: Compare repeated executable image facts
+        id: compare
         run: >-
           uv run python -m saas.scripts.compare_oci_rebuilds
           --label-profile executable
           --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/saas-image-candidate.json
+      - name: Diagnose changed OCI layer files
+        if: ${{ failure() && steps.compare.outcome == 'failure' }}
+        run: >-
+          python -m saas.scripts.diagnose_oci_layer_drift
+          --report artifacts/saas-image-candidate.json
+          --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
+          --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
+          --output artifacts/oci-layer-drift.json
+      - name: Scan exact OCI candidates on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --image server=${{ runner.temp }}/server-1.tar
+          --image host=${{ runner.temp }}/host-1.tar
+          --output artifacts/grype
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
-          path: artifacts/saas-image-candidate.json
+          path: |
+            artifacts/saas-image-candidate.json
+            artifacts/oci-layer-drift.json
+            artifacts/grype-preflight/*.json
+            artifacts/grype/*.json
           if-no-files-found: error
           retention-days: 30
 
@@ -396,9 +459,9 @@ jobs:
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           prefix="ghcr.io/${owner}"
           python_digest=$(crane digest python:3.12-slim)
-          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/debian-sid-runtime-lock.json)
-          runtime_snapshot=$(jq -er .snapshot saas/supply_chain/debian-sid-runtime-lock.json)
+          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)
           node_digest=$(crane digest node:22-slim)
+          go_digest=$(jq -er .builder_manifest_digest saas/supply_chain/github-cli-source-lock.json)
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
@@ -406,9 +469,9 @@ jobs:
           echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
           printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "RUNTIME_IMAGE=debian:sid-slim@${runtime_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "RUNTIME_APT_SNAPSHOT=${runtime_snapshot}" >> "$GITHUB_ENV"
+          printf '%s\n' "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
+          printf '%s\n' "GO_IMAGE=golang:1.27.2-trixie@${go_digest}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           printf '%s\n' "SOURCE_REVISION=${PRODUCT_REVISION}" >> "$GITHUB_ENV"
           printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
@@ -431,8 +494,8 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
             RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
+            GO_IMAGE=${{ env.GO_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
@@ -456,8 +519,8 @@ jobs:
           build-args: |
             PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
             RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            RUNTIME_APT_SNAPSHOT=${{ env.RUNTIME_APT_SNAPSHOT }}
             NODE_IMAGE=${{ env.NODE_IMAGE }}
+            GO_IMAGE=${{ env.GO_IMAGE }}
             SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
             SOURCE_REVISION=${{ env.SOURCE_REVISION }}
             UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
@@ -503,14 +566,13 @@ jobs:
           tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" grype
           "${RUNNER_TEMP}/supply-chain-tools/syft" version
           "${RUNNER_TEMP}/supply-chain-tools/grype" version
-      - name: Generate per-architecture SBOMs and fail-closed scans
+      - name: Generate per-architecture SBOMs and check raw findings
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
           HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/supply-chain
-          scan_timestamp=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)
           for artifact in server host; do
             case "$artifact" in
               server) image="$SERVER_IMAGE" ;;
@@ -531,20 +593,11 @@ jobs:
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
-              uv run python -m saas.scripts.render_runtime_security_vex \
-                --grype-report "${prefix}.raw.grype.json" \
-                --architecture "$arch" \
-                --timestamp "$scan_timestamp" \
-                --output "${prefix}.openvex.json"
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
-                --platform "linux/${arch}" \
-                --vex "${prefix}.openvex.json" \
-                -o json > "${prefix}.admitted.grype.json"
               jq -e '
                 ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
                 ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
-                ([.ignoredMatches[]? | select(.vulnerability.severity == "High")] | length) == 11
-              ' "${prefix}.admitted.grype.json" >/dev/null
+                (.ignoredMatches // []) == []
+              ' "${prefix}.raw.grype.json" >/dev/null
             done
           done
           "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
@@ -580,6 +633,28 @@ jobs:
               --source-digest "$PRODUCT_REVISION" \
               --deny-self-hosted-runners
           done
+      - name: Pull signed images by digest as exact OCI archives
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          crane pull --format=oci --platform=all "$SERVER_IMAGE" "${RUNNER_TEMP}/server-signed.tar"
+          crane pull --format=oci --platform=all "$HOST_IMAGE" "${RUNNER_TEMP}/host-signed.tar"
+      - name: Scan signed image digests on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --image server=${{ runner.temp }}/server-signed.tar
+          --image host=${{ runner.temp }}/host-signed.tar
+          --output artifacts/signed-grype
+      - name: Upload exact signed-image scan reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-image-scans-${{ inputs.product_revision }}
+          path: artifacts/signed-grype/*.json
+          if-no-files-found: warn
+          retention-days: 90
       - name: Record signed candidate facts
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
@@ -613,3 +688,69 @@ jobs:
             artifacts/supply-chain/
           if-no-files-found: error
           retention-days: 90
+
+  verify-published-source:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_signed &&
+      github.ref == 'refs/heads/main'
+    needs: publish-signed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - name: Download immutable signed release facts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-release-candidate-${{ inputs.product_revision }}
+          path: release-facts
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to image registry for independent readback
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Independently verify registry digests, source labels and signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCT_REVISION: ${{ inputs.product_revision }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+        run: |
+          set -euo pipefail
+          facts=release-facts/signed-release-candidate.json
+          jq -e --arg revision "$PRODUCT_REVISION" \
+            '.schema_version == 1 and .product_revision == $revision and (.images | length) == 2' \
+            "$facts" >/dev/null
+          server_seen=0
+          host_seen=0
+          while IFS=$'\t' read -r name digest; do
+            case "$name" in
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-saas-server")
+                [[ "$server_seen" == 0 ]]; server_seen=1 ;;
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-saas-host")
+                [[ "$host_seen" == 0 ]]; host_seen=1 ;;
+              *) exit 2 ;;
+            esac
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            image="${name}@${digest}"
+            [[ "$(crane digest "$image")" == "$digest" ]]
+            for platform in linux/amd64 linux/arm64; do
+              crane config --platform "$platform" "$image" |
+                jq -e --arg revision "$PRODUCT_REVISION" \
+                  '.config.Labels["org.opencontainers.image.revision"] == $revision' >/dev/null
+            done
+            gh attestation verify "oci://${image}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref refs/heads/main \
+              --source-digest "$PRODUCT_REVISION" \
+              --deny-self-hosted-runners
+          done < <(jq -r '.images[] | [.name, .digest] | @tsv' "$facts")
+          [[ "$server_seen" == 1 && "$host_seen" == 1 ]]

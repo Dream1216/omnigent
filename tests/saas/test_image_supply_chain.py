@@ -256,6 +256,8 @@ def _material_lock_repo(tmp_path: Path) -> Path:
         "saas/login_web/package.json",
         "saas/login_web/package-lock.json",
         "saas/supply_chain/npm-122-security-lock.json",
+        "saas/supply_chain/github-cli-source-lock.json",
+        "saas/supply_chain/wolfi-runtime-lock.json",
         ".github/ci-deps/package.json",
         "saas/scripts/bind_runtime_build_revision.py",
         "saas/scripts/normalize_host_cli_tree.py",
@@ -704,6 +706,36 @@ def test_image_material_lock_rejects_noncanonical_gh_copy(
     )
 
 
+def test_image_material_lock_rejects_volatile_wolfi_ldconfig_cache(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    rootfs_cleanup = (
+        " && rm -rf /var/cache/apk/* \\\n"
+        " && rm -f /var/cache/ldconfig/aux-cache \\\n"
+        ' && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp'
+    )
+    assert rootfs_cleanup in source
+    dockerfile.write_text(
+        source.replace(
+            rootfs_cleanup,
+            rootfs_cleanup.replace(
+                "rm -f /var/cache/ldconfig/aux-cache",
+                "true # volatile ldconfig cache retained",
+            ),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        "every Wolfi apk mutation must remove the nondeterministic ldconfig cache"
+        in validate_image_material_lock(repo)
+    )
+
+
 def test_image_material_lock_rejects_unbounded_gh_download(
     tmp_path: Path,
 ) -> None:
@@ -711,7 +743,32 @@ def test_image_material_lock_rejects_unbounded_gh_download(
     dockerfile = repo / "deploy/docker/Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
     dockerfile.write_text(
-        source.replace("for attempt in 1 2 3 4 5", "for attempt in 1", 1),
+        source.replace(
+            "downloaded=; \\\n    for attempt in 1 2 3 4 5; do",
+            "downloaded=; \\\n    for attempt in 1; do",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        "GitHub CLI must come from a canonical verified export layer"
+        in validate_image_material_lock(repo)
+    )
+
+
+def test_image_material_lock_rejects_unbounded_gh_module_download(
+    tmp_path: Path,
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    dockerfile.write_text(
+        source.replace(
+            "modules_downloaded= \\\n && for attempt in 1 2 3 4 5; do",
+            "modules_downloaded= \\\n && for attempt in 1; do",
+            1,
+        ),
         encoding="utf-8",
     )
 
@@ -810,40 +867,40 @@ def test_image_material_lock_rejects_unbounded_gh_download(
             "rm -f /var/cache/ldconfig/aux-cache",
             "true # volatile apt state retained",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "Acquire::Retries=10",
             "Acquire::Retries=0",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "Acquire::http::Timeout=30",
             "Acquire::http::Timeout=0",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "unexpected additional apt sources",
             "extra apt sources ignored",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
             "expected two Debian snapshot sources",
             "rolling Debian mirrors are allowed",
             (
-                "builder, host and server apt layers must use a fixed snapshot with bounded "
-                "fetch retries and remove volatile state"
+                "builder apt layers must use fixed snapshots with bounded fetch retries "
+                "and remove volatile state"
             ),
         ),
         (
@@ -932,7 +989,7 @@ def test_image_material_lock_rejects_unbounded_gh_download(
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "apt-get purge -y --auto-remove make g++",
+            "apk del --purge make gcc",
             "true # transient native build toolchain retained",
             "host CLI layer must normalize and remove volatile installer state",
         ),

@@ -12,14 +12,24 @@ DEVIN_SHA256_ARM64="21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b6
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 verify() {
-    local binary="$1" probe
+    local binary="$1" binary_path probe
     probe="$(mktemp -d)"
     HOME="$probe" "$binary" --version
     rm -rf "$probe"
     if id sandbox >/dev/null 2>&1; then
         probe="$(mktemp -d)"
         chown sandbox "$probe"
-        runuser -u sandbox -- env HOME="$probe" "$binary" --version
+        binary_path="$(command -v "$binary")"
+        if command -v runuser >/dev/null 2>&1; then
+            runuser -u sandbox -- env HOME="$probe" "$binary_path" --version \
+                || { rm -rf "$probe"; die "$binary --version failed as sandbox"; }
+        elif command -v su >/dev/null 2>&1; then
+            su -s /bin/sh -c "HOME='$probe' exec '$binary_path' --version" sandbox \
+                || { rm -rf "$probe"; die "$binary --version failed as sandbox"; }
+        else
+            rm -rf "$probe"
+            die "cannot verify $binary as sandbox: runuser/su missing"
+        fi
         rm -rf "$probe"
     fi
 }
