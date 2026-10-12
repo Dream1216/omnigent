@@ -284,6 +284,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
+        id: candidate-builder
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
@@ -340,6 +341,15 @@ jobs:
           artifact: host
           target: host
           attempt: "2"
+      - name: Reclaim ephemeral builder cache before OCI inspection
+        env:
+          CANDIDATE_BUILDER_NAME: ${{ steps.candidate-builder.outputs.name }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.reclaim_candidate_build_cache \
+            --root "$RUNNER_TEMP" --builder "$CANDIDATE_BUILDER_NAME" \
+            > artifacts/candidate-storage-reclamation.json
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Compare repeated executable image facts
         id: compare
         run: >-
@@ -396,6 +406,7 @@ jobs:
             artifacts/saas-image-candidate.json
             artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
+            artifacts/candidate-storage-reclamation.json
             artifacts/grype-preflight/*.json
             artifacts/grype/*.json
           if-no-files-found: error
