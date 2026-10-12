@@ -133,6 +133,7 @@ def test_release_preview_button_posts_one_use_credential_without_url_leak():
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{server.server_port}/saas/delivery")
             page.get_by_role("button", name="查看预览").wait_for()
+            assert page.get_by_label("健康检查路径").input_value() == "/health"
             with page.expect_popup() as popup_info:
                 page.get_by_role("button", name="查看预览").click()
             popup = popup_info.value

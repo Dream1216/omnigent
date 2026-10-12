@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -44,7 +44,14 @@ class BuildOptions(BaseModel):
     mode: Literal["auto", "static", "dockerfile"] = "auto"
     dockerfile_path: str = Field(default="Dockerfile", max_length=512)
     service_port: int = Field(default=8080, ge=1, le=65535)
-    health_path: str = Field(default="/", pattern=r"^/[^\r\n]*$", max_length=512)
+    health_path: str = Field(default="/health", pattern=r"^/[^\r\n]*$", max_length=512)
+
+    @field_validator("health_path")
+    @classmethod
+    def validate_health_path(cls, value: str) -> str:
+        if value == "/" or ".." in value:
+            raise ValueError("health_path must be normalized")
+        return value
 
 
 class BuildBody(BuildOptions):

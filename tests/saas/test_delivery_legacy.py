@@ -47,7 +47,7 @@ def test_original_lists_create_actions_rollback_and_replays(harness):  # noqa: F
             "source_revision": "a" * 40,
             "artifact_ref": artifact,
             "service_port": 8080,
-            "health_path": "/",
+            "health_path": "/health",
         },
     )
     assert created.status_code == 201, created.text
@@ -161,8 +161,10 @@ def test_session_build_shape_resolves_current_run_and_uses_checkpoint_authority(
             "mode": "auto",
             "dockerfile_path": "Dockerfile",
             "service_port": 8080,
-            "health_path": "/",
+            "health_path": "/health",
         }
+        rejected_health = post(h, "/v1/deployments/build", {**body, "health_path": "/"})
+        assert rejected_health.status_code == 422, rejected_health.text
         result = post(h, "/v1/deployments/build", body, "legacy-session-build")
         assert result.status_code == 202, result.text
         again = post(h, "/v1/deployments/build", body, "legacy-session-build")
