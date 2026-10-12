@@ -25,7 +25,7 @@ from saas.scripts.scan_oci_candidates import file_sha256
 LOCK_PATH = Path("saas/supply_chain/oci-promotion-resume-2d76.json")
 WORKFLOW = ".github/workflows/saas-oci-promotion-resume.yml"
 PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
-BUILD_TYPE = "https://github.com/Dream1216/omnigent/oci-promotion/v1"
+BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1"
 
 
 def api(endpoint: str) -> dict[str, Any]:
@@ -149,10 +149,23 @@ def promotion_predicate(policy_revision: str, run_id: str, attempt: str) -> dict
         "buildDefinition": {
             "buildType": BUILD_TYPE,
             "externalParameters": {
+                "workflow": {
+                    "path": WORKFLOW,
+                    "ref": "refs/heads/main",
+                    "repository": repository,
+                },
                 "product_source_revision": binding["product_revision"],
                 "signing_policy_revision": policy_revision,
                 "original_candidate": binding,
                 "rebuild_performed": False,
+            },
+            "internalParameters": {
+                "github": {
+                    "event_name": "workflow_dispatch",
+                    "repository_id": "1319241251",
+                    "repository_owner_id": "39821512",
+                    "runner_environment": "github-hosted",
+                }
             },
             "resolvedDependencies": [
                 {

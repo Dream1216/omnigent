@@ -125,6 +125,47 @@ def test_explicit_two_bindings_are_required_not_forged_product_certificate(repor
     assert parameters["rebuild_performed"] is False
 
 
+def test_promotion_uses_supported_github_workflow_buildtype_without_relabeling_source(
+    report: Path,
+) -> None:
+    predicate = resume.promotion_predicate(POLICY, RUN, "1")
+    definition = predicate["buildDefinition"]
+    assert definition["buildType"] == "https://actions.github.io/buildtypes/workflow/v1"
+    assert definition["externalParameters"]["workflow"] == {
+        "path": resume.WORKFLOW,
+        "ref": "refs/heads/main",
+        "repository": "https://github.com/Dream1216/omnigent",
+    }
+    assert definition["internalParameters"]["github"] == {
+        "event_name": "workflow_dispatch",
+        "repository_id": "1319241251",
+        "repository_owner_id": "39821512",
+        "runner_environment": "github-hosted",
+    }
+    assert definition["externalParameters"]["original_candidate"]["product_revision"] == REVISION
+    dependencies = definition["resolvedDependencies"]
+    assert dependencies[0]["digest"]["gitCommit"] == REVISION
+    assert dependencies[1]["digest"]["gitCommit"] == POLICY
+
+
+@pytest.mark.parametrize("field", ["build-type", "workflow", "repository-id", "owner-id"])
+def test_unsupported_or_forged_github_build_context_is_rejected(report: Path, field: str) -> None:
+    subject = resume.lock()["images"]["server"]
+    entry = signed_entry(subject)
+    definition = entry["verificationResult"]["statement"]["predicate"]["buildDefinition"]
+    if field == "build-type":
+        definition["buildType"] = "https://github.com/Dream1216/omnigent/oci-promotion/v1"
+    elif field == "workflow":
+        definition["externalParameters"]["workflow"]["ref"] = "refs/heads/untrusted"
+    else:
+        key = "repository_id" if field == "repository-id" else "repository_owner_id"
+        definition["internalParameters"]["github"][key] = "0"
+    with pytest.raises(ValueError, match="explicit original-product"):
+        resume.verify_signature(
+            [entry], subject=subject, policy_revision=POLICY, run_id=RUN, attempt="1"
+        )
+
+
 @pytest.mark.parametrize(
     "field",
     [
