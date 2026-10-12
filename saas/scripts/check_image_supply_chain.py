@@ -637,8 +637,34 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("protected signed release workflow contract is incomplete")
     if workflow.count(f"uses: {_ATTEST_ACTION}") != 3:
         violations.append("protected release must sign the wheel and both OCI images")
-    if workflow.count("push-to-registry: true") != 2 or workflow.count("push: true") != 2:
+    if workflow.count("push-to-registry: true") != 2 or workflow.count("crane push ") != 2:
         violations.append("protected release must publish exactly two signed OCI images")
+    publication = workflow.partition("  publish-signed:")[2].partition(
+        "  verify-published-source:"
+    )[0]
+    promotion_contract = {
+        "needs.build-candidate.outputs.oci-artifact-id",
+        "needs.build-candidate.outputs.oci-artifact-sha256",
+        "needs.build-candidate.outputs.manifest-sha256",
+        "python -m saas.scripts.oci_promotion download",
+        "python -m saas.scripts.oci_promotion prepare",
+        "python -m saas.scripts.oci_promotion readback",
+        "--current-scans artifacts/promotion-current-scans",
+        '--run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"',
+        "name: Read back promoted OCI bytes before signing",
+        "name: Sign server image provenance with GitHub OIDC",
+    }
+    if (
+        any(fragment not in publication for fragment in promotion_contract)
+        or _BUILD_PUSH_ACTION in publication
+        or _CANDIDATE_BUILD_USES in publication
+        or any(command in publication for command in ("docker build", "buildx build"))
+        or publication.index("name: Read back promoted OCI bytes before signing")
+        > publication.index("name: Sign server image provenance with GitHub OIDC")
+    ):
+        violations.append(
+            "protected release must promote the admitted OCI bytes without rebuilding"
+        )
     runtime_verification = _named_workflow_step(
         workflow, "Verify published image runtime revision"
     )

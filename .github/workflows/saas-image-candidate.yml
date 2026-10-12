@@ -68,7 +68,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_signed:
-        description: Build, sign and publish the exact main revision from the protected environment
+        description: Promote and sign the admitted OCI bytes for the exact main revision
         required: true
         type: boolean
         default: false
@@ -114,12 +114,19 @@ jobs:
         run: uv sync --frozen --extra all --group dev --extra saas
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
+      - name: Set up crane for exact OCI transfer regression
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
       - name: Verify image supply-chain policy contracts
+        env:
+          OCI_PROMOTION_TEST_CRANE: crane
         run: >-
           uv run pytest
           tests/saas/test_image_supply_chain.py
           tests/saas/test_scan_oci_candidates.py
           tests/saas/test_oci_candidate_build_capacity.py
+          tests/saas/test_oci_promotion.py
           -q
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain
@@ -186,6 +193,10 @@ jobs:
       - verify-production-migration-replay
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    outputs:
+      oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
+      oci-artifact-sha256: ${{ steps.upload-oci.outputs.artifact-digest }}
+      manifest-sha256: ${{ steps.seal.outputs.manifest-sha256 }}
     services:
       postgres:
         image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
@@ -349,6 +360,31 @@ jobs:
           --image server=${{ runner.temp }}/server-1.tar
           --image host=${{ runner.temp }}/host-1.tar
           --output artifacts/grype
+      - name: Seal exact admitted OCI archives and raw scan evidence
+        id: seal
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/promotion/grype
+          mv "${RUNNER_TEMP}/server-1.tar" artifacts/promotion/server-1.tar
+          mv "${RUNNER_TEMP}/host-1.tar" artifacts/promotion/host-1.tar
+          cp artifacts/saas-image-candidate.json artifacts/promotion/
+          cp artifacts/grype/*.json artifacts/promotion/grype/
+          python -m saas.scripts.oci_promotion seal \
+            --root artifacts/promotion --revision "$CANDIDATE_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
+          cp artifacts/promotion/oci-promotion-manifest.json artifacts/
+      - name: Upload immutable admitted OCI bytes
+        id: upload-oci
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.publish_signed && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-promotion-${{ env.CANDIDATE_REVISION }}
+          path: artifacts/promotion/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -356,6 +392,7 @@ jobs:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
             artifacts/saas-image-candidate.json
+            artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
             artifacts/grype-preflight/*.json
             artifacts/grype/*.json
@@ -372,6 +409,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write
@@ -381,6 +419,7 @@ jobs:
       OMNIGENT_SKIP_WEB_UI: "true"
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+      CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
     steps:
       - name: Validate protected release coordinates
         env:
@@ -403,6 +442,39 @@ jobs:
           python-version: "3.12"
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Download and validate original admitted OCI artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.oci-artifact-id }}
+          OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.oci-artifact-sha256 }}
+        run: |
+          set -euo pipefail
+          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
+          printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
+          python -m saas.scripts.oci_promotion download \
+            --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$source_epoch" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+            --run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"
+          python -m saas.scripts.scan_oci_candidates \
+            --image "server=${RUNNER_TEMP}/admitted-oci/server-1.tar" \
+            --image "host=${RUNNER_TEMP}/admitted-oci/host-1.tar" \
+            --output artifacts/promotion-current-scans/grype
+          python -m saas.scripts.oci_promotion prepare \
+            --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$source_epoch" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --current-scans artifacts/promotion-current-scans \
+            --layout-root "${RUNNER_TEMP}/admitted-layouts" --discard-transferred-archives
+      - name: Retain current same-OCI scan evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: promotion-current-scans-${{ inputs.product_revision }}
+          path: artifacts/promotion-current-scans/
+          if-no-files-found: warn
+          retention-days: 90
       - name: Build and verify the SaaS wheel
         run: |
           set -euo pipefail
@@ -440,8 +512,6 @@ jobs:
           retention-days: 90
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Set up crane
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
@@ -452,81 +522,62 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Resolve immutable image coordinates and build materials
+      - name: Resolve immutable promotion coordinates
         id: release
         run: |
           set -euo pipefail
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           prefix="ghcr.io/${owner}"
-          python_digest=$(crane digest python:3.12-slim)
-          runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)
-          node_digest=$(crane digest node:22-slim)
-          go_digest=$(jq -er .builder_manifest_digest saas/supply_chain/github-cli-source-lock.json)
-          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
-          upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
-          adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
-          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
           echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${PRODUCT_REVISION}" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "GO_IMAGE=golang:1.27.2-trixie@${go_digest}" >> "$GITHUB_ENV"
-          printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
-          printf '%s\n' "SOURCE_REVISION=${PRODUCT_REVISION}" >> "$GITHUB_ENV"
-          printf '%s\n' "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
-          printf '%s\n' "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
-          printf '%s\n' "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
-      - name: Build and publish server image by immutable revision
+      - name: Promote admitted server OCI without rebuilding
         id: build-server
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile
-          target: runtime
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.release.outputs.prefix }}/omnigent-saas-server:${{ steps.release.outputs.tag }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=saas-server-release
-          cache-to: type=gha,scope=saas-server-release,mode=max
-          build-args: |
-            PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
-            RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            NODE_IMAGE=${{ env.NODE_IMAGE }}
-            GO_IMAGE=${{ env.GO_IMAGE }}
-            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
-            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
-            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
-            CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
-            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
-            OMNIGENT_EXTRAS=kubernetes
-      - name: Build and publish host image by immutable revision
+        env:
+          IMAGE_TAG: ${{ steps.release.outputs.prefix }}/omnigent-saas-server:${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          expected=$(jq -er .images.server.index_digest "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json")
+          crane push "${RUNNER_TEMP}/admitted-layouts/server" "$IMAGE_TAG"
+          [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
+          echo "digest=${expected}" >> "$GITHUB_OUTPUT"
+          test -f "${RUNNER_TEMP}/admitted-layouts/server/index.json"
+          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server"
+      - name: Promote admitted host OCI without rebuilding
         id: build-host
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile
-          target: host
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.release.outputs.prefix }}/omnigent-saas-host:${{ steps.release.outputs.tag }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=saas-host-release
-          cache-to: type=gha,scope=saas-host-release,mode=max
-          build-args: |
-            PYTHON_IMAGE=${{ env.PYTHON_IMAGE }}
-            RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            NODE_IMAGE=${{ env.NODE_IMAGE }}
-            GO_IMAGE=${{ env.GO_IMAGE }}
-            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
-            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
-            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
-            CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
-            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
-            EXTRA_HARNESS_CLIS=jcode@0.90.1 devin@3000.11.3
+        env:
+          IMAGE_TAG: ${{ steps.release.outputs.prefix }}/omnigent-saas-host:${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          expected=$(jq -er .images.host.index_digest "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json")
+          crane push "${RUNNER_TEMP}/admitted-layouts/host" "$IMAGE_TAG"
+          [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
+          echo "digest=${expected}" >> "$GITHUB_OUTPUT"
+          test -f "${RUNNER_TEMP}/admitted-layouts/host/index.json"
+          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/host"
+      - name: Read back promoted OCI bytes before signing
+        env:
+          SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
+          HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          crane pull --format=oci --platform=all "$SERVER_IMAGE" "${RUNNER_TEMP}/server-promoted-layout"
+          crane pull --format=oci --platform=all "$HOST_IMAGE" "${RUNNER_TEMP}/host-promoted-layout"
+          for artifact in server host; do
+            tar -cf "${RUNNER_TEMP}/${artifact}-promoted.tar" \
+              -C "${RUNNER_TEMP}/${artifact}-promoted-layout" oci-layout index.json blobs
+          done
+          python -m saas.scripts.oci_promotion readback \
+            --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --server "${RUNNER_TEMP}/server-promoted.tar" --host "${RUNNER_TEMP}/host-promoted.tar" \
+            > artifacts/promotion-readback-before-signing.json
+          for artifact in server host; do
+            test -f "${RUNNER_TEMP}/${artifact}-promoted-layout/index.json"
+            rm -r -- "${RUNNER_TEMP:?}/${artifact}-promoted-layout"
+            rm -- "${RUNNER_TEMP:?}/${artifact}-promoted.tar"
+          done
       - name: Verify published image runtime revision
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
@@ -639,14 +690,30 @@ jobs:
           HOST_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-host@${{ steps.build-host.outputs.digest }}
         run: |
           set -euo pipefail
-          crane pull --format=oci --platform=all "$SERVER_IMAGE" "${RUNNER_TEMP}/server-signed.tar"
-          crane pull --format=oci --platform=all "$HOST_IMAGE" "${RUNNER_TEMP}/host-signed.tar"
+          crane pull --format=oci --platform=all "$SERVER_IMAGE" "${RUNNER_TEMP}/server-signed-layout"
+          crane pull --format=oci --platform=all "$HOST_IMAGE" "${RUNNER_TEMP}/host-signed-layout"
+          for artifact in server host; do
+            tar -cf "${RUNNER_TEMP}/${artifact}-signed.tar" \
+              -C "${RUNNER_TEMP}/${artifact}-signed-layout" oci-layout index.json blobs
+            test -f "${RUNNER_TEMP}/${artifact}-signed-layout/index.json"
+            rm -r -- "${RUNNER_TEMP:?}/${artifact}-signed-layout"
+          done
       - name: Scan signed image digests on both architectures
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --image server=${{ runner.temp }}/server-signed.tar
           --image host=${{ runner.temp }}/host-signed.tar
           --output artifacts/signed-grype
+      - name: Verify signed OCI still equals the admitted candidate
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.oci_promotion readback \
+            --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --server "${RUNNER_TEMP}/server-signed.tar" --host "${RUNNER_TEMP}/host-signed.tar" \
+            > artifacts/promotion-readback-after-signing.json
+          cp "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json" artifacts/
       - name: Upload exact signed-image scan reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -664,6 +731,8 @@ jobs:
           WHEEL_ATTESTATION: ${{ steps.attest-wheel.outputs.attestation-url }}
           SERVER_ATTESTATION: ${{ steps.attest-server.outputs.attestation-url }}
           HOST_ATTESTATION: ${{ steps.attest-host.outputs.attestation-url }}
+          OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.oci-artifact-id }}
+          OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.oci-artifact-sha256 }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
@@ -677,7 +746,9 @@ jobs:
             --arg host_image "$HOST_IMAGE" \
             --arg host_digest "$HOST_DIGEST" \
             --arg host_attestation "$HOST_ATTESTATION" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], production_deployment_receipt: null}' \
+            --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -685,6 +756,9 @@ jobs:
           name: signed-release-candidate-${{ inputs.product_revision }}
           path: |
             artifacts/signed-release-candidate.json
+            artifacts/oci-promotion-manifest.json
+            artifacts/promotion-readback-*.json
+            artifacts/promotion-current-scans/
             artifacts/supply-chain/
           if-no-files-found: error
           retention-days: 90
@@ -694,14 +768,26 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
-    needs: publish-signed
+    needs: [build-candidate, publish-signed]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       packages: read
       attestations: read
+    env:
+      PRODUCT_REVISION: ${{ inputs.product_revision }}
+      CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
     steps:
+      - name: Checkout immutable independent verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.product_revision }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - name: Download immutable signed release facts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -754,3 +840,30 @@ jobs:
               --deny-self-hosted-runners
           done < <(jq -r '.images[] | [.name, .digest] | @tsv' "$facts")
           [[ "$server_seen" == 1 && "$host_seen" == 1 ]]
+      - name: Independently read back exact accepted OCI contents
+        run: |
+          set -euo pipefail
+          facts=release-facts/signed-release-candidate.json
+          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
+          for artifact in server host; do
+            image=$(jq -er --arg suffix "/omnigent-saas-${artifact}" \
+              '.images[] | select(.name | endswith($suffix)) | .name + "@" + .digest' "$facts")
+            crane pull --format=oci --platform=all "$image" "${RUNNER_TEMP}/${artifact}-readback-layout"
+            tar -cf "${RUNNER_TEMP}/${artifact}-readback.tar" \
+              -C "${RUNNER_TEMP}/${artifact}-readback-layout" oci-layout index.json blobs
+            test -f "${RUNNER_TEMP}/${artifact}-readback-layout/index.json"
+            rm -r -- "${RUNNER_TEMP:?}/${artifact}-readback-layout"
+          done
+          python -m saas.scripts.oci_promotion readback \
+            --root release-facts --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$source_epoch" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            --server "${RUNNER_TEMP}/server-readback.tar" --host "${RUNNER_TEMP}/host-readback.tar" \
+            > release-facts/independent-oci-readback.json
+      - name: Upload independent OCI readback receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: independent-oci-readback-${{ inputs.product_revision }}
+          path: release-facts/independent-oci-readback.json
+          if-no-files-found: error
+          retention-days: 90
