@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repository": "Dream1216/omnigent",
+  "product_revision": "2d76f850dc869fc1a0e30dc8f6c3a0baa1c8e16d",
+  "source_date_epoch": 1791822363,
+  "candidate_run_id": 38277574590,
+  "candidate_run_attempt": 1,
+  "candidate_build_job_id": 114907103467,
+  "candidate_manifest_sha256": "75068c2e5297985167f3f2b91110373c2da168206282999d3dc7060f5216fe52",
+  "oci_artifact_id": 11767146798,
+  "oci_artifact_sha256": "6242ec7222b6546af8f52ef6ed728034a54a4fd20186ef0b5d14f82067cb4b01",
+  "report_artifact_id": 11767421662,
+  "report_artifact_sha256": "e0bf927ffda23c4cff4194e433c0a29472e130a35c2d5e88d117c68f62b2b786",
+  "wheel_artifact_id": 11767108737,
+  "wheel_artifact_sha256": "36e7a77e90878b2f59927b3bd21ca3728dd5caf327bc81105c742e9505315121",
+  "wheel_sha256": "d0269260d0aea1a37b38ae435f75d10ef2bbbb7c9f046e8d97babfb5d44061b3",
+  "images": {
+    "server": "sha256:57d74570f69531f8a5db591ea4dbbd66579784fe5a290f9b396421107da29dfb",
+    "host": "sha256:575d7f79c101640fd1426e8505d0d23ace861adbce5c6171b4fc2de2c434644e"
+  },
+  "rebuilt": false,
+  "production_authority": false
+}
