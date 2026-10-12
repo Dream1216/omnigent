@@ -65,17 +65,25 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
         workflow.count(
             "runtime_digest=$(jq -er .manifest_digest saas/supply_chain/wolfi-runtime-lock.json)"
         )
-        == 2
+        == 1
     )
-    assert workflow.count("RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}") == 2
+    assert workflow.count("RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}") == 1
     assert (
         workflow.count(
             "go_digest=$(jq -er .builder_manifest_digest "
             "saas/supply_chain/github-cli-source-lock.json)"
         )
-        == 2
+        == 1
     )
-    assert workflow.count("GO_IMAGE=golang:1.27.2-trixie@${go_digest}") == 2
+    assert workflow.count("GO_IMAGE=golang:1.27.2-trixie@${go_digest}") == 1
+    publication = workflow.partition("  publish-signed:")[2].partition(
+        "  verify-published-source:"
+    )[0]
+    assert "runtime_digest=" not in publication
+    assert "go_digest=" not in publication
+    assert "docker/build-push-action" not in publication
+    assert 'crane push "${RUNNER_TEMP}/admitted-layouts/server"' in publication
+    assert 'crane push "${RUNNER_TEMP}/admitted-layouts/host"' in publication
     assert "RUNTIME_APT_SNAPSHOT" not in workflow
     assert dockerfile.count("FROM secured-python-runtime AS ") == 2
     assert "activate_debian_sid_snapshot.py --snapshot" not in dockerfile

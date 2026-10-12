@@ -11,7 +11,16 @@ def test_saas_host_candidate_bakes_pinned_jcode_and_devin() -> None:
     dockerfile = (_ROOT / "deploy/docker/Dockerfile").read_text()
 
     assert "jcode@0.90.1 devin@3000.11.3" in action
-    assert "EXTRA_HARNESS_CLIS=jcode@0.90.1 devin@3000.11.3" in workflow
+    assert (
+        "EXTRA_HARNESS_CLIS=${{ inputs.artifact == 'host' && "
+        "'jcode@0.90.1 devin@3000.11.3' || '' }}"
+    ) in action
+    publication = workflow.partition("  publish-signed:")[2].partition(
+        "  verify-published-source:"
+    )[0]
+    assert "EXTRA_HARNESS_CLIS=" not in publication
+    assert "name: Promote admitted host OCI without rebuilding" in publication
+    assert 'crane push "${RUNNER_TEMP}/admitted-layouts/host"' in publication
     assert "install-saas-harness-cli.sh" in dockerfile
     assert (
         '("anthropic", "openai", "pi", "kiro", "kimi", "qwen", '
