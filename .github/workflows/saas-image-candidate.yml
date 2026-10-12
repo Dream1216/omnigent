@@ -127,6 +127,8 @@ jobs:
           tests/saas/test_scan_oci_candidates.py
           tests/saas/test_oci_candidate_build_capacity.py
           tests/saas/test_oci_promotion.py
+          tests/saas/test_runtime_security_overlays.py
+          tests/saas/test_host_fleet_cli_supply.py
           -q
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain

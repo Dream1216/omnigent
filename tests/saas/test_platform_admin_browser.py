@@ -494,6 +494,8 @@ def _role_page_action_matrix(browser: Browser, fixture: PlatformAdminFixture) ->
         operator.get_by_test_id("nav-email").click()
         expect(operator.get_by_test_id("view-email")).to_be_visible()
         expect(operator.locator("#email-transport-state")).to_have_text("NOT CONFIGURED")
+        # The HTML placeholder appears before the initial configuration is rendered.
+        expect(operator.locator("#email-password-state")).to_have_text("PASSWORD REQUIRED")
         operator.get_by_test_id("email-enabled").check()
         operator.get_by_test_id("email-host").fill("smtp.example.test")
         operator.get_by_test_id("email-port").fill("587")
