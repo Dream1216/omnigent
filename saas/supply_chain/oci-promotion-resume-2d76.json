@@ -6,6 +6,7 @@
   "candidate_run_id": 38277574590,
   "candidate_run_attempt": 1,
   "candidate_build_job_id": 114907103467,
+  "candidate_build_completed_at": "2026-10-12T18:41:10Z",
   "candidate_manifest_sha256": "75068c2e5297985167f3f2b91110373c2da168206282999d3dc7060f5216fe52",
   "oci_artifact_id": 11767146798,
   "oci_artifact_sha256": "6242ec7222b6546af8f52ef6ed728034a54a4fd20186ef0b5d14f82067cb4b01",

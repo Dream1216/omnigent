@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,15 @@ import pytest
 import yaml
 
 from saas.scripts import resume_oci_promotion as resume
-from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate, seal, write_json
+from tests.saas.test_oci_promotion import (
+    EPOCH,
+    REVISION,
+    candidate,
+    refresh_scan_time,
+    seal,
+    verify_candidate,
+    write_json,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = "b" * 40
@@ -28,6 +38,7 @@ def report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     binding.update(
         product_revision=REVISION,
         source_date_epoch=EPOCH,
+        candidate_build_completed_at=manifest["sealed_at"],
         candidate_manifest_sha256=hashlib.sha256(
             (tmp_path / resume.MANIFEST_NAME).read_bytes()
         ).hexdigest(),
@@ -67,6 +78,58 @@ def signed_entry(subject: str) -> dict[str, Any]:
 
 def test_original_report_still_satisfies_unchanged_raw_and_repeat_gates(report: Path) -> None:
     assert resume.check_report(report)["product_revision"] == REVISION
+
+
+def test_historical_original_admission_still_requires_fresh_promotion_scans(
+    report: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    now = datetime.now(UTC)
+    labels = resume.expected_labels(ROOT, REVISION)
+    refresh_scan_time(report, now - timedelta(hours=26))
+    manifest = seal(report, labels, now - timedelta(hours=25))
+    write_json(report / resume.MANIFEST_NAME, manifest)
+    binding = resume.lock()
+    binding["candidate_manifest_sha256"] = resume.file_sha256(report / resume.MANIFEST_NAME)
+    binding["candidate_build_completed_at"] = (
+        now - timedelta(hours=25) + timedelta(minutes=1)
+    ).isoformat()
+    monkeypatch.setattr(resume, "lock", lambda: copy.deepcopy(binding))
+    assert resume.check_report(report) == manifest
+    parameters = {
+        "manifest_sha256": binding["candidate_manifest_sha256"],
+        "labels": labels,
+        "source_date_epoch": EPOCH,
+    }
+    with pytest.raises(ValueError, match="older than 24 hours"):
+        verify_candidate(report, **parameters)
+    current = tmp_path / "fresh-current"
+    shutil.copytree(report / "grype", current / "grype")
+    with pytest.raises(ValueError, match="older than 24 hours"):
+        verify_candidate(report, current_scan_root=current, **parameters)
+    refresh_scan_time(current, now)
+    assert verify_candidate(report, current_scan_root=current, **parameters) == manifest
+    assert (
+        resume.file_sha256(report / resume.MANIFEST_NAME) == binding["candidate_manifest_sha256"]
+    )
+
+
+@pytest.mark.parametrize("invalid", ["before-seal", "future", "no-timezone"])
+def test_original_completion_time_cannot_be_moved_to_waive_scan_freshness(
+    report: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    binding = resume.lock()
+    sealed_at = datetime.fromisoformat(
+        json.loads((report / resume.MANIFEST_NAME).read_text())["sealed_at"]
+    )
+    completion = {
+        "before-seal": sealed_at - timedelta(seconds=1),
+        "future": datetime.now(UTC) + timedelta(hours=1),
+        "no-timezone": sealed_at.replace(tzinfo=None),
+    }[invalid]
+    binding["candidate_build_completed_at"] = completion.isoformat()
+    monkeypatch.setattr(resume, "lock", lambda: copy.deepcopy(binding))
+    with pytest.raises(ValueError, match="completion time"):
+        resume.check_report(report)
 
 
 @pytest.mark.parametrize("role", ["server", "host"])
@@ -287,7 +350,8 @@ def test_original_artifact_metadata_is_not_replaceable(field: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["head_sha", "run_attempt", "conclusion", "runner_group_name", "job-id"]
+    "field",
+    ["head_sha", "run_attempt", "conclusion", "runner_group_name", "job-id", "completed_at"],
 )
 def test_failed_publisher_does_not_authorize_untrusted_candidate_job(field: str) -> None:
     binding = resume.lock()
@@ -309,6 +373,7 @@ def test_failed_publisher_does_not_authorize_untrusted_candidate_job(field: str)
         "name": "build-candidate",
         "status": "completed",
         "conclusion": "success",
+        "completed_at": binding["candidate_build_completed_at"],
         "runner_group_name": "GitHub Actions",
         "labels": ["ubuntu-latest"],
     }
@@ -351,7 +416,19 @@ def test_resume_workflow_never_builds_or_relabels_oci_and_keeps_all_gates() -> N
     assert len([s for s in attestations if "predicate-path" in s["with"]]) == 2
 
 
-@pytest.mark.parametrize("field", ["none", "subject", "certificate", "packages"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "none",
+        "subject",
+        "certificate",
+        "packages",
+        "unversioned",
+        "predicate-version",
+        "document-version",
+        "empty-inventory",
+    ],
+)
 def test_spdx_attestation_requires_explicit_child_and_exact_generated_sbom(
     report: Path, field: str
 ) -> None:
@@ -359,7 +436,7 @@ def test_spdx_attestation_requires_explicit_child_and_exact_generated_sbom(
     sbom = {"spdxVersion": "SPDX-2.3", "packages": [{"name": "python"}]}
     entry = signed_entry(subject)
     statement = entry["verificationResult"]["statement"]
-    statement["predicateType"] = "https://spdx.dev/Document"
+    statement["predicateType"] = "https://spdx.dev/Document/v2.3"
     statement["predicate"] = copy.deepcopy(sbom)
     if field == "subject":
         statement["subject"] = []
@@ -367,14 +444,21 @@ def test_spdx_attestation_requires_explicit_child_and_exact_generated_sbom(
         entry["verificationResult"]["signature"]["certificate"]["buildSignerDigest"] = REVISION
     elif field == "packages":
         statement["predicate"]["packages"] = []
+    elif field == "unversioned":
+        statement["predicateType"] = "https://spdx.dev/Document"
+    elif field == "predicate-version":
+        statement["predicateType"] = "https://spdx.dev/Document/v2.2"
+    elif field == "document-version":
+        sbom["spdxVersion"] = statement["predicate"]["spdxVersion"] = "SPDX-2.2"
+    elif field == "empty-inventory":
+        sbom["packages"] = statement["predicate"]["packages"] = []
     parameters = {
         "subject": subject,
         "predicate": sbom,
-        "predicate_type": "https://spdx.dev/Document",
         "claims": resume.certificate_claims(POLICY, resume.WORKFLOW, RUN, "1"),
     }
     if field == "none":
-        resume.verify_predicate([entry], **parameters)
+        resume.verify_sbom([entry], **parameters)
     else:
         with pytest.raises(ValueError):
-            resume.verify_predicate([entry], **parameters)
+            resume.verify_sbom([entry], **parameters)
