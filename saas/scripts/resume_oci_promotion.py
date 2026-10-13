@@ -22,7 +22,7 @@ from saas.scripts.oci_promotion import (
 )
 from saas.scripts.scan_oci_candidates import file_sha256
 
-LOCK_PATH = Path("saas/supply_chain/oci-promotion-resume-2d76.json")
+LOCK_PATH = Path("saas/supply_chain/oci-promotion-resume-f440.json")
 WORKFLOW = ".github/workflows/saas-oci-promotion-resume.yml"
 PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1"

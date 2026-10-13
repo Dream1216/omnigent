@@ -5,14 +5,14 @@ on:
     paths:
       - ".github/workflows/saas-oci-promotion-resume.yml"
       - "saas/scripts/resume_oci_promotion.py"
-      - "saas/supply_chain/oci-promotion-resume-2d76.json"
+      - "saas/supply_chain/oci-promotion-resume-f440.json"
       - "tests/saas/test_resume_oci_promotion.py"
   push:
     branches: ["main"]
     paths:
       - ".github/workflows/saas-oci-promotion-resume.yml"
       - "saas/scripts/resume_oci_promotion.py"
-      - "saas/supply_chain/oci-promotion-resume-2d76.json"
+      - "saas/supply_chain/oci-promotion-resume-f440.json"
       - "tests/saas/test_resume_oci_promotion.py"
   workflow_dispatch:
     inputs:
@@ -25,13 +25,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: resume-admitted-oci-2d76
+  group: resume-admitted-oci-f440
   cancel-in-progress: false
 
 env:
-  PRODUCT_REVISION: 2d76f850dc869fc1a0e30dc8f6c3a0baa1c8e16d
-  SOURCE_DATE_EPOCH: "1791822363"
-  ORIGINAL_CANDIDATE_RUN_ID: "38277574590"
+  PRODUCT_REVISION: f4404d47f705c7a3c0745c38ccd1a9be125c31ad
+  SOURCE_DATE_EPOCH: "1791906992"
+  ORIGINAL_CANDIDATE_RUN_ID: "38427634877"
   SIGNING_POLICY_REVISION: ${{ github.sha }}
 
 jobs:
@@ -66,9 +66,9 @@ jobs:
       actions: read
       contents: read
     outputs:
-      manifest-sha256: 75068c2e5297985167f3f2b91110373c2da168206282999d3dc7060f5216fe52
-      oci-artifact-id: "11767146798"
-      oci-artifact-sha256: 6242ec7222b6546af8f52ef6ed728034a54a4fd20186ef0b5d14f82067cb4b01
+      manifest-sha256: 3582a624617788cb7d08018cad6f0bda2f2f1c4c5e41ee3cff21eaf397357914
+      oci-artifact-id: "11839487160"
+      oci-artifact-sha256: bb4c7a649a6ee63dc87f01e14bbad83357e854950c2623ca2a974518e57ae36c
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -521,7 +521,7 @@ jobs:
             --arg host_product_attestation "$HOST_PRODUCT_ATTESTATION" \
             --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: 38277574590, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: 38427634877, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
