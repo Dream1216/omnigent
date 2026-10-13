@@ -29,6 +29,27 @@ POLICY = "b" * 40
 RUN = "43"
 
 
+def test_f440_recovery_workflow_is_bound_to_the_actual_retained_materials() -> None:
+    binding = resume.lock()
+    workflow = yaml.load((ROOT / resume.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    assert binding["product_revision"] == "f4404d47f705c7a3c0745c38ccd1a9be125c31ad"
+    assert binding["candidate_run_id"] == 38427634877
+    assert binding["candidate_build_job_id"] == 115409178450
+    assert binding["candidate_build_completed_at"] == "2026-10-13T18:39:43Z"
+    assert binding["rebuilt"] is False
+    assert binding["production_authority"] is False
+    assert workflow["env"]["PRODUCT_REVISION"] == binding["product_revision"]
+    assert workflow["env"]["SOURCE_DATE_EPOCH"] == str(binding["source_date_epoch"])
+    assert workflow["env"]["ORIGINAL_CANDIDATE_RUN_ID"] == str(binding["candidate_run_id"])
+    outputs = workflow["jobs"]["admit-original"]["outputs"]
+    assert outputs["manifest-sha256"] == binding["candidate_manifest_sha256"]
+    assert outputs["oci-artifact-id"] == str(binding["oci_artifact_id"])
+    assert outputs["oci-artifact-sha256"] == binding["oci_artifact_sha256"]
+    publish = workflow["jobs"]["publish-signed"]
+    assert publish["environment"] == "production-image"
+    assert "run: docker build" not in (ROOT / resume.WORKFLOW).read_text()
+
+
 @pytest.fixture
 def report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     labels, now = candidate(tmp_path)
@@ -217,7 +238,8 @@ def test_promotion_uses_supported_github_workflow_buildtype_without_relabeling_s
             "digest": {"gitCommit": REVISION},
         },
         {
-            "uri": "https://github.com/Dream1216/omnigent/actions/artifacts/11767146798",
+            "uri": "https://github.com/Dream1216/omnigent/actions/artifacts/"
+            + str(resume.lock()["oci_artifact_id"]),
             "digest": {"sha256": resume.lock()["oci_artifact_sha256"]},
         },
     ]
