@@ -169,12 +169,12 @@ def promotion_predicate(policy_revision: str, run_id: str, attempt: str) -> dict
             },
             "resolvedDependencies": [
                 {
-                    "uri": f"git+{repository}@{binding['product_revision']}",
-                    "digest": {"gitCommit": binding["product_revision"]},
-                },
-                {
                     "uri": f"git+{repository}@refs/heads/main",
                     "digest": {"gitCommit": policy_revision},
+                },
+                {
+                    "uri": f"git+{repository}@{binding['product_revision']}",
+                    "digest": {"gitCommit": binding["product_revision"]},
                 },
                 {
                     "uri": f"{repository}/actions/artifacts/{binding['oci_artifact_id']}",

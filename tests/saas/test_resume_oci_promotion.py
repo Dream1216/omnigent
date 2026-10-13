@@ -144,8 +144,43 @@ def test_promotion_uses_supported_github_workflow_buildtype_without_relabeling_s
     }
     assert definition["externalParameters"]["original_candidate"]["product_revision"] == REVISION
     dependencies = definition["resolvedDependencies"]
-    assert dependencies[0]["digest"]["gitCommit"] == REVISION
-    assert dependencies[1]["digest"]["gitCommit"] == POLICY
+    assert dependencies == [
+        {
+            "uri": "git+https://github.com/Dream1216/omnigent@refs/heads/main",
+            "digest": {"gitCommit": POLICY},
+        },
+        {
+            "uri": f"git+https://github.com/Dream1216/omnigent@{REVISION}",
+            "digest": {"gitCommit": REVISION},
+        },
+        {
+            "uri": "https://github.com/Dream1216/omnigent/actions/artifacts/11767146798",
+            "digest": {"sha256": resume.lock()["oci_artifact_sha256"]},
+        },
+    ]
+
+
+@pytest.mark.parametrize("field", ["order", "signer-source", "original-product", "archive"])
+def test_primary_workflow_source_and_every_original_material_are_required(
+    report: Path, field: str
+) -> None:
+    subject = resume.lock()["images"]["server"]
+    entry = signed_entry(subject)
+    dependencies = entry["verificationResult"]["statement"]["predicate"]["buildDefinition"][
+        "resolvedDependencies"
+    ]
+    if field == "order":
+        dependencies[0], dependencies[1] = dependencies[1], dependencies[0]
+    elif field == "signer-source":
+        dependencies[0]["digest"]["gitCommit"] = REVISION
+    elif field == "original-product":
+        dependencies[1]["digest"]["gitCommit"] = POLICY
+    else:
+        dependencies[2]["digest"]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="explicit original-product"):
+        resume.verify_signature(
+            [entry], subject=subject, policy_revision=POLICY, run_id=RUN, attempt="1"
+        )
 
 
 @pytest.mark.parametrize("field", ["build-type", "workflow", "repository-id", "owner-id"])
