@@ -351,13 +351,19 @@ jobs:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.build-host.outputs.digest }}
           push-to-registry: true
-      - name: Record explicit product-source and signer-policy promotion provenance
+      - name: Record supported GitHub workflow SLSA with original-product materials
         id: coordinates
         run: |
           set -euo pipefail
           python -m saas.scripts.resume_oci_promotion predicate \
             --policy-revision "$SIGNING_POLICY_REVISION" --run-id "$GITHUB_RUN_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" > artifacts/promotion-provenance.json
+          jq -e --arg repository "https://github.com/$GITHUB_REPOSITORY" '
+            .buildDefinition.buildType == "https://actions.github.io/buildtypes/workflow/v1" and
+            .buildDefinition.externalParameters.workflow.repository == $repository and
+            .buildDefinition.externalParameters.workflow.ref == "refs/heads/main" and
+            .buildDefinition.externalParameters.workflow.path == ".github/workflows/saas-oci-promotion-resume.yml"
+          ' artifacts/promotion-provenance.json >/dev/null
           for role in server host; do
             for arch in amd64 arm64; do
               image=$(python -m saas.scripts.resume_oci_promotion child \
