@@ -478,6 +478,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000015",
+    ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000015",
+    ): "b9259705dd665c9c08201bc929e75cd0c8db927dc94db98fad1c7b0c083b6fad",
+    (
         18,
         "hh1b2c3d4e5f",
         "p0s000000015",
@@ -489,6 +499,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000015",
+    ): "a335cad1a69229c893f8447692a79d8b4b23ea37ab7225dbc99396f447d10c79",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000015",
+    ): "65e6bee98f5c0c0bb29711a289c62877b8d0d470902132b62502128f040f120d",
     # Derived from the observed 2026-10-06 Preview authority projection
     # (P0S14 digest 9839f65f...) by advancing only saas_head. P0S15 replaces
     # a function body without changing its identity, ACL, owner or public
