@@ -26,6 +26,7 @@ LOCK_PATH = Path("saas/supply_chain/oci-promotion-resume-2d76.json")
 WORKFLOW = ".github/workflows/saas-oci-promotion-resume.yml"
 PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1"
+SPDX_PREDICATE_TYPE = "https://spdx.dev/Document/v2.3"
 
 
 def api(endpoint: str) -> dict[str, Any]:
@@ -80,6 +81,7 @@ def check_original_run(run: dict[str, Any], job: dict[str, Any]) -> None:
         and job.get("name") == "build-candidate"
         and job.get("status") == "completed"
         and job.get("conclusion") == "success"
+        and job.get("completed_at") == binding["candidate_build_completed_at"]
         and job.get("runner_group_name") == "GitHub Actions"
         and "ubuntu-latest" in job.get("labels", []),
         "original successful hosted candidate job is not trusted",
@@ -114,8 +116,18 @@ def check_report(root: Path) -> dict[str, Any]:
             and repeated.get("second", {}).get("attestations") == image["facts"]["attestations"],
             "original repeat facts differ",
         )
+    completed_at = datetime.fromisoformat(
+        binding["candidate_build_completed_at"].replace("Z", "+00:00")
+    )
+    sealed_at = datetime.fromisoformat(manifest["sealed_at"])
     require(
-        validate_scans(root, manifest["images"], now=datetime.now(UTC)) == manifest["scans"],
+        completed_at.tzinfo is not None
+        and sealed_at.tzinfo is not None
+        and sealed_at <= completed_at <= datetime.now(UTC),
+        "trusted original candidate completion time differs",
+    )
+    require(
+        validate_scans(root, manifest["images"], now=completed_at) == manifest["scans"],
         "original raw scans differ",
     )
     return manifest
@@ -248,6 +260,28 @@ def verify_signature(
     )
 
 
+def verify_sbom(
+    entries: list[dict[str, Any]],
+    *,
+    subject: str,
+    predicate: dict[str, Any],
+    claims: dict[str, str],
+) -> None:
+    require(
+        predicate.get("spdxVersion") == "SPDX-2.3"
+        and isinstance(predicate.get("packages"), list)
+        and bool(predicate["packages"]),
+        "complete SPDX 2.3 package inventory required",
+    )
+    verify_predicate(
+        entries,
+        subject=subject,
+        predicate=predicate,
+        predicate_type=SPDX_PREDICATE_TYPE,
+        claims=claims,
+    )
+
+
 def verify_original_wheel(entries: list[dict[str, Any]]) -> None:
     binding = lock()
     claims = certificate_claims(
@@ -350,11 +384,10 @@ def main() -> int:
             json.dumps({"status": "pass", "verification_sha256": file_sha256(args.verification)})
         )
     elif args.command == "verify-sbom":
-        verify_predicate(
+        verify_sbom(
             json.loads(args.verification.read_text()),
             subject=args.subject,
             predicate=read_json(args.sbom),
-            predicate_type="https://spdx.dev/Document",
             claims=certificate_claims(args.policy_revision, WORKFLOW, args.run_id, args.attempt),
         )
         print(json.dumps({"status": "pass", "subject": args.subject}))
