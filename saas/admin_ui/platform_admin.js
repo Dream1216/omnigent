@@ -15,6 +15,11 @@
     operations: [],
     emailConfiguration: null,
     modelProvider: null,
+    modelConnections: [],
+    modelCommand: null,
+    modelCommandBusy: false,
+    modelCommandNotice: null,
+    modelRotation: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
     view: "overview",
@@ -61,6 +66,7 @@
     item.dataset.tone = tone;
     $("#toast-stack").prepend(item);
     window.setTimeout(() => item.remove(), 6500);
+    return item;
   }
 
   function requestError(payload, status) {
@@ -157,7 +163,11 @@
       state.context?.capabilities?.email_configuration_enabled
     );
     $("#model-provider-link").hidden = !Boolean(
-      state.context?.capabilities?.model_provider_enabled
+      state.context?.capabilities?.model_provider_enabled &&
+      !state.context?.capabilities?.model_connections_enabled
+    );
+    $("#model-connections-link").hidden = !Boolean(
+      state.context?.capabilities?.model_connections_enabled
     );
     document.querySelectorAll("[data-permission]").forEach((button) => {
       const permitted = can(button.dataset.permission);
@@ -169,7 +179,7 @@
 
   function showView(view) {
     const button = document.querySelector(`[data-view="${view}"]`);
-    if (!button || button.disabled) {
+    if (!button || button.disabled || button.hidden) {
       toast("platform_permission_denied: this module is not assigned", "error");
       return;
     }
@@ -196,6 +206,7 @@
       audit: () => loadAudit(false),
       email: loadEmailConfiguration,
       models: loadModelProvider,
+      "model-connections": loadModelConnections,
     };
     if (loaders[view]) await loaders[view]();
     state.loaded.add(view);
@@ -398,6 +409,178 @@
   async function loadModelProvider() {
     state.modelProvider = await api("/v2/platform-admin/model-provider");
     renderModelProvider();
+  }
+
+  function modelCommandStorageKey() {
+    return `omnigent.platform.model-command.${state.context.principal_id}`;
+  }
+
+  function saveModelCommand() {
+    if (state.modelCommand) {
+      // Only opaque operation references are retained, never form values or keys.
+      sessionStorage.setItem(modelCommandStorageKey(), JSON.stringify(state.modelCommand));
+    } else {
+      sessionStorage.removeItem(modelCommandStorageKey());
+    }
+  }
+
+  function configureModelConnectionButtons() {
+    const disabled = !mutationReady("platform.model_provider.manage") ||
+      state.modelCommandBusy || Boolean(state.modelCommand?.operationId);
+    $("#model-connection-submit").disabled = disabled;
+    $("#model-connection-rotation-submit").disabled = disabled;
+    for (const selector of ["#model-connection-name", "#model-connection-key", "#model-connection-rotation-key"]) {
+      $(selector).disabled = disabled;
+    }
+    $("#model-connection-new-command").disabled = state.modelCommandBusy;
+    $("#model-connections-refresh").disabled = state.modelCommandBusy;
+  }
+
+  function showModelOperation(operation) {
+    if (state.modelCommandNotice?.dataset.tone === "error") {
+      state.modelCommandNotice.remove();
+      state.modelCommandNotice = null;
+    }
+    const labels = {
+      requested: "已受理，等待投影；尚未启用运行时。",
+      applying: "正在投影；尚未完成验证或发布。",
+      applied: "投影已完成，仍须验证并发布。",
+      verified: "投影验证通过，尚未发布到租户。",
+      failed: "操作失败，请依据错误码处理；不要重复建立相同对象。",
+      uncertain: "外部结果未确认，必须核对；不会自动重放写入。",
+    };
+    $("#model-connection-operation-status").textContent = operation.status.toUpperCase();
+    $("#model-connection-operation-id").textContent = operation.id;
+    $("#model-connection-operation-detail").textContent =
+      `${labels[operation.status] || "未知状态，请查询原操作。"}${operation.error_code ? ` / ${operation.error_code}` : ""}`;
+    state.modelCommand.operationId = operation.id;
+    saveModelCommand();
+    configureModelConnectionButtons();
+  }
+
+  async function recoverModelCommand() {
+    if (!state.modelCommand) return null;
+    let operation;
+    if (state.modelCommand.operationId) {
+      operation = await api(`/v2/platform-admin/model-operations/${encodeURIComponent(state.modelCommand.operationId)}`);
+    } else {
+      const result = await api(`/v2/platform-admin/model-operations?idempotency_key=${encodeURIComponent(state.modelCommand.idempotencyKey)}`);
+      operation = result.operation;
+    }
+    if (operation) showModelOperation(operation);
+    else {
+      $("#model-connection-operation-status").textContent = "NOT FOUND";
+      $("#model-connection-operation-id").textContent = state.modelCommand.idempotencyKey;
+      $("#model-connection-operation-detail").textContent = "未发现已受理记录。使用原命令和原表单内容重试，不另建幂等键。";
+    }
+    return operation;
+  }
+
+  function renderModelConnections() {
+    if (state.modelRotation) {
+      state.modelRotation = state.modelConnections.find((item) => item.id === state.modelRotation.id) || null;
+      if (state.modelRotation) {
+        $("#model-connection-rotation-target").textContent = `${state.modelRotation.display_name} / V${state.modelRotation.version}`;
+      } else $("#model-connection-rotate").hidden = true;
+    }
+    const list = $("#model-connection-list");
+    list.replaceChildren();
+    $("#model-connection-count").textContent = `${state.modelConnections.length} CONNECTIONS / FIRST 100`;
+    if (!state.modelConnections.length) list.append(emptyRecord("尚无连接。先建立候选连接，再验证模型并发布。"));
+    for (const item of state.modelConnections) {
+      list.append(recordRow({
+        title: item.display_name, identifier: item.id, status: "not_published",
+        meta: ["DeepSeek · LiteLLM", `配置 V${item.version}`, `密钥 V${item.credential_generation}`, "运行时未启用"],
+        actions: [actionButton("选择轮换", () => {
+          state.modelRotation = item;
+          $("#model-connection-rotate").hidden = false;
+          $("#model-connection-rotation-target").textContent = `${item.display_name} / V${item.version}`;
+          $("#model-connection-rotation-key").value = "";
+          configureModelConnectionButtons();
+        }, { disabled: !mutationReady("platform.model_provider.manage") })],
+      }));
+    }
+    configureModelConnectionButtons();
+  }
+
+  async function loadModelConnections() {
+    $("#model-connection-list").setAttribute("aria-busy", "true");
+    try {
+      const response = await api("/v2/platform-admin/model-connections");
+      state.modelConnections = response.items;
+      renderModelConnections();
+      if (!state.modelCommand) {
+        try {
+          const stored = JSON.parse(sessionStorage.getItem(modelCommandStorageKey()) || "null");
+          if (stored && /^[a-zA-Z0-9_.:-]{1,128}$/.test(stored.idempotencyKey)) {
+            state.modelCommand = {
+              idempotencyKey: stored.idempotencyKey,
+              operationId: /^[a-f0-9-]{36}$/.test(stored.operationId) ? stored.operationId : null,
+            };
+          }
+        } catch {
+          sessionStorage.removeItem(modelCommandStorageKey());
+        }
+      }
+      await recoverModelCommand();
+      configureModelConnectionButtons();
+    } catch (error) {
+      $("#model-connection-count").textContent = "LOAD FAILED";
+      $("#model-connection-list").replaceChildren(emptyRecord("连接或操作查询失败，请点击刷新。不能据此判定未受理。"));
+      throw error;
+    } finally {
+      $("#model-connection-list").setAttribute("aria-busy", "false");
+    }
+  }
+
+  async function submitModelConnection(event, rotate) {
+    event.preventDefault();
+    if (state.modelCommandBusy || !event.currentTarget.reportValidity()) return;
+    state.modelCommandBusy = true;
+    configureModelConnectionButtons();
+    const keyInput = $(rotate ? "#model-connection-rotation-key" : "#model-connection-key");
+    try {
+      if (await recoverModelCommand()) return;
+      if (!state.modelCommand) {
+        state.modelCommand = { idempotencyKey: idempotency("model-command"), operationId: null };
+        saveModelCommand();
+      }
+      if (rotate && !state.modelRotation) throw new Error("请先选择连接");
+      const path = rotate
+        ? `/v2/platform-admin/model-connections/${encodeURIComponent(state.modelRotation.id)}/credential-versions`
+        : "/v2/platform-admin/model-connections";
+      const body = rotate
+        ? { expected_version: state.modelRotation.version, api_key: keyInput.value }
+        : {
+          expected_version: 0, display_name: $("#model-connection-name").value.trim(),
+          provider_id: "deepseek", base_url: "https://api.deepseek.com", api_key: keyInput.value,
+        };
+      const operation = await api(path, {
+        method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey }, body,
+      });
+      showModelOperation(operation);
+      state.modelCommandNotice?.remove();
+      state.modelCommandNotice = toast("命令已受理；尚未验证或发布，不改变生产路由。", "success");
+      await loadModelConnections();
+    } catch (error) {
+      $("#model-connection-operation-status").textContent = "CHECK RECEIPT";
+      $("#model-connection-operation-detail").textContent = "提交未确认或被拒绝。先刷新查询原命令，不重新创建；非秘密表单内容已保留。";
+      throw error;
+    } finally {
+      keyInput.value = "";
+      state.modelCommandBusy = false;
+      configureModelConnectionButtons();
+    }
+  }
+
+  async function runModelCommand(action) {
+    try {
+      return await action();
+    } catch (error) {
+      state.modelCommandNotice?.remove();
+      state.modelCommandNotice = toast(error instanceof Error ? error.message : String(error), "error");
+      return null;
+    }
   }
 
   function modelValues() {
@@ -1089,6 +1272,21 @@
   });
   $("#model-provider-form").addEventListener("submit", (event) => void run(() => saveModelProvider(event)));
   $("#model-provider-test-form").addEventListener("submit", (event) => void run(() => testModelProvider(event)));
+  $("#model-connection-create").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, false)));
+  $("#model-connection-rotate").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, true)));
+  $("#model-connections-refresh").addEventListener("click", () => void runModelCommand(loadModelConnections));
+  $("#model-connection-new-command").addEventListener("click", () => {
+    state.modelCommand = null;
+    state.modelCommandNotice?.remove();
+    state.modelCommandNotice = null;
+    saveModelCommand();
+    $("#model-connection-create").reset();
+    $("#model-connection-rotation-key").value = "";
+    $("#model-connection-operation-status").textContent = "NEW COMMAND";
+    $("#model-connection-operation-id").textContent = "新的独立命令";
+    $("#model-connection-operation-detail").textContent = "上一操作仍保留在服务端；新命令不会覆盖或重放旧操作。";
+    configureModelConnectionButtons();
+  });
   $("#operations-toggle").addEventListener("click", openOperations);
   $("#operations-close").addEventListener("click", closeOperations);
   $("#operations-drawer").addEventListener("keydown", trapOperationsFocus);

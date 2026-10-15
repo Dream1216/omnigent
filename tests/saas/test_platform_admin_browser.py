@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 import threading
 import time
@@ -46,6 +47,7 @@ from saas.control_plane import (
     UserProjectionInput,
     create_platform_admin_app,
 )
+from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
 
@@ -155,7 +157,9 @@ def _write_certificate(directory: Path) -> tuple[Path, Path]:
 
 
 @pytest.fixture
-def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
+def platform_admin_server(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[PlatformAdminFixture]:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -395,6 +399,13 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         privacy_operations=privacy_operations,
         email_configuration=email_configuration,
         model_provider=model_provider,
+        model_connections=ModelConnectionService(
+            factory,
+            authorization=authorization,
+            secret_cipher=_BrowserSecretCipher(),
+        )
+        if getattr(request, "param", False)
+        else None,
     )
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
@@ -852,3 +863,91 @@ def test_real_chromium_privacy_governed_request_approval_and_content_blindness(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _privacy_governed_action_matrix)
+
+
+def _model_connection_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    secret = "browser-connection-secret-never-public"
+    try:
+        page = _open_console(context, fixture)
+        expect(page.get_by_test_id("nav-model-provider")).to_be_hidden()
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-connection-list")).to_contain_text("尚无连接")
+        page.locator("#model-connection-name").fill("DeepSeek candidate")
+        page.locator("#model-connection-key").fill(secret)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-connection-key")).to_have_value("")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        first_operation = page.locator("#model-connection-operation-id").inner_text()
+        assert secret not in page.evaluate("JSON.stringify(sessionStorage)")
+        expect(page.locator("body")).not_to_contain_text(secret)
+        page.reload()
+        expect(page.locator("#model-connection-operation-id")).to_have_text(first_operation)
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()
+        assert len(listing["items"]) == 1
+        assert listing["items"][0]["runtime_enabled"] is False
+        page.locator("#model-connection-new-command").click()
+        page.get_by_role("button", name="选择轮换", exact=True).click()
+        page.locator("#model-connection-rotation-key").fill("rotated-" + secret)
+        page.locator("#model-connection-rotation-submit").click()
+        expect(page.locator("#model-connection-rotation-target")).to_contain_text("V2")
+        expect(page.locator("#model-connection-rotation-key")).to_have_value("")
+
+        page.locator("#model-connection-new-command").click()
+        page.locator("#model-connection-name").fill("Response-loss candidate")
+        page.locator("#model-connection-key").fill(secret)
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt","message":"Receipt lost"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-connections", lose_receipt, times=1)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-connection-name")).to_have_value("Response-loss candidate")
+        expect(page.locator("#model-connection-key")).to_have_value("")
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()
+        assert len(listing["items"]) == 2
+        assert all(item["runtime_enabled"] is False for item in listing["items"])
+        assert secret not in json.dumps(listing)
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(
+                path=str(directory / "model-connections-recovered-desktop.png"), full_page=True
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(
+                path=str(directory / "model-connections-recovered-mobile.png"), full_page=True
+            )
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-connection-list")).to_contain_text("DeepSeek candidate")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        expect(page.locator("#model-connection-key")).to_be_disabled()
+        expect(page.get_by_role("button", name="选择轮换").first).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", [True], indirect=True)
+def test_real_chromium_model_connections_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_connection_journey)

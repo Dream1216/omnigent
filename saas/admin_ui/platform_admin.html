@@ -70,6 +70,9 @@
           <button id="model-provider-link" data-testid="nav-model-provider" data-permission="platform.model_provider.read" data-view="models" type="button" hidden>
             <span>10</span><strong>MODELS</strong><small>平台托管模型</small>
           </button>
+          <button id="model-connections-link" data-testid="nav-model-connections" data-permission="platform.model_provider.read" data-view="model-connections" type="button" hidden>
+            <span>10</span><strong>MODEL SERVICES</strong><small>连接与候选版本</small>
+          </button>
         </nav>
 
         <div class="boundary-note">
@@ -357,6 +360,40 @@
               <aside class="email-warning"><strong>SMTP IDEMPOTENCY BOUNDARY</strong><p>SMTP 协议没有供应商级幂等键。系统使用稳定 Message-ID 降低重复投递概率，但网络结果不确定时仍按 Outbox 至少一次语义处理。</p></aside>
             </form>
           </div>
+        </section>
+
+        <section class="console-view" data-testid="view-model-connections" data-view-panel="model-connections" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">10 / MODEL SERVICES</p><h1>模型服务</h1><p>在平台统一管理供应商连接。LiteLLM 是内部接入层，不是模型名称；候选配置不会自动改变线上模型或现有会话。</p></div>
+            <button class="quiet-button" id="model-connections-refresh" type="button">刷新连接与操作 ↻</button>
+          </header>
+          <div class="model-connections-boundary"><strong>候选环境 · 生产路由保持关闭</strong><p>密钥只写不回显。已受理不等于投影成功，验证和发布须分别完成。</p></div>
+          <div class="model-connections-layout">
+            <form class="work-panel model-connection-form" id="model-connection-create">
+              <div class="panel-heading"><span>01 / 建立供应商连接</span><small>DEEPSEEK FIRST</small></div>
+              <label><span>连接名称</span><input id="model-connection-name" autocomplete="off" maxlength="128" required placeholder="例如：DeepSeek 主渠道"></label>
+              <label><span>供应商</span><input value="DeepSeek" readonly></label>
+              <label><span>批准的端点</span><input value="https://api.deepseek.com" readonly></label>
+              <label><span>供应商 API Key</span><input id="model-connection-key" autocomplete="new-password" type="password" minlength="16" maxlength="4096" required placeholder="加密保存，不向 Agent 下发"></label>
+              <button class="primary-action" id="model-connection-submit" type="submit">建立连接并受理投影 ↗</button>
+              <p class="model-connection-help">响应丢失时先查询原命令，不重新建连接。页面只保留操作编号，不保存密钥。</p>
+              <button class="quiet-button" id="model-connection-new-command" type="button">开始下一条独立命令</button>
+            </form>
+            <section class="work-panel">
+              <div class="panel-heading"><span>02 / 连接清单</span><small id="model-connection-count">LOADING</small></div>
+              <div class="record-list" id="model-connection-list" aria-live="polite"><p>正在加载连接…</p></div>
+              <form class="model-connection-form" id="model-connection-rotate" hidden>
+                <div class="panel-heading"><span>追加密钥版本</span><small id="model-connection-rotation-target">—</small></div>
+                <label><span>新供应商 API Key</span><input id="model-connection-rotation-key" autocomplete="new-password" type="password" minlength="16" maxlength="4096" required></label>
+                <button class="primary-action" id="model-connection-rotation-submit" type="submit">追加版本，不覆盖旧密钥 ↗</button>
+              </form>
+            </section>
+          </div>
+          <section class="work-panel model-connection-operation" aria-live="polite" aria-atomic="true">
+            <div class="panel-heading"><span>03 / 当前命令回执</span><small id="model-connection-operation-status">NO COMMAND</small></div>
+            <code id="model-connection-operation-id">尚无操作</code>
+            <p id="model-connection-operation-detail">先建立连接，再完成投影、模型验证和发布。</p>
+          </section>
         </section>
 
         <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>

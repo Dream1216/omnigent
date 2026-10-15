@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib.resources import files
 from typing import TYPE_CHECKING, Literal, TypeVar
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         EmailProviderConfigurationService,
         EmailProviderConfigurationView,
     )
+    from saas.control_plane.model_connections import ModelConnectionService
     from saas.control_plane.model_provider import (
         ModelProviderConfigurationService,
         ModelProviderConfigurationView,
@@ -238,6 +239,23 @@ class _ModelProviderTestCommand(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class _CreateModelConnectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0, le=0)
+    display_name: str = Field(min_length=1, max_length=128)
+    provider_id: Literal["deepseek"]
+    base_url: Literal["https://api.deepseek.com"]
+    api_key: SecretStr = Field(min_length=16, max_length=4096)
+
+
+class _RotateModelCredentialCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=1)
+    api_key: SecretStr = Field(min_length=16, max_length=4096)
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -333,6 +351,7 @@ def _status_for(error: PlatformSecurityError) -> int:
         "platform_invalid_credentials",
         "platform_realm_mismatch",
         "platform_session_invalid",
+        "platform_session_expired",
         "platform_principal_inactive",
     }:
         return 401
@@ -365,6 +384,7 @@ def create_platform_admin_app(
     notification_operations: NotificationOperationsProtocol | None = None,
     email_configuration: EmailProviderConfigurationService | None = None,
     model_provider: ModelProviderConfigurationService | None = None,
+    model_connections: ModelConnectionService | None = None,
     password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
@@ -516,6 +536,14 @@ def create_platform_admin_app(
                 "Platform Model Provider authority is unavailable",
             )
         return model_provider
+
+    def model_connection_service() -> ModelConnectionService:
+        if model_connections is None:
+            raise PlatformSecurityError(
+                "platform_model_connections_unavailable",
+                "Model connection management is unavailable",
+            )
+        return model_connections
 
     async def privacy_operation_command_context(
         request: Request,
@@ -711,6 +739,7 @@ def create_platform_admin_app(
                 ),
                 "email_configuration_enabled": email_configuration is not None,
                 "model_provider_enabled": model_provider is not None,
+                "model_connections_enabled": model_connections is not None,
             },
         }
 
@@ -775,6 +804,86 @@ def create_platform_admin_app(
             "policy_version": POLICY_VERSION,
             "status": "accepted",
             "configuration_version": command.expected_version,
+        }
+
+    @app.get("/v2/platform-admin/model-connections")
+    def list_model_connections(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in model_connection_service().list(principal)],
+        }
+
+    @app.post("/v2/platform-admin/model-connections", status_code=202)
+    async def create_model_connection(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_connections import CreateModelConnection
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _CreateModelConnectionCommand,
+        )
+        value = model_connection_service().create(
+            principal,
+            command=CreateModelConnection(
+                display_name=command.display_name,
+                provider_id=command.provider_id,
+                base_url=command.base_url,
+                api_key=command.api_key.get_secret_value(),
+            ),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.post(
+        "/v2/platform-admin/model-connections/{connection_id}/credential-versions", status_code=202
+    )
+    async def rotate_model_credential(request: Request, connection_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _RotateModelCredentialCommand,
+        )
+        value = model_connection_service().rotate_credential(
+            principal,
+            connection_id=connection_id,
+            expected_version=command.expected_version,
+            api_key=command.api_key.get_secret_value(),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-operations")
+    def find_model_operation(
+        request: Request, idempotency_key: str = Query(min_length=1, max_length=128)
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = model_connection_service().find_operation(principal, idempotency_key)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "operation": None if value is None else asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-operations/{operation_id}")
+    def get_model_operation(request: Request, operation_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = model_connection_service().operation(principal, operation_id)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
         }
 
     @app.get("/v2/platform-admin/model-provider")

@@ -211,7 +211,7 @@ BEGIN
         'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015'
+        'p0s000000015', 'lm1a00000001'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -650,6 +650,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000015' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'lm1a00000001' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -736,7 +738,7 @@ BEGIN
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
               'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-              'p0s000000014', 'p0s000000015'
+              'p0s000000014', 'p0s000000015', 'lm1a00000001'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1109,12 +1111,16 @@ BEGIN
     FROM public.saas_alembic_version;
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
-        IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015') THEN
+        IF schema_revision IN (
+            'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+        ) THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
-    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015')
+    IF schema_revision NOT IN (
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+    )
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -1169,7 +1175,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000014', 'p0s000000015') THEN
+    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'lm1a00000001') THEN
         IF to_regclass('public.saas_platform_password_credentials') IS NULL THEN
             RAISE EXCEPTION 'P0S14 Staff password authority object contract rejected';
         END IF;
@@ -1261,7 +1267,7 @@ BEGIN
         'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015'
+        'p0s000000015', 'lm1a00000001'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -4107,7 +4113,7 @@ BEGIN
     IF schema_revision NOT IN (
         'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
         'p0s000000014',
-        'p0s000000015'
+        'p0s000000015', 'lm1a00000001'
     ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
@@ -4629,7 +4635,9 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015') THEN
+    IF schema_revision IN (
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+    ) THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -4660,7 +4668,9 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000013', 'p0s000000014', 'p0s000000015') THEN
+    IF schema_revision IN (
+        'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+    ) THEN
         IF to_regclass('public.saas_model_provider_configurations') IS NULL
            OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
            OR to_regclass('public.saas_model_provider_monthly_budgets') IS NULL
@@ -4705,5 +4715,50 @@ BEGIN
        ) IS NOT NULL THEN
         RAISE EXCEPTION 'P0S13 model Provider authority object contract rejected';
     END IF;
+END
+$$;
+
+-- Connection projection keeps canonical credentials append-only. No browser
+-- application role may fabricate an external completion or rewrite a key.
+DO $$
+DECLARE
+    schema_revision text;
+    table_name text;
+    present_count integer;
+    forced_count integer;
+BEGIN
+    SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
+    SELECT count(*), count(*) FILTER (
+        WHERE relation.relkind = 'r' AND relation.relrowsecurity AND relation.relforcerowsecurity
+    ) INTO present_count, forced_count FROM pg_class relation
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public' AND relation.relname IN (
+        'saas_model_connections', 'saas_model_credential_versions',
+        'saas_model_projection_operations'
+    );
+    IF schema_revision <> 'lm1a00000001' THEN
+        IF present_count <> 0 THEN
+            RAISE EXCEPTION 'model connection revision/object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+    IF present_count <> 3 OR forced_count <> 3 THEN
+        RAISE EXCEPTION 'model connection revision/object contract rejected';
+    END IF;
+    FOREACH table_name IN ARRAY ARRAY[
+        'saas_model_connections', 'saas_model_credential_versions',
+        'saas_model_projection_operations'
+    ] LOOP
+        EXECUTE 'GRANT SELECT ON public.' || quote_ident(table_name) ||
+            ' TO saas_platform_app, saas_secret_broker, saas_platform, saas_platform_governance';
+        EXECUTE 'GRANT INSERT ON public.' || quote_ident(table_name) || ' TO saas_platform_app';
+    END LOOP;
+    GRANT UPDATE (version, credential_generation, updated_by_principal_id, updated_at)
+    ON saas_model_connections TO saas_platform_app;
+    GRANT INSERT (
+        id, tenant_id, aggregate_type, aggregate_key, event_type, payload,
+        idempotency_key, request_hash, attempt_count, available_at, claimed_at,
+        claim_token, published_at, created_at
+    ) ON saas_control_plane_outbox TO saas_platform_app;
 END
 $$;

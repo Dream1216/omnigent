@@ -17,6 +17,33 @@
 }
 
 /* Managed inference rail: dense, operational, and visually distinct from customer UI. */
+.model-connections-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, .8fr) minmax(0, 1.2fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.model-connections-boundary {
+  margin: 1.5rem 0;
+  padding: 1rem 1.25rem;
+  border-left: 3px solid var(--amber);
+  background: var(--panel);
+}
+
+.model-connections-boundary strong { color: var(--amber); }
+.model-connections-boundary p, .model-connection-help { color: var(--muted); font-size: .82rem; line-height: 1.7; }
+.model-connection-form { display: grid; gap: 1.1rem; align-content: start; }
+.model-connection-form label { display: grid; gap: .5rem; }
+.model-connection-form label > span { color: var(--muted); font-size: .78rem; }
+.model-connection-form[hidden] { display: none; }
+#model-connection-rotate { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 1.5rem; }
+.work-panel.model-connection-operation { margin-top: 1.5rem; min-height: 0; border: 1px solid var(--line); }
+.model-connection-operation code { display: block; overflow-wrap: anywhere; color: var(--cyan); font: .8rem/1.7 var(--mono); }
+.model-connection-operation p { color: var(--muted); line-height: 1.7; }
+@media (max-width: 900px) { .model-connections-layout { grid-template-columns: 1fr; } }
+
 .model-provider-heading {
   align-items: end;
 }

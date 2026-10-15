@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-09-14.p3-model-provider"
+POLICY_VERSION: Final = "2026-10-16.p1-model-connections"
 
 
 class PermissionScope(StrEnum):
@@ -376,7 +376,12 @@ _DEFINITIONS = (
         "platform.model_provider.read",
         PermissionScope.PLATFORM,
         PermissionRisk.MEDIUM,
-        api_surfaces=("GET /v2/platform-admin/model-provider",),
+        api_surfaces=(
+            "GET /v2/platform-admin/model-provider",
+            "GET /v2/platform-admin/model-connections",
+            "GET /v2/platform-admin/model-operations",
+            "GET /v2/platform-admin/model-operations/{operation_id}",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.read",
     ),
@@ -385,7 +390,11 @@ _DEFINITIONS = (
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
-        api_surfaces=("PUT /v2/platform-admin/model-provider",),
+        api_surfaces=(
+            "PUT /v2/platform-admin/model-provider",
+            "POST /v2/platform-admin/model-connections",
+            "POST /v2/platform-admin/model-connections/{connection_id}/credential-versions",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.changed",
     ),

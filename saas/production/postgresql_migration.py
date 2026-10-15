@@ -217,6 +217,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "73f27f7154831640b5959eb5cde053bbdf104112d37937dff24b6d2e8c3d739b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "65f5ec6d09613562d255304cadb522d03b6eff2041e91932408683b2ff9b556b",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
     (
@@ -296,6 +306,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "1db51154613388ab5f620d768c83e4a0b6684664646dc233a07a762931b42e1f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "4c0be04405439e86e581ca4e48d913dfcc4c01708d32719e4e9c70baa44f93c6",
     (
         16,
         "mm1a2b3c4d5e",
@@ -381,6 +401,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "c8060cc83f22fefbd96080d84759f319a9d3ef1336a1a3f9f2cf516ab5b67698",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "5686d692300b36cf58f49b342d4a32ebb0e99727a6332e8c5608b74a7f52f024",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "61239caab9e58b03e93f9ee59a59f05c83ce28326c97d5580f275d47777660eb",
     (
@@ -433,6 +463,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "e50bc4dfbcd82634b4f08600a66d25b8720603e3cf1ea7e7d8e11e5f0e283656",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "be834aa42f02b858f23130d08fc801851569720bea3b40250912b35b26f34361",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "fb328b45607f5117d72c3fcafabb9997ee9e33c18e3fe4334254546ffe875de4",
     (
@@ -480,6 +520,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "536e22fb65125271c1644ac28117e941fb556f6f6b2dc8f4e288bc288c54a8da",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "e583ff6dc454d6f8f4cf5c14a909d02646c6bc2a61988ce4e4d122b551d396f8",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
     (
@@ -499,6 +549,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "0e4bb916d19eeedbce2843641f66d7e50571b7bd3ce0fadf46d3224c17a7a8ee",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "7a1f878c6491e69fdb379b5240a91c512342a3e6b473a120061a897afd1d51ab",
     (
         16,
         "mm1a2b3c4d5e",
