@@ -45,6 +45,13 @@ migration is rewritten.
   relaxed by the baseline change.
 - ServerInfo and Session APIs retain the SaaS authentication, CSRF/Origin and
   RuntimeContext middleware. New routes still require the full isolation matrix.
+- SaaS image builds enable `VITE_OMNIGENT_HOST_ROUTING=true`. Multi-replica
+  deployments also require `OMNIGENT_HOST_SLICE_KEY_ENABLED=1` on executing
+  Hosts and consistent hashing of the existing slice header/query onto the
+  same Server endpoints. Shared PostgreSQL does not share live tunnels.
+  Endpoint updates must drain ingress workers so the Host and browser reconnect
+  to the same destination. The upstream unauthenticated prototype alone does
+  not satisfy the SaaS rollout gate.
 - The ADR candidate is refreshed with `review_required` intact. Historical
   approvals and evidence remain immutable and do not approve this release.
 
