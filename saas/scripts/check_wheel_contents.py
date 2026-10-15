@@ -352,6 +352,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/artifact_store.py",
     "saas/production/postgresql_migration.py",
     "saas/production/server.py",
+    "saas/production/agent_store.py",
     "saas/production/server_config.py",
     "saas/production/service_bindings.py",
     "saas/production/kubernetes_runtime_provider.py",

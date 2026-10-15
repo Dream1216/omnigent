@@ -1150,6 +1150,9 @@ def test_production_composition_forces_context_free_official_jobs_off(
 
         assert captured["suppress_context_free_builtin_seed"] is True
         assert captured["scheduled_task_store"] is None
+        assert captured["mcp_registry"] is None
+        assert captured["public_sharing_max_level"] == "read"
+        assert captured["agent_store"].supports_user_agents is False
     finally:
         sessions.close()
 

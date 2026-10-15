@@ -1492,6 +1492,13 @@ def build_production_server(
             "context-free official lifespan jobs cannot be enabled in production"
         )
     app_dependencies["scheduled_task_store"] = None
+    app_dependencies["mcp_registry"] = None
+    app_dependencies["public_sharing_max_level"] = "read"
+    from saas.production.agent_store import disable_standalone_agent_installs
+
+    app_dependencies["agent_store"] = disable_standalone_agent_installs(
+        official_dependencies.agent_store
+    )
     try:
         app = create_omnigent_saas_app(
             integration=services.integration,
