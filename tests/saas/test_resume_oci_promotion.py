@@ -29,6 +29,65 @@ POLICY = "b" * 40
 RUN = "43"
 
 
+@pytest.mark.parametrize(
+    ("profile", "path", "workflow", "revision"),
+    [
+        (
+            "f440",
+            "saas/supply_chain/oci-promotion-resume-f440.json",
+            ".github/workflows/saas-oci-promotion-resume.yml",
+            "f4404d47f705c7a3c0745c38ccd1a9be125c31ad",
+        ),
+        (
+            "token-renewal-c90a079c",
+            "saas/supply_chain/oci-promotion-token-renewal-c90a079c.json",
+            ".github/workflows/saas-oci-promotion-token-renewal.yml",
+            "c90a079cb6e3c6cadda35ee1ea3121083e86d8fa",
+        ),
+    ],
+)
+def test_release_profile_binds_exact_product_lock_and_signer(
+    monkeypatch: pytest.MonkeyPatch, profile: str, path: str, workflow: str, revision: str
+) -> None:
+    for name in ("LOCK_PATH", "WORKFLOW", "_SELECTED_PRODUCT_REVISION"):
+        monkeypatch.setattr(resume, name, getattr(resume, name))
+    resume.configure_release_profile(profile)
+    assert Path(path) == resume.LOCK_PATH
+    assert workflow == resume.WORKFLOW
+    assert revision == resume._SELECTED_PRODUCT_REVISION
+    binding: dict[str, Any] = {
+        "schema_version": 1,
+        "repository": "Dream1216/omnigent",
+        "product_revision": revision,
+        "rebuilt": False,
+        "production_authority": False,
+    }
+    monkeypatch.setattr(resume, "read_json", lambda _value: copy.deepcopy(binding))
+    assert resume.lock() == binding
+    for field, value in (
+        ("product_revision", POLICY),
+        ("repository", "other/omnigent"),
+        ("schema_version", 2),
+        ("rebuilt", True),
+        ("production_authority", True),
+    ):
+        original = binding[field]
+        binding[field] = value
+        with pytest.raises(ValueError, match="immutable material scope"):
+            resume.lock()
+        binding[field] = original
+
+
+@pytest.mark.parametrize(
+    "profile", ["unreviewed", "token-renewal-4dd4f670", "token-renewal-6b51036e"]
+)
+def test_release_profile_rejects_unreviewed_selection(profile: str) -> None:
+    original = (resume.LOCK_PATH, resume.WORKFLOW, resume._SELECTED_PRODUCT_REVISION)
+    with pytest.raises(ValueError, match="unapproved release profile"):
+        resume.configure_release_profile(profile)
+    assert original == (resume.LOCK_PATH, resume.WORKFLOW, resume._SELECTED_PRODUCT_REVISION)
+
+
 def test_f440_recovery_workflow_is_bound_to_the_actual_retained_materials() -> None:
     binding = resume.lock()
     workflow = yaml.load((ROOT / resume.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
@@ -48,6 +107,96 @@ def test_f440_recovery_workflow_is_bound_to_the_actual_retained_materials() -> N
     publish = workflow["jobs"]["publish-signed"]
     assert publish["environment"] == "production-image"
     assert "run: docker build" not in (ROOT / resume.WORKFLOW).read_text()
+
+
+def test_token_renewal_recovery_binds_actual_candidate_and_original_wheel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("LOCK_PATH", "WORKFLOW", "_SELECTED_PRODUCT_REVISION"):
+        monkeypatch.setattr(resume, name, getattr(resume, name))
+    resume.configure_release_profile("token-renewal-c90a079c")
+    binding = resume.lock()
+    assert binding == {
+        "schema_version": 1,
+        "repository": "Dream1216/omnigent",
+        "product_revision": "c90a079cb6e3c6cadda35ee1ea3121083e86d8fa",
+        "source_date_epoch": 1792091272,
+        "candidate_run_id": 38792121089,
+        "candidate_run_attempt": 1,
+        "candidate_run_conclusion": "failure",
+        "candidate_build_job_id": 116620710153,
+        "candidate_build_completed_at": "2026-10-15T20:58:01Z",
+        "candidate_manifest_sha256": (
+            "60220221724dc74390549701a1d8b7ca554c75b9205cec887c11bca0f9cf4812"
+        ),
+        "oci_artifact_id": 12005794203,
+        "oci_artifact_sha256": "32a7d9038d3d0b418a0c29e868156bbef96a1eaa9a5d3adafe71e4fbfab6ca19",
+        "report_artifact_id": 12005554352,
+        "report_artifact_sha256": (
+            "d3ce25b380ed77544d8c190b834e515ddb7fab539bd1adcd0ff70e4597d62db6"
+        ),
+        "wheel_artifact_id": 12006543176,
+        "wheel_artifact_sha256": (
+            "7bb61ecc0caf198ab2344189d9133521058baa34a726985dfcf105fd920433ea"
+        ),
+        "wheel_sha256": "d8943d62d0329d87899c2d475b06d440c11d1ff3e483746e8f1936da59803b8e",
+        "images": {
+            "server": "sha256:d309604af931bf454ec76c3fa098e27afe663433bdda73f454e69abc03571fe5",
+            "host": "sha256:237ac333db58abcad813747c85b4b0cf4dcff173b5c9d5955e055149a19c12e8",
+        },
+        "rebuilt": False,
+        "production_authority": False,
+    }
+    predicate = resume.promotion_predicate(POLICY, RUN, "1")
+    external = predicate["buildDefinition"]["externalParameters"]
+    assert external["original_candidate"] == binding
+    assert external["product_source_revision"] == binding["product_revision"]
+    assert external["signing_policy_revision"] == POLICY
+    assert external["workflow"]["path"] == resume.WORKFLOW
+    workflow_text = (ROOT / resume.WORKFLOW).read_text()
+    workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
+    assert workflow["env"]["PRODUCT_REVISION"] == binding["product_revision"]
+    assert workflow["env"]["SOURCE_DATE_EPOCH"] == str(binding["source_date_epoch"])
+    assert workflow["env"]["ORIGINAL_CANDIDATE_RUN_ID"] == str(binding["candidate_run_id"])
+    assert workflow["jobs"]["admit-original"]["outputs"] == {
+        "manifest-sha256": binding["candidate_manifest_sha256"],
+        "oci-artifact-id": str(binding["oci_artifact_id"]),
+        "oci-artifact-sha256": binding["oci_artifact_sha256"],
+    }
+    publish = workflow["jobs"]["publish-signed"]
+    assert publish["environment"] == "production-image"
+    for job_name in ("admit-original", "publish-signed", "verify-published-source"):
+        condition = workflow["jobs"][job_name]["if"]
+        assert "github.event_name == 'workflow_dispatch'" in condition
+        assert "inputs.policy_revision == github.sha" in condition
+        assert "github.ref == 'refs/heads/main'" in condition
+    helper = "python -m saas.scripts.resume_oci_promotion"
+    assert workflow_text.count(helper) >= 10
+    assert workflow_text.count(helper) == workflow_text.count(
+        helper + " --release token-renewal-c90a079c "
+    )
+    assert "docker build" not in workflow_text and "uv build" not in workflow_text
+    steps = {step.get("name"): step for step in publish["steps"]}
+    scans = steps["Generate per-architecture SBOMs and check raw findings"]["run"]
+    assert "for arch in amd64 arm64; do" in scans
+    assert helper + " --release token-renewal-c90a079c child" in scans
+    assert '--role "$artifact" --architecture "$arch"' in scans
+    assert "(.ignoredMatches // []) == []" in scans
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            step = steps[f"Sign {role} {arch} explicit SPDX subject"]
+            assert step["with"]["subject-digest"] == (
+                "${{ steps.coordinates.outputs." + f"{role}-{arch}" + " }}"
+            )
+            assert step["with"]["sbom-path"] == f"artifacts/supply-chain/{role}-{arch}.spdx.json"
+    facts = steps["Record signed candidate facts"]
+    assert facts["env"]["WHEEL_ATTESTATION"] == (
+        "https://github.com/Dream1216/omnigent/attestations/56434357"
+    )
+    assert "original_candidate_run_id: 38792121089" in facts["run"]
+    for event in ("pull_request", "push"):
+        assert resume.WORKFLOW in workflow["on"][event]["paths"]
+        assert str(resume.LOCK_PATH) in workflow["on"][event]["paths"]
 
 
 @pytest.fixture
@@ -377,7 +526,7 @@ def test_original_artifact_metadata_is_not_replaceable(field: str) -> None:
 )
 def test_failed_publisher_does_not_authorize_untrusted_candidate_job(field: str) -> None:
     binding = resume.lock()
-    run = {
+    run: dict[str, Any] = {
         "id": binding["candidate_run_id"],
         "run_attempt": 1,
         "head_sha": binding["product_revision"],
@@ -408,6 +557,67 @@ def test_failed_publisher_does_not_authorize_untrusted_candidate_job(field: str)
         job[field] = "different"
     with pytest.raises(ValueError, match="candidate job"):
         resume.check_original_run(run, job)
+
+
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+def test_explicit_completed_run_still_requires_exact_successful_candidate(
+    monkeypatch: pytest.MonkeyPatch, conclusion: str
+) -> None:
+    binding = copy.deepcopy(resume.lock())
+    binding["candidate_run_conclusion"] = conclusion
+    monkeypatch.setattr(resume, "lock", lambda: copy.deepcopy(binding))
+    run = {
+        "id": binding["candidate_run_id"],
+        "run_attempt": binding["candidate_run_attempt"],
+        "head_sha": binding["product_revision"],
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "path": ".github/workflows/saas-image-candidate.yml",
+        "status": "completed",
+        "conclusion": conclusion,
+        "repository": {"full_name": binding["repository"]},
+    }
+    job = {
+        "id": binding["candidate_build_job_id"],
+        "run_id": binding["candidate_run_id"],
+        "run_attempt": binding["candidate_run_attempt"],
+        "name": "build-candidate",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": binding["candidate_build_completed_at"],
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-latest"],
+    }
+    resume.check_original_run(run, job)
+    for changed in (
+        {"conclusion": "failure"},
+        {"status": "in_progress"},
+        {"runner_group_name": "self-hosted"},
+        {"id": binding["candidate_build_job_id"] + 1},
+        {"run_id": binding["candidate_run_id"] + 1},
+        {"completed_at": "2099-01-01T00:00:00Z"},
+    ):
+        with pytest.raises(ValueError, match="candidate job"):
+            resume.check_original_run(run, {**job, **changed})
+    for changed in (
+        {"conclusion": "cancelled"},
+        {"conclusion": "failure" if conclusion == "success" else "success"},
+        {"head_sha": POLICY},
+        {"status": "in_progress"},
+    ):
+        with pytest.raises(ValueError, match="candidate job"):
+            resume.check_original_run({**run, **changed}, job)
+
+
+@pytest.mark.parametrize("conclusion", [None, "cancelled", "skipped", "timed_out", ""])
+def test_resume_cannot_lock_a_nonterminal_or_unadmitted_original_run(
+    monkeypatch: pytest.MonkeyPatch, conclusion: object
+) -> None:
+    binding = copy.deepcopy(resume.lock())
+    binding["candidate_run_conclusion"] = conclusion
+    monkeypatch.setattr(resume, "lock", lambda: copy.deepcopy(binding))
+    with pytest.raises(ValueError, match="unapproved original run conclusion"):
+        resume.check_original_run({}, {})
 
 
 def test_resume_workflow_never_builds_or_relabels_oci_and_keeps_all_gates() -> None:
