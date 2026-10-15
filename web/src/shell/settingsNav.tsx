@@ -272,6 +272,7 @@ export function SettingsSidebarBody({
   const groupKey: Record<string, MessageKey> = {
     Desktop: "settings.group.desktop",
     General: "settings.group.general",
+    Customize: "settings.group.customize",
     Admin: "settings.group.admin",
     Archived: "settings.group.archived",
   };

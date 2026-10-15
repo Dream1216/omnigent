@@ -30,10 +30,11 @@ unchanged; this scope approval is not independent code review or a waiver.
 
 This baseline includes the upstream `c90e5de4` AgentSpec tool-grant enforcement
 and `f754c140` sidecar MCP allow-list enforcement. The downstream queue does
-not replace either security boundary. Patch 0003 owns the complete
+not replace either security boundary. Patch 0005 owns the complete
 `host/connect.py` delta so the Host factory, Runner entrypoint, interactive
 shell inventory and external workspace propagation remain one replayable file;
-patch 0005 owns the remaining external Host bridge paths.
+the same patch owns the remaining external Host bridge paths. Patch 0003 owns
+the atomic credential and lifecycle admission in `host_store.py`.
 
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
