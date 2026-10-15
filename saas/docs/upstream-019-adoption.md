@@ -36,6 +36,10 @@ migration is rewritten.
 - The Host factory seam is forwarded through upstream's new
   `_serve_host_until_exit` helper. Ordinary heartbeat persistence stays separate
   from the ping worker; machine-credential revocation remains fail closed.
+- The Preview Runner's private dispatcher and hello pins are refreshed after
+  reviewing the optional diagnostics parameter and new MCP advertisement.
+  The Preview-only ASGI tunnel removes that unsupported MCP capability from
+  hello; TLS, DNS/CIDR binding and one-use registrations remain enforced.
 - Nine patches replay against the pinned 0.19 tree and reproduce all 27
   downstream-modified official Python files. No budget or release policy is
   relaxed by the baseline change.
