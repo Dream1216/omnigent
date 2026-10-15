@@ -260,6 +260,15 @@ the SaaS Agent-readiness and branding behavior. Upstream's new launch admission
 wrapper already preserves the previous account-owner check and adds MCP
 capability validation, so the old `partial` wrapper is superseded.
 
+The `upstream-019-abrupt-death-test-budget-v33` approval raises only the direct
+file ceiling from 153 to 154. Publish the abrupt-death fixture state through a
+same-directory temporary file and atomic replacement, preserving all SIGKILL,
+descendant and socket cleanup assertions. The deterministic empty-read race is
+reproduced before the fix; real processes pass on macOS and Linux without
+retries afterward. Including the merged main build metadata correction, the
+measured delta is 154 files / 3,415 net lines. The 4,576-line ceiling, nine
+patches, 0.85 isolation floor and every technical/live/release gate remain.
+
 The initial focused replay verification covers external Host credential
 revocation, pending-input delivery/deduplication, and snapshot workflow archive
 safety. Full Agent, tenant-isolation, N-1 and release gates remain required.
