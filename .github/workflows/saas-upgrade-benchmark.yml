@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 45
     env:
       OMNIGENT_SKIP_WEB_UI: "true"
+      PYTHONUNBUFFERED: "1"
       JOURNEYS: session_cold_start,session_cold_restart,warm_turn,time_to_first_token,interrupt,create_session,fork_session,list_sessions,get_session,load_conversation_history
     steps:
       - name: Check out exact candidate
@@ -50,7 +51,7 @@ jobs:
           test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
           jq -n --arg base "$EXPECTED_BASE" --arg candidate "$EXPECTED_CANDIDATE" \
             --arg journeys "$JOURNEYS" \
-            '{base_revision:$base, candidate_revision:$candidate, journeys:($journeys|split(",")), production_slo_evidence:false}' \
+            '{base_revision:$base, candidate_revision:$candidate, journeys:($journeys|split(",")), measurement_harness_revision:$candidate, same_runner_sequential:true, production_slo_evidence:false}' \
             > artifacts/source-binding.json
           sha256sum baseline/uv.lock candidate/uv.lock > artifacts/lock-sha256.txt
       - name: Set up baseline Python
@@ -68,27 +69,34 @@ jobs:
           for side in baseline candidate; do
             (cd "$side" && uv sync --frozen --extra all --extra saas --group test)
           done
+      - name: Verify installed component revisions outside both source trees
+        run: |
+          set -euo pipefail
+          for side in baseline candidate; do
+            expected=$(git -C "$side" rev-parse HEAD)
+            (cd artifacts && env -u PYTHONPATH "$GITHUB_WORKSPACE/$side/.venv/bin/python" \
+              -c 'import json, sys, omnigent; from omnigent._build_info import COMMIT_SHA; assert COMMIT_SHA == sys.argv[1]; print(json.dumps({"revision":COMMIT_SHA,"module":omnigent.__file__}))' "$expected") \
+              > "artifacts/$side-install.json"
+          done
       - name: Seed the older schema and migrate the candidate copy
         run: |
           (cd baseline && uv run --no-sync dev/benchmarks/omnigent/seed.py \
             --database-uri sqlite:///bench.db --sessions 5000 --items-per-session 200)
           cp baseline/bench.db candidate/bench.db
           (cd candidate && uv run --no-sync omni debug db-upgrade sqlite:///bench.db)
-      - name: Measure both versions on the same runner
+      - name: Measure pinned components with one isolated harness
         run: |
-          pids=()
+          set -euo pipefail
           for side in baseline candidate; do
-            (cd "$side" && uv run --no-sync dev/benchmarks/omnigent/run.py \
-              --database-uri sqlite:///bench.db --journeys "$JOURNEYS" \
-              --iterations 100 --runs 3 --output "$GITHUB_WORKSPACE/artifacts/$side.json") \
-              > "artifacts/$side.log" 2>&1 &
-            pids+=("$!")
+            (cd candidate && \
+              OMNIGENT_COMPAT_SERVER_PYTHON="$GITHUB_WORKSPACE/$side/.venv/bin/python" \
+              OMNIGENT_COMPAT_RUNNER_PYTHON="$GITHUB_WORKSPACE/$side/.venv/bin/python" \
+              setsid --wait uv run --no-sync dev/benchmarks/omnigent/run.py \
+                --database-uri "sqlite:///$GITHUB_WORKSPACE/$side/bench.db" \
+                --journeys "$JOURNEYS" --iterations 100 --runs 3 \
+                --output "$GITHUB_WORKSPACE/artifacts/$side.json") \
+              2>&1 | tee "artifacts/$side.log"
           done
-          result=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || result=1
-          done
-          exit "$result"
       - name: Require measured journeys and enforce upstream thresholds
         working-directory: candidate
         run: |

@@ -70,9 +70,19 @@ green test does not authorize that merge or any production promotion.
 ## Performance comparison in the SaaS fork
 
 The downstream `saas-upgrade-benchmark.yml` workflow runs in this repository
-and reuses the upstream seed, runner and comparator. Its comparison uses the PR's exact SaaS base commit on the same runner,
-locked installs, the upstream P50/P95 thresholds, and ten required Session/Host
-journeys. A regression, missing journey, missing baseline or absent comparison
+and reuses the upstream seed, runner and comparator. Both measurements use one
+current harness with the existing Server/Host/Runner interpreter redirects;
+installed component revisions are checked outside either source tree. The
+versions run sequentially in separate process sessions on the same runner to
+keep cleanup from terminating a sibling benchmark or the CI controller. The
+baseline is the PR's exact SaaS base commit. Locked installs, the upstream
+P50/P95 thresholds, and ten required Session/Host journeys remain mandatory. A regression, missing journey, missing baseline or absent comparison
 fails the SaaS verdict. Official upstream workflows retain their repository restrictions.
 These local/mock-provider benchmarks do not replace deployed multi-replica,
 live-provider or production SLO evidence.
+
+The retained desktop recovery browser tests follow upstream's replacement of
+classic account switching with Sign out and Connect. The shell owns credential
+clearing and the next browser sign-in; the renderer no longer supplies the
+removed `browserSignIn` IPC override. Native and picker sign-out tests retain
+the authorization, renewal-wait, credential-clearing and error assertions.
