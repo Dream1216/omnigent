@@ -414,6 +414,7 @@ def _verify_preview_deployment_and_startup(
                 ),
             )
             sessions.close()
+            _verify_runner_deployment_and_startup(plan, preview_receipt, config, refreshed, admin)
             with admin.begin() as connection:
                 connection.exec_driver_sql(
                     "ALTER POLICY rls_preview_gateway_instances_preview_edge "
@@ -433,3 +434,66 @@ def _verify_preview_deployment_and_startup(
         admin.dispose()
         for engine in engines.values():
             engine.dispose()
+
+
+def _verify_runner_deployment_and_startup(
+    plan: migration.ProductionPostgreSqlPlan,
+    staging_receipt: migration.PostgreSqlMigrationReceipt,
+    config: SimpleNamespace,
+    engines: dict[str, sa.Engine],
+    admin: sa.Engine,
+) -> None:
+    login = "runner_23dbe8e9d95a442abc841c356800ecfc_g13"
+    with admin.begin() as connection:
+        connection.exec_driver_sql(
+            f"CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+            "INHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8"
+        )
+        connection.exec_driver_sql(
+            f"GRANT saas_runner_agent TO {login} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+        )
+    migration.verify_production_postgresql_state(engines=engines, config=config)
+    with admin.begin() as connection:
+        connection.exec_driver_sql(
+            f"REVOKE saas_runner_agent FROM {plan.principal_operator.login} "
+            "GRANTED BY CURRENT_USER RESTRICT"
+        )
+    migration.verify_production_postgresql_state(engines=engines, config=config)
+    verified = migration.run_production_postgresql_migration(plan, verify_only=True)
+    assert verified.catalog_sha256 == staging_receipt.catalog_sha256
+    sessions = create_role_session_factories(
+        config,  # type: ignore[arg-type]
+        verify_state=lambda service_engines, service_config: (
+            migration.verify_production_postgresql_state(
+                engines=service_engines, config=service_config
+            )
+        ),
+    )
+    sessions.close()
+    with admin.connect() as connection:
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_auth_members m "
+                    "JOIN pg_roles granted ON granted.oid=m.roleid "
+                    "JOIN pg_roles member ON member.oid=m.member "
+                    "WHERE granted.rolname='saas_runner_agent' AND member.rolname=:principal"
+                ),
+                {"principal": plan.principal_operator.login},
+            )
+            == 0
+        )
+    for unsafe in ("ADMIN TRUE", "INHERIT FALSE", "SET TRUE"):
+        with admin.begin() as connection:
+            connection.exec_driver_sql(f"GRANT saas_runner_agent TO {login} WITH {unsafe}")
+        with pytest.raises(migration.PostgreSqlMigrationError) as widened:
+            migration.verify_production_postgresql_state(engines=engines, config=config)
+        assert widened.value.code == "service_role_graph_drifted"
+        with admin.begin() as connection:
+            connection.exec_driver_sql(
+                f"GRANT saas_runner_agent TO {login} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+            )
+    migration.verify_production_postgresql_state(engines=engines, config=config)
+    print(
+        "RUNNER_REVOKED_MANAGEMENT_STARTUP=pass; original_receipt=unchanged; unsafe_edges=rejected"
+    )

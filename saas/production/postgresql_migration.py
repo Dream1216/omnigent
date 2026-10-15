@@ -1457,6 +1457,47 @@ def _stable_control_plane_memberships(
     ]
 
 
+def _canonical_runner_management_catalog(
+    catalog: Mapping[str, object],
+    *,
+    principal_operator: str,
+    bootstrap_name: str,
+) -> dict[str, object]:
+    """Hash both admitted Runner lifecycle states as the original staging state.
+
+    Call only after the complete principal graph has been verified. Revoking
+    its sole optional management edge must not invalidate the source anchor or
+    the immutable staging receipt; every other catalog fact stays authoritative.
+    This projection changes no database permissions or caller-owned values.
+    """
+
+    security = catalog.get("control_plane_security")
+    memberships = security.get("memberships") if isinstance(security, Mapping) else None
+    if not isinstance(memberships, list) or any(
+        not isinstance(row, list) or len(row) != 6 for row in memberships
+    ):
+        raise PostgreSqlMigrationError("service_role_graph_drifted", "verification")
+    management = ["saas_runner_agent", principal_operator, bootstrap_name, True, False, False]
+    observed = [
+        row
+        for row in memberships
+        if row[0] == "saas_runner_agent" and row[1] == principal_operator
+    ]
+    if observed == [management]:
+        return dict(catalog)
+    if observed:
+        raise PostgreSqlMigrationError("service_role_graph_drifted", "verification")
+    projected = [*memberships, management]
+    projected.sort(key=lambda row: tuple(str(value) for value in row[:3]))
+    return {
+        **catalog,
+        "control_plane_security": {
+            **cast(Mapping[str, object], security),
+            "memberships": projected,
+        },
+    }
+
+
 def _service_login_flags_are_safe(
     row: tuple[object, ...],
     *,
@@ -3506,15 +3547,21 @@ def _verify_state(
                 saas_connection,
                 saas_owner=plan.saas_owner.login,
             )
-    catalog = {
-        "official_head": official_head,
-        "saas_head": saas_head,
-        "ownership": ownership,
-        "runtime_acls": runtime_acls,
-        "runtime_rls_tables": [contract.table_name for contract in load_runtime_rls_contract()],
-        "official_security": official_security,
-        "control_plane_security": control_plane_security,
-    }
+    catalog = _canonical_runner_management_catalog(
+        {
+            "official_head": official_head,
+            "saas_head": saas_head,
+            "ownership": ownership,
+            "runtime_acls": runtime_acls,
+            "runtime_rls_tables": [
+                contract.table_name for contract in load_runtime_rls_contract()
+            ],
+            "official_security": official_security,
+            "control_plane_security": control_plane_security,
+        },
+        principal_operator=plan.principal_operator.login,
+        bootstrap_name=str(bootstrap_name),
+    )
     _verify_source_security_catalog_digest(
         catalog,
         key=(int(server_version_num) // 10000, official_head, saas_head),
@@ -3909,17 +3956,21 @@ def verify_production_postgresql_state(
                 official_owner=receipt.official_owner,
                 saas_owner=receipt.saas_owner,
             )
-        catalog = {
-            "official_head": receipt.official_head,
-            "saas_head": receipt.saas_head,
-            "ownership": ownership,
-            "runtime_acls": runtime_acls,
-            "runtime_rls_tables": [
-                contract.table_name for contract in load_runtime_rls_contract()
-            ],
-            "official_security": official_security,
-            "control_plane_security": control_plane_security,
-        }
+        catalog = _canonical_runner_management_catalog(
+            {
+                "official_head": receipt.official_head,
+                "saas_head": receipt.saas_head,
+                "ownership": ownership,
+                "runtime_acls": runtime_acls,
+                "runtime_rls_tables": [
+                    contract.table_name for contract in load_runtime_rls_contract()
+                ],
+                "official_security": official_security,
+                "control_plane_security": control_plane_security,
+            },
+            principal_operator=receipt.principal_operator,
+            bootstrap_name=str(bootstrap_name),
+        )
         _verify_source_security_catalog_digest(
             catalog,
             key=(

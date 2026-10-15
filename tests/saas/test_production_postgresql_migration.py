@@ -392,6 +392,54 @@ def test_static_security_catalog_excludes_only_safe_dynamic_runner_edges() -> No
     ) == [management[:6], unsafe_runner[:6]]
 
 
+def test_runner_management_catalog_projection_preserves_the_staging_receipt() -> None:
+    management = ["saas_runner_agent", "principal", "postgres", True, False, False]
+    existing = ["saas_app", "principal", "postgres", True, False, False]
+    staged = {
+        "control_plane_security": {"memberships": [existing, management], "policies": []},
+        "official_security": {"policies": [["unchanged"]]},
+    }
+    runtime = {
+        **staged,
+        "control_plane_security": {"memberships": [existing], "policies": []},
+    }
+    assert (
+        migration._canonical_runner_management_catalog(
+            staged, principal_operator="principal", bootstrap_name="postgres"
+        )
+        == staged
+    )
+    assert (
+        migration._canonical_runner_management_catalog(
+            runtime, principal_operator="principal", bootstrap_name="postgres"
+        )
+        == staged
+    )
+    assert runtime["control_plane_security"]["memberships"] == [existing]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [["saas_runner_agent", "principal", "other", True, False, False]],
+        [["saas_runner_agent", "principal", "postgres", False, False, False]],
+        [["saas_runner_agent", "principal", "postgres", True, True, False]],
+        [["saas_runner_agent", "principal", "postgres", True, False, True]],
+        [["saas_runner_agent", "principal", "postgres", True, False, False]] * 2,
+        [["saas_runner_agent", "principal"]],
+        None,
+    ],
+)
+def test_runner_management_catalog_projection_rejects_malformed_edges(rows: object) -> None:
+    with pytest.raises(migration.PostgreSqlMigrationError) as rejected:
+        migration._canonical_runner_management_catalog(
+            {"control_plane_security": {"memberships": rows}},
+            principal_operator="principal",
+            bootstrap_name="postgres",
+        )
+    assert rejected.value.code == "service_role_graph_drifted"
+
+
 def test_service_login_flags_require_exact_runtime_journal_search_path() -> None:
     common = (True, False, False, False, False, False, True, -1)
     journal = "runtime_provider_journal_login"
@@ -1431,7 +1479,11 @@ def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
         "runtime_acls": (),
         "runtime_rls_tables": [contract.table_name for contract in contracts],
         "official_security": {},
-        "control_plane_security": {},
+        "control_plane_security": {
+            "memberships": [
+                ["saas_runner_agent", "principal_operator", "postgres", True, False, False]
+            ]
+        },
     }
     catalog_digest = migration.hashlib.sha256(
         json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
@@ -1496,7 +1548,7 @@ def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
     monkeypatch.setattr(
         migration,
         "_control_plane_security_catalog",
-        lambda _connection, **_kwargs: {},
+        lambda _connection, **_kwargs: catalog["control_plane_security"],
     )
     monkeypatch.setattr(migration, "_verify_object_ownership", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(
