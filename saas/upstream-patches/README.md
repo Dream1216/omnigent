@@ -269,6 +269,13 @@ retries afterward. Including the merged main build metadata correction, the
 measured delta is 154 files / 3,415 net lines. The 4,576-line ceiling, nine
 patches, 0.85 isolation floor and every technical/live/release gate remain.
 
+The requester approved `upstream-019-toast-cleanup-test-budget-v34` on
+2026-10-16, raising only the direct-file ceiling from 154 to 155. The existing
+archive Undo toast tests now await Sonner DOM removal before teardown; all
+rendering, Undo, batch, deduplication and deadline assertions remain. The
+measured scope is 155 files / 3,416 net lines. This source-scope approval retains
+the 4,576-line ceiling, nine patches, 0.85 isolation floor and all release gates.
+
 The initial focused replay verification covers external Host credential
 revocation, pending-input delivery/deduplication, and snapshot workflow archive
 safety. Full Agent, tenant-isolation, N-1 and release gates remain required.

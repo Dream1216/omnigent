@@ -114,36 +114,49 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 154,
+    "max_direct_upstream_files": 155,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "followup": {
-      "revision": "upstream-019-abrupt-death-test-budget-v33",
+      "revision": "upstream-019-toast-cleanup-test-budget-v34",
       "approved_at": "2026-10-16",
       "governance_mode": "single_owner_beta",
-      "previous_max_direct_upstream_files": 153,
-      "measured_direct_upstream_files": 154,
+      "previous_max_direct_upstream_files": 154,
+      "measured_direct_upstream_files": 155,
       "previous_max_upstream_net_added_loc": 4576,
-      "measured_upstream_net_added_loc": 3415,
+      "measured_upstream_net_added_loc": 3416,
       "scoped_paths": [
-        "tests/inner/test_brokered_auth_abrupt_death.py"
+        "web/src/shell/archiveUndoToast.test.tsx"
       ],
-      "reason": "The requester explicitly approved only the direct-file ceiling increase from 153 to 154 for atomic publication of the upstream abrupt-death test fixture. A deterministic pipe handshake reproduces the empty JSON read before the fix; macOS and Linux real-process scenarios pass without retries after writing the complete state to a same-directory temporary file and atomically replacing state.json. Retain every SIGKILL, descendant and socket cleanup assertion; no product runtime code changes. The approved main c90a079c build metadata fix adds four net official lines, resulting in 3,415 measured lines. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and all release gates. This Single-Owner Beta approval is not independent production review or release admission.",
+      "reason": "The requester explicitly authorized sequential execution of the final-source freeze, candidate OCI, all P4 acceptance and conditional P5. This approves the reviewed 154-to-155 file proposal for awaiting actual Sonner toast removal before test DOM teardown. Preserve all existing assertions, the 4,576-line ceiling, nine patches, 0.85 isolation floor and all technical/live/signing/restore/canary/independent admission gates. This source-scope approval is not a passed acceptance result.",
       "previous_revision": {
-        "revision": "upstream-019-terminal-reconnect-test-budget-v32",
+        "revision": "upstream-019-abrupt-death-test-budget-v33",
         "approved_at": "2026-10-16",
         "governance_mode": "single_owner_beta",
-        "previous_max_direct_upstream_files": 152,
-        "measured_direct_upstream_files": 153,
+        "previous_max_direct_upstream_files": 153,
+        "measured_direct_upstream_files": 154,
         "previous_max_upstream_net_added_loc": 4576,
-        "measured_upstream_net_added_loc": 3409,
+        "measured_upstream_net_added_loc": 3415,
         "scoped_paths": [
-          "tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"
+          "tests/inner/test_brokered_auth_abrupt_death.py"
         ],
-        "reason": "The requester explicitly approved only the direct-file ceiling increase from 152 to 153 for the upstream terminal reconnect test correction. Ignore complete OSC 10/11 RGB replies when checking typed input and reuse the existing loopback-blocking setup so injected relay closes target the active transport. Six real browser cases pass without retries across both terminal surfaces, both close codes, direct attach and relay fallback. Product code and behavior assertions remain unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and every release gate. This Single-Owner Beta scope authorization is not independent production review, image admission or acceptance.",
-        "previous_revision_reference": "upstream-019-reviewed-visual-budget-v31"
+        "reason": "The requester explicitly approved only the direct-file ceiling increase from 153 to 154 for atomic publication of the upstream abrupt-death test fixture. A deterministic pipe handshake reproduces the empty JSON read before the fix; macOS and Linux real-process scenarios pass without retries after writing the complete state to a same-directory temporary file and atomically replacing state.json. Retain every SIGKILL, descendant and socket cleanup assertion; no product runtime code changes. The approved main c90a079c build metadata fix adds four net official lines, resulting in 3,415 measured lines. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and all release gates. This Single-Owner Beta approval is not independent production review or release admission.",
+        "previous_revision": {
+          "revision": "upstream-019-terminal-reconnect-test-budget-v32",
+          "approved_at": "2026-10-16",
+          "governance_mode": "single_owner_beta",
+          "previous_max_direct_upstream_files": 152,
+          "measured_direct_upstream_files": 153,
+          "previous_max_upstream_net_added_loc": 4576,
+          "measured_upstream_net_added_loc": 3409,
+          "scoped_paths": [
+            "tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"
+          ],
+          "reason": "The requester explicitly approved only the direct-file ceiling increase from 152 to 153 for the upstream terminal reconnect test correction. Ignore complete OSC 10/11 RGB replies when checking typed input and reuse the existing loopback-blocking setup so injected relay closes target the active transport. Six real browser cases pass without retries across both terminal surfaces, both close codes, direct attach and relay fallback. Product code and behavior assertions remain unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and every release gate. This Single-Owner Beta scope authorization is not independent production review, image admission or acceptance.",
+          "previous_revision_reference": "upstream-019-reviewed-visual-budget-v31"
+        }
       }
     },
     "previous_followup": {
