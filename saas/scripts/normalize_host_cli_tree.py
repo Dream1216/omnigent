@@ -70,13 +70,16 @@ def detach_hardlinked_regular_files(root: Path) -> int:
 
 
 def normalize_tree_metadata(root: Path, *, source_date_epoch: int) -> int:
-    """Normalize retained metadata and return a deterministic tree digest."""
+    """Remove shared directory writes, normalize mtimes, and digest the tree."""
 
     if source_date_epoch < 0:
         raise ValueError("SOURCE_DATE_EPOCH must be non-negative")
     entries = [root, *sorted(root.rglob("*"), key=lambda path: path.as_posix())]
     timestamp_ns = source_date_epoch * 1_000_000_000
     for path in entries:
+        metadata = path.stat(follow_symlinks=False)
+        if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o022:
+            os.chmod(path, stat.S_IMODE(metadata.st_mode) & ~0o022, follow_symlinks=False)
         os.utime(path, ns=(timestamp_ns, timestamp_ns), follow_symlinks=False)
 
     digest = hashlib.sha256()

@@ -20,6 +20,7 @@ from saas.scripts.check_image_supply_chain import (
     validate_release,
 )
 from saas.scripts.compare_oci_rebuilds import compare_archives
+from saas.scripts.normalize_host_cli_tree import normalize_tree_metadata
 
 _NOW = datetime(2026, 8, 5, 12, tzinfo=UTC)
 
@@ -575,6 +576,111 @@ def test_host_cli_normalizer_canonicalizes_multiple_roots(tmp_path: Path) -> Non
         assert all(root.stat().st_mtime_ns == 123_000_000_000 for root in roots)
 
     assert manifests[0] == manifests[1]
+
+
+def test_host_cli_normalizer_converges_installer_directory_write_permissions(
+    tmp_path: Path,
+) -> None:
+    digests = []
+    for name, mode in (("first", 0o777), ("second", 0o755)):
+        root = tmp_path / name
+        root.mkdir()
+        package = root / "node_modules" / "package"
+        package.mkdir(parents=True)
+        package.chmod(mode)
+        (package / "index.js").write_bytes(b"same pinned package\n")
+        digests.append(normalize_tree_metadata(root, source_date_epoch=123))
+        assert package.stat().st_mode & 0o777 == 0o755
+    assert digests[0] == digests[1]
+
+
+def test_host_cli_directory_normalization_preserves_private_and_executable_modes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    root.mkdir(mode=0o700)
+    executable = root / "tool"
+    executable.write_bytes(b"#!/bin/sh\n")
+    executable.chmod(0o755)
+    payload = root / "payload"
+    payload.write_bytes(b"package data")
+    payload.chmod(0o600)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o777)
+    outside_time = outside.stat().st_mtime_ns
+    link = root / "outside-link"
+    link.symlink_to(outside, target_is_directory=True)
+
+    normalize_tree_metadata(root, source_date_epoch=123)
+
+    assert root.stat().st_mode & 0o777 == 0o700
+    assert executable.stat().st_mode & 0o777 == 0o755
+    assert executable.read_bytes() == b"#!/bin/sh\n"
+    assert payload.stat().st_mode & 0o777 == 0o600
+    assert payload.read_bytes() == b"package data"
+    assert link.is_symlink()
+    assert outside.stat().st_mode & 0o777 == 0o777
+    assert outside.stat().st_mtime_ns == outside_time
+
+
+def test_wolfi_rootfs_copy_binds_epoch_in_file_content(tmp_path: Path) -> None:
+    dockerfile = (_repo() / "deploy/docker/Dockerfile").read_text()
+    rootfs = dockerfile.split("FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs", 1)[
+        1
+    ].split("FROM scratch AS secured-python-runtime", 1)[0]
+    marker = "printf '%s\\n' \"${SOURCE_DATE_EPOCH}\" > /etc/omnigent-runtime-source-date-epoch"
+    assert marker in rootfs
+    assert rootfs.index("apk add --no-cache") < rootfs.index(marker)
+    cache_input_hashes = []
+    for epoch in (111, 222):
+        destination = tmp_path / str(epoch)
+        subprocess.run(
+            [
+                "sh",
+                "-ec",
+                marker.replace("/etc/omnigent-runtime-source-date-epoch", str(destination)),
+            ],
+            env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
+            check=True,
+        )
+        assert destination.read_bytes() == f"{epoch}\n".encode()
+        cache_input_hashes.append(hashlib.sha256(destination.read_bytes()).hexdigest())
+    assert cache_input_hashes[0] != cache_input_hashes[1]
+
+
+@pytest.mark.parametrize(
+    ("relative", "target", "replacement", "violation"),
+    [
+        (
+            "deploy/docker/Dockerfile",
+            "printf '%s\\n' \"${SOURCE_DATE_EPOCH}\" > /etc/omnigent-runtime-source-date-epoch",
+            "true # epoch content binding removed",
+            "Wolfi scratch COPY must bind epoch in retained rootfs content",
+        ),
+        (
+            "deploy/docker/Dockerfile",
+            "printf '%s\\n' \"${SOURCE_DATE_EPOCH}\" > /etc/omnigent-runtime-source-date-epoch",
+            "printf '%s\\n' 0 > /etc/omnigent-runtime-source-date-epoch",
+            "Wolfi scratch COPY must bind epoch in retained rootfs content",
+        ),
+        (
+            "saas/scripts/normalize_host_cli_tree.py",
+            "os.chmod(path, stat.S_IMODE(metadata.st_mode) & ~0o022, follow_symlinks=False)",
+            "pass # installer directory permissions retained",
+            "host CLI directories must remove group and other write permissions",
+        ),
+    ],
+)
+def test_image_material_lock_rejects_epoch_and_directory_mode_regression(
+    tmp_path: Path, relative: str, target: str, replacement: str, violation: str
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    path = repo / relative
+    source = path.read_text()
+    assert target in source
+    path.write_text(source.replace(target, replacement, 1))
+    assert violation in validate_image_material_lock(repo)
 
 
 @pytest.mark.parametrize(
