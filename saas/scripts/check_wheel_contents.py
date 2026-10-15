@@ -394,6 +394,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/platform_model_admin.py",
     "saas/production/platform_model_gateway.py",
     "saas/production/platform_model_host.py",
+    "saas/production/platform_model_relay.py",
     "saas/runner_adapter/platform_model_gateway.py",
     "saas/scripts/check_deployment_readiness.py",
     "saas/scripts/check_worker_health.py",

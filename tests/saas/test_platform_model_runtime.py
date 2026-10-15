@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -38,6 +39,7 @@ from saas.runner_adapter import (
 )
 from saas.runner_adapter.platform_models import (
     PLATFORM_MODEL_CREDENTIAL_ENV,
+    PLATFORM_MODEL_RELAY_BASE_URL_ENV,
     activate_platform_managed_model_runtime,
     activate_platform_managed_model_secret,
     load_platform_managed_model_projection,
@@ -77,7 +79,34 @@ def test_managed_sandbox_stages_projected_model_key_owner_only(tmp_path: Path) -
     assert stat.S_IMODE(target.stat().st_mode) == 0o400
     assert environment["OMNIGENT_SAAS_SERVER_URL"] == ("http://omnigent-saas-server.example.svc")
     assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"] == str(target)
-    assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"] == "3600"
+    assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"] == "28800"
+
+
+def test_fixed_host_defaults_to_eight_hours(tmp_path, monkeypatch):
+    key = tmp_path / "signing-key"
+    key.write_bytes(b"s" * 32)
+    key.chmod(0o400)
+    captured = []
+
+    def run_host(server_url, *, host_factory):
+        from omnigent.host.identity import HostIdentity
+
+        host = host_factory(
+            HostIdentity(host_id="0123456789abcdef0123456789abcdef", name="ttl-test"),
+            server_url,
+        )
+        captured.append(host._platform_model_token_ttl)
+
+    monkeypatch.setattr(platform_model_host, "activate_managed_host_environment", lambda: None)
+    monkeypatch.setattr(platform_model_host, "run_host_process", run_host)
+    platform_model_host.run_platform_model_host(
+        {
+            "OMNIGENT_SAAS_SERVER_URL": "https://control-plane.invalid",
+            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(uuid4()),
+            "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
+        }
+    )
+    assert captured == [28800]
 
 
 def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment(
@@ -148,6 +177,48 @@ def test_gateway_projection_routes_opencode_without_cli_login(
     assert resolution.provider_id == "platform-deepseek"
     assert resolution.api_key == "session-bound-gateway-token"
     assert resolution.model_id == "deepseek-flash"
+
+
+def test_all_provider_consumers_use_host_channel_without_mutating_saved_profile(
+    tmp_path, monkeypatch
+):
+    from omnigent.onboarding.provider_config import load_config
+    from omnigent.runner.session_init_protocol import validate_runner_inference_config
+
+    profile = json.loads(
+        render_platform_model_gateway_config(
+            allowed_models=("deepseek-flash", "deepseek-v4-pro"),
+            default_model="deepseek-flash",
+        )
+    )
+    path = tmp_path / "profile.json"
+    original = json.dumps(profile)
+    path.write_text(original)
+    monkeypatch.setenv("OMNIGENT_INFERENCE_CONFIG", str(path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv(PLATFORM_MODEL_CREDENTIAL_ENV, "stable-local-capability")
+    monkeypatch.setenv(
+        PLATFORM_MODEL_RELAY_BASE_URL_ENV,
+        json.dumps(
+            {
+                "platform-deepseek": {"openai": "http://127.0.0.1:23456/v1"},
+            }
+        ),
+    )
+
+    validate_runner_inference_config(profile)
+    launch = resolve_native_codex_launch(model=None)
+    assert launch.login_required is False
+    assert 'base_url="http://127.0.0.1:23456/v1"' in "\n".join(launch.config_overrides)
+    opencode = resolve_databricks_gateway(None)
+    assert opencode is not None and opencode.api_key == "stable-local-capability"
+    assert opencode.base_url == "http://127.0.0.1:23456/v1"
+    pi = resolve_pi_native_provider(config_loader=load_config)
+    assert pi is not None and pi.base_url == "http://127.0.0.1:23456/v1"
+    assert pi.api_key == "stable-local-capability"
+    assert path.read_text() == original
+    assert load_config()["providers"] == profile["providers"]
 
 
 @pytest.mark.asyncio

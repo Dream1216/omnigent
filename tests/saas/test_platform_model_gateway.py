@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import make_url
@@ -27,6 +29,7 @@ from saas.production.platform_model_gateway import (
     load_platform_model_pricing,
 )
 from saas.production.platform_model_host import PlatformModelHostProcess
+from saas.production.platform_model_relay import PlatformModelRelay
 from saas.production.service_bindings import (
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
@@ -35,6 +38,7 @@ from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayToken
 from saas.runner_adapter.platform_models import (
     PLATFORM_MODEL_CREDENTIAL_ENV,
     PLATFORM_MODEL_CREDENTIAL_REFERENCE,
+    PLATFORM_MODEL_RELAY_BASE_URL_ENV,
     render_platform_model_gateway_config,
 )
 
@@ -360,15 +364,129 @@ def test_token_is_partition_session_and_expiry_bound() -> None:
         raise AssertionError("expired model gateway token was accepted")
 
 
-def test_managed_host_injects_runner_only_session_token(
+@pytest.mark.parametrize(
+    "kind,code",
+    [
+        ("expired", "platform_model_authentication_expired"),
+        ("tampered", "platform_model_authentication_invalid"),
+        ("wrong-tenant", "platform_model_authentication_invalid"),
+    ],
+)
+def test_expiry_classification_never_reaches_budget_or_provider(kind, code):
+    def upstream(_request):
+        raise AssertionError("rejected authentication reached provider")
+
+    client, budgets, _ = _client(httpx.MockTransport(upstream))
+    authority = PlatformModelGatewayTokenAuthority(
+        signing_key=SIGNING_KEY,
+        tenant_id=uuid4() if kind == "wrong-tenant" else TENANT_ID,
+    )
+    token = authority.issue(session_id=SESSION_ID, ttl_seconds=60, now=1000)
+    if kind == "tampered":
+        token += "tampered"
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "no side effects"},
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == code
+    assert not budgets.reserved and not budgets.settled and not budgets.released
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_relay_expiry_recovery_with_real_gateway_settles_one_model_call(monkeypatch):
+    provider_requests = []
+
+    async def upstream(request):
+        provider_requests.append(request)
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(
+                b'data: {"type":"response.completed","response":{'
+                b'"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}\n\n'
+            ),
+        )
+
+    gateway_client, budgets, _ = _client(httpx.MockTransport(upstream))
+    real_validate = PlatformModelGatewayTokenAuthority.validate
+    monkeypatch.setattr(
+        PlatformModelGatewayTokenAuthority,
+        "validate",
+        lambda self, token, **kwargs: real_validate(self, token, now=1060),
+    )
+    host_clock = [1000]
+    attempts = []
+
+    async def gateway_transport(request):
+        attempts.append(request)
+        response = await asyncio.to_thread(
+            gateway_client.post,
+            request.url.path,
+            headers={"Authorization": request.headers["authorization"]},
+            content=request.content,
+        )
+        host_clock[0] = 1001
+        return httpx.Response(response.status_code, stream=httpx.ByteStream(response.content))
+
+    relay = PlatformModelRelay(
+        authority=PlatformModelGatewayTokenAuthority(signing_key=SIGNING_KEY, tenant_id=TENANT_ID),
+        session_id=SESSION_ID,
+        ttl_seconds=60,
+        clock=lambda: host_clock[0],
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(gateway_transport)),
+    )
+    with TestClient(relay.app) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {relay.capability}"},
+            json={
+                "model": "deepseek-flash",
+                "input": "one model call",
+                "max_output_tokens": 100,
+                "stream": True,
+            },
+        )
+    assert response.status_code == 200
+    assert len(attempts) == 2
+    assert len(provider_requests) == 1
+    assert len(budgets.settled) == 1
+    assert budgets.settled[0]["actual_tokens"] == 15
+    assert not budgets.released
+    assert attempts[0].content == attempts[1].content
+
+
+@pytest.mark.parametrize("failure", [None, "spawn", "follow"])
+def test_managed_host_injects_runner_only_session_channel(
     monkeypatch,
     tmp_path: Path,
+    failure,
 ) -> None:
     authority = PlatformModelGatewayTokenAuthority(
         signing_key=SIGNING_KEY,
         tenant_id=TENANT_ID,
     )
     captured: dict[str, str] = {}
+
+    class Relay:
+        capability = "runner-only-capability-not-a-gateway-token"
+
+        def __init__(self, **kwargs):
+            assert kwargs["authority"] is authority
+            assert kwargs["session_id"] == SESSION_ID
+
+        def start(self):
+            return "http://127.0.0.1:12345/v1"
+
+        def follow(self, _process):
+            captured["followed"] = "yes"
+            if failure == "follow":
+                raise OSError("monitor unavailable")
+
+        def close(self):
+            captured["closed"] = "yes"
+
+    monkeypatch.setattr("saas.production.platform_model_host.PlatformModelRelay", Relay)
 
     def fake_spawn(
         _self: HostProcess,
@@ -377,9 +495,17 @@ def test_managed_host_injects_runner_only_session_token(
         _workspace: Path,
     ):
         captured["token"] = environment[PLATFORM_MODEL_CREDENTIAL_ENV]
+        captured["transport"] = environment[PLATFORM_MODEL_RELAY_BASE_URL_ENV]
+        if failure == "spawn":
+            raise OSError("spawn failed")
         return cast(object, object()), tmp_path / "runner.log"
 
     monkeypatch.setattr(HostProcess, "_spawn_runner_proc", fake_spawn)
+    monkeypatch.setattr(
+        HostProcess,
+        "_stop_runner_proc",
+        staticmethod(lambda _proc: captured.update(stopped="yes")),
+    )
     host = PlatformModelHostProcess(
         HostIdentity(host_id="0123456789abcdef0123456789abcdef", name="model-host"),
         "https://control-plane.invalid",
@@ -388,10 +514,21 @@ def test_managed_host_injects_runner_only_session_token(
     )
     environment = {PRIMARY_SESSION_ID_ENV_VAR: str(SESSION_ID)}
 
-    host._spawn_runner_proc(environment, "session-", tmp_path)
+    if failure is None:
+        host._spawn_runner_proc(environment, "session-", tmp_path)
+    else:
+        with pytest.raises(OSError):
+            host._spawn_runner_proc(environment, "session-", tmp_path)
 
     assert PLATFORM_MODEL_CREDENTIAL_ENV not in environment
-    assert authority.validate(captured["token"]).session_id == SESSION_ID
+    assert PLATFORM_MODEL_RELAY_BASE_URL_ENV not in environment
+    assert captured["token"] == Relay.capability
+    assert json.loads(captured["transport"]) == {
+        "platform-deepseek": {"openai": "http://127.0.0.1:12345/v1"}
+    }
+    assert ("followed" in captured) == (failure != "spawn")
+    assert ("closed" in captured) == (failure is not None)
+    assert ("stopped" in captured) == (failure == "follow")
 
 
 def test_pricing_policy_requires_canonical_read_only_file(tmp_path: Path) -> None:

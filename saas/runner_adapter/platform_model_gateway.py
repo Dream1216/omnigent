@@ -15,10 +15,15 @@ from saas.runner_adapter.platform_models import PLATFORM_MODEL_CREDENTIAL_ENV
 
 _TOKEN_VERSION = 1
 _MAX_TOKEN_TTL_SECONDS = 8 * 60 * 60
+DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS = 8 * 60 * 60
 
 
 class PlatformModelGatewayTokenError(ValueError):
     """A model-gateway bearer is malformed, expired, or outside its partition."""
+
+
+class PlatformModelGatewayTokenExpired(PlatformModelGatewayTokenError):
+    """An otherwise authenticated, correctly scoped bearer has expired."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +56,7 @@ class PlatformModelGatewayTokenAuthority:
         self,
         *,
         session_id: UUID,
-        ttl_seconds: int = 60 * 60,
+        ttl_seconds: int = DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
         now: int | None = None,
     ) -> str:
         if (
@@ -108,10 +113,12 @@ class PlatformModelGatewayTokenAuthority:
                 or not isinstance(issued_at, int)
                 or not isinstance(expires_at, int)
                 or issued_at > current + 30
-                or expires_at <= current
+                or expires_at <= issued_at
                 or expires_at - issued_at > _MAX_TOKEN_TTL_SECONDS
             ):
                 raise PlatformModelGatewayTokenError("invalid claims")
+            if expires_at <= current:
+                raise PlatformModelGatewayTokenExpired("expired token")
         except PlatformModelGatewayTokenError:
             raise
         except (ValueError, TypeError, UnicodeError, binascii.Error):
@@ -129,7 +136,7 @@ def inject_platform_model_gateway_token(
     *,
     authority: PlatformModelGatewayTokenAuthority,
     session_id: UUID,
-    ttl_seconds: int = 60 * 60,
+    ttl_seconds: int = DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
 ) -> None:
     """Put one synthetic, session-bound bearer into the Runner-only environment."""
 
@@ -150,8 +157,10 @@ def _unb64(value: str) -> bytes:
 
 
 __all__ = [
+    "DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS",
     "PlatformModelGatewayClaims",
     "PlatformModelGatewayTokenAuthority",
     "PlatformModelGatewayTokenError",
+    "PlatformModelGatewayTokenExpired",
     "inject_platform_model_gateway_token",
 ]

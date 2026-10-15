@@ -42,6 +42,58 @@ const RATE_LIMIT_ERROR = [
 describe("ErrorBanner", () => {
   beforeEach(() => vi.mocked(copyText).mockClear());
 
+  it("labels explicit platform expiry without a CLI login hint or task replay action", () => {
+    const onRetry = vi.fn();
+    render(
+      <ErrorBanner
+        code="codex_turn_error"
+        source="execution"
+        message="401 platform_model_authentication_expired. Try codex login."
+        onRetry={onRetry}
+        relatedErrors={[
+          {
+            itemId: "later-connection-error",
+            code: "connection_error",
+            source: "execution",
+            message: "Connection closed",
+          },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "会话认证过期，正在恢复" }));
+    expect(screen.getByTestId("error-message-content")).toHaveTextContent("无需重新登录");
+    expect(screen.queryByText(/codex login/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume session" })).toBeNull();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("does not claim recovery is ongoing after the bounded attempt failed", () => {
+    render(
+      <ErrorBanner
+        code="codex_turn_error"
+        source="execution"
+        message="503 platform_model_authentication_recovery_failed. Try codex login."
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "会话认证恢复失败" }));
+    expect(screen.getByTestId("error-message-content")).toHaveTextContent("用户任务未自动重放");
+    expect(screen.queryByText(/codex login/)).toBeNull();
+    expect(screen.queryByText("会话认证过期，正在恢复")).toBeNull();
+  });
+
+  it("does not misclassify a generic 401 as token expiry", () => {
+    render(
+      <ErrorBanner
+        code="codex_turn_error"
+        source="execution"
+        message="401 Unauthorized: invalid credentials"
+      />,
+    );
+    expect(screen.getByTestId("error-headline")).toHaveTextContent("Codex ran into an error");
+    expect(screen.queryByText("会话认证过期，正在恢复")).toBeNull();
+  });
+
   it("renders compact by default and expands labeled message content", () => {
     render(
       <ErrorBanner message={TERMINAL_ERROR} source="execution" code="required_terminal_exited" />,

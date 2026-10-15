@@ -19,6 +19,15 @@ Patch 0010 preserves host ownership and workspace validation order. An Agent
 whose bundle is absent is rejected as invalid input rather than returning a
 server error. This stays in an existing direct upstream file.
 
+The session-model renewal change extends patch 0006 with a generic Host-owned
+loopback transport override at provider-family resolution. Saved inference
+profiles and their launch hashes stay unchanged. Issuance, eight-hour lifetime,
+pre-expiry renewal and the single pre-admission expiry retry remain in `saas/`.
+The error-banner source/test add two direct upstream files. The requester's
+2026-10-15 approval raises only the 148-file ceiling to the measured 150 files.
+All remaining source limits, protected CI and production admission gates stay
+unchanged; this scope approval is not independent code review or a waiver.
+
 This baseline includes the upstream `c90e5de4` AgentSpec tool-grant enforcement
 and `f754c140` sidecar MCP allow-list enforcement. The downstream queue does
 not replace either security boundary. Patch 0003 owns the complete

@@ -51,6 +51,7 @@ from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayClaims,
     PlatformModelGatewayTokenAuthority,
     PlatformModelGatewayTokenError,
+    PlatformModelGatewayTokenExpired,
 )
 from saas.runner_adapter.platform_models import PLATFORM_MODEL_MAX_OUTPUT_TOKENS
 
@@ -503,6 +504,17 @@ def create_platform_model_gateway_app(gateway: PlatformModelGateway) -> FastAPI:
 
     @app.exception_handler(PlatformModelGatewayTokenError)
     async def invalid_token(_request: Request, _error: PlatformModelGatewayTokenError):
+        if isinstance(_error, PlatformModelGatewayTokenExpired):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": {
+                        "code": "platform_model_authentication_expired",
+                        "message": "会话认证过期，正在恢复",
+                    }
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         return _error_response(401, "platform_model_authentication_invalid")
 
     @app.get("/healthz")
