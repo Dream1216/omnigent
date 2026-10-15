@@ -7352,6 +7352,12 @@ async def _dispatch_session_event_to_runner_impl(
                 return _SessionEventDispatchResult(item_id=committed_id, pending_id=None)
             live_pending_id = pending_inputs.pending_id_for_stable_id(session_id, web_stable_id)
             if live_pending_id is not None:
+                log_input_event(
+                    _logger,
+                    "native_input_retry_deduplicated",
+                    session_id=session_id,
+                    attributes=pending_inputs.delivery_attributes_for(session_id, live_pending_id),
+                )
                 return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
         ensure_outcome = (
             _NativeTerminalEnsureOutcome(error=None)

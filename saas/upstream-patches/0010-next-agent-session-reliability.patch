@@ -137,7 +137,7 @@ index 6507230fd..b62db2ebe 100644
 @@ -3423,0 +3463 @@ def _kubernetes_launcher_factory(
 +            host_command=host_command,
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index 02ddc6e79..fdd0212ea 100644
+index 02ddc6e79..564e62fd2 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py
 +++ b/omnigent/server/routes/_sessions/orchestration.py
 @@ -3058,0 +3059,2 @@ async def _persist_external_conversation_item_unlocked(
@@ -151,7 +151,7 @@ index 02ddc6e79..fdd0212ea 100644
 +        # The same logical web submission already reached this persist-before-
 +        # forward boundary. Re-dispatching it would execute the turn twice.
 +        return persisted_items[0].id
-@@ -7332,0 +7341,15 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -7332,0 +7341,21 @@ async def _dispatch_session_event_to_runner_impl(
 +        raw_stable_id = body.data.get("stable_id")
 +        web_stable_id = (
 +            raw_stable_id
@@ -166,18 +166,24 @@ index 02ddc6e79..fdd0212ea 100644
 +                return _SessionEventDispatchResult(item_id=committed_id, pending_id=None)
 +            live_pending_id = pending_inputs.pending_id_for_stable_id(session_id, web_stable_id)
 +            if live_pending_id is not None:
++                log_input_event(
++                    _logger,
++                    "native_input_retry_deduplicated",
++                    session_id=session_id,
++                    attributes=pending_inputs.delivery_attributes_for(session_id, live_pending_id),
++                )
 +                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
-@@ -7367,6 +7389,0 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -7367,6 +7395,0 @@ async def _dispatch_session_event_to_runner_impl(
 -        raw_stable_id = body.data.get("stable_id")
 -        web_stable_id = (
 -            raw_stable_id
 -            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
 -            else None
 -        )
-@@ -10095 +10112 @@ async def _routing_host_for_create(
+@@ -10095 +10118 @@ async def _routing_host_for_create(
 -    body: SessionCreateInput,
 +    body: SessionCreateInput | SessionCreateMetadata,
-@@ -10157,0 +10175,56 @@ def _create_resolved_harness(
+@@ -10157,0 +10181,56 @@ def _create_resolved_harness(
 +def _reported_harness_failure(host: Host, harness: str) -> str | None:
 +    """Return an actionable failure only when a Host supplied readiness data."""
 +    from omnigent.harness_availability import harness_launch_availability
@@ -234,7 +240,7 @@ index 02ddc6e79..fdd0212ea 100644
 +            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
 +
 +
-@@ -10443,0 +10517,13 @@ async def _resolve_native_smart_routing(
+@@ -10443,0 +10523,13 @@ async def _resolve_native_smart_routing(
 +_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
 +
 +
@@ -248,7 +254,7 @@ index 02ddc6e79..fdd0212ea 100644
 +    return None
 +
 +
-@@ -10858,8 +10944,16 @@ async def _create_session_from_existing_agent(
+@@ -10858,8 +10950,16 @@ async def _create_session_from_existing_agent(
 -        canonical_workspace = await _validate_session_workspace(
 -            user_id=user_id,
 -            host_id=body.host_id,
@@ -273,9 +279,9 @@ index 02ddc6e79..fdd0212ea 100644
 +                    code=ErrorCode.INVALID_INPUT,
 +                ) from exc
 +            raise
-@@ -10895,0 +10990 @@ async def _create_session_from_existing_agent(
+@@ -10895,0 +10996 @@ async def _create_session_from_existing_agent(
 +    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
-@@ -11100,0 +11196 @@ async def _create_session_from_existing_agent(
+@@ -11100,0 +11202 @@ async def _create_session_from_existing_agent(
 +                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
 index 5370e51e1..eb0308ab4 100644
