@@ -18,11 +18,15 @@ from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+from saas.production.platform_model_relay import PlatformModelRelay
 from saas.runner_adapter.platform_model_gateway import (
+    DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
     PlatformModelGatewayTokenAuthority,
-    inject_platform_model_gateway_token,
 )
-from saas.runner_adapter.platform_models import PLATFORM_MODEL_CREDENTIAL_ENV
+from saas.runner_adapter.platform_models import (
+    PLATFORM_MODEL_CREDENTIAL_ENV,
+    PLATFORM_MODEL_RELAY_BASE_URL_ENV,
+)
 from saas.runner_adapter.process_policy import activate_managed_host_environment
 
 _SERVER_URL_ENV = "OMNIGENT_SAAS_SERVER_URL"
@@ -36,7 +40,7 @@ class PlatformModelHostConfigurationError(ValueError):
 
 
 class PlatformModelHostProcess(HostProcess):
-    """Official Host that injects a short-lived model token per Runner session."""
+    """Official Host that owns one renewable model channel per Runner session."""
 
     def __init__(
         self,
@@ -104,18 +108,35 @@ class PlatformModelHostProcess(HostProcess):
             session_id = UUID(env[PRIMARY_SESSION_ID_ENV_VAR])
         except (KeyError, ValueError):
             raise OSError("Platform model Runner requires a canonical session identity") from None
-        inject_platform_model_gateway_token(
-            env,
+        if env.get(PLATFORM_MODEL_CREDENTIAL_ENV) or env.get(PLATFORM_MODEL_RELAY_BASE_URL_ENV):
+            raise OSError("Platform model Runner credential is already present")
+        relay = PlatformModelRelay(
             authority=self._platform_model_tokens,
             session_id=session_id,
             ttl_seconds=self._platform_model_token_ttl,
         )
         try:
-            return super()._spawn_runner_proc(env, session_slug, workspace)
+            env[PLATFORM_MODEL_RELAY_BASE_URL_ENV] = json.dumps(
+                {
+                    "platform-deepseek": {"openai": relay.start()},
+                }
+            )
+            env[PLATFORM_MODEL_CREDENTIAL_ENV] = relay.capability
+            proc, log_path = super()._spawn_runner_proc(env, session_slug, workspace)
+            try:
+                relay.follow(proc)
+            except BaseException:
+                self._stop_runner_proc(proc)
+                raise
+            return proc, log_path
+        except BaseException:
+            relay.close()
+            raise
         finally:
-            # Popen has copied the environment by this point. Keep the bearer
+            # Popen has copied the environment by this point. Keep the capability
             # out of Host-side retained dictionaries and exception formatting.
             env.pop(PLATFORM_MODEL_CREDENTIAL_ENV, None)
+            env.pop(PLATFORM_MODEL_RELAY_BASE_URL_ENV, None)
 
 
 def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
@@ -124,7 +145,7 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
     server_url = _required(environ, _SERVER_URL_ENV)
     try:
         tenant_id = UUID(_required(environ, _TENANT_ID_ENV))
-        token_ttl = int(environ.get(_TOKEN_TTL_ENV, "3600"))
+        token_ttl = int(environ.get(_TOKEN_TTL_ENV, str(DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS)))
     except ValueError:
         raise PlatformModelHostConfigurationError(
             "Platform model Host identity is invalid"

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from omnigent.onboarding.sandboxes.kubernetes import MANAGED_SERVER_URL_ENV_VAR
 from saas.production.platform_model_host import run_platform_model_host
+from saas.runner_adapter.platform_model_gateway import DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS
 
 _SOURCE_KEY = Path("/credentials/omnigent-platform-model/key")
 _SERVER_URL_ENV = "OMNIGENT_SAAS_SERVER_URL"
@@ -81,7 +82,7 @@ def stage_platform_model_key(
 
     environ[_SERVER_URL_ENV] = server_url
     environ[_SIGNING_KEY_FILE_ENV] = str(target)
-    environ.setdefault(_TOKEN_TTL_ENV, "3600")
+    environ.setdefault(_TOKEN_TTL_ENV, str(DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS))
     return target
 
 

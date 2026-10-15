@@ -232,7 +232,47 @@ function parseErrorMessage(rawMessage: string): ParsedErrorMessage {
  * unclassified failure reads as English) and finally to the raw message/code —
  * never a blank panel.
  */
-export function ErrorBanner({
+function platformModelAuthDetails<T extends RenderErrorDetails>(error: T): T {
+  const expired =
+    error.code === "platform_model_authentication_expired" ||
+    error.message.includes("platform_model_authentication_expired") ||
+    error.message.includes("会话认证过期，正在恢复");
+  const failed =
+    error.code === "platform_model_authentication_recovery_failed" ||
+    error.message.includes("platform_model_authentication_recovery_failed") ||
+    error.message.includes("会话认证恢复失败");
+  if (!expired && !failed) return error;
+  const title = failed ? "会话认证恢复失败" : "会话认证过期，正在恢复";
+  return {
+    ...error,
+    code: failed
+      ? "platform_model_authentication_recovery_failed"
+      : "platform_model_authentication_expired",
+    title,
+    message: failed
+      ? "平台自动刷新未成功，请联系管理员检查认证通道。用户任务未自动重放。"
+      : "平台正在刷新会话凭据，无需重新登录；仅重试被认证层拒绝的模型请求。",
+    cause: undefined,
+    remediation: undefined,
+  };
+}
+
+export function ErrorBanner(props: ErrorBannerProps) {
+  const primary = platformModelAuthDetails(props);
+  const related = props.relatedErrors?.map(platformModelAuthDetails);
+  const managedAuth = [primary, ...(related ?? [])].some((error) =>
+    error.code.startsWith("platform_model_authentication_"),
+  );
+  return (
+    <ErrorBannerContent
+      {...primary}
+      relatedErrors={related}
+      onRetry={managedAuth ? undefined : props.onRetry}
+    />
+  );
+}
+
+function ErrorBannerContent({
   itemId = null,
   message,
   source,

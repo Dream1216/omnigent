@@ -44,6 +44,7 @@ never ``gemini``.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field, replace
@@ -662,6 +663,7 @@ def _expand_family(provider_name: str, family_name: str, family: FamilyConfig) -
     """
     prefix = f"providers.{provider_name}.{family_name}"
     base_url = _expand(f"{prefix}.base_url", family.base_url)
+    base_url = _loopback_transport_url(provider_name, family_name, base_url)
     if family.api_key is not None:
         api_key = _expand(f"{prefix}.api_key", family.api_key)
         return replace(family, base_url=base_url, api_key=api_key)
@@ -670,6 +672,33 @@ def _expand_family(provider_name: str, family_name: str, family: FamilyConfig) -
         return replace(family, base_url=base_url, api_key=resolved, api_key_ref=None)
     # auth_command (or, defensively, nothing) — leave the secret slot empty.
     return replace(family, base_url=base_url)
+
+
+def _loopback_transport_url(provider: str, family: str, base_url: str) -> str:
+    """Apply a Host-owned local transport without mutating the saved provider policy."""
+    raw = os.environ.get("OMNIGENT_PROVIDER_LOOPBACK_TRANSPORTS")
+    if not raw:
+        return base_url
+    from urllib.parse import urlsplit
+
+    try:
+        overrides = json.loads(raw)
+        endpoint = overrides.get(provider, {}).get(family)
+        if endpoint is None:
+            return base_url
+        parsed = urlsplit(endpoint)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port is None
+            or not 1 <= parsed.port <= 65535
+            or not isinstance(endpoint, str)
+            or endpoint != f"http://127.0.0.1:{parsed.port}/v1"
+        ):
+            raise ValueError("invalid endpoint")
+        return endpoint
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("Host provider transport is invalid") from None
 
 
 def _parse_family(provider_name: str, family_name: str, raw: dict[str, object]) -> FamilyConfig:
