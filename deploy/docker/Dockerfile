@@ -310,6 +310,10 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && rm -f /var/cache/ldconfig/aux-cache \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 
+# COPY cache checksums omit mtimes, so bind the epoch in retained rootfs bytes.
+RUN printf '%s\n' "${SOURCE_DATE_EPOCH}" > /etc/omnigent-runtime-source-date-epoch \
+ && touch -h -d "@${SOURCE_DATE_EPOCH}" /etc/omnigent-runtime-source-date-epoch /etc
+
 # Rebase the complete, package-pinned Wolfi filesystem onto a clean image
 # configuration.  Wolfi's own OCI labels describe the upstream base rather
 # than this executable release; retaining them would make the final image

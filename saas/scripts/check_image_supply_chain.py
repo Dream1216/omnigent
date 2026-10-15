@@ -1182,6 +1182,16 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp' not in runtime_security_stage
     ):
         violations.append("Wolfi runtime COPY parents must bind the source date epoch")
+    rootfs_stage = runtime_security_stage.split(runtime_security_marker, 1)[0]
+    rootfs_epoch_content = (
+        "RUN printf '%s\\n' \"${SOURCE_DATE_EPOCH}\" > /etc/omnigent-runtime-source-date-epoch"
+    )
+    if (
+        rootfs_epoch_content not in rootfs_stage
+        or 'touch -h -d "@${SOURCE_DATE_EPOCH}" /etc/omnigent-runtime-source-date-epoch /etc'
+        not in rootfs_stage
+    ):
+        violations.append("Wolfi scratch COPY must bind epoch in retained rootfs content")
     if (
         "apk add --no-cache git=2.56.0-r0" not in runtime_stage
         or "test -x /usr/bin/git" not in runtime_stage
@@ -1381,6 +1391,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "os.utime(path, ns=(timestamp_ns, timestamp_ns), follow_symlinks=False)",
         "Host CLI normalized manifest sha256",
     }
+    if (
+        "stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o022" not in host_cli_normalizer
+        or "os.chmod(path, stat.S_IMODE(metadata.st_mode) & ~0o022, follow_symlinks=False)"
+        not in host_cli_normalizer
+    ):
+        violations.append("host CLI directories must remove group and other write permissions")
     hardlink_invocation = "python -B /tmp/normalize_host_cli_tree.py"
     host_cli_order_contract = {
         "pnpm install --frozen-lockfile",
