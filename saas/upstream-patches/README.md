@@ -244,6 +244,12 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 
 ## 0.19 integration replay
 
+Same-repository pull requests retain the sealed, scanned unsigned OCI archives
+for three days under `saas-oci-validation-<revision>` so the pre-merge live gates
+can exercise the actual candidate. The protected main promotion artifact retains
+its distinct name, conditions and signing authority; the promotion verifier
+rejects validation artifacts. This export grants no package or OIDC permissions.
+
 All nine patches are regenerated against `09152b0a15af5075f20dd8f9178066957908a810`;
 the queue still owns the same 27 official Python paths. Patches 0005 and 0007
 are rewritten for the new Host diagnostics/heartbeat split and Unity Gateway
