@@ -553,6 +553,6 @@
   }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
-  "upstream_version": "0.18.0.dev20261006"
+  "upstream_revision": "09152b0a15af5075f20dd8f9178066957908a810",
+  "upstream_version": "0.19.0.dev20261015"
 }

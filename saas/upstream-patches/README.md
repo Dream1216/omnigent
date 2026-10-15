@@ -10,7 +10,7 @@ with the repository's trailing-whitespace hook. This does not relax the binding:
 every patch is applied only to the pinned upstream revision, and the checker
 then requires every replayed official-source byte to match the product tree.
 
-The `825f8500` (v0.18.0.dev20261006) replay keeps adapter contract `0.2.0`: the Host factory and
+The `09152b0a` (v0.19.0.dev20261015) replay keeps adapter contract `0.2.0`: the Host factory and
 Runner-entry changes are additive composition seams that preserve the existing
 Runtime Partition wire protocol, receipt schema, and persisted compatibility
 fields. A future wire or receipt change must bump the contract independently.
@@ -233,14 +233,32 @@ the initial SPA HTML title while preserving the upstream default and escaping
 the configured value. Patch 0010 now also owns `omnigent/server/app.py`; the
 nine-patch ceiling and existing source-delta ceilings remain unchanged.
 
+## 0.19 integration replay
+
+All nine patches are regenerated against `09152b0a15af5075f20dd8f9178066957908a810`;
+the queue still owns the same 27 official Python paths. Patches 0005 and 0007
+are rewritten for the new Host diagnostics/heartbeat split and Unity Gateway
+naming. Host credential expiry/revocation remains fail closed on the ping path;
+ordinary liveness writes use the upstream heartbeat worker. Patch 0010 retains
+committed-input deduplication alongside upstream delivery diagnostics and keeps
+the SaaS Agent-readiness and branding behavior. Upstream's new launch admission
+wrapper already preserves the previous account-owner check and adds MCP
+capability validation, so the old `partial` wrapper is superseded.
+
+The initial focused replay verification covers external Host credential
+revocation, pending-input delivery/deduplication, and snapshot workflow archive
+safety. Full Agent, tenant-isolation, N-1 and release gates remain required.
+No wire or receipt change is introduced by this replay; adapter contract `0.2.0`
+and Runner Session protocol `2` must still pass the integration matrix.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
-| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
-| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `825f8500` | Remove when upstream exposes equivalent external Host lifecycle semantics |
-| `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `825f8500` | Remove when upstream ships the managed fleet versions and install behavior |
-| `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `825f8500` | Remove when upstream supports the complete managed Host credential and workspace route |
-| `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `825f8500` | Remove when upstream publishes configured gateway models and managed callback routing |
-| `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `825f8500` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
-| `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
-| `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `09152b0a` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
+| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `09152b0a` | Remove when upstream exposes equivalent external Host lifecycle semantics |
+| `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `09152b0a` | Remove when upstream ships the managed fleet versions and install behavior |
+| `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `09152b0a` | Remove when upstream supports the complete managed Host credential and workspace route |
+| `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `09152b0a` | Remove when upstream publishes configured gateway models and managed callback routing |
+| `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `09152b0a` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
+| `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `09152b0a` | Remove when upstream supports the same credential-free platform routing |
+| `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `09152b0a` | Remove when upstream exposes the equivalent dual managed runtime provider |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `09152b0a` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
