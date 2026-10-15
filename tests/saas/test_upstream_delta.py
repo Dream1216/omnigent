@@ -131,11 +131,28 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 150
+    assert budget["max_direct_upstream_files"] == 152
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
     followup = revision["followup"]
+    assert followup["revision"] == "upstream-019-reviewed-visual-budget-v31"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 150
+    assert followup["measured_direct_upstream_files"] == 152
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3389
+    assert followup["scoped_paths"] == [
+        "web/src/lib/identity.managedRouting.test.ts",
+        "web/src/lib/viteProxy.test.ts",
+        "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png",
+    ]
+    followup = followup["previous_revision"]
     assert followup["revision"] == "platform-model-token-renewal-budget-v30"
     assert followup["approved_at"] == "2026-10-15"
     assert followup["previous_max_direct_upstream_files"] == 148

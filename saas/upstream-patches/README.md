@@ -28,6 +28,14 @@ The error-banner source/test add two direct upstream files. The requester's
 All remaining source limits, protected CI and production admission gates stay
 unchanged; this scope approval is not independent code review or a waiver.
 
+The requester separately approved the exact 0.19 file ceiling of 152 on
+2026-10-16 (`upstream-019-reviewed-visual-budget-v31`). The measured 152 files
+include two frontend contract-test adaptations and five reviewed Linux visual
+baselines preserving SaaS language switching and Agent readiness hints. Retain
+the 4,576-line ceiling, nine patches, 0.85 isolation floor and every release gate.
+The approval covers source scope only; independent review, administrator CI
+policy review and production admission remain required.
+
 This baseline includes the upstream `c90e5de4` AgentSpec tool-grant enforcement
 and `f754c140` sidecar MCP allow-list enforcement. The downstream queue does
 not replace either security boundary. Patch 0005 owns the complete
