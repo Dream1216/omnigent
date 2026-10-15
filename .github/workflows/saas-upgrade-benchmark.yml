@@ -1,0 +1,107 @@
+name: SaaS upgrade benchmark
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "omnigent/**"
+      - "saas/**"
+      - "dev/benchmarks/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/saas-upgrade-benchmark.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-upgrade-benchmark-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: SaaS base vs candidate performance
+    if: github.repository == 'Dream1216/omnigent' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      JOURNEYS: session_cold_start,session_cold_restart,warm_turn,time_to_first_token,interrupt,create_session,fork_session,list_sessions,get_session,load_conversation_history
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Check out exact SaaS base
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Record immutable source binding
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_CANDIDATE: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p artifacts
+          test "$(git -C baseline rev-parse HEAD)" = "$EXPECTED_BASE"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
+          jq -n --arg base "$EXPECTED_BASE" --arg candidate "$EXPECTED_CANDIDATE" \
+            --arg journeys "$JOURNEYS" \
+            '{base_revision:$base, candidate_revision:$candidate, journeys:($journeys|split(",")), production_slo_evidence:false}' \
+            > artifacts/source-binding.json
+          sha256sum baseline/uv.lock candidate/uv.lock > artifacts/lock-sha256.txt
+      - name: Set up baseline Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: baseline/.python-version
+      - name: Set up candidate Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: candidate/.python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install both locked environments
+        run: |
+          for side in baseline candidate; do
+            (cd "$side" && uv sync --frozen --extra all --extra saas --group test)
+          done
+      - name: Seed the older schema and migrate the candidate copy
+        run: |
+          (cd baseline && uv run --no-sync dev/benchmarks/omnigent/seed.py \
+            --database-uri sqlite:///bench.db --sessions 5000 --items-per-session 200)
+          cp baseline/bench.db candidate/bench.db
+          (cd candidate && uv run --no-sync omni debug db-upgrade sqlite:///bench.db)
+      - name: Measure both versions on the same runner
+        run: |
+          pids=()
+          for side in baseline candidate; do
+            (cd "$side" && uv run --no-sync dev/benchmarks/omnigent/run.py \
+              --database-uri sqlite:///bench.db --journeys "$JOURNEYS" \
+              --iterations 100 --runs 3 --output "$GITHUB_WORKSPACE/artifacts/$side.json") \
+              > "artifacts/$side.log" 2>&1 &
+            pids+=("$!")
+          done
+          result=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || result=1
+          done
+          exit "$result"
+      - name: Require measured journeys and enforce upstream thresholds
+        working-directory: candidate
+        run: |
+          uv run --no-sync dev/benchmarks/omnigent/compare.py \
+            --baseline ../artifacts/baseline.json --candidate ../artifacts/candidate.json \
+            --threshold 0.30 --threshold-p95 0.50 --require "$JOURNEYS" \
+            --output-json ../artifacts/comparison.json \
+            --output-markdown ../artifacts/comparison.md
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-upgrade-benchmark-${{ github.event.pull_request.head.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30

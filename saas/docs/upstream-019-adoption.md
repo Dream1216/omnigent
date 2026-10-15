@@ -66,3 +66,13 @@ logic. Upstream also changes ten GitHub workflows. The trusted main evaluator
 requires explicit administrator review for policy and automation changes and
 will reject this candidate until that review is resolved. A candidate-side
 green test does not authorize that merge or any production promotion.
+
+## Performance comparison in the SaaS fork
+
+The downstream `saas-upgrade-benchmark.yml` workflow runs in this repository
+and reuses the upstream seed, runner and comparator. Its comparison uses the PR's exact SaaS base commit on the same runner,
+locked installs, the upstream P50/P95 thresholds, and ten required Session/Host
+journeys. A regression, missing journey, missing baseline or absent comparison
+fails the SaaS verdict. Official upstream workflows retain their repository restrictions.
+These local/mock-provider benchmarks do not replace deployed multi-replica,
+live-provider or production SLO evidence.
