@@ -131,11 +131,21 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 152
+    assert budget["max_direct_upstream_files"] == 153
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
     followup = revision["followup"]
+    assert followup["revision"] == "upstream-019-terminal-reconnect-test-budget-v32"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 152
+    assert followup["measured_direct_upstream_files"] == 153
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3409
+    assert followup["scoped_paths"] == ["tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"]
+    assert followup["previous_revision_reference"] == "upstream-019-reviewed-visual-budget-v31"
+    followup = revision["previous_followup"]
     assert followup["revision"] == "upstream-019-reviewed-visual-budget-v31"
     assert followup["approved_at"] == "2026-10-16"
     assert followup["governance_mode"] == "single_owner_beta"

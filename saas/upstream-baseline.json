@@ -48,12 +48,26 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 152,
+    "max_direct_upstream_files": 153,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "followup": {
+      "revision": "upstream-019-terminal-reconnect-test-budget-v32",
+      "approved_at": "2026-10-16",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 152,
+      "measured_direct_upstream_files": 153,
+      "previous_max_upstream_net_added_loc": 4576,
+      "measured_upstream_net_added_loc": 3409,
+      "scoped_paths": [
+        "tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"
+      ],
+      "reason": "The requester explicitly approved only the direct-file ceiling increase from 152 to 153 for the upstream terminal reconnect test correction. Ignore complete OSC 10/11 RGB replies when checking typed input and reuse the existing loopback-blocking setup so injected relay closes target the active transport. Six real browser cases pass without retries across both terminal surfaces, both close codes, direct attach and relay fallback. Product code and behavior assertions remain unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and every release gate. This Single-Owner Beta scope authorization is not independent production review, image admission or acceptance.",
+      "previous_revision_reference": "upstream-019-reviewed-visual-budget-v31"
+    },
+    "previous_followup": {
       "revision": "upstream-019-reviewed-visual-budget-v31",
       "approved_at": "2026-10-16",
       "governance_mode": "single_owner_beta",

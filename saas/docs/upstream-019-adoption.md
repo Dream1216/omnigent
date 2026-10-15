@@ -67,6 +67,19 @@ requires explicit administrator review for policy and automation changes and
 will reject this candidate until that review is resolved. A candidate-side
 green test does not authorize that merge or any production promotion.
 
+## Reviewed source budget
+
+The requester approved the direct-file ceiling from 150 to 152 for the
+reviewed frontend contracts and five maintained Linux baselines, then from
+152 to 153 for the upstream terminal reconnect test correction. The latter
+ignores complete terminal RGB response frames in the typed-input observation
+and keeps injected relay closes on the active transport using the existing
+loopback-blocking setup. Both terminal surfaces, both close codes, direct
+attachment and relay fallback passed six real browser cases without retries.
+All reconnect, input and fallback assertions remain enforced. Product code
+is unchanged. The 4,576-line ceiling, nine patches, 0.85 isolation floor,
+forbidden paths, reverse dependencies and release gates remain enforced.
+
 ## Performance comparison in the SaaS fork
 
 The downstream `saas-upgrade-benchmark.yml` workflow runs in this repository

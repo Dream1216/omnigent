@@ -16,8 +16,10 @@ import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.e2e_ui.conftest import open_right_rail
+from tests.e2e_ui.shells.test_terminal_direct_attach import _BLOCK_LOOPBACK_DIALS
 
 _ATTACH_WS = re.compile(r"/resources/terminals/.*/attach")
+_OSC_COLOR_REPLY = re.compile(r"\x1b\](?:10|11);rgb:[0-9a-fA-F/]+\x1b\\")
 
 
 def _open_new_shell(page: Page) -> None:
@@ -35,6 +37,8 @@ def test_embedded_terminal_reconnects_after_transport_close(
 ) -> None:
     """Both terminal surfaces reconnect and accept input after two transient closes."""
     base_url, session_id = terminal_session
+    # Keep the injected relay close on the active transport after local discovery.
+    page.add_init_script(_BLOCK_LOOPBACK_DIALS)
     live: dict[str, object] = {"ws": None, "dials": 0, "input": ""}
 
     def _handle(ws: WebSocketRoute) -> None:
@@ -88,7 +92,12 @@ def test_embedded_terminal_reconnects_after_transport_close(
         terminal_view.locator("textarea.xterm-helper-textarea").focus()
         page.keyboard.type(probe)
         deadline = time.monotonic() + 10
-        while probe not in str(live["input"]) and time.monotonic() < deadline:
+        while (
+            probe not in _OSC_COLOR_REPLY.sub("", str(live["input"]))
+            and time.monotonic() < deadline
+        ):
             page.wait_for_timeout(50)
-        assert probe in str(live["input"]), "terminal did not forward input after reconnecting"
+        assert probe in _OSC_COLOR_REPLY.sub("", str(live["input"])), (
+            "terminal did not forward input after reconnecting"
+        )
         page.keyboard.press("Control+U")
