@@ -36,9 +36,19 @@ it.each([
       return;
     }
     const proxies = (await result)?.config.server?.proxy;
-    expect(Object.keys(proxies ?? {})).toEqual(["/v1", "/api", "/auth", "/health", "/.well-known"]);
-    for (const proxy of Object.values(proxies ?? {})) {
-      expect(typeof proxy === "object" && proxy.headers).toEqual(expected);
+    expect(Object.keys(proxies ?? {})).toEqual([
+      "/v1",
+      "/api",
+      "/auth",
+      "/saas/auth",
+      "/saas/login",
+      "/health",
+      "/.well-known",
+    ]);
+    for (const [route, proxy] of Object.entries(proxies ?? {})) {
+      expect(typeof proxy === "object" && proxy.headers).toEqual(
+        route.startsWith("/saas/") ? undefined : expected,
+      );
     }
   } finally {
     vi.unstubAllEnvs();
