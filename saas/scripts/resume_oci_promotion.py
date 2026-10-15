@@ -27,6 +27,26 @@ WORKFLOW = ".github/workflows/saas-oci-promotion-resume.yml"
 PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1"
 SPDX_PREDICATE_TYPE = "https://spdx.dev/Document/v2.3"
+_RELEASE_PROFILES = {
+    "f440": (
+        LOCK_PATH,
+        WORKFLOW,
+        "f4404d47f705c7a3c0745c38ccd1a9be125c31ad",
+    ),
+    "token-renewal-c90a079c": (
+        Path("saas/supply_chain/oci-promotion-token-renewal-c90a079c.json"),
+        ".github/workflows/saas-oci-promotion-token-renewal.yml",
+        "c90a079cb6e3c6cadda35ee1ea3121083e86d8fa",
+    ),
+}
+_SELECTED_PRODUCT_REVISION = _RELEASE_PROFILES["f440"][2]
+
+
+def configure_release_profile(name: str) -> None:
+    """Select only an explicit reviewed product/lock/signer tuple."""
+    global LOCK_PATH, WORKFLOW, _SELECTED_PRODUCT_REVISION
+    require(name in _RELEASE_PROFILES, "unapproved release profile")
+    LOCK_PATH, WORKFLOW, _SELECTED_PRODUCT_REVISION = _RELEASE_PROFILES[name]
 
 
 def api(endpoint: str) -> dict[str, Any]:
@@ -34,7 +54,16 @@ def api(endpoint: str) -> dict[str, Any]:
 
 
 def lock() -> dict[str, Any]:
-    return read_json(LOCK_PATH)
+    binding = read_json(LOCK_PATH)
+    require(
+        binding.get("schema_version") == 1
+        and binding.get("repository") == "Dream1216/omnigent"
+        and binding.get("product_revision") == _SELECTED_PRODUCT_REVISION
+        and binding.get("rebuilt") is False
+        and binding.get("production_authority") is False,
+        "release profile and immutable material scope differ",
+    )
+    return binding
 
 
 def check_artifact(metadata: dict[str, Any], coordinate: str, name: str) -> None:
@@ -65,6 +94,11 @@ def download(coordinate: str, name: str, destination: Path) -> None:
 
 def check_original_run(run: dict[str, Any], job: dict[str, Any]) -> None:
     binding = lock()
+    conclusion = binding.get("candidate_run_conclusion", "failure")
+    require(
+        isinstance(conclusion, str) and conclusion in {"success", "failure"},
+        "unapproved original run conclusion",
+    )
     require(
         run.get("id") == binding["candidate_run_id"]
         and run.get("run_attempt") == binding["candidate_run_attempt"]
@@ -73,7 +107,7 @@ def check_original_run(run: dict[str, Any], job: dict[str, Any]) -> None:
         and run.get("event") == "workflow_dispatch"
         and run.get("path") == ".github/workflows/saas-image-candidate.yml"
         and run.get("status") == "completed"
-        and run.get("conclusion") == "failure"
+        and run.get("conclusion") == conclusion
         and run.get("repository", {}).get("full_name") == binding["repository"]
         and job.get("id") == binding["candidate_build_job_id"]
         and job.get("run_id") == binding["candidate_run_id"]
@@ -320,6 +354,7 @@ def verify_original_wheel(entries: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release", choices=tuple(_RELEASE_PROFILES), default="f440")
     parser.add_argument(
         "command",
         choices=(
@@ -342,6 +377,7 @@ def main() -> int:
     parser.add_argument("--subject")
     parser.add_argument("--sbom", type=Path)
     args = parser.parse_args()
+    configure_release_profile(args.release)
     binding = lock()
     if args.command == "preflight":
         prefix = f"repos/{binding['repository']}/actions"
