@@ -1,0 +1,110 @@
+name: LiteLLM isolated contracts
+
+on:
+  push:
+    branches: [main, codex/litellm-platform-integration]
+    paths:
+      - .github/workflows/litellm-contract.yml
+      - deploy/litellm/**
+      - saas/control_plane/litellm_client.py
+      - saas/production/litellm_release.json
+      - saas/production/platform_model_gateway.py
+      - saas/scripts/*litellm*.py
+      - tests/saas/*litellm*.py
+      - tests/saas/fixtures/litellm/**
+      - uv.lock
+      - pyproject.toml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: litellm-contract-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  OMNIGENT_SKIP_WEB_UI: "true"
+  UV_INDEX_URL: https://pypi.org/simple
+  PIP_INDEX_URL: https://pypi.org/simple
+  OPENAI_LOG: warning
+
+jobs:
+  native-contract:
+    name: Native ${{ matrix.arch }} protocol and restore
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      PROBE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked component dependencies
+        run: uv sync --frozen --extra all --extra saas --group dev
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.22.1
+      - name: Verify runner architecture and exact upstream materials
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PROBE_ARCH:$(uname -m)" in amd64:x86_64|arm64:aarch64) ;; *) exit 2 ;; esac
+          mkdir -p artifacts
+          base=$(jq -er .image saas/production/litellm_release.json)
+          docker pull --platform "linux/$PROBE_ARCH" "$base"
+          crane pull --platform "linux/$PROBE_ARCH" --format legacy "$base" "$RUNNER_TEMP/upstream.tar"
+          docker image inspect "$base" > artifacts/upstream-image.json
+          docker version > artifacts/docker-version.txt
+          docker buildx version >> artifacts/docker-version.txt
+          python -m saas.scripts.prepare_litellm_runtime --destination .litellm-runtime
+          cp .litellm-runtime/materials.json artifacts/
+          echo "PROBE_UPSTREAM=$base" >> "$GITHUB_ENV"
+      - name: Build the MIT core candidate without emulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_epoch=$(git show -s --format=%ct HEAD)
+          docker buildx build --platform "linux/$PROBE_ARCH" --load \
+            --provenance=false --sbom=false --progress=plain \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE_DATE_EPOCH="$source_epoch" \
+            -f deploy/litellm/Dockerfile -t omnigent-litellm:p0-native .
+          docker image inspect omnigent-litellm:p0-native > artifacts/candidate-image.json
+      - name: Pull checksum-pinned disposable fixture images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull --platform "linux/$PROBE_ARCH" postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+          docker pull --platform "linux/$PROBE_ARCH" python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+      - name: Run management, Agent transport, and PostgreSQL restore contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=$(docker image inspect --format '{{.Id}}' omnigent-litellm:p0-native)
+          uv run --no-sync python -m saas.scripts.run_litellm_contract \
+            --docker-context default --architecture "$PROBE_ARCH" \
+            --image "$candidate" --upstream-image "$PROBE_UPSTREAM" \
+            --source-archive "$RUNNER_TEMP/upstream.tar" \
+            --output artifacts/contract.json
+          jq -e '.passed == true and .execution_mode == "native" and .cleanup_completed == true and .production_traffic_changed == false and .real_provider_tested == false' artifacts/contract.json
+      - name: Retain component evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: litellm-isolated-${{ matrix.arch }}-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
