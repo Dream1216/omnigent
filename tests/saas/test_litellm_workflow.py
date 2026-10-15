@@ -25,3 +25,4 @@ def test_component_lane_uses_native_runners_and_cannot_publish_or_use_vendor_sec
     assert ".production_traffic_changed == false" in source
     assert ".real_provider_tested == false" in source
     assert document["concurrency"]["cancel-in-progress"] == "false"
+    assert "uv run --no-sync python -m saas.scripts.prepare_litellm_runtime" in source

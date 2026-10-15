@@ -69,7 +69,7 @@ jobs:
           docker image inspect "$base" > artifacts/upstream-image.json
           docker version > artifacts/docker-version.txt
           docker buildx version >> artifacts/docker-version.txt
-          python -m saas.scripts.prepare_litellm_runtime --destination .litellm-runtime
+          uv run --no-sync python -m saas.scripts.prepare_litellm_runtime --destination .litellm-runtime
           cp .litellm-runtime/materials.json artifacts/
           echo "PROBE_UPSTREAM=$base" >> "$GITHUB_ENV"
       - name: Build the MIT core candidate without emulation
