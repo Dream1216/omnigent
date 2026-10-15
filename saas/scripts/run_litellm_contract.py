@@ -1,4 +1,4 @@
-"""Run disposable LiteLLM/PostgreSQL contracts without production credentials."""
+"""Run disposable LiteLLM/PostgreSQL contracts; live credentials are explicit."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import contextlib
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -45,6 +46,7 @@ class Probe:
         upstream_image: str,
         real_provider_command: tuple[str, ...] = (),
         mode: str = "protocol_restore",
+        dns_servers: tuple[str, ...] = (),
     ) -> None:
         self.context = context
         self.image = image
@@ -53,6 +55,13 @@ class Probe:
         self.upstream_image = upstream_image
         self.real_provider_command = real_provider_command
         self.mode = mode
+        if len(dns_servers) > 3:
+            raise ValueError("Probe DNS configuration is invalid")
+        for value in dns_servers:
+            address = ipaddress.ip_address(value)
+            if address.is_loopback or address.is_multicast or address.is_unspecified:
+                raise ValueError("Probe DNS configuration is invalid")
+        self.dns_servers = dns_servers
         if mode == "live_protocol" and not real_provider_command:
             raise ValueError("Live protocol mode requires an approved credential source")
         self.source_config = _RELEASE["platform_configs"][f"linux/{architecture}"].removeprefix(
@@ -80,7 +89,11 @@ class Probe:
             "production_traffic_changed": False,
             "real_provider_tested": False,
             "agent_runtime_tested": False,
-            "network_scope": "dedicated_bridge_loopback_ports_synthetic_credentials",
+            "network_scope": "dedicated_bridge_loopback_ports",
+            "explicit_dns_resolver_count": len(dns_servers),
+            "provider_credential_source": "operator_command"
+            if real_provider_command
+            else "synthetic_fixture",
         }
 
     def docker(self, *args: str, input_bytes: bytes | None = None, timeout: int = 60) -> str:
@@ -118,6 +131,7 @@ class Probe:
         name = self.run_id + "-" + suffix
         self.names.append(name)
         env_args = [value for key in extra_env for value in ("-e", key)]
+        dns_args = [value for server in self.dns_servers for value in ("--dns", server)]
         self.docker(
             "run",
             "--detach",
@@ -128,6 +142,7 @@ class Probe:
             f"omnigent.litellm.probe={self.run_id}",
             "--network",
             self.run_id,
+            *dns_args,
             *env_args,
             *args,
             image,
@@ -880,6 +895,7 @@ def main() -> int:
     parser.add_argument("--architecture", choices=("amd64", "arm64"), required=True)
     parser.add_argument("--upstream-image", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dns-server", action="append", default=[])
     parser.add_argument(
         "--mode", choices=("protocol_restore", "live_protocol"), default="protocol_restore"
     )
@@ -893,6 +909,7 @@ def main() -> int:
         args.upstream_image,
         tuple(args.real_provider_command),
         args.mode,
+        tuple(args.dns_server),
     )
     try:
         probe.run()

@@ -22,6 +22,56 @@ def test_live_mode_cannot_silently_fall_back_to_simulation() -> None:
         _probe(mode="live_protocol")
 
 
+@pytest.mark.parametrize("resolver", ("127.0.0.1", "0.0.0.0", "224.0.0.1", "https://dns.test"))
+def test_invalid_dns_override_is_rejected(resolver: str) -> None:
+    with pytest.raises(ValueError):
+        Probe(
+            "test", "candidate", Path("source.tar"), "amd64", "upstream", dns_servers=(resolver,)
+        )
+
+
+def test_dns_override_only_applies_to_owned_probe_containers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = Probe(
+        "test",
+        "candidate",
+        Path("source.tar"),
+        "amd64",
+        "upstream",
+        dns_servers=("192.0.2.53", "2001:db8::53"),
+    )
+    calls = []
+
+    def docker(*args, **kwargs):
+        calls.append(args)
+        return "owned-container-id"
+
+    monkeypatch.setattr(probe, "docker", docker)
+    name = probe.start("proxy", "candidate")
+    assert name == probe.run_id + "-proxy"
+    assert calls == [
+        (
+            "run",
+            "--detach",
+            "--pull=never",
+            "--name",
+            name,
+            "--label",
+            f"omnigent.litellm.probe={probe.run_id}",
+            "--network",
+            probe.run_id,
+            "--dns",
+            "192.0.2.53",
+            "--dns",
+            "2001:db8::53",
+            "candidate",
+        )
+    ]
+    assert probe.report["explicit_dns_resolver_count"] == 2
+    assert probe.report["production_traffic_changed"] is False
+
+
 def test_cleanup_never_removes_a_resource_with_different_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
