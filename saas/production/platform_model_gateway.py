@@ -194,6 +194,16 @@ class BudgetAuthority(Protocol):
     ) -> ModelProviderBudgetReservationView: ...
 
 
+def _streaming_document(document: dict[str, object], *, responses: bool) -> dict[str, object]:
+    outbound = dict(document)
+    outbound["stream"] = True
+    if responses:
+        outbound.pop("stream_options", None)
+    else:
+        outbound["stream_options"] = {"include_usage": True}
+    return outbound
+
+
 class PlatformModelGateway:
     """Authenticate, admit, proxy and settle one OpenAI-compatible stream."""
 
@@ -287,12 +297,7 @@ class PlatformModelGateway:
             await self._release(reservation)
             return _error(409, "platform_model_configuration_changed")
 
-        outbound = dict(document)
-        outbound["stream"] = True
-        if upstream_path == "chat/completions":
-            outbound["stream_options"] = {"include_usage": True}
-        else:
-            outbound.pop("stream_options", None)
+        outbound = _streaming_document(document, responses=upstream_path == "responses")
         client = self._client_factory()
         try:
             upstream = await client.send(
@@ -466,17 +471,24 @@ class _UsageParser:
             total = _usage_integer(usage.get("total_tokens"))
             if total != prompt + completion:
                 raise ValueError("Provider usage total is inconsistent")
-            details = usage.get("input_tokens_details")
-            cache_hit_value = (
-                details.get("cached_tokens")
-                if responses_usage and isinstance(details, dict)
-                else usage.get("prompt_cache_hit_tokens")
+            details = usage.get(
+                "input_tokens_details" if responses_usage else "prompt_tokens_details"
             )
-            cache_miss_value = (
-                prompt - cache_hit_value
-                if responses_usage and isinstance(cache_hit_value, int)
-                else usage.get("prompt_cache_miss_tokens")
-            )
+            cache_hit_value = usage.get("prompt_cache_hit_tokens")
+            cache_miss_value = usage.get("prompt_cache_miss_tokens")
+            if cache_hit_value is not None:
+                _usage_integer(cache_hit_value)
+            if cache_miss_value is not None:
+                _usage_integer(cache_miss_value)
+            if isinstance(details, dict) and "cached_tokens" in details:
+                standard_hit = _usage_integer(details["cached_tokens"])
+                standard_miss = prompt - standard_hit
+                if (cache_hit_value is not None and cache_hit_value != standard_hit) or (
+                    cache_miss_value is not None and cache_miss_value != standard_miss
+                ):
+                    raise ValueError("Provider cache usage encodings disagree")
+                cache_hit_value = standard_hit
+                cache_miss_value = standard_miss
             if cache_hit_value is None and cache_miss_value is None:
                 cache_hit = 0
                 cache_miss = prompt

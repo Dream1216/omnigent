@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from saas.scripts.run_litellm_contract import Probe, ProbeFailure
+
+
+def _probe(*, mode: str = "protocol_restore", command: tuple[str, ...] = ()) -> Probe:
+    return Probe(
+        "test-context", "candidate", Path("source.tar"), "amd64", "upstream", command, mode
+    )
+
+
+def test_live_mode_cannot_silently_fall_back_to_simulation() -> None:
+    with pytest.raises(ValueError, match="approved credential source"):
+        _probe(mode="live_protocol")
+
+
+def test_cleanup_never_removes_a_resource_with_different_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _probe()
+    probe.names.append("foreign-container")
+    calls = []
+
+    def docker(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "container":
+            return "foreign-id"
+        if args[0] == "inspect":
+            return json.dumps([{"Config": {"Labels": {"omnigent.litellm.probe": "another-run"}}}])
+        return ""
+
+    monkeypatch.setattr(probe, "docker", docker)
+    probe.cleanup()
+    assert not any(call[0] == "rm" for call in calls)
+    assert probe.report["cleanup_completed"] is False
+    assert probe.report["resources_remaining"] == ["foreign-container"]
+
+
+def test_cleanup_reclaims_only_its_own_containers_and_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _probe()
+    probe.names.append(probe.run_id + "-proxy")
+    removed = []
+
+    def docker(*args, **kwargs):
+        if args[0] == "container" or args[:2] == ("network", "ls"):
+            return "owned-id"
+        if args[0] == "inspect":
+            return json.dumps([{"Config": {"Labels": {"omnigent.litellm.probe": probe.run_id}}}])
+        if args[:2] == ("network", "inspect"):
+            return json.dumps([{"Labels": {"omnigent.litellm.probe": probe.run_id}}])
+        removed.append(args)
+        return "removed"
+
+    monkeypatch.setattr(probe, "docker", docker)
+    probe.cleanup()
+    assert removed == [("rm", "--force", probe.names[0]), ("network", "rm", probe.run_id)]
+    assert probe.report["cleanup_completed"] is True
+
+
+def test_docker_timeout_is_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("docker", 1, output=b"sensitive-provider-details")
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(ProbeFailure, match=r"^docker_operation_timed_out$"):
+        _probe().docker("info")
+
+
+def test_invalid_live_credential_source_never_reaches_management(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _probe(mode="live_protocol", command=("trusted-source",))
+
+    def source(argv, **kwargs):
+        assert argv == ("trusted-source",)
+        assert not kwargs.get("shell", False)
+        return SimpleNamespace(
+            stdout=b'{"provider_id":"not-approved","api_key":"do-not-print","model":"other"}'
+        )
+
+    monkeypatch.setattr(subprocess, "run", source)
+    with pytest.raises(ProbeFailure, match=r"^provider_credential_source_invalid$"):
+        asyncio.run(probe.live_contract("http://127.0.0.1:4000"))
+    assert "do-not-print" not in json.dumps(probe.report)

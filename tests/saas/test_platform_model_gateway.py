@@ -24,6 +24,7 @@ from saas.production.platform_model_gateway import (
     PlatformModelGateway,
     PlatformModelPrice,
     PlatformModelPricingPolicy,
+    _UsageParser,
     build_platform_model_gateway,
     create_platform_model_gateway_app,
     load_platform_model_pricing,
@@ -160,7 +161,15 @@ def _client(
     )
 
 
-def test_streams_provider_bytes_and_settles_observed_usage() -> None:
+@pytest.mark.parametrize(
+    "cache_fields",
+    (
+        b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,',
+        b'"prompt_tokens_details":{"cached_tokens":4},',
+    ),
+    ids=("deepseek-native-cache", "litellm-standard-cache"),
+)
+def test_streams_provider_bytes_and_settles_observed_usage(cache_fields: bytes) -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer provider-secret-never-returned"
         sent = __import__("json").loads(request.content)
@@ -168,9 +177,9 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         body = (
             b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
             b'data: {"choices":[],"usage":{"prompt_tokens":10,'
-            b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,'
-            b'"completion_tokens":5,"total_tokens":15}}\n\n'
-            b"data: [DONE]\n\n"
+            + cache_fields
+            + b'"completion_tokens":5,"total_tokens":15}}\n\n'
+            + b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
@@ -198,6 +207,38 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         }
     ]
     assert not budgets.released
+
+
+@pytest.mark.parametrize("cached", (-1, 11, True, "4", None))
+def test_standard_cache_usage_rejects_invalid_token_counts(cached: object) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": cached},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
+
+
+@pytest.mark.parametrize("legacy_hit", (3, True))
+def test_standard_cache_usage_does_not_hide_inconsistent_native_fields(
+    legacy_hit: object,
+) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_cache_hit_tokens": legacy_hit,
+        "prompt_cache_miss_tokens": 6,
+        "prompt_tokens_details": {"cached_tokens": 4},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
 
 
 def test_streams_responses_api_and_settles_nested_usage() -> None:
