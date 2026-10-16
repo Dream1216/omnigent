@@ -1,6 +1,6 @@
 # Platform managed model candidates
 
-The independent Staff console manages encrypted connections, immutable model drafts, platform-funded test budgets, bounded verification, and tenant-scoped candidate publication versions. Recording a candidate catalog does not enable runtime routing or change the customer model selector. Connections, verification, and publication have separate, default-off capability flags.
+The independent Staff console manages encrypted connections, immutable model drafts, platform-funded test budgets, bounded verification, and tenant-scoped candidate publication versions. Customers in the SaaS runtime can inspect their tenant's candidates in both composer model menus, with the concrete model, channel, protocol, and an explicit unavailable reason. Recording or viewing a candidate does not enable runtime routing or change the selected model. Connections, verification, and publication have separate, default-off capability flags.
 
 ## Sub-features
 
@@ -15,12 +15,14 @@ The independent Staff console manages encrypted connections, immutable model dra
 - `publication-recovery`: recover the original publication after a lost response or reload without submitting another command or sending inference.
 - `staff-authority`: a current fresh Staff operator can mutate; a security auditor can read but cannot edit.
 - `small-screen`: the same console entry remains usable on a narrow viewport without horizontal overflow.
+- `tenant-candidate-discovery`: customers can inspect their scoped candidate metadata in existing-session and landing model menus, including mobile; candidates remain disabled until runtime authorization is implemented.
 
 ## How to get to it (user POV)
 
 - Open `/platform-admin`, authenticate in the independent Staff realm, then select the managed-model connections navigation item. The page contains connection creation, credential rotation, operation receipts, model drafts, test funding, verification, and tenant candidate catalogs when their capabilities are configured. Start a test from its draft row; inspect the latest receipt from the same row or refresh the current command. For publication, inspect the target tenant catalog, start a new independent command, then confirm publication from the verified draft row.
 - Open `/platform-admin#model-connections` after Staff authentication, including after a page reload. This reaches the same view directly.
 - Use either route on desktop or mobile. The Tenant Owner Beta model-provider console is a separate legacy entry, not an alternative Staff login.
+- As a customer in the SaaS app, open an existing conversation's model pill, then its configuration submenu; or open New session, choose a harness, then Edit. The Platform models section shows tenant candidate names, DeepSeek as the channel, LiteLLM as the transport, and the unavailable reason. A candidate cannot be selected. Ordinary OSS servers retain their host-owned catalogs without probing the SaaS API.
 
 ## Driving it with the repro environment
 
@@ -34,6 +36,8 @@ Preconditions: these Staff console tests own their HTTPS server, disposable SQLi
 - Independent realm, navigation, and role/page/action boundaries: `tests/saas/test_platform_admin_browser.py::test_real_chromium_platform_console_role_page_and_action_matrix`.
 
 Run the selected test directly with `.venv/bin/pytest -q`. Each journey drives the visible controls and cross-checks the control-plane API. Real PostgreSQL budget/role checks and real LiteLLM/provider protocol checks are separate acceptance lanes, not supplied by these browser tests.
+
+Customer menu discovery uses the separately built SPA and explicit browser-only backend contracts: `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_can_inspect_model_candidates_but_cannot_select_them`. Run it through the browser-only command in Composer, with recording and an evidence output directory. It covers both entry points on desktop and mobile, verifies the disabled state and no model mutation, and makes no real supplier calls. Tenant authentication/API behavior and actual App-login RLS are checked separately in the tenant catalog SaaS tests.
 
 ## Gotchas
 

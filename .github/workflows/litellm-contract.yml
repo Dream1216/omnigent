@@ -15,10 +15,12 @@ on:
       - saas/control_plane/model_gateway_audit.py
       - saas/control_plane/model_inference_requests.py
       - saas/control_plane/run_customer_pricing.py
+      - saas/control_plane/tenant_model_catalog.py
       - saas/control_plane/billing_metering.py
       - saas/control_plane/execution.py
       - saas/control_plane/execution_models.py
       - saas/control_plane/migrations/versions/lm2d00000001_execution_customer_pricing.py
+      - saas/control_plane/migrations/versions/lm2e00000001_tenant_model_catalog.py
       - saas/outbox_worker.py
       - saas/control_plane/model_verification_contract.py
       - saas/production/model_protocol_probe.py
@@ -28,6 +30,7 @@ on:
       - saas/production/model_verification.py
       - saas/production/litellm_release.json
       - saas/production/platform_model_gateway.py
+      - saas/production/tenant_model_catalog.py
       - saas/scripts/*litellm*.py
       - tests/saas/*litellm*.py
       - tests/saas/test_model_protocol_probe.py
@@ -39,6 +42,7 @@ on:
       - tests/saas/test_model_gateway_audit.py
       - tests/saas/test_model_inference_requests.py
       - tests/saas/test_run_customer_pricing.py
+      - tests/saas/test_tenant_model_catalog.py
       - tests/saas/test_billing_metering.py
       - tests/saas/fixtures/litellm/**
       - uv.lock
@@ -97,6 +101,7 @@ jobs:
           tests/saas/test_model_gateway_audit.py
           tests/saas/test_model_inference_requests.py
           tests/saas/test_run_customer_pricing.py
+          tests/saas/test_tenant_model_catalog.py
           tests/saas/test_billing_metering.py
       - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:

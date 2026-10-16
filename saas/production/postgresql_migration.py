@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "f82346dfffbd263065be83a4d094c0f9f8286d8d6c4e5169d1cfc25452d83b31",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "524da8b85b6146339c1baf7688fea8fb37f566c9b4210ea75ddc229b47009f7d",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -406,6 +417,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "66a9b2290d9236d2d4dec7a08c14447a68dbb1bd95b707d19ee72b4fbc38e843",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e64cf676bb68d26fe8430bfcd20222d0ad9a71e6e5d52a1eecf81566f1c7207f",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -596,6 +618,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e606146da4d7950f1e5a30450a3032c966edc72868aa6c2d76dfba7869b4c1e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "6db83f8196c5b04d20e792f1e21145965c83ddcbc938c23f49e12a52cdc86a46",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -756,6 +789,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "cf3df80d8483ca58fc4377e9929ed491035b7f8f0031b3e1599f6706f7b5b989",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "3b9ea929ceb35f1409ec36b397c82d71d684fd7f0691261bb05dbb4f51c87f18",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -911,6 +955,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "85d802b226f86abf4f7bc596093f8155da90db2d9d05b25615b5bc9d1a5f87dc",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "51fef83db0284bdb393dc629f4a13d8bf77a32ad1d34219ddb9bf99e6534a1e0",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -1041,6 +1096,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "62eecc799477d90700a18d12d15ea4a9bffade451aa93dd37920db09b41f169d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "989bf297be8cfd63b0d191e5940158d8bd0171595c21a02f09acd365a3c961a9",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -1178,6 +1244,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "7588d4270d123f6a1717218fa1403278b9fc8e21a3921e0dc05f63dfe4e2c970",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e76bebe85f1312f7e4484cb9e3f29b5dd3ab763aee1b412ea3cfd300b8f8b8c3",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,
@@ -1280,6 +1357,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "718b542a937564894a458d55d39843c734e70a17f94b991b852ff12f00704da7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "4030f963cf5327fadec62ceecd95450302df0d2d6170cb17a13112ec869a2efb",
     # PG16/18 source replay d841a033; frozen execution customer prices.
     (
         16,

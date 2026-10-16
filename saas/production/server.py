@@ -1366,6 +1366,15 @@ def build_production_saas_services(
         runtime_initializer=runtime_initializer,
     )
     if integration.runtime_router is not None:
+        from saas.control_plane.tenant_model_catalog import TenantModelCatalog
+        from saas.production.tenant_model_catalog import create_tenant_model_catalog_router
+
+        integration.runtime_router.include_router(
+            create_tenant_model_catalog_router(
+                auth_provider=integration.auth_provider,
+                catalog=TenantModelCatalog(sessions.engines["app"]),
+            )
+        )
         integration.runtime_router.include_router(
             create_legacy_delivery_router(
                 DeliveryAccess(

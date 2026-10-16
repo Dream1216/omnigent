@@ -3749,6 +3749,7 @@ export function NewChatLandingScreen() {
           </>
         )}
         <ComposerConfigSections
+          managedCandidates
           sdk={
             selectedAgentHasAdvancedSettings && selectedAgent
               ? {
