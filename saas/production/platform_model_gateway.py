@@ -104,7 +104,11 @@ def _streaming_document(document: dict[str, object], *, responses: bool) -> dict
     outbound["stream"] = True
     if responses:
         outbound.pop("stream_options", None)
+        outbound["max_output_tokens"] = _output_token_limit(document, responses=True)
     else:
+        # DeepSeek receives one concrete bound, including null/omitted SDK defaults.
+        outbound.pop("max_completion_tokens", None)
+        outbound["max_tokens"] = _output_token_limit(document, responses=False)
         outbound["stream_options"] = {"include_usage": True}
     return outbound
 
@@ -615,6 +619,8 @@ def _request_document(raw: bytes, *, responses: bool = False) -> dict[str, objec
         raise ValueError("Platform model request model is invalid")
     if document.get("stream") is not True:
         raise ValueError("Platform model gateway requires streaming")
+    if "n" in document and (responses or type(document["n"]) is not int or document["n"] != 1):
+        raise ValueError("Platform model gateway requires one completion")
     _output_token_limit(document, responses=responses)
     return document
 
@@ -634,13 +640,16 @@ def _requested_tokens(
 def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> int:
     """Return the validated reservation limit for either OpenAI wire shape."""
 
+    if not responses and "max_tokens" in document and "max_completion_tokens" in document:
+        first, second = document["max_tokens"], document["max_completion_tokens"]
+        if type(first) is not type(second) or first != second:
+            raise ValueError("Platform model output limits conflict")
     value = (
         document.get("max_output_tokens", 4096)
         if responses
         else document.get("max_tokens", document.get("max_completion_tokens", 4096))
     )
-    # Responses declares max_output_tokens nullable. Treat explicit null like
-    # omission for reservation while preserving the upstream request verbatim.
+    # The same effective default is materialized in the outbound request.
     if value is None:
         return 4096
     if isinstance(value, bool) or not isinstance(value, int):

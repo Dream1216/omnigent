@@ -22,6 +22,7 @@ on:
       - tests/saas/test_model_protocol_probe.py
       - tests/saas/test_model_verification_worker.py
       - tests/saas/test_production_model_projection.py
+      - tests/saas/test_platform_model_gateway.py
       - tests/saas/fixtures/litellm/**
       - uv.lock
       - pyproject.toml
@@ -71,6 +72,7 @@ jobs:
           tests/saas/test_litellm_configuration_attestation.py
           tests/saas/test_model_verification_worker.py
           tests/saas/test_production_model_projection.py
+          tests/saas/test_platform_model_gateway.py
       - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
           version: v0.22.1

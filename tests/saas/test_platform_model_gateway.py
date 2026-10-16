@@ -280,10 +280,10 @@ def test_streams_responses_api_and_settles_nested_usage() -> None:
     ]
 
 
-def test_responses_accepts_nullable_output_limit() -> None:
+def test_responses_materializes_nullable_output_limit_before_egress() -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         sent = json.loads(request.content)
-        assert sent["max_output_tokens"] is None
+        assert sent["max_output_tokens"] == 4096
         body = (
             b"event: response.completed\n"
             b'data: {"type":"response.completed","response":{"usage":'
@@ -304,6 +304,84 @@ def test_responses_accepts_nullable_output_limit() -> None:
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("responses", "limits", "expected"),
+    (
+        (False, {}, 4096),
+        (False, {"max_tokens": None}, 4096),
+        (False, {"max_completion_tokens": None}, 4096),
+        (False, {"max_tokens": 17}, 17),
+        (False, {"max_completion_tokens": 19}, 19),
+        (False, {"max_tokens": 17, "max_completion_tokens": 17}, 17),
+        (True, {}, 4096),
+        (True, {"max_output_tokens": None}, 4096),
+        (True, {"max_output_tokens": 23}, 23),
+    ),
+)
+def test_output_hold_limit_is_always_an_explicit_upstream_bound(
+    responses: bool, limits: dict[str, object], expected: int
+) -> None:
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        assert sent["max_output_tokens" if responses else "max_tokens"] == expected
+        assert "max_completion_tokens" not in sent
+        if responses:
+            body = (
+                b'data: {"type":"response.completed","response":{"usage":'
+                b'{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+            )
+        else:
+            body = (
+                b'data: {"usage":{"prompt_tokens":1,"completion_tokens":1,'
+                b'"total_tokens":2}}\n\ndata: [DONE]\n\n'
+            )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    document = {"model": "deepseek-flash", "stream": True, **limits}
+    document["input" if responses else "messages"] = "hello" if responses else []
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json=document,
+    )
+    assert response.status_code == 200
+    assert budgets.reserved[0]["requested_tokens"] >= expected
+    assert len(budgets.settled) == 1 and not budgets.released
+
+
+@pytest.mark.parametrize(
+    ("responses", "limits"),
+    (
+        (False, {"max_tokens": 17, "max_completion_tokens": 19}),
+        (False, {"max_tokens": None, "max_completion_tokens": 19}),
+        (False, {"n": 2}),
+        (False, {"n": True}),
+        (False, {"n": None}),
+        (False, {"n": "1"}),
+        (True, {"n": 1}),
+    ),
+)
+def test_ambiguous_or_multisample_limits_fail_before_budget_or_provider(
+    responses: bool, limits: dict[str, object]
+) -> None:
+    calls = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "stream": True, **limits},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "platform_model_request_invalid"
+    assert not calls and not budgets.reserved and not budgets.settled and not budgets.released
 
 
 def test_provider_rejection_releases_budget_without_leaking_body() -> None:
