@@ -725,9 +725,18 @@ def test_module_entrypoint_runs_after_response_helpers() -> None:
 
 
 @pytest.mark.parametrize("endpoint", ["chat/completions", "responses"])
-@pytest.mark.parametrize("component", ["gateway", "relay"])
+@pytest.mark.parametrize(
+    "component,usage_state",
+    [
+        ("gateway", "absent"),
+        ("gateway", "interim"),
+        ("gateway", "terminal"),
+        ("gateway", "malformed"),
+        ("relay", "absent"),
+    ],
+)
 def test_client_disconnect_cannot_cancel_stream_finalization(
-    endpoint: str, component: str
+    endpoint: str, component: str, usage_state: str
 ) -> None:
     import anyio
     from fastapi import FastAPI
@@ -737,10 +746,41 @@ def test_client_disconnect_cannot_cancel_stream_finalization(
         closed = False
 
         async def __aiter__(self):
+            total = 14 if usage_state == "malformed" else 15
             if endpoint == "responses":
-                yield b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                frame = b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "type": "response.in_progress"
+                        if usage_state == "interim"
+                        else "response.completed",
+                        "response": {
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 4},
+                                "output_tokens": 5,
+                                "total_tokens": total,
+                            }
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
             else:
-                yield b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+                frame = b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "prompt_cache_hit_tokens": 4,
+                            "prompt_cache_miss_tokens": 6,
+                            "completion_tokens": 5,
+                            "total_tokens": total,
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
+                    if usage_state != "interim":
+                        frame += b"data: [DONE]\n\n"
+            yield frame
             await anyio.sleep_forever()
 
         async def aclose(self) -> None:
@@ -816,8 +856,14 @@ def test_client_disconnect_cannot_cancel_stream_finalization(
     assert len(requests) == 1
     if component == "gateway":
         assert (provider.closed, len(budgets.settled)) == (True, 1)
-        assert budgets.settled[0]["actual_tokens"] == budgets.reserved[0]["requested_tokens"]
-        assert budgets.settled[0]["actual_microusd"] == budgets.reserved[0]["requested_microusd"]
+        if usage_state == "terminal":
+            assert budgets.settled[0]["actual_tokens"] == 15
+            assert budgets.settled[0]["actual_microusd"] == 5
+        else:
+            assert budgets.settled[0]["actual_tokens"] == budgets.reserved[0]["requested_tokens"]
+            assert (
+                budgets.settled[0]["actual_microusd"] == budgets.reserved[0]["requested_microusd"]
+            )
     else:
         assert provider.closed
         assert not budgets.reserved and not budgets.settled

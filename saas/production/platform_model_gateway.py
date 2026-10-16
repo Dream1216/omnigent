@@ -367,7 +367,7 @@ class PlatformModelGateway:
             with anyio.CancelScope(shield=True):
                 await upstream.aclose()
                 await client.aclose()
-                if completed and parser.total_tokens is not None:
+                if (completed or parser.final_usage_received) and parser.total_tokens is not None:
                     actual_tokens = max(1, parser.total_tokens)
                     cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
                     actual_cost = max(
@@ -430,6 +430,7 @@ class _UsageParser:
         self.prompt_cache_miss_tokens: int | None = None
         self.completion_tokens: int | None = None
         self.total_tokens: int | None = None
+        self.final_usage_received = False
 
     def feed(self, chunk: bytes) -> None:
         self._pending.extend(chunk)
@@ -449,7 +450,10 @@ class _UsageParser:
         if not line.startswith(b"data:"):
             return
         payload = line[5:].strip()
-        if not payload or payload == b"[DONE]":
+        if not payload:
+            return
+        if payload == b"[DONE]":
+            self.final_usage_received = self.total_tokens is not None
             return
         try:
             document = json.loads(payload)
@@ -493,6 +497,9 @@ class _UsageParser:
             self.prompt_cache_miss_tokens = cache_miss
             self.completion_tokens = completion
             self.total_tokens = total
+            # Native clients can close after this event before HTTP EOF arrives.
+            if document.get("type") == "response.completed":
+                self.final_usage_received = True
         except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             return
 
