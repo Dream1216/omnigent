@@ -99,6 +99,37 @@ reconciles the original receipt and budget; it does not send inference again.
 Disabling the feature does not erase receipts, release uncertain charges or
 replay a user task.
 
+## Replica route readiness
+
+`LiteLLMReplicaReadinessAuthority` checks a deployment-owned inventory of two to
+sixteen individual replica endpoints. Never build this inventory from browser
+input or substitute a shared load-balancer address. The library reads the
+canonical stored credential before and after concurrent `GET /model/info`
+checks. In the locked version, that endpoint lists the process's router model
+list. Every configured endpoint must expose the approved immutable deployment,
+model, endpoint, named credential and disabled retry settings.
+
+The result binds the draft, credential version, stored-state fingerprint and
+exact endpoint inventory. It is valid for at most thirty seconds from the start
+of the check. A publisher must recheck it against the current inventory and
+authorization immediately before changing the release pointer. Missing routes,
+endpoint failures, changed storage or expired evidence reject readiness; sibling
+reads are cancelled before returning. These checks do not issue inference keys,
+perform inference, reserve budget or grant publication authority.
+
+The evidence scope is
+`stored_credentials_and_visible_replica_routes_not_hidden_replica_memory`.
+It proves neither hidden credential bytes in each process nor physical Kubernetes
+membership. Production publication still needs a trusted deployed-fleet inventory,
+the approved protocol/capability evidence, tenant authorization and release gates.
+Constructing the library does not enable production routing.
+
+The isolated fixture freezes periodic reload at 3600 seconds to make a stale
+second replica deterministic. It adds a model to the primary, checks that the
+second replica prevents readiness, reloads that replica and checks again. This
+is test configuration, not a production reload recommendation; production uses
+its separately reviewed reload and topology settings.
+
 ## Verification and recovery
 
 Run the focused regression from the repository root:
@@ -106,6 +137,7 @@ Run the focused regression from the repository root:
 ```sh
 .venv/bin/python -m pytest -q \
   tests/saas/test_litellm_configuration_attestation.py \
+  tests/saas/test_litellm_replica_readiness.py \
   tests/saas/test_model_verification_worker.py \
   tests/saas/test_production_model_projection.py
 ```
@@ -115,7 +147,9 @@ PostgreSQL on native amd64 and arm64. It verifies the read identity, hidden
 override rejection, wrong-key rejection and restored database state, using a
 synthetic upstream and no production credentials. A passing component report
 must state `masked_credentials_attested=true`, the explicit storage-only scope,
-successful cleanup and `production_traffic_changed=false`.
+successful cleanup and `production_traffic_changed=false`. Replica checks also
+require `replica_route_readiness_checked=true` and the explicit route-readiness
+scope above. Their provider-request counter must remain unchanged.
 
 During an isolated restore, restore both the database and matching salt, reapply
 the reviewed read-role grants to the restored logical database, and validate the

@@ -13,6 +13,7 @@ on:
       - saas/control_plane/model_verification_contract.py
       - saas/production/model_protocol_probe.py
       - saas/production/litellm_configuration_attestation.py
+      - saas/production/litellm_replica_readiness.py
       - saas/production/model_projection.py
       - saas/production/model_verification.py
       - saas/production/litellm_release.json
@@ -70,6 +71,7 @@ jobs:
         run: >-
           uv run --no-sync python -m pytest -q
           tests/saas/test_litellm_configuration_attestation.py
+          tests/saas/test_litellm_replica_readiness.py
           tests/saas/test_model_verification_worker.py
           tests/saas/test_production_model_projection.py
           tests/saas/test_platform_model_gateway.py
@@ -118,7 +120,7 @@ jobs:
             --image "$candidate" --upstream-image "$PROBE_UPSTREAM" \
             --source-archive "$RUNNER_TEMP/upstream.tar" \
             --output artifacts/contract.json
-          jq -e '.passed == true and .execution_mode == "native" and .cleanup_completed == true and .production_traffic_changed == false and .real_provider_tested == false and .masked_credentials_attested == true and .configuration_attestation_scope == "stored_model_credential_and_database_overlays_not_replica_memory"' artifacts/contract.json
+          jq -e '.passed == true and .execution_mode == "native" and .cleanup_completed == true and .production_traffic_changed == false and .real_provider_tested == false and .masked_credentials_attested == true and .configuration_attestation_scope == "stored_model_credential_and_database_overlays_not_replica_memory" and .replica_route_readiness_checked == true and .replica_route_readiness_scope == "stored_credentials_and_visible_replica_routes_not_hidden_replica_memory"' artifacts/contract.json
       - name: Retain component evidence even on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

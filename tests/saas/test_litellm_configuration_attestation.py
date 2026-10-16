@@ -200,3 +200,23 @@ def test_only_the_unmodified_empty_upstream_license_baseline_is_allowed():
     snapshot.settings[0]["param_value"] = {"unapproved-router": "unapproved-tuning"}
     with pytest.raises(LiteLLMAttestationError):
         attest_litellm_configuration(snapshot, **arguments)
+
+
+@pytest.mark.parametrize(
+    "change", ("deployment", "credential", "configuration", "state", "scope", "contract", "time")
+)
+def test_storage_witness_binding_rejects_another_draft_or_proof_contract(change):
+    snapshot, arguments = _snapshot()
+    witness = attest_litellm_configuration(snapshot, **arguments)
+    witness.require_binding(arguments["draft"])
+    fields = {
+        "deployment": {"deployment_id": uuid4()},
+        "credential": {"credential_version_id": uuid4()},
+        "configuration": {"configuration_sha256": "f" * 64},
+        "state": {"stored_state_sha256": "invalid"},
+        "scope": {"scope": "all_hidden_runtime_memory"},
+        "contract": {"contract": "unapproved"},
+        "time": {"observed_at": witness.observed_at.replace(tzinfo=None)},
+    }
+    with pytest.raises(LiteLLMAttestationError, match="binding_invalid"):
+        replace(witness, **fields[change]).require_binding(arguments["draft"])

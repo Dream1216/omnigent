@@ -34,6 +34,12 @@ from saas.production.litellm_configuration_attestation import (
     LiteLLMAttestationError,
     LiteLLMConfigurationAttestor,
 )
+from saas.production.litellm_replica_readiness import (
+    READINESS_SCOPE,
+    LiteLLMReplicaEndpoint,
+    LiteLLMReplicaReadinessAuthority,
+    LiteLLMReplicaReadinessError,
+)
 from saas.production.model_protocol_probe import (
     ModelProbeAdmission,
     ModelProtocolProbe,
@@ -518,6 +524,7 @@ class Probe:
             return
         self.configure_storage_attestor(db, "probe")
         asyncio.run(self.contract(proxy_url, provider_base, upstream_url))
+        asyncio.run(self.check_replica_readiness(proxy_url, upstream_url))
         if self.real_provider_command:
             asyncio.run(self.live_contract(proxy_url))
         stored = self.docker(
@@ -648,6 +655,114 @@ class Probe:
             and bool(self.attested_bindings),
         )
         self.report["passed"] = True
+
+    async def check_replica_readiness(self, primary_url: str, upstream_url: str) -> None:
+        assert self.attestor is not None and len(self.attested_bindings) == 2
+        # The fixture deliberately freezes periodic reload so the stale-route negative is stable.
+        replica = self.start(
+            "second-replica",
+            self.image,
+            "--platform=linux/" + self.architecture,
+            "--memory=4g",
+            "--cpus=2",
+            "--publish",
+            "127.0.0.1::4000",
+            "--mount",
+            f"type=bind,source={_FIXTURES / 'proxy.yaml'},target=/probe.yaml,readonly",
+            extra_env=(
+                "DATABASE_URL",
+                "LITELLM_MASTER_KEY",
+                "LITELLM_SALT_KEY",
+                "STORE_MODEL_IN_DB",
+                "DISABLE_ADMIN_UI",
+                "LITELLM_MODE",
+                "LITELLM_LOCAL_MODEL_COST_MAP",
+            ),
+            command=("--config", "/probe.yaml", "--port", "4000"),
+        )
+        replica_url = self.port(replica, 4000)
+        self.wait_http(replica_url + "/health/readiness")
+        storage = self.attestor
+        source, credential, provider_base, _ = self.attested_bindings[0]
+
+        def endpoint(identifier: str, url: str) -> LiteLLMReplicaEndpoint:
+            return LiteLLMReplicaEndpoint(
+                identifier,
+                LiteLLMManagementConfiguration(
+                    base_url=url,
+                    management_key=self.environment["LITELLM_MASTER_KEY"],
+                    allowed_http_hosts=("127.0.0.1",),
+                    allowed_provider_base_urls=(provider_base,),
+                    timeout_seconds=10,
+                ),
+            )
+
+        def authority(url: str) -> LiteLLMReplicaReadinessAuthority:
+            return LiteLLMReplicaReadinessAuthority(
+                (endpoint("primary", primary_url), endpoint("second", url)), storage=storage
+            )
+
+        known_replicas = authority(replica_url)
+        evidence = []
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as observer:
+            before = (await observer.get(upstream_url + "/evidence")).json()["requests"]
+            for draft, name, base, _ in self.attested_bindings:
+                proof = await known_replicas.attest(
+                    draft=draft,
+                    credential_name=name,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=base,
+                )
+                evidence.append(proof.evidence())
+                self.check("replica_routes_and_storage_agree_" + draft.wire_api, True)
+            late = compile_model_deployment_draft(
+                CreateModelDeploymentDraft(
+                    source.public_model_id,
+                    "isolated not-yet-loaded replica route",
+                    source.connection_id,
+                    source.credential_version_id,
+                    0,
+                    source.wire_api,
+                    32,
+                ),
+                deployment_id=uuid4(),
+            )
+            management = LiteLLMManagementClient(endpoint("primary", primary_url).management)
+            await management.create_deepseek_deployment(
+                deployment_id=late.deployment_id,
+                alias=late.alias,
+                model=late.public_model_id,
+                credential_name=credential,
+                provider_base_url=provider_base,
+            )
+            try:
+                await known_replicas.attest(
+                    draft=late,
+                    credential_name=credential,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=provider_base,
+                )
+            except LiteLLMReplicaReadinessError:
+                self.check("missing_replica_route_rejects_release_readiness", True)
+            else:
+                self.check("missing_replica_route_rejects_release_readiness", False)
+            self.docker("restart", replica, timeout=60)
+            replica_url = self.port(replica, 4000)
+            self.wait_http(replica_url + "/health/readiness")
+            proof = await authority(replica_url).attest(
+                draft=late,
+                credential_name=credential,
+                expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                provider_base_url=provider_base,
+            )
+            evidence.append(proof.evidence())
+            self.check("reloaded_replica_route_ready", True)
+            after = (await observer.get(upstream_url + "/evidence")).json()["requests"]
+            self.check("replica_readiness_never_calls_provider", before == after)
+        self.docker("stop", "--time=30", replica)
+        self.report["replica_route_readiness_checked"] = True
+        self.report["replica_route_readiness_scope"] = READINESS_SCOPE
+        self.report["replica_route_readiness"] = evidence
 
     def configure_storage_attestor(self, db: str, database: str) -> None:
         if self.attestor is not None:

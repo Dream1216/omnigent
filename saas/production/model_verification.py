@@ -47,7 +47,6 @@ from saas.control_plane.model_verification_contract import (
 from saas.control_plane.outbox import OutboxClaimRoute, OutboxPublishError
 from saas.control_plane.platform_models import ModelProviderBudgetReservationRecord
 from saas.production.litellm_configuration_attestation import (
-    ATTESTATION_CONTRACT,
     LiteLLMAttestationError,
     LiteLLMConfigurationAttestation,
     LiteLLMConfigurationAttestor,
@@ -461,15 +460,9 @@ class ModelVerificationPublisher:
             credential_name=claim.credential_name,
             expected_api_key=api_key,
         )
-        if (
-            not isinstance(witness, LiteLLMConfigurationAttestation)
-            or witness.contract != ATTESTATION_CONTRACT
-            or witness.deployment_id != claim.draft.deployment_id
-            or witness.credential_version_id != claim.draft.credential_version_id
-            or witness.configuration_sha256 != claim.draft.configuration_sha256
-            or re.fullmatch(r"[0-9a-f]{64}", witness.stored_state_sha256) is None
-        ):
+        if not isinstance(witness, LiteLLMConfigurationAttestation):
             raise LiteLLMAttestationError("litellm_attestation_binding_invalid")
+        witness.require_binding(claim.draft)
         return witness
 
     def _bind_budget(self, claim: _Claim, reservation: ModelProviderBudgetReservationView) -> None:

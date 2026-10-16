@@ -67,6 +67,21 @@ class LiteLLMConfigurationAttestation:
     contract: str = ATTESTATION_CONTRACT
     scope: str = "stored_model_credential_and_database_overlays"
 
+    def require_binding(self, draft: CompiledModelDeploymentDraft) -> None:
+        if (
+            self.contract != ATTESTATION_CONTRACT
+            or self.scope != "stored_model_credential_and_database_overlays"
+            or self.deployment_id != draft.deployment_id
+            or self.credential_version_id != draft.credential_version_id
+            or self.configuration_sha256 != draft.configuration_sha256
+            or not isinstance(self.stored_state_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.stored_state_sha256) is None
+            or not isinstance(self.observed_at, datetime)
+            or self.observed_at.tzinfo is None
+            or self.observed_at.utcoffset() is None
+        ):
+            raise LiteLLMAttestationError("litellm_attestation_binding_invalid")
+
     def evidence(self) -> dict[str, object]:
         return {
             "contract": self.contract,
