@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -24,6 +24,10 @@ from saas.control_plane.model_projection import (
 from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
 from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.onboarding_composition import validate_production_outbox_publisher
+from saas.production.litellm_configuration_attestation import (
+    ATTESTATION_LOGIN,
+    LiteLLMConfigurationAttestor,
+)
 from saas.production.model_protocol_probe import (
     ModelProtocolProbe,
     ModelProtocolProbeConfiguration,
@@ -31,6 +35,7 @@ from saas.production.model_protocol_probe import (
 from saas.production.model_verification import (
     MODEL_VERIFICATION_ROUTE,
     ModelVerificationPublisher,
+    model_configuration_attestation_enabled,
     model_verification_enabled,
 )
 from saas.production.onboarding import _read_bytes, _regular_file, build_production_secret_cipher
@@ -152,6 +157,7 @@ class ProductionModelProjectionPublisher:
     fallback: OutboxPublisher = field(repr=False)
     verification: ModelVerificationPublisher | None = field(default=None, repr=False)
     billing_engine: sa.Engine | None = field(default=None, repr=False)
+    storage_attestation: LiteLLMConfigurationAttestor | None = field(default=None, repr=False)
 
     def validate_outbox_configuration(self) -> None:
         verify_model_projection_postgresql_state(
@@ -163,6 +169,8 @@ class ProductionModelProjectionPublisher:
                 expected_login=self.config.service_role_graph.login_for("billing"),
                 expected_role="saas_billing",
             )
+        if self.storage_attestation is not None:
+            self.storage_attestation.validate_authority()
         validate_production_outbox_publisher(self.fallback)
 
     def publish(
@@ -207,9 +215,14 @@ class ProductionModelProjectionPublisher:
             if callable(close):
                 close()
         finally:
-            if self.billing_engine is not None and self.billing_engine is not self.engine:
-                self.billing_engine.dispose()
-            self.engine.dispose()
+            with ExitStack() as cleanup:
+                engines = {self.engine}
+                if self.billing_engine is not None:
+                    engines.add(self.billing_engine)
+                if self.storage_attestation is not None:
+                    engines.add(self.storage_attestation.engine)
+                for engine in engines:
+                    cleanup.callback(engine.dispose)
 
 
 def wrap_production_model_projection(
@@ -226,11 +239,12 @@ def wrap_production_model_projection(
     """Projection owns its login; optional priced tests use a separate Billing login."""
 
     if not model_projection_enabled(source):
-        if model_verification_enabled(source):
+        if model_verification_enabled(source) or model_configuration_attestation_enabled(source):
             raise ProductionModelProjectionError("model_verification_requires_projection")
         return fallback
     engine: sa.Engine | None = None
     billing_engine: sa.Engine | None = None
+    attestation_engine: sa.Engine | None = None
     try:
         config = load_production_model_projection_config(source)
         cipher = secret_cipher_loader(source)
@@ -238,9 +252,40 @@ def wrap_production_model_projection(
             raise ValueError
         engine = engine_factory(config.database_url)
         verification = None
-        if model_verification_enabled(source):
-            if config.control_plane_schema_revision != CONTROL_PLANE_SCHEMA_REVISION:
+        storage_attestation = None
+        verification_enabled = model_verification_enabled(source)
+        attestation_enabled = model_configuration_attestation_enabled(source)
+        if (attestation_enabled and not verification_enabled) or (
+            verification_enabled
+            and config.control_plane_schema_revision != CONTROL_PLANE_SCHEMA_REVISION
+        ):
+            raise ValueError
+        if attestation_enabled:
+            attestation_url, attestation_parsed, _path = load_production_database_url_file(
+                source, "litellm_attestation"
+            )
+            if (
+                attestation_parsed.username != ATTESTATION_LOGIN
+                or not attestation_parsed.database
+                or attestation_parsed.database == sa.make_url(config.database_url).database
+                or source.get("OMNIGENT_SAAS_LITELLM_SALT_KEY")
+            ):
                 raise ValueError
+            salt_path = _regular_file(
+                source, "OMNIGENT_SAAS_LITELLM_SALT_KEY_FILE", maximum_bytes=4098
+            )
+            salt = (
+                _read_bytes(salt_path, "OMNIGENT_SAAS_LITELLM_SALT_KEY_FILE", maximum_bytes=4098)
+                .decode("ascii")
+                .rstrip("\r\n")
+            )
+            attestation_engine = engine_factory(attestation_url)
+            storage_attestation = LiteLLMConfigurationAttestor(
+                attestation_engine,
+                salt_key=salt,
+                expected_database=attestation_parsed.database,
+            )
+        if verification_enabled:
             billing_url, parsed, _path = load_production_database_url_file(source, "billing")
             if parsed.username != config.service_role_graph.login_for("billing"):
                 raise ValueError
@@ -257,6 +302,8 @@ def wrap_production_model_projection(
                         allowed_http_hosts=config.management.allowed_http_hosts,
                     )
                 ),
+                attestor=storage_attestation,
+                secret_cipher=cipher if storage_attestation is not None else None,
             )
         publisher = ProductionModelProjectionPublisher(
             config,
@@ -267,6 +314,7 @@ def wrap_production_model_projection(
             fallback,
             verification,
             billing_engine,
+            storage_attestation,
         )
         publisher.validate_outbox_configuration()
         return publisher
@@ -277,4 +325,7 @@ def wrap_production_model_projection(
         if billing_engine is not None and billing_engine is not engine:
             with suppress(Exception):
                 billing_engine.dispose()
+        if attestation_engine is not None and attestation_engine not in (engine, billing_engine):
+            with suppress(Exception):
+                attestation_engine.dispose()
         raise ProductionModelProjectionError("model_projection_startup_rejected") from None

@@ -18,6 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+import sqlalchemy as sa
 
 from saas.control_plane.litellm_client import (
     LiteLLMManagementClient,
@@ -25,8 +26,13 @@ from saas.control_plane.litellm_client import (
     LiteLLMManagementError,
 )
 from saas.control_plane.model_deployments import (
+    CompiledModelDeploymentDraft,
     CreateModelDeploymentDraft,
     compile_model_deployment_draft,
+)
+from saas.production.litellm_configuration_attestation import (
+    LiteLLMAttestationError,
+    LiteLLMConfigurationAttestor,
 )
 from saas.production.model_protocol_probe import (
     ModelProbeAdmission,
@@ -80,6 +86,9 @@ class Probe:
         )
         self.run_id = "omnigent-litellm-p0-" + uuid4().hex[:10]
         self.names: list[str] = []
+        self.attestor: LiteLLMConfigurationAttestor | None = None
+        self.attestation_database: str | None = None
+        self.attested_bindings: list[tuple[CompiledModelDeploymentDraft, str, str, str]] = []
         self.environment = {
             **os.environ,
             "POSTGRES_PASSWORD": secrets.token_hex(24),
@@ -192,6 +201,7 @@ class Probe:
                     "PROBE_LIVE_PROVIDER_KEY",
                     "PROBE_LIVE_INFERENCE_KEY",
                     "PROBE_BOUNDED_INFERENCE_KEY",
+                    "PROBE_ATTESTOR_PASSWORD",
                 ):
                     value = self.environment.get(key)
                     if value:
@@ -219,6 +229,8 @@ class Probe:
         raise ProbeFailure("http_readiness_timeout")
 
     def cleanup(self) -> None:
+        if self.attestor is not None:
+            self.attestor.engine.dispose()
         remaining = []
         for name in reversed(self.names):
             try:
@@ -360,6 +372,8 @@ class Probe:
             "--cpus=1",
             "--tmpfs",
             "/var/lib/postgresql:rw,size=1073741824",
+            "--publish",
+            "127.0.0.1::5432",
             "-e",
             "POSTGRES_USER=probe",
             "-e",
@@ -502,6 +516,7 @@ class Probe:
             asyncio.run(self.live_contract(proxy_url))
             self.report["passed"] = True
             return
+        self.configure_storage_attestor(db, "probe")
         asyncio.run(self.contract(proxy_url, provider_base, upstream_url))
         if self.real_provider_command:
             asyncio.run(self.live_contract(proxy_url))
@@ -616,7 +631,102 @@ class Probe:
         recovered_url = self.port(recovered, 4000)
         self.wait_http(recovered_url + "/health/readiness")
         asyncio.run(self.check_model_persistence(recovered_url, restored=True))
+        self.configure_storage_attestor(db, "probe_restored")
+        assert self.attestor is not None
+        self.check(
+            "stored_configuration_attestation_survives_restore",
+            all(
+                self.attestor.attest(
+                    draft=draft,
+                    credential_name=credential,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=base,
+                ).stored_state_sha256
+                == expected
+                for draft, credential, base, expected in self.attested_bindings
+            )
+            and bool(self.attested_bindings),
+        )
         self.report["passed"] = True
+
+    def configure_storage_attestor(self, db: str, database: str) -> None:
+        if self.attestor is not None:
+            self.attestor.engine.dispose()
+        self.attestation_database = db
+        self.environment.setdefault("PROBE_ATTESTOR_PASSWORD", secrets.token_hex(24))
+        self.docker(
+            "exec",
+            "-i",
+            db,
+            "psql",
+            "-U",
+            "probe",
+            "-d",
+            database,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "--single-transaction",
+            input_bytes=(
+                _REPO / "deploy/litellm/postgresql_attestation_principals.sql"
+            ).read_bytes()
+            + (
+                "\nALTER ROLE omnigent_litellm_attestor PASSWORD '"
+                + self.environment["PROBE_ATTESTOR_PASSWORD"]
+                + "';\n"
+            ).encode(),
+        )
+        self.docker(
+            "exec",
+            "-i",
+            "-e",
+            "PGPASSWORD",
+            db,
+            "psql",
+            "-h",
+            "127.0.0.1",
+            "-U",
+            "probe_litellm_owner",
+            "-d",
+            database,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-v",
+            "litellm_database=" + database,
+            "--single-transaction",
+            input_bytes=(_REPO / "deploy/litellm/postgresql_attestation_grants.sql").read_bytes(),
+        )
+        address = httpx.URL(self.port(db, 5432))
+        url = sa.URL.create(
+            "postgresql+psycopg",
+            username="omnigent_litellm_attestor",
+            password=self.environment["PROBE_ATTESTOR_PASSWORD"],
+            host=address.host,
+            port=address.port,
+            database=database,
+        )
+        self.attestor = LiteLLMConfigurationAttestor(
+            sa.create_engine(url, hide_parameters=True, poolclass=sa.pool.NullPool),
+            salt_key=self.environment["LITELLM_SALT_KEY"],
+            expected_database=database,
+        )
+        self.attestor.validate_authority()
+        self.check("configuration_attestor_exact_read_only_identity", True)
+        for label, statement in (
+            ("ungranted_columns", 'SELECT * FROM public."LiteLLM_CredentialsTable"'),
+            ("inference_keys", 'SELECT token FROM public."LiteLLM_VerificationToken"'),
+            ("writes", 'UPDATE public."LiteLLM_CredentialsTable" SET credential_values = NULL'),
+            ("set_role", "SET ROLE omnigent_litellm_attestation_read"),
+        ):
+            try:
+                with self.attestor.engine.begin() as connection:
+                    connection.exec_driver_sql(statement)
+            except sa.exc.DBAPIError as error:
+                self.check(
+                    "configuration_attestor_denies_" + label,
+                    getattr(error.orig, "sqlstate", None) in {"42501", "25006"},
+                )
+            else:
+                self.check("configuration_attestor_denies_" + label, False)
 
     async def check_model_persistence(self, proxy_url: str, *, restored: bool = False) -> None:
         management = LiteLLMManagementClient(
@@ -751,6 +861,34 @@ class Probe:
                 )
                 suffix = "responses" if responses else "chat"
                 self.check("bounded_model_readback_" + suffix, True)
+                assert self.attestor is not None
+                witness = self.attestor.attest(
+                    draft=draft,
+                    credential_name=credential_name,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=provider_base,
+                )
+                self.check(
+                    "stored_model_and_credential_attested_" + suffix,
+                    witness.configuration_sha256 == draft.configuration_sha256,
+                )
+                self.attested_bindings.append(
+                    (draft, credential_name, provider_base, witness.stored_state_sha256)
+                )
+                try:
+                    self.attestor.attest(
+                        draft=draft,
+                        credential_name=credential_name,
+                        expected_api_key="not-the-approved-private-provider-key",
+                        provider_base_url=provider_base,
+                    )
+                except LiteLLMAttestationError as rejected:
+                    self.check(
+                        "stored_credential_mismatch_denied_" + suffix,
+                        rejected.code == "litellm_configuration_drift",
+                    )
+                else:
+                    self.check("stored_credential_mismatch_denied_" + suffix, False)
                 try:
                     await management.reconcile_deepseek_deployment(
                         deployment_id=draft.deployment_id,
@@ -807,11 +945,114 @@ class Probe:
                 )
             after = (await observer.get(upstream_url + "/evidence")).json()["requests"]
             self.check("bounded_model_probe_attempts_observed", len(after) - len(before) == 2)
-            self.report["masked_credentials_attested"] = False
+            await self.storage_drift_contract(management, draft, credential_name, provider_base)
+            self.report["masked_credentials_attested"] = True
+            self.report["configuration_attestation_scope"] = (
+                "stored_model_credential_and_database_overlays_not_replica_memory"
+            )
         self.report["bounded_model_protocol_probe"] = {
             "scope": "synthetic_provider_transport_not_staff_or_budget_acceptance",
             "results": results,
         }
+
+    def mutate_fixture_configuration(self, statement: str) -> None:
+        assert self.attestation_database is not None
+        self.docker(
+            "exec",
+            "-i",
+            self.attestation_database,
+            "psql",
+            "-U",
+            "probe",
+            "-d",
+            "probe",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "--single-transaction",
+            input_bytes=statement.encode(),
+        )
+
+    async def storage_drift_contract(
+        self,
+        management: LiteLLMManagementClient,
+        source: CompiledModelDeploymentDraft,
+        credential_name: str,
+        provider_base: str,
+    ) -> None:
+        assert self.attestor is not None
+        draft = compile_model_deployment_draft(
+            CreateModelDeploymentDraft(
+                source.public_model_id,
+                "isolated hidden override",
+                source.connection_id,
+                source.credential_version_id,
+                0,
+                source.wire_api,
+                32,
+            ),
+            deployment_id=uuid4(),
+        )
+        await management.create_deepseek_deployment(
+            deployment_id=draft.deployment_id,
+            alias=draft.alias,
+            model=draft.public_model_id,
+            credential_name=credential_name,
+            provider_base_url=provider_base,
+        )
+        try:
+            self.mutate_fixture_configuration(
+                'UPDATE "LiteLLM_ProxyModelTable" SET litellm_params = '
+                "jsonb_set(litellm_params::jsonb, '{api_key}', "
+                "to_jsonb('isolated-unapproved-override'::text)) "
+                "WHERE model_id='" + str(draft.deployment_id) + "';"
+            )
+            await management.reconcile_deepseek_deployment(
+                deployment_id=draft.deployment_id,
+                alias=draft.alias,
+                model=draft.public_model_id,
+                credential_name=credential_name,
+                provider_base_url=provider_base,
+            )
+            self.check("hidden_override_remains_hidden_from_management_readback", True)
+            try:
+                self.attestor.attest(
+                    draft=draft,
+                    credential_name=credential_name,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=provider_base,
+                )
+            except LiteLLMAttestationError as error:
+                self.check(
+                    "hidden_override_storage_attestation_denied",
+                    error.code == "litellm_attestation_model_override",
+                )
+            else:
+                self.check("hidden_override_storage_attestation_denied", False)
+        finally:
+            await management.delete_deployment(deployment_id=draft.deployment_id)
+        self.mutate_fixture_configuration(
+            'INSERT INTO "LiteLLM_Config" (param_name, param_value) '
+            "VALUES ('router_settings', '{\"num_retries\":1}');"
+        )
+        try:
+            try:
+                self.attestor.attest(
+                    draft=source,
+                    credential_name=credential_name,
+                    expected_api_key=self.environment["PROBE_PROVIDER_KEY"],
+                    provider_base_url=provider_base,
+                )
+            except LiteLLMAttestationError as error:
+                self.check(
+                    "unapproved_database_router_overlay_denied",
+                    error.code == "litellm_attestation_overlay_drift",
+                )
+            else:
+                self.check("unapproved_database_router_overlay_denied", False)
+        finally:
+            self.mutate_fixture_configuration(
+                "DELETE FROM \"LiteLLM_Config\" WHERE param_name='router_settings';"
+            )
 
     async def contract(self, proxy_url: str, provider_base: str, upstream_url: str) -> None:
         management = LiteLLMManagementClient(
@@ -1040,6 +1281,7 @@ def main() -> int:
         ProbeFailure,
         LiteLLMManagementError,
         ModelProtocolProbeError,
+        LiteLLMAttestationError,
         httpx.HTTPError,
         subprocess.SubprocessError,
         OSError,
@@ -1050,7 +1292,9 @@ def main() -> int:
         probe.report["passed"] = False
         probe.report["error_code"] = (
             error.code
-            if isinstance(error, (LiteLLMManagementError, ModelProtocolProbeError))
+            if isinstance(
+                error, (LiteLLMManagementError, ModelProtocolProbeError, LiteLLMAttestationError)
+            )
             else str(error)
             if isinstance(error, ProbeFailure)
             else type(error).__name__

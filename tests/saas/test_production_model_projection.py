@@ -370,3 +370,111 @@ def test_verification_event_cannot_fall_through_when_consumer_is_disabled(tmp_pa
         production.wrap_production_model_projection(
             {"OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED": "true"}, fallback=_Fallback()
         )
+
+
+def _attestation_environment(tmp_path):
+    source = _verification_environment(tmp_path)
+    source["OMNIGENT_SAAS_MODEL_CONFIG_ATTESTATION_ENABLED"] = "true"
+    for name, value in (
+        (
+            "LITELLM_ATTESTATION_DATABASE_URL",
+            "postgresql+psycopg://omnigent_litellm_attestor:isolated-read-only@db.example:5432/omnigent_litellm?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt",
+        ),
+        ("LITELLM_SALT_KEY", "isolated-litellm-at-rest-salt-key-only"),
+    ):
+        path = tmp_path / name
+        path.write_text(value)
+        path.chmod(0o400)
+        source["OMNIGENT_SAAS_" + name + "_FILE"] = str(path)
+    return source
+
+
+class _ReadOnlyAttestor:
+    def __init__(self, engine, *, salt_key, expected_database):
+        assert salt_key == "isolated-litellm-at-rest-salt-key-only"
+        assert expected_database == "omnigent_litellm"
+        self.engine, self.validated = engine, 0
+
+    def validate_authority(self):
+        self.validated += 1
+
+
+def test_storage_attestation_is_composed_only_in_trusted_worker_with_separate_database(
+    tmp_path, monkeypatch
+):
+    source, engines, users, disposed = _attestation_environment(tmp_path), [], [], []
+    monkeypatch.setattr(production, "verify_model_projection_postgresql_state", lambda **_: None)
+    monkeypatch.setattr(production, "_inspect_service_login", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(production, "LiteLLMConfigurationAttestor", _ReadOnlyAttestor)
+
+    def build(url):
+        users.append(sa.make_url(url).username)
+        engine = sa.create_engine("sqlite://")
+        engines.append(engine)
+        sa.event.listen(engine, "engine_disposed", lambda _: disposed.append(True))
+        return engine
+
+    wrapped = production.wrap_production_model_projection(
+        source,
+        fallback=_Fallback(),
+        engine_factory=build,
+        secret_cipher_loader=lambda _: _Cipher(),
+    )
+    assert isinstance(wrapped, production.ProductionModelProjectionPublisher)
+    assert users == [
+        "model_projection_login",
+        "omnigent_litellm_attestor",
+        "platform_model_billing_login",
+    ]
+    assert wrapped.storage_attestation.validated == 1
+    assert wrapped.verification._attestor is wrapped.storage_attestation
+    assert "isolated-litellm-at-rest-salt-key-only" not in repr(wrapped)
+    wrapped.close()
+    assert len(disposed) == 3
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "no_verification",
+        "same_database",
+        "wrong_login",
+        "salt_mode",
+        "direct_salt",
+        "invalid_flag",
+    ),
+)
+def test_storage_attestation_configuration_rejects_wrong_or_ambient_authority(
+    tmp_path, monkeypatch, change
+):
+    source, fallback, disposed = _attestation_environment(tmp_path), _Fallback(), []
+    engine = sa.create_engine("sqlite://")
+    sa.event.listen(engine, "engine_disposed", lambda _: disposed.append(True))
+    if change == "no_verification":
+        source["OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED"] = "false"
+    elif change in {"same_database", "wrong_login"}:
+        path = Path(source["OMNIGENT_SAAS_LITELLM_ATTESTATION_DATABASE_URL_FILE"])
+        path.chmod(0o600)
+        value = path.read_text()
+        path.write_text(
+            value.replace("/omnigent_litellm?", "/omnigent?")
+            if change == "same_database"
+            else value.replace("omnigent_litellm_attestor:", "model_projection_login:")
+        )
+        path.chmod(0o400)
+    elif change == "salt_mode":
+        Path(source["OMNIGENT_SAAS_LITELLM_SALT_KEY_FILE"]).chmod(0o600)
+    elif change == "direct_salt":
+        source["OMNIGENT_SAAS_LITELLM_SALT_KEY"] = "private-must-not-be-in-errors"
+    else:
+        source["OMNIGENT_SAAS_MODEL_CONFIG_ATTESTATION_ENABLED"] = "TRUE"
+    with pytest.raises(production.ProductionModelProjectionError) as error:
+        production.wrap_production_model_projection(
+            source,
+            fallback=fallback,
+            engine_factory=lambda _: engine,
+            secret_cipher_loader=lambda _: _Cipher(),
+        )
+    assert str(error.value) == "model_projection_startup_rejected"
+    assert error.value.__suppress_context__ and not fallback.closed
+    assert disposed == [True]

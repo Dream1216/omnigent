@@ -15,6 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from omnigent.db.utils import make_named_managed_session_maker
+from omnigent.stores.credential_store.secret_cipher import SecretCipher
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.litellm_client import LiteLLMManagementClient, LiteLLMManagementError
 from saas.control_plane.model_budget import (
@@ -22,6 +23,7 @@ from saas.control_plane.model_budget import (
     ModelProviderBudgetError,
     ModelProviderBudgetReservationView,
 )
+from saas.control_plane.model_connections import credential_context
 from saas.control_plane.model_deployments import (
     CompiledModelDeploymentDraft,
     compile_stored_model_deployment,
@@ -44,6 +46,12 @@ from saas.control_plane.model_verification_contract import (
 )
 from saas.control_plane.outbox import OutboxClaimRoute, OutboxPublishError
 from saas.control_plane.platform_models import ModelProviderBudgetReservationRecord
+from saas.production.litellm_configuration_attestation import (
+    ATTESTATION_CONTRACT,
+    LiteLLMAttestationError,
+    LiteLLMConfigurationAttestation,
+    LiteLLMConfigurationAttestor,
+)
 from saas.production.model_protocol_probe import (
     ModelProbeAdmission,
     ModelProtocolProbe,
@@ -63,6 +71,13 @@ def model_verification_enabled(source: Mapping[str, str]) -> bool:
     value = source.get("OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED", "false")
     if value not in {"true", "false"}:
         raise ValueError("model_verification_flag_invalid")
+    return value == "true"
+
+
+def model_configuration_attestation_enabled(source: Mapping[str, str]) -> bool:
+    value = source.get("OMNIGENT_SAAS_MODEL_CONFIG_ATTESTATION_ENABLED", "false")
+    if value not in {"true", "false"}:
+        raise ValueError("model_configuration_attestation_flag_invalid")
     return value == "true"
 
 
@@ -87,6 +102,8 @@ class _Claim:
 @dataclass(slots=True)
 class _Invocation:
     attempts: int = 0
+    attestation: LiteLLMConfigurationAttestation | None = None
+    attestation_completed: bool = False
     started_at: datetime | None = None
 
 
@@ -108,11 +125,16 @@ class ModelVerificationPublisher:
         management: LiteLLMManagementClient,
         budget: ModelProviderBudgetAdmissionService,
         probe: ModelProtocolProbe,
+        attestor: LiteLLMConfigurationAttestor | None = None,
+        secret_cipher: SecretCipher | None = None,
     ) -> None:
         self._session = make_named_managed_session_maker(
             engine, query_name_prefix="saas.model_verification_worker", immediate=True
         )
         self._management, self._budget, self._probe = management, budget, probe
+        if (attestor is None) != (secret_cipher is None):
+            raise ValueError("model_configuration_attestation_incomplete")
+        self._attestor, self._cipher = attestor, secret_cipher
 
     def publish(
         self,
@@ -172,6 +194,8 @@ class ModelVerificationPublisher:
                 )
             )
             self._assert_live(claim)
+            invocation.attestation = self._attest(claim)
+            self._assert_live(claim)
             now = datetime.now(timezone.utc)
             reservation = self._budget.reserve_platform_test(
                 verification_id=claim.operation_id,
@@ -193,11 +217,23 @@ class ModelVerificationPublisher:
                 result = asyncio.run(self._invoke(claim, reservation, invocation))
                 if not isinstance(result, ModelProtocolProbeResult):
                     raise ValueError("model_verification_result_invalid")
+                if invocation.attestation is not None:
+                    final_attestation = self._attest(claim)
+                    if (
+                        final_attestation is None
+                        or final_attestation.stored_state_sha256
+                        != invocation.attestation.stored_state_sha256
+                    ):
+                        raise LiteLLMAttestationError("litellm_configuration_changed_during_test")
+                    invocation.attestation = final_attestation
+                    invocation.attestation_completed = True
                 outcome = "passed"
         except _Stopped:
             code = "model_verification_authority_changed"
         except ModelProviderBudgetError as error:
             code = self._safe_code(error.code, "model_verification_budget_failed")
+        except LiteLLMAttestationError as error:
+            code = self._safe_code(error.code, "litellm_configuration_unattested")
         except LiteLLMManagementError as error:
             code = self._safe_code(error.code, "model_verification_management_failed")
             outcome = "uncertain" if error.uncertain else "failed"
@@ -405,6 +441,37 @@ class ModelVerificationPublisher:
             if claim.expires_at - datetime.now(timezone.utc) < timedelta(seconds=90):
                 raise _Stopped
 
+    def _attest(self, claim: _Claim) -> LiteLLMConfigurationAttestation | None:
+        if self._attestor is None:
+            return None
+        assert self._cipher is not None
+        with self._session("read_canonical_secret_for_bound_storage_check") as db:
+            self._live(db, claim)
+            credential = db.get(ModelCredentialVersionRecord, claim.draft.credential_version_id)
+            if credential is None:
+                raise _Stopped
+            api_key = self._cipher.decrypt(
+                credential.api_key_ciphertext,
+                context=credential_context(claim.draft.connection_id, credential.id),
+            )
+        if not isinstance(api_key, str):
+            raise LiteLLMAttestationError("litellm_canonical_credential_unavailable")
+        witness = self._attestor.attest(
+            draft=claim.draft,
+            credential_name=claim.credential_name,
+            expected_api_key=api_key,
+        )
+        if (
+            not isinstance(witness, LiteLLMConfigurationAttestation)
+            or witness.contract != ATTESTATION_CONTRACT
+            or witness.deployment_id != claim.draft.deployment_id
+            or witness.credential_version_id != claim.draft.credential_version_id
+            or witness.configuration_sha256 != claim.draft.configuration_sha256
+            or re.fullmatch(r"[0-9a-f]{64}", witness.stored_state_sha256) is None
+        ):
+            raise LiteLLMAttestationError("litellm_attestation_binding_invalid")
+        return witness
+
     def _bind_budget(self, claim: _Claim, reservation: ModelProviderBudgetReservationView) -> None:
         if (
             reservation.purpose,
@@ -535,6 +602,9 @@ class ModelVerificationPublisher:
             "latency_millis": latency,
             "occurred_at": now.isoformat(),
             "configuration_readback_scope": "visible_transport_not_masked_credentials",
+            "configuration_attestation": invocation.attestation.evidence()
+            if invocation.attestation_completed and invocation.attestation is not None
+            else None,
         }
         canonical = canonical_verification_document(evidence)
         with self._session("retain_protocol_result_before_settlement") as db:

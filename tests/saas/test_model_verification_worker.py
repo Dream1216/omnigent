@@ -30,6 +30,10 @@ from saas.control_plane.platform_models import (
     ModelProviderMonthlyBudgetRecord,
 )
 from saas.control_plane.platform_security import PlatformAuthorizationService
+from saas.production.litellm_configuration_attestation import (
+    LiteLLMAttestationError,
+    LiteLLMConfigurationAttestation,
+)
 from saas.production.model_protocol_probe import (
     ModelProtocolProbe,
     ModelProtocolProbeConfiguration,
@@ -39,7 +43,7 @@ from tests.saas.test_model_protocol_probe import _body, _events
 from tests.saas.test_model_verifications import _pricing, _verification_fixture
 
 
-def _worker_fixture(*, responses=False, inference=None, management_handler=None):
+def _worker_fixture(*, responses=False, inference=None, management_handler=None, attestor=None):
     prices = _pricing()
     prices = replace(
         prices,
@@ -145,6 +149,8 @@ def _worker_fixture(*, responses=False, inference=None, management_handler=None)
             transport=httpx.MockTransport(manage),
         ),
         budget=budget,
+        attestor=attestor,
+        secret_cipher=_connections._cipher if attestor is not None else None,
         probe=ModelProtocolProbe(
             ModelProtocolProbeConfiguration(base_url="https://litellm.test"),
             transport=httpx.MockTransport(infer),
@@ -180,6 +186,104 @@ def test_priced_test_settles_actual_usage_once_and_redelivery_never_infers(respo
             == db.get(ModelVerificationReceiptRecord, operation.id).evidence_sha256
         )
         assert db.scalar(sa.text("SELECT COUNT(*) FROM saas_customer_ledger_entries")) == 0
+
+
+class _StoredAttestor:
+    def __init__(self, *, fail_at=None, change_at=None, wrong_binding=False):
+        self.calls, self.fail_at, self.change_at, self.wrong_binding = (
+            [],
+            fail_at,
+            change_at,
+            wrong_binding,
+        )
+
+    def attest(self, *, draft, credential_name, expected_api_key):
+        assert expected_api_key == "test-connection-secret-not-public"
+        self.calls.append((draft.deployment_id, credential_name))
+        if len(self.calls) == self.fail_at:
+            raise LiteLLMAttestationError()
+        return LiteLLMConfigurationAttestation(
+            deployment_id=uuid4() if self.wrong_binding else draft.deployment_id,
+            credential_version_id=draft.credential_version_id,
+            configuration_sha256=draft.configuration_sha256,
+            stored_state_sha256=("b" if len(self.calls) == self.change_at else "a") * 64,
+            observed_at=datetime.now(timezone.utc),
+        )
+
+
+def test_storage_attestation_is_bound_before_and_after_one_inference_and_not_replayed():
+    attestor = _StoredAttestor()
+    publisher, envelope, _budget, _factory, service, actor, operation, calls = _worker_fixture(
+        attestor=attestor
+    )
+    publisher.publish(**envelope)
+    publisher.publish(**envelope)
+    receipt = service.receipt(actor, operation.id)
+    assert receipt["operation"]["status"] == "verified"
+    witness = receipt["evidence"]["configuration_attestation"]
+    assert witness["configuration_sha256"] == receipt["configuration_sha256"]
+    assert witness["stored_state_sha256"] == "a" * 64
+    assert len(attestor.calls) == 2 and calls.count("/v1/chat/completions") == 1
+    assert "test-connection-secret-not-public" not in json.dumps(receipt, default=str)
+
+
+@pytest.mark.parametrize("wrong_binding", (False, True))
+def test_storage_drift_rejects_before_any_budget_key_or_inference(wrong_binding):
+    attestor = _StoredAttestor(fail_at=None if wrong_binding else 1, wrong_binding=wrong_binding)
+    publisher, envelope, _budget, factory, service, actor, operation, calls = _worker_fixture(
+        attestor=attestor
+    )
+    publisher.publish(**envelope)
+    publisher.publish(**envelope)
+    receipt = service.receipt(actor, operation.id)
+    assert receipt["operation"]["status"] == "failed" and calls == ["/model/info"]
+    assert receipt["evidence"]["actual_microusd"] == 0
+    assert receipt["evidence"]["configuration_attestation"] is None
+    with factory() as db:
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(ModelProviderBudgetReservationRecord))
+            == 0
+        )
+
+
+def test_staff_revocation_during_storage_read_rejects_before_budget_or_inference():
+    from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
+
+    class RevokingAttestor(_StoredAttestor):
+        def attest(self, **kwargs):
+            witness = super().attest(**kwargs)
+            with factory.begin() as db:
+                db.execute(sa.update(PlatformRoleAssignmentRecord).values(status="revoked"))
+            return witness
+
+    publisher, envelope, _budget, factory, _service, _actor, operation, calls = _worker_fixture(
+        attestor=RevokingAttestor()
+    )
+    publisher.publish(**envelope)
+    assert calls == ["/model/info"]
+    with factory() as db:
+        assert db.get(ModelProjectionOperationRecord, operation.id).status == "failed"
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(ModelProviderBudgetReservationRecord))
+            == 0
+        )
+
+
+@pytest.mark.parametrize("fail", (True, False))
+def test_post_inference_configuration_drift_settles_actual_cost_without_verifying(fail):
+    attestor = _StoredAttestor(fail_at=2 if fail else None, change_at=None if fail else 2)
+    publisher, envelope, _budget, factory, service, actor, operation, calls = _worker_fixture(
+        attestor=attestor
+    )
+    publisher.publish(**envelope)
+    publisher.publish(**envelope)
+    receipt = service.receipt(actor, operation.id)
+    assert receipt["operation"]["status"] == "failed" and calls.count("/v1/chat/completions") == 1
+    assert receipt["evidence"]["actual_microusd"] == 14
+    assert receipt["evidence"]["configuration_attestation"] is None
+    with factory() as db:
+        budget = db.scalar(sa.select(ModelProviderBudgetReservationRecord))
+        assert budget.status == "settled" and budget.settled_microusd == 14
 
 
 @pytest.mark.parametrize("status", (401, 429, 500))

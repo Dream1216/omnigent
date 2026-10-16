@@ -12,11 +12,16 @@ on:
       - saas/control_plane/model_pricing.py
       - saas/control_plane/model_verification_contract.py
       - saas/production/model_protocol_probe.py
+      - saas/production/litellm_configuration_attestation.py
+      - saas/production/model_projection.py
+      - saas/production/model_verification.py
       - saas/production/litellm_release.json
       - saas/production/platform_model_gateway.py
       - saas/scripts/*litellm*.py
       - tests/saas/*litellm*.py
       - tests/saas/test_model_protocol_probe.py
+      - tests/saas/test_model_verification_worker.py
+      - tests/saas/test_production_model_projection.py
       - tests/saas/fixtures/litellm/**
       - uv.lock
       - pyproject.toml
@@ -60,6 +65,12 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked component dependencies
         run: uv sync --frozen --extra all --extra saas --group dev
+      - name: Verify storage bindings and trusted Worker boundaries
+        run: >-
+          uv run --no-sync python -m pytest -q
+          tests/saas/test_litellm_configuration_attestation.py
+          tests/saas/test_model_verification_worker.py
+          tests/saas/test_production_model_projection.py
       - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
           version: v0.22.1
@@ -105,7 +116,7 @@ jobs:
             --image "$candidate" --upstream-image "$PROBE_UPSTREAM" \
             --source-archive "$RUNNER_TEMP/upstream.tar" \
             --output artifacts/contract.json
-          jq -e '.passed == true and .execution_mode == "native" and .cleanup_completed == true and .production_traffic_changed == false and .real_provider_tested == false' artifacts/contract.json
+          jq -e '.passed == true and .execution_mode == "native" and .cleanup_completed == true and .production_traffic_changed == false and .real_provider_tested == false and .masked_credentials_attested == true and .configuration_attestation_scope == "stored_model_credential_and_database_overlays_not_replica_memory"' artifacts/contract.json
       - name: Retain component evidence even on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

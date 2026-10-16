@@ -42,6 +42,7 @@ from saas.production.model_verification import ModelVerificationPublisher
 from tests.saas.test_model_connections import _KEY, _fixture
 from tests.saas.test_model_deployments import _command
 from tests.saas.test_model_protocol_probe import _body, _events
+from tests.saas.test_model_verification_worker import _StoredAttestor
 from tests.saas.test_model_verifications import _pricing
 
 
@@ -274,6 +275,8 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
             worker,
             management=management,
             budget=budget,
+            attestor=_StoredAttestor(),
+            secret_cipher=cipher,
             probe=ModelProtocolProbe(
                 ModelProtocolProbeConfiguration(base_url="https://litellm.test"),
                 transport=httpx.MockTransport(infer),
