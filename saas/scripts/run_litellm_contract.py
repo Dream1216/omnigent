@@ -13,6 +13,7 @@ import secrets
 import subprocess
 import tarfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +23,16 @@ from saas.control_plane.litellm_client import (
     LiteLLMManagementClient,
     LiteLLMManagementConfiguration,
     LiteLLMManagementError,
+)
+from saas.control_plane.model_deployments import (
+    CreateModelDeploymentDraft,
+    compile_model_deployment_draft,
+)
+from saas.production.model_protocol_probe import (
+    ModelProbeAdmission,
+    ModelProtocolProbe,
+    ModelProtocolProbeConfiguration,
+    ModelProtocolProbeError,
 )
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -180,6 +191,7 @@ class Probe:
                     "PROBE_INFERENCE_KEY",
                     "PROBE_LIVE_PROVIDER_KEY",
                     "PROBE_LIVE_INFERENCE_KEY",
+                    "PROBE_BOUNDED_INFERENCE_KEY",
                 ):
                     value = self.environment.get(key)
                     if value:
@@ -697,6 +709,84 @@ class Probe:
         self.check("real_provider_agent_protocols", all(row["passed"] for row in results.values()))
         self.report["real_provider_tested"] = True
 
+    async def bounded_protocol_contract(
+        self,
+        management: LiteLLMManagementClient,
+        *,
+        proxy_url: str,
+        provider_base: str,
+        upstream_url: str,
+        credential_name: str,
+    ) -> None:
+        # The synthetic provider exercises transport, not Staff or money admission.
+        results = []
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as observer:
+            before = (await observer.get(upstream_url + "/evidence")).json()["requests"]
+            for responses in (False, True):
+                draft = compile_model_deployment_draft(
+                    CreateModelDeploymentDraft(
+                        _PROBE_MODEL,
+                        "isolated bounded protocol",
+                        uuid4(),
+                        uuid4(),
+                        0,
+                        "openai_responses" if responses else "openai_chat_completions",
+                        32,
+                    ),
+                    deployment_id=uuid4(),
+                )
+                await management.create_deepseek_deployment(
+                    deployment_id=draft.deployment_id,
+                    alias=draft.alias,
+                    model=draft.public_model_id,
+                    credential_name=credential_name,
+                    provider_base_url=provider_base,
+                )
+                key = await management.create_inference_key(
+                    aliases=(draft.alias,),
+                    key_alias=self.run_id
+                    + ("-bounded-responses" if responses else "-bounded-chat"),
+                    duration_seconds=300,
+                )
+                self.environment["PROBE_BOUNDED_INFERENCE_KEY"] = key.value
+                result = await ModelProtocolProbe(
+                    ModelProtocolProbeConfiguration(
+                        base_url=proxy_url,
+                        allowed_http_hosts=("127.0.0.1",),
+                    )
+                ).run_admitted_probe(
+                    admission=ModelProbeAdmission(
+                        uuid4(),
+                        uuid4(),
+                        draft.deployment_id,
+                        draft.configuration_sha256,
+                        datetime.now(timezone.utc) + timedelta(minutes=4),
+                    ),
+                    draft=draft,
+                    inference_key=key,
+                )
+                results.append(
+                    {
+                        "wire_api": result.wire_api,
+                        "configuration_sha256": result.configuration_sha256,
+                        "request_attempts": result.request_attempts,
+                        "output_token_limit": result.output_token_limit,
+                        "input_tokens": result.usage.input_tokens,
+                        "output_tokens": result.usage.output_tokens,
+                        "total_tokens": result.usage.total_tokens,
+                    }
+                )
+                self.check(
+                    "bounded_model_probe_responses" if responses else "bounded_model_probe_chat",
+                    result.request_attempts == 1 and result.usage.total_tokens == 22,
+                )
+            after = (await observer.get(upstream_url + "/evidence")).json()["requests"]
+            self.check("bounded_model_probe_attempts_observed", len(after) - len(before) == 2)
+        self.report["bounded_model_protocol_probe"] = {
+            "scope": "synthetic_provider_transport_not_staff_or_budget_acceptance",
+            "results": results,
+        }
+
     async def contract(self, proxy_url: str, provider_base: str, upstream_url: str) -> None:
         management = LiteLLMManagementClient(
             LiteLLMManagementConfiguration(
@@ -885,6 +975,13 @@ class Probe:
             )
             self.report["agent_runtime_tested"] = True
             self.report["upstream_requests"] = after_agent
+        await self.bounded_protocol_contract(
+            management,
+            proxy_url=proxy_url,
+            provider_base=provider_base,
+            upstream_url=upstream_url,
+            credential_name=credential,
+        )
 
 
 def main() -> int:
@@ -916,6 +1013,7 @@ def main() -> int:
     except (
         ProbeFailure,
         LiteLLMManagementError,
+        ModelProtocolProbeError,
         httpx.HTTPError,
         subprocess.SubprocessError,
         OSError,
@@ -926,7 +1024,7 @@ def main() -> int:
         probe.report["passed"] = False
         probe.report["error_code"] = (
             error.code
-            if isinstance(error, LiteLLMManagementError)
+            if isinstance(error, (LiteLLMManagementError, ModelProtocolProbeError))
             else str(error)
             if isinstance(error, ProbeFailure)
             else type(error).__name__

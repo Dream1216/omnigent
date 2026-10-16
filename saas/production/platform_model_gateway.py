@@ -37,6 +37,7 @@ from saas.control_plane.model_provider import (
     ModelProviderConfigurationReader,
     PlatformManagedModelRuntimeConfiguration,
 )
+from saas.control_plane.model_usage import normalize_model_usage
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import _inspect_service_login
 from saas.production.server_config import (
@@ -461,47 +462,14 @@ class _UsageParser:
                 usage = response.get("usage") if isinstance(response, dict) else None
             if not isinstance(usage, dict):
                 return
-            responses_usage = "input_tokens" in usage or "output_tokens" in usage
-            prompt = _usage_integer(
-                usage.get("input_tokens") if responses_usage else usage.get("prompt_tokens")
+            normalized = normalize_model_usage(
+                usage, responses="input_tokens" in usage or "output_tokens" in usage
             )
-            completion = _usage_integer(
-                usage.get("output_tokens") if responses_usage else usage.get("completion_tokens")
-            )
-            total = _usage_integer(usage.get("total_tokens"))
-            if total != prompt + completion:
-                raise ValueError("Provider usage total is inconsistent")
-            details = usage.get(
-                "input_tokens_details" if responses_usage else "prompt_tokens_details"
-            )
-            cache_hit_value = usage.get("prompt_cache_hit_tokens")
-            cache_miss_value = usage.get("prompt_cache_miss_tokens")
-            if cache_hit_value is not None:
-                _usage_integer(cache_hit_value)
-            if cache_miss_value is not None:
-                _usage_integer(cache_miss_value)
-            if isinstance(details, dict) and "cached_tokens" in details:
-                standard_hit = _usage_integer(details["cached_tokens"])
-                standard_miss = prompt - standard_hit
-                if (cache_hit_value is not None and cache_hit_value != standard_hit) or (
-                    cache_miss_value is not None and cache_miss_value != standard_miss
-                ):
-                    raise ValueError("Provider cache usage encodings disagree")
-                cache_hit_value = standard_hit
-                cache_miss_value = standard_miss
-            if cache_hit_value is None and cache_miss_value is None:
-                cache_hit = 0
-                cache_miss = prompt
-            else:
-                cache_hit = _usage_integer(cache_hit_value)
-                cache_miss = _usage_integer(cache_miss_value)
-                if cache_hit + cache_miss != prompt:
-                    raise ValueError("Provider prompt cache usage is inconsistent")
-            self.prompt_tokens = prompt
-            self.prompt_cache_hit_tokens = cache_hit
-            self.prompt_cache_miss_tokens = cache_miss
-            self.completion_tokens = completion
-            self.total_tokens = total
+            self.prompt_tokens = normalized.input_tokens
+            self.prompt_cache_hit_tokens = normalized.input_cache_hit_tokens
+            self.prompt_cache_miss_tokens = normalized.input_cache_miss_tokens
+            self.completion_tokens = normalized.output_tokens
+            self.total_tokens = normalized.total_tokens
         except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             return
 
@@ -775,12 +743,6 @@ def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> i
         raise ValueError("Platform model output limit is invalid")
     if not 1 <= value <= PLATFORM_MODEL_MAX_OUTPUT_TOKENS:
         raise ValueError("Platform model output limit is invalid")
-    return value
-
-
-def _usage_integer(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("Provider usage value is invalid")
     return value
 
 

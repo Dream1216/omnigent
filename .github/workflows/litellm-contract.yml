@@ -7,10 +7,13 @@ on:
       - .github/workflows/litellm-contract.yml
       - deploy/litellm/**
       - saas/control_plane/litellm_client.py
+      - saas/control_plane/model_usage.py
+      - saas/production/model_protocol_probe.py
       - saas/production/litellm_release.json
       - saas/production/platform_model_gateway.py
       - saas/scripts/*litellm*.py
       - tests/saas/*litellm*.py
+      - tests/saas/test_model_protocol_probe.py
       - tests/saas/fixtures/litellm/**
       - uv.lock
       - pyproject.toml

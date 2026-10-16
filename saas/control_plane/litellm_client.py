@@ -20,6 +20,34 @@ _INFERENCE_ROUTES = (
 )
 
 
+def validate_litellm_endpoint(
+    base_url: str, *, allowed_http_hosts: tuple[str, ...], timeout_seconds: float
+) -> None:
+    """Only deployment-owned base addresses are configuration, never request fields."""
+
+    try:
+        parsed = urlsplit(base_url)
+        port = parsed.port
+        valid = (
+            parsed.scheme in {"http", "https"}
+            and (port is None or 1 <= port <= 65535)
+            and not any(character.isspace() for character in base_url)
+            and parsed.hostname
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+            and parsed.path in {"", "/"}
+            and (parsed.scheme == "https" or parsed.hostname in allowed_http_hosts)
+            and type(timeout_seconds) in {float, int}
+            and 1 <= timeout_seconds <= 120
+        )
+    except (ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        raise ValueError("LiteLLM endpoint configuration is invalid") from None
+
+
 class LiteLLMManagementError(RuntimeError):
     """Redacted failure; uncertain writes require reconciliation, not retry."""
 
@@ -40,22 +68,15 @@ class LiteLLMManagementConfiguration:
 
     def __post_init__(self) -> None:
         try:
-            parsed = urlsplit(self.base_url)
-            port = parsed.port
+            validate_litellm_endpoint(
+                self.base_url,
+                allowed_http_hosts=self.allowed_http_hosts,
+                timeout_seconds=self.timeout_seconds,
+            )
         except ValueError:
             raise ValueError("LiteLLM management configuration is invalid") from None
         if (
-            parsed.scheme not in {"http", "https"}
-            or (port is not None and not 1 <= port <= 65535)
-            or any(character.isspace() for character in self.base_url)
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or parsed.path not in {"", "/"}
-            or (parsed.scheme == "http" and parsed.hostname not in self.allowed_http_hosts)
-            or not 1 <= self.timeout_seconds <= 120
+            not isinstance(self.management_key, str)
             or not 16 <= len(self.management_key) <= 4096
             or not all(33 <= ord(character) <= 126 for character in self.management_key)
         ):
