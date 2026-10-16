@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
-from saas.control_plane.db_models import SaasBase, _values
+from saas.control_plane.db_models import SaasBase, _hex64, _values
 
 PLATFORM_STAFF_STATUSES = ("active", "suspended", "deleted")
 PLATFORM_ASSIGNMENT_STATUSES = ("active", "revoked", "expired")
@@ -48,6 +48,8 @@ MODEL_PROVIDER_RECEIPT_ACTIONS = (
 )
 MODEL_PROVIDER_BUDGET_RESERVATION_STATUSES = (
     "reserved",
+    "in_flight",
+    "uncertain",
     "settled",
     "released",
     "rejected",
@@ -576,6 +578,7 @@ class ModelProviderBudgetReservationRecord(SaasBase):
     released_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     rejection_code: Mapped[str | None] = mapped_column(sa.String(64))
+    outcome_evidence_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
@@ -602,16 +605,17 @@ class ModelProviderBudgetReservationRecord(SaasBase):
         sa.CheckConstraint(
             "settled_microusd >= 0 AND released_microusd >= 0 "
             "AND settled_tokens >= 0 AND released_tokens >= 0 "
-            "AND ((status = 'reserved' AND released_microusd = 0 "
+            "AND ((status IN ('reserved', 'in_flight', 'uncertain') AND released_microusd = 0 "
             "AND released_tokens = 0 AND settled_microusd <= admitted_microusd "
             "AND settled_tokens <= admitted_tokens) "
-            "OR (status <> 'reserved' "
+            "OR (status NOT IN ('reserved', 'in_flight', 'uncertain') "
             "AND settled_microusd + released_microusd = admitted_microusd "
             "AND settled_tokens + released_tokens = admitted_tokens))",
             name="ck_model_provider_budget_reservation_conservation",
         ),
         sa.CheckConstraint(
-            "(status = 'reserved' AND admitted_microusd = requested_microusd "
+            "(status IN ('reserved', 'in_flight', 'uncertain') "
+            "AND admitted_microusd = requested_microusd "
             "AND admitted_tokens = requested_tokens "
             "AND released_microusd = 0 AND released_tokens = 0 "
             "AND rejection_code IS NULL) OR "
@@ -623,6 +627,12 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             "(status = 'rejected' AND admitted_microusd = 0 AND admitted_tokens = 0 "
             "AND rejection_code IS NOT NULL)",
             name="ck_model_provider_budget_reservation_state",
+        ),
+        sa.CheckConstraint(
+            "outcome_evidence_sha256 IS NULL OR (status IN ('settled', 'released') AND "
+            + _hex64("outcome_evidence_sha256")
+            + ")",
+            name="ck_model_provider_budget_outcome_evidence",
         ),
         sa.CheckConstraint(
             "length(operation_key) > 0 AND length(request_hash) = 64",

@@ -4,10 +4,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
-from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
+from saas.control_plane.model_budget import (
+    ModelProviderBudgetAdmissionService,
+    ModelProviderBudgetError,
+)
 from saas.control_plane.platform_models import (
     ModelProviderBudgetReservationRecord,
     ModelProviderConfigurationRecord,
@@ -180,6 +184,8 @@ def test_metered_deltas_settle_atomically_before_unused_reservation_is_released(
             now=NOW + timedelta(seconds=1),
         )
         assert (applied.settled_microusd, applied.settled_tokens) == (250, 300)
+    with pytest.raises(ModelProviderBudgetError):
+        service.begin_attempt(reservation_id=reservation.id, now=NOW + timedelta(seconds=2))
     finalized = service.release(
         reservation_id=reservation.id,
         now=NOW + timedelta(seconds=2),
@@ -192,3 +198,110 @@ def test_metered_deltas_settle_atomically_before_unused_reservation_is_released(
         assert monthly is not None and daily is not None
         assert (monthly.reserved_microusd, monthly.settled_microusd) == (0, 250)
         assert (daily.reserved_tokens, daily.settled_tokens) == (0, 300)
+
+
+def _pending_attempt(service):
+    return service.reserve(
+        tenant_id=uuid4(),
+        run_id=uuid4(),
+        operation_key="bounded-attempt",
+        requested_microusd=900,
+        requested_tokens=900,
+        ttl=timedelta(seconds=2),
+        now=NOW,
+    )
+
+
+def test_sent_and_uncertain_attempts_cannot_be_restarted_released_or_expired(tmp_path):
+    service, sessions = _service(tmp_path)
+    reservation = _pending_attempt(service)
+    started = service.begin_attempt(reservation_id=reservation.id, now=NOW)
+    assert started.status == "in_flight" and started.version == 2
+    assert service.recover_expired(now=NOW + timedelta(days=1)) == ()
+    for action in (
+        lambda: service.begin_attempt(reservation_id=reservation.id, now=NOW),
+        lambda: service.release(reservation_id=reservation.id, now=NOW),
+        lambda: service.settle(
+            reservation_id=reservation.id, actual_microusd=1, actual_tokens=1, now=NOW
+        ),
+    ):
+        with pytest.raises(ModelProviderBudgetError):
+            action()
+    uncertain = service.mark_uncertain(
+        reservation_id=reservation.id, now=NOW + timedelta(seconds=3)
+    )
+    assert uncertain.status == "uncertain" and uncertain.version == 3
+    assert service.mark_uncertain(
+        reservation_id=reservation.id, now=NOW + timedelta(days=1)
+    ).replayed
+    assert service.recover_expired(now=NOW + timedelta(days=1)) == ()
+    with sessions() as db:
+        monthly = db.get(ModelProviderMonthlyBudgetRecord, ("deepseek", NOW.date().replace(day=1)))
+        assert (monthly.reserved_microusd, monthly.settled_microusd) == (900, 0)
+
+
+@pytest.mark.parametrize("uncertain", (False, True))
+@pytest.mark.parametrize("actual", ((450, 650), (0, 0)))
+def test_attempt_resolution_requires_evidence_is_idempotent_and_survives_expiry(
+    tmp_path, uncertain, actual
+):
+    service, sessions = _service(tmp_path)
+    reservation = _pending_attempt(service)
+    service.begin_attempt(reservation_id=reservation.id, now=NOW)
+    if uncertain:
+        service.mark_uncertain(reservation_id=reservation.id, now=NOW + timedelta(seconds=1))
+    command = {
+        "reservation_id": reservation.id,
+        "actual_microusd": actual[0],
+        "actual_tokens": actual[1],
+        "evidence_sha256": "e" * 64,
+        "now": NOW + timedelta(days=1),
+    }
+    result = service.resolve_attempt(**command)
+    assert result.status == ("settled" if actual[1] else "released")
+    assert result.outcome_evidence_sha256 == "e" * 64
+    assert service.resolve_attempt(**command).replayed
+    with pytest.raises(ModelProviderBudgetError) as conflict:
+        service.resolve_attempt(**{**command, "evidence_sha256": "f" * 64})
+    assert conflict.value.code == "platform_model_budget_settlement_conflict"
+    with pytest.raises(ModelProviderBudgetError):
+        service.mark_uncertain(reservation_id=reservation.id, now=NOW + timedelta(days=2))
+    with sessions() as db:
+        monthly = db.get(ModelProviderMonthlyBudgetRecord, ("deepseek", NOW.date().replace(day=1)))
+        daily = db.get(
+            ModelProviderTenantDailyUsageRecord, (reservation.tenant_id, "deepseek", NOW.date())
+        )
+        assert (monthly.reserved_microusd, monthly.settled_microusd) == (0, actual[0])
+        assert (daily.reserved_tokens, daily.settled_tokens) == (0, actual[1])
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"evidence_sha256": ""},
+        {"evidence_sha256": "provider-secret"},
+        {"actual_microusd": True},
+        {"actual_tokens": -1},
+        {"actual_microusd": 0},
+        {"actual_microusd": 901},
+    ),
+)
+def test_invalid_attempt_outcome_never_changes_the_held_budget(tmp_path, overrides):
+    service, _sessions = _service(tmp_path)
+    reservation = _pending_attempt(service)
+    service.begin_attempt(reservation_id=reservation.id, now=NOW)
+    with pytest.raises(ModelProviderBudgetError):
+        service.resolve_attempt(
+            **{
+                "reservation_id": reservation.id,
+                "actual_microusd": 450,
+                "actual_tokens": 650,
+                "evidence_sha256": "e" * 64,
+                "now": NOW + timedelta(days=1),
+                **overrides,
+            }
+        )
+    assert (
+        service.mark_uncertain(reservation_id=reservation.id, now=NOW + timedelta(days=1)).status
+        == "uncertain"
+    )

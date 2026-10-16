@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "3f056feec34a5f87d73700e3bafe8ab51797aabc27b4dc6be0b3d1b0fc901ceb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "cd78fdb34b71f91b0947958f7032b1ed42698b2f105e12ee4fe839bc4ce6812b",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -329,6 +340,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "643d6bf9e81a9b3b98cba4c0f1f394ce04012f068f3e8d225a74e2134bb754cd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "034e94372746d9a7b529bdbda11b1696f0e2158680d55e615ccbd9a3327248c2",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -442,6 +464,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "5605e9414c13aaeb57b7b1695fa4c110da13d6389361a3e083e8826383786260",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "ab166706b45c91c0d7937849d7ca4e7a474739019e6077ded008aa62df622a28",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -525,6 +558,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "3f5cb8ab70f462c417695a5233378ce5b9d502547db1e487a42af4dfa06d0ce7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "4796091adebffdb520b40fb798e7be85e37076cb7949ec5e753af51643537f12",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -603,6 +647,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "28bfb8ba926b45805896901e678699ae0a37b1a959d73ec0138ebcdba79c7786",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "24f21d35404e2bd9dc97ed1b1985bff9cf845e112efed9d80d881df6713226f0",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -656,6 +711,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "77efd9287fc62c59563d278e36d36d9eb1e92b0b239d269a1e6c9a0302a1e24e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "9a7b3e89d4a7929ead9bcde79074271a3a7d921af540d150257bf1c0d66ceb93",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -716,6 +782,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "f3dcfb6314e95241485a536578829fbe5bc289e576a6f550a01df86ce34f7183",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "b43e0bf129ea7e21b1f5b0187e79675f1b81fb337ee7ba374f49258d6ce44a35",
     # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
     (
         16,
@@ -741,6 +818,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "5b576a5035910c79e823e92a27145bed967bc9fd0001f4cf7835c6ee7b7fc9a8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "e1c63b2f660220514b11e3c797e669d2f1c66af55e20b67059d32ae33e3e852a",
     (
         16,
         "mm1a2b3c4d5e",

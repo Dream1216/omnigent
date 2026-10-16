@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
@@ -12,6 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.db.query_context import query_name_scope
 from saas.control_plane.platform_models import (
     ModelProviderBudgetReservationRecord,
     ModelProviderConfigurationRecord,
@@ -51,12 +53,14 @@ class ModelProviderBudgetReservationView:
     expires_at: datetime
     version: int
     replayed: bool = False
+    outcome_evidence_sha256: str | None = None
 
 
 class ModelProviderBudgetAdmissionService:
     """Serialize global monthly spend and per-Tenant daily token authority."""
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        # Preserve the supplied session class and its authority-binding callbacks.
         self._sessions = session_factory
 
     def reserve(
@@ -264,6 +268,133 @@ class ModelProviderBudgetAdmissionService:
             record.status = "settled"
             record.updated_at = at
             record.version += 1
+            db.flush()
+            return _view(record)
+
+    def begin_attempt(
+        self, *, reservation_id: UUID, now: datetime | None = None
+    ) -> ModelProviderBudgetReservationView:
+        """Commit the single-attempt fence before sending any inference bytes."""
+
+        at = _aware(now or datetime.now(timezone.utc))
+        _positive_uuid(reservation_id, "reservation")
+        with (
+            query_name_scope("saas.model_budget.begin_inference_attempt"),
+            self._sessions.begin() as db,
+        ):
+            record = self._locked_reservation(db, reservation_id)
+            if record.status in {"in_flight", "uncertain"}:
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_attempt_already_started",
+                    "Inference attempt already started",
+                )
+            if (
+                record.status != "reserved"
+                or at >= _stored_time(record.expires_at)
+                or record.settled_microusd != 0
+                or record.settled_tokens != 0
+            ):
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_reservation_inactive",
+                    "Model budget reservation is not active",
+                )
+            record.status, record.updated_at = "in_flight", at
+            record.version += 1
+            db.flush()
+            return _view(record)
+
+    def mark_uncertain(
+        self, *, reservation_id: UUID, now: datetime | None = None
+    ) -> ModelProviderBudgetReservationView:
+        """Retain the full hold; expiry and ordinary release cannot settle unknown costs."""
+
+        at = _aware(now or datetime.now(timezone.utc))
+        _positive_uuid(reservation_id, "reservation")
+        with (
+            query_name_scope("saas.model_budget.retain_uncertain_inference"),
+            self._sessions.begin() as db,
+        ):
+            record = self._locked_reservation(db, reservation_id)
+            if record.status == "uncertain":
+                return _view(record, replayed=True)
+            if record.status != "in_flight":
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_reservation_inactive",
+                    "Inference attempt is not pending",
+                )
+            record.status, record.updated_at = "uncertain", at
+            record.version += 1
+            db.flush()
+            return _view(record)
+
+    def resolve_attempt(
+        self,
+        *,
+        reservation_id: UUID,
+        actual_microusd: int,
+        actual_tokens: int,
+        evidence_sha256: str,
+        now: datetime | None = None,
+    ) -> ModelProviderBudgetReservationView:
+        """Resolve one sent attempt from trusted usage or authoritative no-usage evidence."""
+
+        at = _aware(now or datetime.now(timezone.utc))
+        _positive_uuid(reservation_id, "reservation")
+        if (
+            not isinstance(evidence_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+            or type(actual_microusd) is not int
+            or type(actual_tokens) is not int
+            or not 0 <= actual_microusd <= (1 << 63) - 1
+            or not 0 <= actual_tokens <= (1 << 63) - 1
+            or (actual_microusd == 0) != (actual_tokens == 0)
+        ):
+            raise ModelProviderBudgetError(
+                "platform_model_budget_outcome_invalid", "Inference outcome evidence is invalid"
+            )
+        with (
+            query_name_scope("saas.model_budget.resolve_inference_outcome"),
+            self._sessions.begin() as db,
+        ):
+            record = self._locked_reservation(db, reservation_id)
+            if record.status in {"settled", "released"}:
+                if (
+                    record.outcome_evidence_sha256 != evidence_sha256
+                    or record.settled_microusd != actual_microusd
+                    or record.settled_tokens != actual_tokens
+                ):
+                    raise ModelProviderBudgetError(
+                        "platform_model_budget_settlement_conflict",
+                        "Inference outcome conflicts with its receipt",
+                    )
+                return _view(record, replayed=True)
+            if record.status not in {"in_flight", "uncertain"}:
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_reservation_inactive",
+                    "No sent inference attempt awaits resolution",
+                )
+            if not (
+                record.settled_microusd <= actual_microusd <= record.admitted_microusd
+                and record.settled_tokens <= actual_tokens <= record.admitted_tokens
+            ):
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_settlement_exceeds_reservation",
+                    "Inference outcome exceeds its hold",
+                )
+            monthly, daily = self._locked_counters(db, record)
+            self._require_reserved_counters(monthly, daily, record)
+            monthly.reserved_microusd -= record.admitted_microusd
+            monthly.settled_microusd += actual_microusd
+            daily.reserved_tokens -= record.admitted_tokens
+            daily.settled_tokens += actual_tokens
+            for counter in (monthly, daily):
+                counter.updated_at, counter.version = at, counter.version + 1
+            record.settled_microusd, record.settled_tokens = actual_microusd, actual_tokens
+            record.released_microusd = record.admitted_microusd - actual_microusd
+            record.released_tokens = record.admitted_tokens - actual_tokens
+            record.status = "settled" if actual_tokens else "released"
+            record.outcome_evidence_sha256 = evidence_sha256
+            record.updated_at, record.version = at, record.version + 1
             db.flush()
             return _view(record)
 
@@ -531,6 +662,7 @@ def _view(
         expires_at=_stored_time(record.expires_at),
         version=record.version,
         replayed=replayed,
+        outcome_evidence_sha256=record.outcome_evidence_sha256,
     )
 
 
