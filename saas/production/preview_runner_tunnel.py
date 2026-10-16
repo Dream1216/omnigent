@@ -20,7 +20,7 @@ import ssl
 import stat
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
@@ -33,10 +33,12 @@ from starlette.types import Receive, Scope, Send
 from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.typing import Origin
 
+from omnigent.host.frames import CAP_MCP_REGISTRY
 from omnigent.runner.identity import (
     OMNIGENT_INTERNAL_WS_ORIGIN,
     RUNNER_TUNNEL_TOKEN_HEADER,
 )
+from omnigent.runner.transports.ws_tunnel.frames import HelloFrame, decode_frame, encode_frame
 from omnigent.runner.transports.ws_tunnel.limits import (
     RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
     TUNNEL_KEEPALIVE_PING_INTERVAL_S,
@@ -69,9 +71,9 @@ _PRIVATE_CONTRACT_HASHES = MappingProxyType(
             "a2da0dc05ff42f8e36c5d9ecd289ed14a0e618004cd424b268b810821f0c216a"
         ),
         "_handle_tunnel_frame": (
-            "5d179e69c490fdb97555e66a3821a55aa819be7120e6ffb3bf5e31a5bca17571"
+            "44a02ca4c1545716965f776898ebddb1c183e2f1c4de2358c84e13b7f554c16a"
         ),
-        "_send_hello": ("6a6ac92546303dfdd66a5e65c47005b127a8bfea0e6367d76a6a4266d140a750"),
+        "_send_hello": ("d70fbef46d6ebf63552459c6fe05e24ab615b330b84c77285dd8a2ed550735ee"),
     }
 )
 
@@ -405,7 +407,19 @@ class ProductionPreviewRunnerTunnel:
             ssl=self._tls_context,
             server_hostname=endpoint.server_name,
         ) as websocket:
-            await _send_hello(websocket.send, self.config.product_revision)
+
+            async def send_preview_hello(data: str) -> None:
+                frame = decode_frame(data)
+                if not isinstance(frame, HelloFrame):
+                    raise ProductionPreviewRunnerTunnelError("Preview Runner hello is invalid")
+                # The Preview-only ASGI app does not implement managed MCP execution.
+                frame = replace(
+                    frame,
+                    capabilities=[cap for cap in frame.capabilities if cap != CAP_MCP_REGISTRY],
+                )
+                await websocket.send(encode_frame(frame))
+
+            await _send_hello(send_preview_hello, self.config.product_revision)
             external_stop = asyncio.create_task(stop.wait(), name="preview-runner-stop")
             internal_stop = asyncio.create_task(
                 self._internal_stop.wait(), name="preview-runner-close"

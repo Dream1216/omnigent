@@ -31,8 +31,9 @@
 # arm64 hosts (Apple Silicon laptops, arm64 clusters) as well as amd64.
 # Nothing below is arch-specific: the python/node base images are
 # multi-arch and apt/pip/npm/COPY-from-node all resolve per-arch under
-# buildx. Amd64-only consumers (Modal, Daytona, CoreWeave) keep pulling
-# the amd64 variant from the manifest list, unchanged.
+# buildx. Only web-builder is pinned to $BUILDPLATFORM (see that stage).
+# Amd64-only consumers (Modal, Daytona, CoreWeave) keep pulling the
+# amd64 variant from the manifest list, unchanged.
 #
 # Build (from repo root):
 #
@@ -83,12 +84,17 @@ ARG ADAPTER_CONTRACT_VERSION=unknown
 # /web/omnigent/server/static/web-ui, which the server builder overlays.
 # Server-only: the host target never reaches this stage.
 #
+# Pinned to the build host's platform: the bundle is arch-independent
+# (plain JS/CSS/HTML), and vite's native bundler has stalled indefinitely
+# at "rendering chunks" under QEMU arm64 emulation, timing out releases.
+#
 # Behind a corporate npm proxy, pass it through:
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+ENV PNPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 WORKDIR /web
 
 # Workspace manifests + lockfile first so the install layer caches across pure
@@ -103,6 +109,7 @@ RUN npm install -g "pnpm@${PNPM_VERSION}" \
 RUN pnpm install --frozen-lockfile --filter web
 
 COPY web/ ./web/
+ARG VITE_OMNIGENT_HOST_ROUTING=false
 RUN pnpm --filter web run build
 
 # The login is an isolated Next.js / React 18 export; no Node service is added.

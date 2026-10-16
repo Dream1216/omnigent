@@ -34,7 +34,7 @@ index 5d2d771c0..86aba9cd1 100644
 +        )
 +    return env
 diff --git a/omnigent/inner/kimi_executor.py b/omnigent/inner/kimi_executor.py
-index 9ee8e8432..59b9ca343 100644
+index c5efb08c1..4530212b4 100644
 --- a/omnigent/inner/kimi_executor.py
 +++ b/omnigent/inner/kimi_executor.py
 @@ -4,2 +4,2 @@ Drives Moonshot AI's upstream ``kimi`` CLI from
@@ -127,12 +127,14 @@ index 9ee8e8432..59b9ca343 100644
 +        if self._model:
 +            env["KIMI_MODEL_NAME"] = self._model
 +        return env
-@@ -500,2 +556,2 @@ class KimiExecutor(Executor):
+@@ -500,3 +556,3 @@ class KimiExecutor(Executor):
 -            # kimi is a curl-installed single binary: it must read its own
 -            # install dir and write its config dir ($KIMI_CODE_HOME, default
+-            # ~/.kimi-code), or it can't start inside the jail.
 +            # kimi must read its own install dir and write its config dir
 +            # ($KIMI_CODE_HOME, default
-@@ -741 +797,5 @@ class KimiExecutor(Executor):
++            # ~/.kimi-code) and /tmp, or it can't start inside the jail.
+@@ -739 +795,5 @@ class KimiExecutor(Executor):
 -        env = self._build_spawn_env()
 +        try:
 +            env = await self._build_spawn_env()

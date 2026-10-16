@@ -68,11 +68,13 @@ async def main():
     os.close(read_fd)
     await asyncio.sleep(0.3)
     pids = [child.pid for child in psutil.Process().children(recursive=True)]
-    state_path.write_text(json.dumps({
+    state_tmp = state_path.with_suffix(".tmp")
+    state_tmp.write_text(json.dumps({
         "pids": pids,
         "socket": str(readiness.socket_path),
         "public_dir": str(readiness.socket_path.parent),
     }))
+    state_tmp.replace(state_path)
     while True:
         await asyncio.sleep(3600)
 

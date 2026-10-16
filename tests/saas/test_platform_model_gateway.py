@@ -722,3 +722,149 @@ def test_module_entrypoint_runs_after_response_helpers() -> None:
     )
 
     assert entrypoint.lineno > (helper.end_lineno or helper.lineno)
+
+
+@pytest.mark.parametrize("endpoint", ["chat/completions", "responses"])
+@pytest.mark.parametrize(
+    "component,usage_state",
+    [
+        ("gateway", "absent"),
+        ("gateway", "interim"),
+        ("gateway", "terminal"),
+        ("gateway", "malformed"),
+        ("relay", "absent"),
+    ],
+)
+def test_client_disconnect_cannot_cancel_stream_finalization(
+    endpoint: str, component: str, usage_state: str
+) -> None:
+    import anyio
+    from fastapi import FastAPI
+    from starlette.types import ASGIApp, Message, Scope
+
+    class ProviderStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            total = 14 if usage_state == "malformed" else 15
+            if endpoint == "responses":
+                frame = b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "type": "response.in_progress"
+                        if usage_state == "interim"
+                        else "response.completed",
+                        "response": {
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 4},
+                                "output_tokens": 5,
+                                "total_tokens": total,
+                            }
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
+            else:
+                frame = b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "prompt_cache_hit_tokens": 4,
+                            "prompt_cache_miss_tokens": 6,
+                            "completion_tokens": 5,
+                            "total_tokens": total,
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
+                    if usage_state != "interim":
+                        frame += b"data: [DONE]\n\n"
+            yield frame
+            await anyio.sleep_forever()
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            self.closed = True
+
+    provider = ProviderStream()
+    requests: list[httpx.Request] = []
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, stream=provider)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    application = cast(FastAPI, client.app)
+    if component == "relay":
+        relay = PlatformModelRelay(
+            authority=PlatformModelGatewayTokenAuthority(
+                signing_key=SIGNING_KEY, tenant_id=TENANT_ID
+            ),
+            session_id=SESSION_ID,
+            ttl_seconds=60,
+            clock=lambda: 1000,
+            client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(upstream)),
+        )
+        application = relay.app
+        token = relay.capability
+    payload: dict[str, object] = {"model": "deepseek-flash", "stream": True}
+    if endpoint == "responses":
+        payload.update(input="hello", max_output_tokens=100)
+    else:
+        payload.update(messages=[{"role": "user", "content": "hello"}], max_tokens=100)
+
+    async def disconnect_after_output() -> None:
+        output = anyio.Event()
+        body_sent = False
+
+        async def receive() -> Message:
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {"type": "http.request", "body": json.dumps(payload).encode()}
+            await output.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            if message["type"] == "http.response.body" and message.get("body"):
+                output.set()
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/v1/" + endpoint,
+            "raw_path": ("/v1/" + endpoint).encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"authorization", ("Bearer " + token).encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("gateway.test", 443),
+        }
+        with anyio.fail_after(3):
+            async with application.router.lifespan_context(application):
+                await cast(ASGIApp, application)(scope, receive, send)
+
+    anyio.run(disconnect_after_output)
+
+    assert len(requests) == 1
+    if component == "gateway":
+        assert (provider.closed, len(budgets.settled)) == (True, 1)
+        if usage_state == "terminal":
+            assert budgets.settled[0]["actual_tokens"] == 15
+            assert budgets.settled[0]["actual_microusd"] == 5
+        else:
+            assert budgets.settled[0]["actual_tokens"] == budgets.reserved[0]["requested_tokens"]
+            assert (
+                budgets.settled[0]["actual_microusd"] == budgets.reserved[0]["requested_microusd"]
+            )
+    else:
+        assert provider.closed
+        assert not budgets.reserved and not budgets.settled
+    assert not budgets.released
