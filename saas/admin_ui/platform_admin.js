@@ -16,6 +16,8 @@
     emailConfiguration: null,
     modelProvider: null,
     modelConnections: [],
+    modelDeployments: [],
+    modelDraftConnection: null,
     modelCommand: null,
     modelCommandBusy: false,
     modelCommandNotice: null,
@@ -434,6 +436,14 @@
     }
     $("#model-connection-new-command").disabled = state.modelCommandBusy;
     $("#model-connections-refresh").disabled = state.modelCommandBusy;
+    document.querySelectorAll('[data-testid="model-draft-select"]').forEach((button) => {
+      button.disabled = !mutationReady("platform.model_provider.manage") || state.modelCommandBusy;
+    });
+    const draftDisabled = disabled || !state.modelDraftConnection ||
+      !$("#model-deployment-credential").value;
+    for (const element of $("#model-deployment-create").elements) {
+      element.disabled = draftDisabled;
+    }
   }
 
   function showModelOperation(operation) {
@@ -497,7 +507,11 @@
           $("#model-connection-rotation-target").textContent = `${item.display_name} / V${item.version}`;
           $("#model-connection-rotation-key").value = "";
           configureModelConnectionButtons();
-        }, { disabled: !mutationReady("platform.model_provider.manage") })],
+        }, { disabled: !mutationReady("platform.model_provider.manage") }),
+        ...(state.context.capabilities.model_deployments_enabled ? [actionButton("建立模型草稿", () => selectModelDraftConnection(item), {
+          testId: "model-draft-select",
+          disabled: !mutationReady("platform.model_provider.manage"),
+        })] : [])],
       }));
     }
     configureModelConnectionButtons();
@@ -509,6 +523,12 @@
       const response = await api("/v2/platform-admin/model-connections");
       state.modelConnections = response.items;
       renderModelConnections();
+      $("#model-deployment-panel").hidden = !state.context.capabilities.model_deployments_enabled;
+      if (state.context.capabilities.model_deployments_enabled) {
+        const drafts = await api("/v2/platform-admin/model-deployments");
+        state.modelDeployments = drafts.items;
+        renderModelDeployments();
+      }
       if (!state.modelCommand) {
         try {
           const stored = JSON.parse(sessionStorage.getItem(modelCommandStorageKey()) || "null");
@@ -580,6 +600,73 @@
       state.modelCommandNotice?.remove();
       state.modelCommandNotice = toast(error instanceof Error ? error.message : String(error), "error");
       return null;
+    }
+  }
+
+  function renderModelDeployments() {
+    const list = $("#model-deployment-list");
+    list.replaceChildren();
+    $("#model-deployment-count").textContent = `${state.modelDeployments.length} VERSIONS / FIRST 100`;
+    if (!state.modelDeployments.length) list.append(emptyRecord("尚无草稿。连接投影确认后可建立候选模型。"));
+    for (const item of state.modelDeployments) {
+      list.append(recordRow({
+        title: item.display_name, identifier: item.public_model_id, status: item.projection_status,
+        meta: [`版本 V${item.generation}`, item.wire_api, `输出 ≤ ${item.max_output_tokens}`,
+          `验证：${item.verification_status}`, "未发布 · 运行时未启用", `配置 ${shortId(item.configuration_sha256)}`],
+      }));
+    }
+  }
+
+  async function selectModelDraftConnection(item) {
+    state.modelDraftConnection = item;
+    $("#model-deployment-target").textContent = `${item.display_name} / 当前密钥 V${item.credential_generation}`;
+    $("#model-deployment-credential").replaceChildren(new Option("正在核对当前凭据投影…", ""));
+    configureModelConnectionButtons();
+    const response = await api(`/v2/platform-admin/model-connections/${encodeURIComponent(item.id)}/credential-versions`);
+    if (state.modelDraftConnection?.id !== item.id) return;
+    const current = response.items.filter((value) => value.generation === item.credential_generation && value.projected);
+    $("#model-deployment-credential").replaceChildren(...(current.length
+      ? current.map((value) => new Option(`V${value.generation} / 投影已确认`, value.id))
+      : [new Option("当前密钥投影未确认，暂不可建立草稿", "")]));
+    configureModelConnectionButtons();
+  }
+
+  async function submitModelDeployment(event) {
+    event.preventDefault();
+    if (state.modelCommandBusy || !event.currentTarget.reportValidity()) return;
+    state.modelCommandBusy = true;
+    configureModelConnectionButtons();
+    try {
+      if (await recoverModelCommand()) return;
+      if (!state.modelCommand) {
+        state.modelCommand = { idempotencyKey: idempotency("model-draft"), operationId: null };
+        saveModelCommand();
+      }
+      if (!state.modelDraftConnection) throw new Error("请先选择连接");
+      const publicModelId = $("#model-deployment-model").value.trim();
+      const expectedGeneration = Math.max(0, ...state.modelDeployments
+        .filter((item) => item.public_model_id === publicModelId).map((item) => item.generation));
+      const operation = await api("/v2/platform-admin/model-deployments", {
+        method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey },
+        body: {
+          public_model_id: publicModelId, display_name: $("#model-deployment-name").value.trim(),
+          connection_id: state.modelDraftConnection.id,
+          credential_version_id: $("#model-deployment-credential").value,
+          expected_generation: expectedGeneration, wire_api: $("#model-deployment-protocol").value,
+          max_output_tokens: Number($("#model-deployment-output").value),
+        },
+      });
+      showModelOperation(operation);
+      state.modelCommandNotice?.remove();
+      state.modelCommandNotice = toast("模型草稿已受理；尚未测试或发布。", "success");
+      await loadModelConnections();
+    } catch (error) {
+      $("#model-connection-operation-status").textContent = "CHECK RECEIPT";
+      $("#model-connection-operation-detail").textContent = "草稿提交未确认或被拒绝。先刷新查询原操作，表单内容已保留。";
+      throw error;
+    } finally {
+      state.modelCommandBusy = false;
+      configureModelConnectionButtons();
     }
   }
 
@@ -1274,6 +1361,7 @@
   $("#model-provider-test-form").addEventListener("submit", (event) => void run(() => testModelProvider(event)));
   $("#model-connection-create").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, false)));
   $("#model-connection-rotate").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, true)));
+  $("#model-deployment-create").addEventListener("submit", (event) => void runModelCommand(() => submitModelDeployment(event)));
   $("#model-connections-refresh").addEventListener("click", () => void runModelCommand(loadModelConnections));
   $("#model-connection-new-command").addEventListener("click", () => {
     state.modelCommand = null;
@@ -1281,6 +1369,10 @@
     state.modelCommandNotice = null;
     saveModelCommand();
     $("#model-connection-create").reset();
+    $("#model-deployment-create").reset();
+    state.modelDraftConnection = null;
+    $("#model-deployment-target").textContent = "从连接清单选择建立草稿；只有当前且已确认投影的密钥版本可选。";
+    $("#model-deployment-credential").replaceChildren(new Option("先选择连接", ""));
     $("#model-connection-rotation-key").value = "";
     $("#model-connection-operation-status").textContent = "NEW COMMAND";
     $("#model-connection-operation-id").textContent = "新的独立命令";

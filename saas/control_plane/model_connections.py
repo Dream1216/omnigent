@@ -59,6 +59,38 @@ class ModelProjectionOperationView:
     status: str
     error_code: str | None
     version: int
+    deployment_version_id: UUID | None = None
+
+
+def authorize_platform_model_operation(
+    db: Session,
+    authorization: PlatformAuthorizationService,
+    actor: ValidatedPlatformPrincipal,
+    permission: str,
+    now: datetime,
+) -> None:
+    """Bind the current Staff identity and preserve the same fresh-auth fence."""
+
+    if now.tzinfo is None or actor.expires_at <= now:
+        raise PlatformSecurityError("platform_session_expired", "Staff session has expired")
+    apply_platform_rls_context(db, PlatformRlsContext(principal_id=actor.principal_id))
+    authorization.require_current(db, actor, permission, now=now)
+    if permission == "platform.model_provider.manage" and (
+        actor.authenticated_at > now or now - actor.authenticated_at > timedelta(minutes=5)
+    ):
+        raise PlatformSecurityError(
+            "platform_fresh_auth_required", "Fresh Staff authentication is required"
+        )
+
+
+def lock_model_operation_idempotency(db: Session, principal_id: UUID) -> None:
+    """Serialize the actor's shared connection/deployment command namespace."""
+
+    if db.get_bind().dialect.name == "postgresql":
+        lock_id = int.from_bytes(
+            sha256(str(principal_id).encode()).digest()[:8], "big", signed=True
+        )
+        db.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
 
 
 def credential_context(connection_id: UUID, credential_id: UUID) -> SecretContext:
@@ -106,6 +138,7 @@ def _operation_view(record: ModelProjectionOperationRecord) -> ModelProjectionOp
         record.status,
         record.error_code,
         record.version,
+        record.deployment_version_id,
     )
 
 
@@ -130,16 +163,7 @@ class ModelConnectionService:
         permission: str,
         now: datetime,
     ) -> None:
-        if now.tzinfo is None or actor.expires_at <= now:
-            raise PlatformSecurityError("platform_session_expired", "Staff session has expired")
-        apply_platform_rls_context(db, PlatformRlsContext(principal_id=actor.principal_id))
-        self._authorization.require_current(db, actor, permission, now=now)
-        if permission == "platform.model_provider.manage" and (
-            actor.authenticated_at > now or now - actor.authenticated_at > timedelta(minutes=5)
-        ):
-            raise PlatformSecurityError(
-                "platform_fresh_auth_required", "Fresh Staff authentication is required"
-            )
+        authorize_platform_model_operation(db, self._authorization, actor, permission, now)
 
     def list(self, actor: ValidatedPlatformPrincipal) -> tuple[ModelConnectionView, ...]:
         with self._sessions.begin() as db:
@@ -260,11 +284,7 @@ class ModelConnectionService:
         with self._sessions.begin() as db:
             self._authorize(db, actor, "platform.model_provider.manage", now)
             # Serialize this actor's admissions before reading the idempotency receipt.
-            if db.get_bind().dialect.name == "postgresql":
-                lock_id = int.from_bytes(
-                    sha256(str(actor.principal_id).encode()).digest()[:8], "big", signed=True
-                )
-                db.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
+            lock_model_operation_idempotency(db, actor.principal_id)
             prior = db.scalar(
                 sa.select(ModelProjectionOperationRecord).where(
                     ModelProjectionOperationRecord.actor_principal_id == actor.principal_id,

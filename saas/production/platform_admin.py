@@ -17,6 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from saas.control_plane.client_network import TrustedClientNetworkConfig
 from saas.control_plane.model_connections import ModelConnectionService
+from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
 from saas.control_plane.platform_security import (
@@ -159,6 +160,7 @@ def build_platform_admin(
         if enabled not in {"true", "false"}:
             raise ValueError("Platform model connection flag is invalid")
         model_connections = None
+        model_deployments = None
         if enabled == "true":
             try:
                 cipher = build_production_secret_cipher(environ)
@@ -169,11 +171,13 @@ def build_platform_admin(
             model_connections = ModelConnectionService(
                 application, authorization=authorization, secret_cipher=cipher
             )
+            model_deployments = ModelDeploymentService(engines[1], authorization=authorization)
         app = create_platform_admin_app(
             config=config,
             sessions=sessions,
             authorization=authorization,
             model_connections=model_connections,
+            model_deployments=model_deployments,
             projections=PlatformProjectionService(application),
             password_authentication=PlatformPasswordAuthenticationService(
                 authenticator,

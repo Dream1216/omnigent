@@ -260,7 +260,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                     == "lm1a00000001"
                 )
             restored = migration.run_production_postgresql_migration(plan)
-            assert restored.saas_head == "lm1b00000001"
+            assert restored.saas_head == migration._expected_head("saas")
             assert restored.catalog_sha256 == first.catalog_sha256
         finally:
             control.dispose()

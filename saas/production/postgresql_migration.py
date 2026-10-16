@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "78a572b84059c07a5f612ce0f5648acfe954af5837b66f7e666da5979c249c68",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "7396e0d0e5b992c8af4aa2c14cb30c379dcd33a98829e4f797b53054e8dda548",
     # PG16/18 four-authority replay source 0c88bfbf, including the projection receipt.
     (
         16,
@@ -318,6 +329,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "e523b42a7dccc3ce3b9730859b1f570a42d7eb66478941aab380727986d1da26",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "61d3fc2f85fa3a7e832b6be9a00998a3b7af9796916cc5b82c2dd75dab6922ff",
     (
         16,
         "mm1a2b3c4d5e",
@@ -420,6 +442,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "87238927cb7e203bd12128a7904c9e3e9b3fbccfa681f2e3cbfcf24374861e4e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "ca849a685569696117b3172733ca78d6761dac547e67eb910a4587c35df9a2fe",
     (
         16,
         "mm1a2b3c4d5e",
@@ -492,6 +525,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "673b21e1727423bd9cb59624b4d286a9acc20801cc57d44b1a62859813a6a937",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "90c144fcda779457eac3f5c428161a36d4fbd9d934b55898f54f168e96f39a6a",
     (
         16,
         "mm1a2b3c4d5e",
@@ -559,6 +603,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "1014a485862f91ee768815e33017c86eef0fb0d4b1cc0965a64bf9d187cc2330",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "0f5db660cc669afafb19f25d30aed4f7852c7063e915e58f95f2ee14820312c9",
     (
         16,
         "mm1a2b3c4d5e",
@@ -601,6 +656,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "d5e5c7e54bae52e55583927a99ab0fe24ac4eee7d5f3009af448d59adb981e39",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "f4ba422b561742f6cdfcb5c4c400afbb69ddcbea0613e9c46225f0c494fbce89",
     (
         16,
         "mm1a2b3c4d5e",
@@ -650,6 +716,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "3fb2645f5fd2a43332455d8dbd6b68aa89d1818a4fdf96df32a9a950d324cb2d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "f80c671c65b88eb37bfffdbc6381cd71d1cd6578dc40eadaf0c987ccd083ed13",
     (
         16,
         "mm1a2b3c4d5e",
@@ -664,6 +741,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "bd14208e978cb3affc4b1a1aee7df5480e37054db36c3dae87986903b7ba0845",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "5b16a688dc4559a12b4712ffc81b52f5ce07e32f80501da76ce8523e96806a60",
     (
         16,
         "mm1a2b3c4d5e",

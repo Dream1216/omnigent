@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -15,8 +16,17 @@ from omnigent.stores.credential_store.secret_cipher import SecretCipher
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.litellm_client import LiteLLMManagementClient, LiteLLMManagementError
 from saas.control_plane.model_connections import credential_context
+from saas.control_plane.model_deployments import (
+    CompiledModelDeploymentDraft,
+    CreateModelDeploymentDraft,
+    ModelDeploymentValidationError,
+    ModelWireApi,
+    compile_model_deployment_draft,
+)
 from saas.control_plane.model_routing_models import (
+    ModelConnectionRecord,
     ModelCredentialVersionRecord,
+    ModelDeploymentVersionRecord,
     ModelProjectionOperationRecord,
     ModelProjectionTransitionRecord,
 )
@@ -47,7 +57,8 @@ class _ProjectionClaim:
     operation_version: int
     event_id: UUID
     credential_name: str
-    api_key: str = field(repr=False)
+    api_key: str | None = field(default=None, repr=False)
+    deployment: CompiledModelDeploymentDraft | None = None
 
 
 class ModelCredentialProjectionPublisher:
@@ -96,12 +107,24 @@ class ModelCredentialProjectionPublisher:
         if claim is None:
             return
         try:
-            asyncio.run(
-                self._management.create_deepseek_credential(
-                    name=claim.credential_name,
-                    api_key=claim.api_key,
+            if claim.deployment is not None:
+                asyncio.run(
+                    self._management.create_deepseek_deployment(
+                        deployment_id=claim.deployment.deployment_id,
+                        alias=claim.deployment.alias,
+                        model=claim.deployment.public_model_id,
+                        credential_name=claim.credential_name,
+                    )
                 )
-            )
+            elif claim.api_key is not None:
+                asyncio.run(
+                    self._management.create_deepseek_credential(
+                        name=claim.credential_name,
+                        api_key=claim.api_key,
+                    )
+                )
+            else:
+                raise ValueError("model projection claim is invalid")
         except LiteLLMManagementError as error:
             uncertain = (
                 error.uncertain
@@ -200,7 +223,8 @@ class ModelCredentialProjectionPublisher:
             if (
                 operation is None
                 or operation.credential_version_id != credential_id
-                or operation.action not in {"create_connection", "rotate_credential"}
+                or operation.action
+                not in {"create_connection", "rotate_credential", "create_deployment"}
             ):
                 raise self._invalid_event()
             event = db.execute(
@@ -245,6 +269,8 @@ class ModelCredentialProjectionPublisher:
             credential = db.get(ModelCredentialVersionRecord, credential_id)
             if credential is None or credential.connection_id != operation.connection_id:
                 raise self._invalid_event()
+            if operation.action == "create_deployment":
+                return self._claim_deployment(db, operation, credential, now, event_id)
             try:
                 key = self._cipher.decrypt(
                     credential.api_key_ciphertext,
@@ -270,6 +296,76 @@ class ModelCredentialProjectionPublisher:
             return _ProjectionClaim(
                 operation.id, operation.version, event_id, credential.credential_name, key
             )
+
+    def _claim_deployment(
+        self,
+        db: Session,
+        operation: ModelProjectionOperationRecord,
+        credential: ModelCredentialVersionRecord,
+        now: datetime,
+        event_id: UUID,
+    ) -> _ProjectionClaim | None:
+        row = db.get(ModelDeploymentVersionRecord, operation.deployment_version_id)
+        try:
+            if row is None:
+                raise ValueError
+            compiled = compile_model_deployment_draft(
+                CreateModelDeploymentDraft(
+                    public_model_id=row.public_model_id,
+                    display_name=row.display_name,
+                    connection_id=row.connection_id,
+                    credential_version_id=row.credential_version_id,
+                    expected_generation=row.generation - 1,
+                    wire_api=cast(ModelWireApi, row.wire_api),
+                    max_output_tokens=row.max_output_tokens,
+                ),
+                deployment_id=row.id,
+            )
+            if (
+                row.connection_id != operation.connection_id
+                or row.credential_version_id != operation.credential_version_id
+                or row.provider_model != compiled.public_model_id
+                or row.deployment_alias != compiled.alias
+                or row.configuration_sha256 != compiled.configuration_sha256
+                or row.canonical_configuration != compiled.canonical_configuration
+                or operation.request_hash != compiled.request_hash
+            ):
+                raise ValueError
+        except (ModelDeploymentValidationError, ValueError, TypeError):
+            self._set_state(
+                db, operation, "failed", "model_deployment_projection_invalid", now, event_id
+            )
+            return None
+        generation = db.scalar(
+            sa.select(ModelConnectionRecord.credential_generation).where(
+                ModelConnectionRecord.id == operation.connection_id,
+            )
+        )
+        applied = db.scalar(
+            sa.select(ModelProjectionOperationRecord.id)
+            .where(
+                ModelProjectionOperationRecord.credential_version_id == credential.id,
+                ModelProjectionOperationRecord.connection_id == operation.connection_id,
+                ModelProjectionOperationRecord.action.in_(
+                    ("create_connection", "rotate_credential")
+                ),
+                ModelProjectionOperationRecord.status == "applied",
+            )
+            .limit(1)
+        )
+        if applied is None or generation != credential.generation:
+            self._set_state(
+                db, operation, "failed", "model_deployment_credential_not_ready", now, event_id
+            )
+            return None
+        self._set_state(db, operation, "applying", None, now, event_id)
+        return _ProjectionClaim(
+            operation.id,
+            operation.version,
+            event_id,
+            credential.credential_name,
+            deployment=compiled,
+        )
 
     def _finish(self, claim: _ProjectionClaim, *, status: str, error_code: str | None) -> None:
         with self._sessions("acknowledge_external_write") as db:

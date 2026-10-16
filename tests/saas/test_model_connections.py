@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, SaasBase
 from saas.control_plane.model_connections import CreateModelConnection, ModelConnectionService
+from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
     ModelCredentialVersionRecord,
@@ -91,6 +92,9 @@ def _fixture(*, enabled=True, engine=None):
         authorization=authorization,
         projections=PlatformProjectionService(factory),
         model_connections=service if enabled else None,
+        model_deployments=ModelDeploymentService(engine, authorization=authorization)
+        if enabled
+        else None,
     )
     client = TestClient(app, base_url=_ORIGIN)
     client.cookies.set(config.cookie_name, issued.token)

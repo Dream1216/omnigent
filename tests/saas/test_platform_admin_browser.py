@@ -7,11 +7,13 @@ import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import sqlalchemy as sa
 import uvicorn
@@ -47,7 +49,14 @@ from saas.control_plane import (
     UserProjectionInput,
     create_platform_admin_app,
 )
+from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.litellm_client import (
+    LiteLLMManagementClient,
+    LiteLLMManagementConfiguration,
+)
 from saas.control_plane.model_connections import ModelConnectionService
+from saas.control_plane.model_deployments import ModelDeploymentService
+from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
 
@@ -79,6 +88,8 @@ class PlatformAdminFixture:
     privacy_user_id: UUID
     privacy_request_user_id: UUID
     privacy_manifest_id: UUID
+    project_models: Callable[[], None]
+    model_projection_calls: list[str]
 
 
 class _BrowserSecretCipher:
@@ -406,7 +417,46 @@ def platform_admin_server(
         )
         if getattr(request, "param", False)
         else None,
+        model_deployments=ModelDeploymentService(engine, authorization=authorization)
+        if getattr(request, "param", False) == "deployments"
+        else None,
     )
+    model_projection_calls: list[str] = []
+
+    def synthetic_management(request: httpx.Request) -> httpx.Response:
+        model_projection_calls.append(request.url.path)
+        return httpx.Response(200, json={"status": "success"})
+
+    def project_models() -> None:
+        publisher = ModelCredentialProjectionPublisher(
+            engine,
+            secret_cipher=_BrowserSecretCipher(),
+            management=LiteLLMManagementClient(
+                LiteLLMManagementConfiguration(
+                    base_url="https://litellm.test", management_key="isolated-browser-test-only"
+                ),
+                transport=httpx.MockTransport(synthetic_management),
+            ),
+        )
+        with factory() as db:
+            events = db.scalars(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.event_type == "platform.model_projection.requested"
+                )
+            ).all()
+            envelopes = [
+                {
+                    "event_id": event.id,
+                    **{
+                        name: getattr(event, name)
+                        for name in ("event_type", "aggregate_type", "aggregate_key", "payload")
+                    },
+                }
+                for event in events
+            ]
+        for envelope in envelopes:
+            publisher.publish(**envelope)
+
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
         uvicorn.Config(
@@ -443,6 +493,8 @@ def platform_admin_server(
             privacy_user_id=privacy_user_id,
             privacy_request_user_id=privacy_request_user_id,
             privacy_manifest_id=privacy_manifest.manifest_id,
+            project_models=project_models,
+            model_projection_calls=model_projection_calls,
         )
     finally:
         server.should_exit = True
@@ -951,3 +1003,91 @@ def test_real_chromium_model_connections_and_lost_receipt_recovery(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _model_connection_journey)
+
+
+def _model_deployment_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    secret = "browser-draft-secret-never-public"
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-deployment-panel")).to_be_visible()
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        page.locator("#model-connection-name").fill("DeepSeek draft channel")
+        page.locator("#model-connection-key").fill(secret)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        page.locator("#model-connection-new-command").click()
+        page.get_by_role("button", name="建立模型草稿", exact=True).click()
+        expect(page.locator("#model-deployment-credential")).to_contain_text("投影未确认")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.get_by_role("button", name="建立模型草稿", exact=True).click()
+        expect(page.locator("#model-deployment-credential")).to_contain_text("投影已确认")
+        page.locator("#model-deployment-model").fill("deepseek-v4-pro")
+        page.locator("#model-deployment-name").fill("DeepSeek V4 Pro 隔离候选")
+        page.locator("#model-deployment-output").fill("32")
+
+        def lose_receipt(route):
+            assert route.request.method == "POST"
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt","message":"Receipt lost"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments", lose_receipt, times=1)
+        page.locator("#model-deployment-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-deployment-name")).to_have_value("DeepSeek V4 Pro 隔离候选")
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        receipt = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls == ["/credentials", "/model/new"]
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("APPLIED")
+        expect(page.locator("#model-deployment-list")).to_contain_text("not_tested")
+        expect(page.locator("#model-deployment-list")).to_contain_text("未发布")
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-deployments").json()
+        assert len(listing["items"]) == 1
+        assert listing["items"][0]["runtime_enabled"] is False
+        assert secret not in json.dumps(listing)
+        assert secret not in page.evaluate("JSON.stringify(sessionStorage)")
+        expect(page.locator("body")).not_to_contain_text(secret)
+        page.reload()
+        expect(page.locator("#model-connection-operation-id")).to_have_text(receipt)
+        expect(page.locator("#model-connection-operation-status")).to_have_text("APPLIED")
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(directory / "model-draft-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(path=str(directory / "model-draft-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-deployment-list")).to_contain_text("DeepSeek V4 Pro 隔离候选")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        expect(page.get_by_role("button", name="建立模型草稿", exact=True)).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["deployments"], indirect=True)
+def test_real_chromium_model_draft_projection_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_deployment_journey)

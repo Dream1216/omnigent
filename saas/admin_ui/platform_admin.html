@@ -394,6 +394,25 @@
             <code id="model-connection-operation-id">尚无操作</code>
             <p id="model-connection-operation-detail">先建立连接，再完成投影、模型验证和发布。</p>
           </section>
+          <section id="model-deployment-panel" hidden>
+            <div class="model-connections-layout">
+              <form class="work-panel model-connection-form" id="model-deployment-create">
+                <div class="panel-heading"><span>04 / 不可变模型草稿</span><small>NOT TESTED / NOT PUBLISHED</small></div>
+                <p class="model-connection-help" id="model-deployment-target">从连接清单选择建立草稿；只有当前且已确认投影的密钥版本可选。</p>
+                <label><span>对外模型 ID</span><input id="model-deployment-model" maxlength="128" required pattern="deepseek-[a-z0-9][a-z0-9_.-]*" placeholder="deepseek-v4-pro"></label>
+                <label><span>展示名称</span><input id="model-deployment-name" maxlength="128" required placeholder="例如：DeepSeek V4 Pro"></label>
+                <label><span>已确认投影的密钥版本</span><select id="model-deployment-credential" required><option value="">先选择连接</option></select></label>
+                <label><span>请求协议</span><select id="model-deployment-protocol"><option value="openai_chat_completions">Chat Completions</option><option value="openai_responses">Responses</option></select></label>
+                <label><span>最大输出 token</span><input id="model-deployment-output" type="number" min="1" max="65536" value="1024" required></label>
+                <button class="primary-action" id="model-deployment-submit" type="submit">保存草稿并受理投影 ↗</button>
+                <p class="model-connection-help">版本追加，不覆盖已保存定义。保存或投影成功均不代表验证通过，不改变用户模型选择器。</p>
+              </form>
+              <section class="work-panel">
+                <div class="panel-heading"><span>05 / 草稿版本</span><small id="model-deployment-count">LOADING</small></div>
+                <div class="record-list" id="model-deployment-list" aria-live="polite"></div>
+              </section>
+            </div>
+          </section>
         </section>
 
         <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>

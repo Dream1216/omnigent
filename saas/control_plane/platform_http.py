@@ -52,6 +52,7 @@ if TYPE_CHECKING:
         EmailProviderConfigurationView,
     )
     from saas.control_plane.model_connections import ModelConnectionService
+    from saas.control_plane.model_deployments import ModelDeploymentService
     from saas.control_plane.model_provider import (
         ModelProviderConfigurationService,
         ModelProviderConfigurationView,
@@ -249,6 +250,18 @@ class _CreateModelConnectionCommand(BaseModel):
     api_key: SecretStr = Field(min_length=16, max_length=4096)
 
 
+class _CreateModelDeploymentCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    public_model_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    connection_id: UUID
+    credential_version_id: UUID
+    expected_generation: int = Field(ge=0, lt=(1 << 31) - 1)
+    wire_api: Literal["openai_chat_completions", "openai_responses"]
+    max_output_tokens: int = Field(ge=1, le=65536)
+
+
 class _RotateModelCredentialCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -344,6 +357,8 @@ def _request_id(request: Request) -> str:
 
 
 def _status_for(error: PlatformSecurityError) -> int:
+    if error.code == "platform_model_credential_not_projected":
+        return 409
     if error.code == "platform_feature_disabled":
         return 404
     if error.code in {
@@ -385,6 +400,7 @@ def create_platform_admin_app(
     email_configuration: EmailProviderConfigurationService | None = None,
     model_provider: ModelProviderConfigurationService | None = None,
     model_connections: ModelConnectionService | None = None,
+    model_deployments: ModelDeploymentService | None = None,
     password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
@@ -544,6 +560,13 @@ def create_platform_admin_app(
                 "Model connection management is unavailable",
             )
         return model_connections
+
+    def model_deployment_service() -> ModelDeploymentService:
+        if model_deployments is None:
+            raise PlatformSecurityError(
+                "platform_model_deployments_unavailable", "Model drafts are not configured"
+            )
+        return model_deployments
 
     async def privacy_operation_command_context(
         request: Request,
@@ -740,6 +763,7 @@ def create_platform_admin_app(
                 "email_configuration_enabled": email_configuration is not None,
                 "model_provider_enabled": model_provider is not None,
                 "model_connections_enabled": model_connections is not None,
+                "model_deployments_enabled": model_deployments is not None,
             },
         }
 
@@ -874,6 +898,50 @@ def create_platform_admin_app(
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
             "operation": None if value is None else asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-connections/{connection_id}/credential-versions")
+    def list_model_credential_versions(request: Request, connection_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [
+                asdict(value)
+                for value in model_deployment_service().credential_versions(
+                    principal, connection_id
+                )
+            ],
+        }
+
+    @app.get("/v2/platform-admin/model-deployments")
+    def list_model_deployments(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in model_deployment_service().list(principal)],
+        }
+
+    @app.post("/v2/platform-admin/model-deployments", status_code=202)
+    async def create_model_deployment(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_deployments import CreateModelDeploymentDraft
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _CreateModelDeploymentCommand,
+        )
+        value = model_deployment_service().create(
+            principal,
+            command=CreateModelDeploymentDraft(**command.model_dump()),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
         }
 
     @app.get("/v2/platform-admin/model-operations/{operation_id}")
