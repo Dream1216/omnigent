@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from saas.control_plane.client_network import TrustedClientNetworkConfig
+from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
 from saas.control_plane.platform_security import (
@@ -23,6 +24,7 @@ from saas.control_plane.platform_security import (
     PlatformProjectionService,
     PlatformSessionService,
 )
+from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import PostgreSqlMigrationError, _inspect_service_login
 from saas.production.server_config import (
     ProductionServerConfigError,
@@ -152,10 +154,26 @@ def build_platform_admin(
             origin=config.origin,
             audience=config.audience,
         )
+        authorization = PlatformAuthorizationService(application)
+        enabled = environ.get("OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED", "false")
+        if enabled not in {"true", "false"}:
+            raise ValueError("Platform model connection flag is invalid")
+        model_connections = None
+        if enabled == "true":
+            try:
+                cipher = build_production_secret_cipher(environ)
+                if cipher is None:
+                    raise ValueError
+            except Exception:  # noqa: BLE001 - KMS deployment details stay private.
+                raise ValueError("Platform model connection cipher is unavailable") from None
+            model_connections = ModelConnectionService(
+                application, authorization=authorization, secret_cipher=cipher
+            )
         app = create_platform_admin_app(
             config=config,
             sessions=sessions,
-            authorization=PlatformAuthorizationService(application),
+            authorization=authorization,
+            model_connections=model_connections,
             projections=PlatformProjectionService(application),
             password_authentication=PlatformPasswordAuthenticationService(
                 authenticator,

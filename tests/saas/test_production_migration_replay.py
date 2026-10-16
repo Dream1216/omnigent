@@ -455,6 +455,8 @@ def _verify_preview_deployment_and_startup(
         config, refreshed = _startup_config(plan, preview_receipt, tmp_path)
         try:
             migration.verify_production_postgresql_state(engines=refreshed, config=config)
+            if plan.model_projection_service_role_bindings is not None:
+                _verify_projection_deployment_startup(plan, config)
             sessions = create_role_session_factories(
                 config,  # type: ignore[arg-type]
                 verify_state=lambda service_engines, service_config: (
@@ -484,6 +486,36 @@ def _verify_preview_deployment_and_startup(
         admin.dispose()
         for engine in engines.values():
             engine.dispose()
+
+
+def _verify_projection_deployment_startup(
+    plan: migration.ProductionPostgreSqlPlan, config: SimpleNamespace
+) -> None:
+    url = plan.saas_owner.url.set(username=plan.service_role_graph.login_for("model_projection"))
+    engine = sa.create_engine(url)
+    owner = sa.create_engine(plan.saas_owner.url)
+    try:
+        migration.verify_model_projection_postgresql_state(
+            engine=engine, database_url=url.render_as_string(hide_password=False), config=config
+        )
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT UPDATE ON saas_model_credential_versions TO saas_model_projection"
+            )
+        with pytest.raises(migration.PostgreSqlMigrationError) as drift:
+            migration.verify_model_projection_postgresql_state(
+                engine=engine,
+                database_url=url.render_as_string(hide_password=False),
+                config=config,
+            )
+        assert drift.value.code == "source_security_catalog_drifted"
+    finally:
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE UPDATE ON saas_model_credential_versions FROM saas_model_projection"
+            )
+        owner.dispose()
+        engine.dispose()
 
 
 def _verify_runner_deployment_and_startup(

@@ -4101,13 +4101,48 @@ def verify_production_postgresql_state(
     """
 
     try:
-        receipt = _load_runtime_receipt(config)
         expected_service_roles = dict(_SERVER_SERVICE_ROLES)
         if "billing" in config.capabilities:
             expected_service_roles["billing"] = "saas_billing"
+        _verify_service_postgresql_state(
+            engines=engines,
+            config=config,
+            expected_service_roles=expected_service_roles,
+            configured_urls=config.secrets.database_urls.as_mapping(),
+        )
+    except PostgreSqlMigrationError:
+        raise
+    except Exception:  # noqa: BLE001 - malformed deployment objects stay content-free.
+        raise PostgreSqlMigrationError(
+            "runtime_verification_failed", "runtime_verification"
+        ) from None
+
+
+def verify_model_projection_postgresql_state(
+    *, engine: Engine, database_url: str, config: Any
+) -> None:
+    """Apply the same receipt and catalog proof through only the projection login."""
+
+    _verify_service_postgresql_state(
+        engines={"model_projection": engine},
+        config=config,
+        expected_service_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+        configured_urls={"model_projection": database_url},
+    )
+
+
+def _verify_service_postgresql_state(
+    *,
+    engines: Mapping[str, Engine],
+    config: Any,
+    expected_service_roles: Mapping[str, str],
+    configured_urls: Mapping[str, str],
+) -> None:
+
+    try:
+        receipt = _load_runtime_receipt(config)
         if set(engines) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_engine_set_invalid", "runtime_verification")
-        configured_urls = config.secrets.database_urls.as_mapping()
         if set(configured_urls) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_url_set_invalid", "runtime_verification")
         facts: list[_ServiceSessionFacts] = []
@@ -4147,7 +4182,7 @@ def verify_production_postgresql_state(
             raise PostgreSqlMigrationError(
                 "service_database_receipt_mismatch", "runtime_verification"
             )
-        with engines["runtime"].connect() as connection:
+        with engines[next(iter(expected_service_roles))].connect() as connection:
             server_version_num, bootstrap_name = connection.execute(
                 sa.text(
                     "SELECT current_setting('server_version_num')::integer, "
@@ -4395,5 +4430,6 @@ __all__ = [
     "ProductionPostgreSqlPlan",
     "parse_production_postgresql_url",
     "run_production_postgresql_migration",
+    "verify_model_projection_postgresql_state",
     "verify_production_postgresql_state",
 ]

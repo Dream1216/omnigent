@@ -27,6 +27,67 @@ AUDIENCE = "omnigent-platform-admin"
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("enabled", (False, True))
+def test_staff_builder_opt_in_admission_without_management_secret(monkeypatch, enabled):
+    from tests.saas.test_model_connections import _fixture, _payload
+
+    _service, factory, _actor, cipher, _client, _headers = _fixture()
+    engine = factory.kw["bind"]
+    bindings = ProductionServiceRoleBindings(
+        path=Path("/isolated-staff-bindings.json"),
+        sha256="a" * 64,
+        bindings=tuple(
+            ProductionServiceRoleBinding(service, service + "_login", "saas_" + service)
+            for service in ("platform_app", "platform_authenticator")
+        ),
+    )
+    # This is a composition test; dedicated-role authority is exercised on PostgreSQL separately.
+    monkeypatch.setattr(platform_admin, "_engines", lambda *_: ((engine, engine), bindings))
+    monkeypatch.setattr(platform_admin, "_inspect_service_login", lambda *_args, **_kwargs: None)
+    cipher_calls = []
+
+    def load_cipher(source):
+        cipher_calls.append(source)
+        assert "OMNIGENT_SAAS_LITELLM_MANAGEMENT_KEY_FILE" not in source
+        return cipher
+
+    monkeypatch.setattr(platform_admin, "build_production_secret_cipher", load_cipher)
+    source = {
+        **_environment(),
+        "OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED": "true" if enabled else "false",
+    }
+    app, _engines = platform_admin.build_platform_admin(source)
+    client = TestClient(app, base_url=ORIGIN)
+    response = client.post(
+        "/v2/platform-admin/session/login",
+        headers={"Origin": ORIGIN},
+        json={"username": "model-operator", "password": "model-operator-test-password"},
+    )
+    assert response.status_code == 201
+    context = client.get("/v2/platform-admin/context").json()
+    assert context["capabilities"]["model_connections_enabled"] is enabled
+    admitted = client.post(
+        "/v2/platform-admin/model-connections",
+        headers={
+            "Origin": ORIGIN,
+            "X-CSRF-Token": response.json()["csrf_token"],
+            "Idempotency-Key": "production-builder-admission",
+        },
+        json=_payload(),
+    )
+    assert admitted.status_code == (202 if enabled else 503)
+    if enabled:
+        assert admitted.json()["status"] == "requested"
+        assert (
+            client.get("/v2/platform-admin/model-connections").json()["items"][0][
+                "runtime_enabled"
+            ]
+            is False
+        )
+    assert len(cipher_calls) == int(enabled)
+    engine.dispose()
+
+
 def _environment() -> dict[str, str]:
     return {
         "OMNIGENT_SAAS_PLATFORM_ADMIN_ENABLED": "true",
