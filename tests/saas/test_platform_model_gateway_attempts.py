@@ -180,6 +180,54 @@ def test_response_progress_usage_is_not_a_terminal_cost_receipt(tmp_path):
     assert _row(sessions).status == "uncertain"
 
 
+@pytest.mark.parametrize(
+    "delta",
+    ({}, {"content": ""}, {"role": "assistant", "content": None, "tool_calls": None}),
+)
+def test_litellm_usage_only_choice_retains_no_extra_output_and_resolves_cost(tmp_path, delta):
+    def handler(_request):
+        usage = json.loads(_body(terminal=False).splitlines()[0][5:])
+        usage["choices"] = [{"index": 0, "delta": delta, "finish_reason": None}]
+        body = b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+        body += b"data: " + json.dumps(usage).encode() + b"\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, path, request, _, sessions, _ = _fixture(tmp_path, handler)
+    assert client.post(path, **request).status_code == 200
+    row = _row(sessions)
+    assert row.status == "settled" and row.settled_tokens == row.settled_microusd == 13
+
+
+@pytest.mark.parametrize(
+    "choices",
+    (
+        [{"index": 0, "delta": {"content": "more output"}}],
+        [{"index": 0, "delta": {"tool_calls": [{"function": {"arguments": "{}"}}]}}],
+        [{"index": 0, "delta": {"role": "user"}}],
+        [{"index": 1, "delta": {}}],
+        [{"index": True, "delta": {}}],
+        [{"index": 0, "delta": "invalid"}],
+        [{"index": 0, "delta": {}, "message": {"content": "non-streaming output"}}],
+        [{"index": 0, "delta": {}}, {"index": 1, "delta": {}}],
+        {"index": 0, "delta": {}},
+    ),
+)
+def test_usage_bearing_choice_with_output_or_invalid_shape_remains_uncertain(tmp_path, choices):
+    def handler(_request):
+        usage = json.loads(_body(terminal=False).splitlines()[0][5:])
+        usage["choices"] = choices
+        return httpx.Response(
+            200,
+            content=b"data: " + json.dumps(usage).encode() + b"\n\ndata: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client, path, request, _, sessions, _ = _fixture(tmp_path, handler)
+    assert client.post(path, **request).status_code == 200
+    row = _row(sessions)
+    assert row.status == "uncertain" and row.settled_tokens == row.settled_microusd == 0
+
+
 @pytest.mark.parametrize("responses", (False, True))
 def test_explicit_terminal_zero_usage_releases_only_with_bound_evidence(tmp_path, responses):
     def handler(_request):

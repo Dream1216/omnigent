@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from saas.scripts.run_litellm_contract import Probe, ProbeFailure
+from saas.scripts.run_litellm_contract import Probe, ProbeFailure, _platform_usage
 
 
 def _probe(*, mode: str = "protocol_restore", command: tuple[str, ...] = ()) -> Probe:
@@ -142,3 +142,43 @@ def test_invalid_live_credential_source_never_reaches_management(
     with pytest.raises(ProbeFailure, match=r"^provider_credential_source_invalid$"):
         asyncio.run(probe.live_contract("http://127.0.0.1:4000"))
     assert "do-not-print" not in json.dumps(probe.report)
+
+
+@pytest.mark.parametrize("responses", (False, True))
+@pytest.mark.parametrize("terminal", (False, True))
+def test_platform_usage_contract_requires_the_selected_wire_terminal(responses, terminal):
+    if responses:
+        event = {
+            "type": "response.completed" if terminal else "response.in_progress",
+            "response": {
+                "usage": {
+                    "input_tokens": 17,
+                    "output_tokens": 5,
+                    "total_tokens": 22,
+                    "input_tokens_details": {"cached_tokens": 9},
+                }
+            },
+        }
+        body = b"data: " + json.dumps(event).encode() + b"\n\n"
+    else:
+        event = {
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}],
+            "usage": {
+                "prompt_tokens": 17,
+                "completion_tokens": 5,
+                "total_tokens": 22,
+                "prompt_tokens_details": {"cached_tokens": 9},
+            },
+        }
+        body = b"data: " + json.dumps(event).encode() + b"\n\n"
+        if terminal:
+            body += b"data: [DONE]\n\n"
+    expected = {
+        "total_tokens": 22,
+        "cache_hit_tokens": 9,
+        "cache_miss_tokens": 8,
+        "completion_tokens": 5,
+    }
+    unknown = dict.fromkeys(expected)
+    assert _platform_usage(body, responses=responses) == (expected if terminal else unknown)
+    assert _platform_usage(body, responses=not responses) == unknown

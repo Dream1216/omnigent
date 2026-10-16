@@ -196,6 +196,9 @@ provider cost. A sent request with missing, malformed or over-limit usage,
 upstream rejection, timeout or client cancellation retains the hold as uncertain.
 Ordinary reservation expiry cannot release sent attempts. Explicit terminal zero
 usage can release the hold with a bound outcome hash; silence is not zero usage.
+The locked LiteLLM release retains a single empty choice in its Chat usage-only
+frame. This is accepted only without additional text/tool output; terminal
+usage is still required and the contract probe selects the exact wire protocol.
 
 The outcome hash binds the reservation, tenant/session, model, protocol,
 configuration and approved price revision to normalized usage. A lost settlement

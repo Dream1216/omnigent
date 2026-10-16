@@ -398,6 +398,27 @@ class PlatformModelGateway:
             return
 
 
+def _chat_usage_has_no_output(value: object) -> bool:
+    if not isinstance(value, list) or len(value) > 1:
+        return False
+    for choice in value:
+        if (
+            not isinstance(choice, dict)
+            or type(choice.get("index", 0)) is not int
+            or choice.get("index", 0) != 0
+            or choice.get("message")
+            or choice.get("finish_reason")
+            not in {None, "stop", "length", "tool_calls", "function_call", "content_filter"}
+        ):
+            return False
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict) or delta.get("role") not in {None, "assistant"}:
+            return False
+        if any(value not in (None, "", [], {}) for key, value in delta.items() if key != "role"):
+            return False
+    return True
+
+
 class _UsageParser:
     def __init__(self, *, responses: bool = False) -> None:
         self._pending = bytearray()
@@ -459,7 +480,8 @@ class _UsageParser:
                 usage = response.get("usage") if isinstance(response, dict) else None
             if usage is None:
                 return
-            if not self._responses and document.get("choices"):
+            # LiteLLM retains an empty choice in the final usage-only chunk.
+            if not self._responses and not _chat_usage_has_no_output(document.get("choices", [])):
                 raise ValueError("Usage must be in the final Chat usage frame")
             normalized = normalize_model_usage(usage, responses=self._responses)
             self._usage = normalized

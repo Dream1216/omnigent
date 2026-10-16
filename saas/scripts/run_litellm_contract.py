@@ -55,6 +55,21 @@ _POSTGRES = "postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd
 _PYTHON = "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
 
 
+def _platform_usage(body: bytes, *, responses: bool) -> dict[str, int | None]:
+    from saas.production.platform_model_gateway import _UsageParser
+
+    parser = _UsageParser(responses=responses)
+    parser.feed(body)
+    parser.finish()
+    usage = parser.final_usage
+    return {
+        "total_tokens": usage.total_tokens if usage is not None else None,
+        "cache_hit_tokens": usage.input_cache_hit_tokens if usage is not None else None,
+        "cache_miss_tokens": usage.input_cache_miss_tokens if usage is not None else None,
+        "completion_tokens": usage.output_tokens if usage is not None else None,
+    }
+
+
 class ProbeFailure(RuntimeError):
     pass
 
@@ -1262,17 +1277,7 @@ class Probe:
                         if usage and (usage.get("total_tokens") == 22):
                             usage_found = True
                 self.check(wire.replace("/", "_") + "_usage", usage_found)
-                from saas.production.platform_model_gateway import _UsageParser
-
-                parser = _UsageParser()
-                parser.feed(response.content)
-                parser.finish()
-                observed = {
-                    "total_tokens": parser.total_tokens,
-                    "cache_hit_tokens": parser.prompt_cache_hit_tokens,
-                    "cache_miss_tokens": parser.prompt_cache_miss_tokens,
-                    "completion_tokens": parser.completion_tokens,
-                }
+                observed = _platform_usage(response.content, responses=wire == "responses")
                 self.report[wire.replace("/", "_") + "_platform_usage"] = observed
                 self.check(
                     wire.replace("/", "_") + "_platform_usage_compatible",
