@@ -497,6 +497,44 @@ class ModelProviderConfigurationReceiptRecord(SaasBase):
     )
 
 
+class ModelTestFundingPolicyRecord(SaasBase):
+    """Append-only platform-funded verification limits; contains no credentials."""
+
+    __tablename__ = "saas_model_test_funding_policies"
+
+    provider_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False)
+    monthly_budget_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    daily_test_budget_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    daily_test_token_limit: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    max_test_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    max_test_tokens: Mapped[int] = mapped_column(nullable=False)
+    daily_test_attempt_limit: Mapped[int] = mapped_column(nullable=False)
+    actor_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
+    )
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "provider_id = 'deepseek' AND version > 0", name="ck_model_test_policy_identity"
+        ),
+        sa.CheckConstraint(
+            "monthly_budget_microusd BETWEEN 1 AND 1000000000000000 "
+            "AND daily_test_budget_microusd BETWEEN 1 AND monthly_budget_microusd "
+            "AND max_test_microusd BETWEEN 1 AND daily_test_budget_microusd "
+            "AND daily_test_token_limit BETWEEN 1 AND 1000000000 "
+            "AND max_test_tokens BETWEEN 1 AND 2048 "
+            "AND max_test_tokens <= daily_test_token_limit "
+            "AND daily_test_attempt_limit BETWEEN 1 AND 1000",
+            name="ck_model_test_policy_limits",
+        ),
+        sa.CheckConstraint(_hex64("request_hash"), name="ck_model_test_policy_hash"),
+    )
+
+
 class ModelProviderMonthlyBudgetRecord(SaasBase):
     """Serialized Platform-wide monthly spend counter for one Provider."""
 
@@ -561,8 +599,21 @@ class ModelProviderBudgetReservationRecord(SaasBase):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
-    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    tenant_id: Mapped[UUID | None] = mapped_column()
+    run_id: Mapped[UUID | None] = mapped_column()
+    purpose: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="tenant_run", server_default="tenant_run"
+    )
+    test_operation_id: Mapped[UUID | None] = mapped_column()
+    test_actor_principal_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey(
+            "saas_platform_staff_principals.id",
+            ondelete="RESTRICT",
+            name="fk_model_budget_test_actor",
+        )
+    )
+    test_policy_version: Mapped[int | None] = mapped_column()
+    test_configuration_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     operation_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     configuration_version: Mapped[int] = mapped_column(nullable=False)
@@ -585,6 +636,26 @@ class ModelProviderBudgetReservationRecord(SaasBase):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
 
     __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("provider_id", "test_policy_version"),
+            (
+                "saas_model_test_funding_policies.provider_id",
+                "saas_model_test_funding_policies.version",
+            ),
+            name="fk_model_budget_test_policy",
+            ondelete="RESTRICT",
+        ),
+        sa.UniqueConstraint("test_operation_id", name="uq_model_budget_test_operation"),
+        sa.CheckConstraint(
+            "(purpose = 'tenant_run' AND tenant_id IS NOT NULL AND run_id IS NOT NULL "
+            "AND test_operation_id IS NULL AND test_actor_principal_id IS NULL "
+            "AND test_policy_version IS NULL AND test_configuration_sha256 IS NULL) OR "
+            "(purpose = 'platform_test' AND tenant_id IS NULL AND run_id IS NULL "
+            "AND test_operation_id IS NOT NULL AND test_actor_principal_id IS NOT NULL "
+            "AND test_policy_version IS NOT NULL AND test_configuration_sha256 IS NOT NULL "
+            "AND test_policy_version > 0 AND " + _hex64("test_configuration_sha256") + ")",
+            name="ck_model_budget_funding_scope",
+        ),
         sa.CheckConstraint(
             f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
             name="ck_model_provider_budget_reservation_provider",
@@ -663,6 +734,7 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             "expires_at",
             "id",
         ),
+        sa.Index("ix_model_budget_test_day", "provider_id", "purpose", "usage_date"),
         sa.Index(
             "ix_model_provider_budget_reservation_run",
             "tenant_id",

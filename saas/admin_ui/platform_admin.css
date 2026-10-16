@@ -42,6 +42,13 @@
 .work-panel.model-connection-operation { margin-top: 1.5rem; min-height: 0; border: 1px solid var(--line); }
 .model-connection-operation code { display: block; overflow-wrap: anywhere; color: var(--cyan); font: .8rem/1.7 var(--mono); }
 .model-connection-operation p { color: var(--muted); line-height: 1.7; }
+#model-test-funding-panel { margin-top: 1.5rem; min-height: 0; border: 1px solid var(--line); }
+.model-test-funding-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.1rem; }
+#model-test-funding-receipt { overflow-wrap: anywhere; }
+#model-test-funding-form .model-provider-enable { display: flex; align-items: center; gap: .8rem; background: var(--night-raised); padding: 1rem; }
+#model-test-funding-form .model-provider-enable input { width: 1.1rem; height: 1.1rem; margin: 0; flex: 0 0 auto; }
+#model-test-funding-form .model-provider-enable > span { color: var(--paper); }
+@media (max-width: 900px) { .model-test-funding-fields { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .model-connections-layout { grid-template-columns: 1fr; } }
 
 .model-provider-heading {

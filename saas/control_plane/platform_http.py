@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         ModelProviderConfigurationService,
         ModelProviderConfigurationView,
     )
+    from saas.control_plane.model_test_funding import ModelTestFundingService
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
@@ -269,6 +270,19 @@ class _RotateModelCredentialCommand(BaseModel):
     api_key: SecretStr = Field(min_length=16, max_length=4096)
 
 
+class _ModelTestFundingCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0, lt=(1 << 31) - 1)
+    enabled: bool
+    monthly_budget_microusd: int = Field(ge=1, le=10**15)
+    daily_test_budget_microusd: int = Field(ge=1, le=10**15)
+    daily_test_token_limit: int = Field(ge=1, le=10**9)
+    max_test_microusd: int = Field(ge=1, le=10**15)
+    max_test_tokens: int = Field(ge=1, le=2048)
+    daily_test_attempt_limit: int = Field(ge=1, le=1000)
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -401,6 +415,7 @@ def create_platform_admin_app(
     model_provider: ModelProviderConfigurationService | None = None,
     model_connections: ModelConnectionService | None = None,
     model_deployments: ModelDeploymentService | None = None,
+    model_test_funding: ModelTestFundingService | None = None,
     password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
@@ -567,6 +582,13 @@ def create_platform_admin_app(
                 "platform_model_deployments_unavailable", "Model drafts are not configured"
             )
         return model_deployments
+
+    def model_test_funding_service() -> ModelTestFundingService:
+        if model_test_funding is None:
+            raise PlatformSecurityError(
+                "platform_model_test_funding_unavailable", "Platform test funding is unavailable"
+            )
+        return model_test_funding
 
     async def privacy_operation_command_context(
         request: Request,
@@ -764,6 +786,7 @@ def create_platform_admin_app(
                 "model_provider_enabled": model_provider is not None,
                 "model_connections_enabled": model_connections is not None,
                 "model_deployments_enabled": model_deployments is not None,
+                "model_test_funding_enabled": model_test_funding is not None,
             },
         }
 
@@ -948,6 +971,34 @@ def create_platform_admin_app(
     def get_model_operation(request: Request, operation_id: UUID) -> dict[str, object]:
         principal, _token = authenticate(request)
         value = model_connection_service().operation(principal, operation_id)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-test-funding")
+    def get_model_test_funding(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(model_test_funding_service().get(principal)),
+        }
+
+    @app.put("/v2/platform-admin/model-test-funding")
+    async def configure_model_test_funding(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_test_funding import ModelTestFundingPolicy
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelTestFundingCommand
+        )
+        value = model_test_funding_service().configure(
+            principal,
+            expected_version=command.expected_version,
+            policy=ModelTestFundingPolicy(**command.model_dump(exclude={"expected_version"})),
+        )
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,

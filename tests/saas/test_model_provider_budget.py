@@ -17,6 +17,7 @@ from saas.control_plane.platform_models import (
     ModelProviderConfigurationRecord,
     ModelProviderMonthlyBudgetRecord,
     ModelProviderTenantDailyUsageRecord,
+    ModelTestFundingPolicyRecord,
 )
 
 NOW = datetime(2026, 9, 14, 4, 0, tzinfo=timezone.utc)
@@ -25,6 +26,7 @@ NOW = datetime(2026, 9, 14, 4, 0, tzinfo=timezone.utc)
 def _service(tmp_path: Path) -> tuple[ModelProviderBudgetAdmissionService, sessionmaker[Session]]:
     engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'budget.sqlite'}")
     for table in (
+        ModelTestFundingPolicyRecord.__table__,
         ModelProviderConfigurationRecord.__table__,
         ModelProviderMonthlyBudgetRecord.__table__,
         ModelProviderTenantDailyUsageRecord.__table__,

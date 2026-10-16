@@ -57,6 +57,7 @@ from saas.control_plane.litellm_client import (
 from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
+from saas.control_plane.model_test_funding import ModelTestFundingService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
 
@@ -419,6 +420,9 @@ def platform_admin_server(
         else None,
         model_deployments=ModelDeploymentService(engine, authorization=authorization)
         if getattr(request, "param", False) == "deployments"
+        else None,
+        model_test_funding=ModelTestFundingService(engine, authorization=authorization)
+        if getattr(request, "param", False)
         else None,
     )
     model_projection_calls: list[str] = []
@@ -1091,3 +1095,88 @@ def test_real_chromium_model_draft_projection_and_lost_receipt_recovery(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _model_deployment_journey)
+
+
+def _model_test_funding_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("NOT CONFIGURED")
+        assert (
+            page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()[
+                "version"
+            ]
+            == 0
+        )
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-per-call").fill("0.000017")
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        receipt = page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()
+        assert receipt["policy"]["max_test_microusd"] == 17
+        page.locator("#model-test-funding-daily").fill("0.5")
+
+        def lose_receipt(route):
+            assert route.request.method == "PUT"
+            response = route.fetch()
+            assert response.status == 200
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-test-funding", lose_receipt, times=1)
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-test-funding-daily")).to_have_value("0.5")
+        expect(page.locator("#model-test-funding-save")).to_be_disabled()
+        page.locator("#model-test-funding-refresh").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        expect(page.locator("#model-test-funding-receipt")).to_contain_text(
+            "模型仍须单独测试和发布"
+        )
+        receipt = page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()
+        assert (
+            receipt["version"] == 2 and receipt["policy"]["daily_test_budget_microusd"] == 500000
+        )
+        assert fixture.model_projection_calls == []
+        page.reload()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        assert (
+            page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()[
+                "items"
+            ]
+            == []
+        )
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-test-funding-panel").screenshot(
+                path=str(directory / "model-test-funding-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(directory / "model-test-funding-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        expect(page.locator("#model-test-funding-save")).to_be_disabled()
+        expect(page.locator("#model-test-funding-enabled")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["funding"], indirect=True)
+def test_real_chromium_platform_test_funding_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_test_funding_journey)

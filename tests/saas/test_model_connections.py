@@ -19,6 +19,7 @@ from saas.control_plane.model_routing_models import (
     ModelCredentialVersionRecord,
     ModelProjectionOperationRecord,
 )
+from saas.control_plane.model_test_funding import ModelTestFundingService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
@@ -93,6 +94,9 @@ def _fixture(*, enabled=True, engine=None):
         projections=PlatformProjectionService(factory),
         model_connections=service if enabled else None,
         model_deployments=ModelDeploymentService(engine, authorization=authorization)
+        if enabled
+        else None,
+        model_test_funding=ModelTestFundingService(engine, authorization=authorization)
         if enabled
         else None,
     )

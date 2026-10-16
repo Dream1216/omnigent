@@ -66,6 +66,10 @@ def test_staff_builder_opt_in_admission_without_management_secret(monkeypatch, e
     assert response.status_code == 201
     context = client.get("/v2/platform-admin/context").json()
     assert context["capabilities"]["model_connections_enabled"] is enabled
+    assert context["capabilities"]["model_test_funding_enabled"] is enabled
+    assert client.get("/v2/platform-admin/model-test-funding").status_code == (
+        200 if enabled else 503
+    )
     admitted = client.post(
         "/v2/platform-admin/model-connections",
         headers={

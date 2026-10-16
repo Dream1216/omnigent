@@ -17,6 +17,9 @@
     modelProvider: null,
     modelConnections: [],
     modelDeployments: [],
+    modelTestFunding: null,
+    modelTestFundingLoaded: false,
+    modelTestFundingBusy: false,
     modelDraftConnection: null,
     modelCommand: null,
     modelCommandBusy: false,
@@ -529,6 +532,10 @@
         state.modelDeployments = drafts.items;
         renderModelDeployments();
       }
+      $("#model-test-funding-panel").hidden = !state.context.capabilities.model_test_funding_enabled;
+      if (state.context.capabilities.model_test_funding_enabled) {
+        await loadModelTestFunding().catch((error) => toast(error.message, "error"));
+      }
       if (!state.modelCommand) {
         try {
           const stored = JSON.parse(sessionStorage.getItem(modelCommandStorageKey()) || "null");
@@ -667,6 +674,87 @@
     } finally {
       state.modelCommandBusy = false;
       configureModelConnectionButtons();
+    }
+  }
+
+  function configureModelTestFunding() {
+    const disabled = !mutationReady("platform.model_provider.manage") ||
+      !state.modelTestFundingLoaded || state.modelTestFundingBusy;
+    for (const element of $("#model-test-funding-form").elements) element.disabled = disabled;
+    $("#model-test-funding-refresh").disabled = state.modelTestFundingBusy;
+  }
+
+  function microUsdInput(value) {
+    const amount = BigInt(value);
+    return `${amount / 1000000n}.${String(amount % 1000000n).padStart(6, "0")}`;
+  }
+
+  function fundingAmount(selector) {
+    const parts = /^(\d+)(?:\.(\d{1,6}))?$/.exec($(selector).value);
+    if (!parts) throw new Error("金额最多保留六位小数，不使用指数格式");
+    const amount = BigInt(parts[1]) * 1000000n + BigInt((parts[2] || "").padEnd(6, "0"));
+    if (amount < 1n || amount > 1000000000000000n) throw new Error("测试预算金额超出允许范围");
+    return Number(amount);
+  }
+
+  function renderModelTestFunding(value) {
+    state.modelTestFunding = value;
+    state.modelTestFundingLoaded = true;
+    const policy = value.policy;
+    $("#model-test-funding-enabled").checked = Boolean(policy?.enabled);
+    if (policy) {
+      $("#model-test-funding-monthly").value = microUsdInput(policy.monthly_budget_microusd);
+      $("#model-test-funding-daily").value = microUsdInput(policy.daily_test_budget_microusd);
+      $("#model-test-funding-per-call").value = microUsdInput(policy.max_test_microusd);
+      $("#model-test-funding-daily-tokens").value = String(policy.daily_test_token_limit);
+      $("#model-test-funding-call-tokens").value = String(policy.max_test_tokens);
+      $("#model-test-funding-attempts").value = String(policy.daily_test_attempt_limit);
+    }
+    $("#model-test-funding-status").textContent = policy ? `V${value.version} / ${policy.enabled ? "FUNDED" : "DISABLED"}` : "NOT CONFIGURED";
+    $("#model-test-funding-receipt").textContent = policy
+      ? `策略 V${value.version} · ${formatDate(value.occurred_at)} · 回执 ${value.request_hash}。仅确认资金策略，模型仍须单独测试和发布。`
+      : "尚未配置测试资金，不允许发出测试请求。表单默认值尚未保存。";
+    configureModelTestFunding();
+  }
+
+  async function loadModelTestFunding() {
+    try {
+      renderModelTestFunding(await api("/v2/platform-admin/model-test-funding"));
+    } catch (error) {
+      state.modelTestFundingLoaded = false;
+      $("#model-test-funding-status").textContent = "CHECK RECEIPT";
+      $("#model-test-funding-receipt").textContent = "预算策略查询未确认，停止提交；稍后核对。";
+      configureModelTestFunding();
+      throw error;
+    }
+  }
+
+  async function submitModelTestFunding(event) {
+    event.preventDefault();
+    if (state.modelTestFundingBusy || !state.modelTestFundingLoaded || !event.currentTarget.reportValidity()) return;
+    const body = {
+      expected_version: state.modelTestFunding?.version || 0,
+      enabled: $("#model-test-funding-enabled").checked,
+      monthly_budget_microusd: fundingAmount("#model-test-funding-monthly"),
+      daily_test_budget_microusd: fundingAmount("#model-test-funding-daily"),
+      max_test_microusd: fundingAmount("#model-test-funding-per-call"),
+      daily_test_token_limit: Number($("#model-test-funding-daily-tokens").value),
+      max_test_tokens: Number($("#model-test-funding-call-tokens").value),
+      daily_test_attempt_limit: Number($("#model-test-funding-attempts").value),
+    };
+    state.modelTestFundingBusy = true;
+    configureModelTestFunding();
+    try {
+      renderModelTestFunding(await api("/v2/platform-admin/model-test-funding", { method: "PUT", body }));
+      toast("平台测试预算已保存；未启用任何模型。", "success");
+    } catch (error) {
+      state.modelTestFundingLoaded = false;
+      $("#model-test-funding-status").textContent = "CHECK RECEIPT";
+      $("#model-test-funding-receipt").textContent = "保存结果未确认或被拒绝。先核对预算策略，不重复提交；输入暂时保留。";
+      throw error;
+    } finally {
+      state.modelTestFundingBusy = false;
+      configureModelTestFunding();
     }
   }
 
@@ -1363,6 +1451,8 @@
   $("#model-connection-rotate").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, true)));
   $("#model-deployment-create").addEventListener("submit", (event) => void runModelCommand(() => submitModelDeployment(event)));
   $("#model-connections-refresh").addEventListener("click", () => void runModelCommand(loadModelConnections));
+  $("#model-test-funding-form").addEventListener("submit", (event) => void runModelCommand(() => submitModelTestFunding(event)));
+  $("#model-test-funding-refresh").addEventListener("click", () => void runModelCommand(loadModelTestFunding));
   $("#model-connection-new-command").addEventListener("click", () => {
     state.modelCommand = null;
     state.modelCommandNotice?.remove();

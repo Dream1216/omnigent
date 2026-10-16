@@ -156,7 +156,7 @@ def test_real_postgresql_draft_admission_and_projection_use_separate_restricted_
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "lm1d00000001"
+                == "lm1e00000001"
             )
             assert connection.scalar(
                 sa.text(

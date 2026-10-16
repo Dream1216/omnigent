@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "08215d64d8d70615d1a10bf355708534f1f60684dcf3b14a27ccd3a77180a6a4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "893d03b8e1bf05d740358c54ee7fec4c933f909f3af3e8685c66bacd3f885530",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -340,6 +351,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f2d2221c2204ea2b331d2debdd002a9baeae92a343d82ae6510d1c85b0892c9c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "a77b2ca511cda787935f7837141544ef57e843db7d1f71fb7c5b81451f66c094",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -464,6 +486,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "9307e3089fc0c64a64f3f495bf6dc5311c3589c95ebd439624f0cccb0391ded2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "e25720d7385832419a94584888334c14983e6a8a9cf24de6c2b1f7af666468f7",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -558,6 +591,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "13ea4e8774cef8e7bcbab9a273598bbe77f61dc868ff5ffac57e31a51937a0f1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f4a4fdf32d8fa851790f82d2adf4c0f48a17d91907f96f10a098c5773e9e38ca",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -647,6 +691,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f8083ea5721f4f31faffc230f77a4d2b4ec3be4ec9e3fb28ca521f9a91595aed",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "1c1aef1c9deca4063f85ac9949157910eff0afbe2bbb8d397957865176ccd98c",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -711,6 +766,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "6a709684e319e43a620ccb2cb48ddcf2ef932df32612c8b8a4cb366d939395c7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "959734fece24128a6604086345bc26684c04638855b00b4a1223b834e8b22815",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -782,6 +848,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "cf2fd93f9181c18f00d053c69bf7caf41e4b37f22777f67f621b832dcf47c459",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "a15fec8fd15626c4ea3bd8e5bb0d688752fa017a4544d287abef632127d19047",
     # PG16/18 restricted source replay b9528de4; retained inference budget holds.
     (
         16,
@@ -818,6 +895,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "48cd96276e31fa9ea61cd0102b07e98f3624d74a51ba88e3936234a63a4562f7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "d2a2075574f70f058bf33ee56bf0fa5263baf3730e45501f4964eff621257b56",
     (
         16,
         "mm1a2b3c4d5e",
