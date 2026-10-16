@@ -101,9 +101,11 @@ def _environment() -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("verification_enabled", (False, True))
+@pytest.mark.parametrize(
+    "verification_enabled,publication_enabled", ((False, False), (True, False), (True, True))
+)
 def test_staff_priced_test_composition_loads_only_approved_prices(
-    monkeypatch, verification_enabled
+    monkeypatch, verification_enabled, publication_enabled
 ):
     from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
     from tests.saas.test_model_connections import _fixture
@@ -137,6 +139,10 @@ def test_staff_priced_test_composition_loads_only_approved_prices(
             "OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED": "true"
             if verification_enabled
             else "false",
+            "OMNIGENT_SAAS_MODEL_PUBLICATION_ENABLED": "true" if publication_enabled else "false",
+            "OMNIGENT_SAAS_MODEL_CONFIG_ATTESTATION_ENABLED": "true"
+            if publication_enabled
+            else "false",
             "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": CONTROL_PLANE_SCHEMA_REVISION,
         }
     )
@@ -159,6 +165,12 @@ def test_staff_priced_test_composition_loads_only_approved_prices(
         is verification_enabled
     )
     assert prices_loaded == ([True] if verification_enabled else [])
+    assert (
+        client.get("/v2/platform-admin/context").json()["capabilities"][
+            "model_publication_enabled"
+        ]
+        is publication_enabled
+    )
     engine.dispose()
 
 

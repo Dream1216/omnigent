@@ -75,9 +75,11 @@ def authorize_platform_model_operation(
         raise PlatformSecurityError("platform_session_expired", "Staff session has expired")
     apply_platform_rls_context(db, PlatformRlsContext(principal_id=actor.principal_id))
     authorization.require_current(db, actor, permission, now=now)
-    if permission in {"platform.model_provider.manage", "platform.model_provider.test"} and (
-        actor.authenticated_at > now or now - actor.authenticated_at > timedelta(minutes=5)
-    ):
+    if permission in {
+        "platform.model_provider.manage",
+        "platform.model_provider.test",
+        "platform.model_provider.publish",
+    } and (actor.authenticated_at > now or now - actor.authenticated_at > timedelta(minutes=5)):
         raise PlatformSecurityError(
             "platform_fresh_auth_required", "Fresh Staff authentication is required"
         )

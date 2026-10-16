@@ -25,6 +25,8 @@
     modelCommandBusy: false,
     modelCommandNotice: null,
     modelVerificationId: null,
+    modelPublications: [],
+    modelPublicationTenant: null,
     modelRotation: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
@@ -433,7 +435,7 @@
   function configureModelConnectionButtons() {
     const disabled = !mutationReady("platform.model_provider.manage") ||
       state.modelCommandBusy || Boolean(state.modelCommand?.operationId) ||
-      state.modelCommand?.kind === "verify_deployment";
+      ["verify_deployment", "publish_deployment"].includes(state.modelCommand?.kind);
     $("#model-connection-submit").disabled = disabled;
     $("#model-connection-rotation-submit").disabled = disabled;
     for (const selector of ["#model-connection-name", "#model-connection-key", "#model-connection-rotation-key"]) {
@@ -460,6 +462,12 @@
         !state.modelTestFunding?.policy?.enabled || state.modelCommandBusy ||
         item?.projection_status !== "applied" || !compatibleCommand;
     });
+    document.querySelectorAll('[data-testid="model-publication-start"]').forEach((button) => {
+      const item = state.modelDeployments.find((value) => value.id === button.dataset.deploymentId);
+      button.disabled = !mutationReady("platform.model_provider.publish") ||
+        !state.modelPublicationTenant || state.modelCommandBusy || Boolean(state.modelCommand) ||
+        item?.verification_status !== "verified";
+    });
   }
 
   function showModelOperation(operation) {
@@ -476,6 +484,7 @@
       uncertain: "外部结果未确认，必须核对；不会自动重放写入。",
     };
     const verification = operation.action === "verify_deployment";
+    const publication = operation.action === "publish_deployment";
     const verificationLabels = {
       requested: "测试已受理，等待预算准入及单次执行；尚未发布。",
       applying: "正在执行受限测试或核对结算；不要重复发起请求。",
@@ -483,13 +492,19 @@
       failed: "测试失败，请查看验证回执；不会重放用户任务。",
       uncertain: "测试或核对结果未确认，请查看费用回执；不会自动重放请求。",
     };
+    const publicationLabels = {
+      requested: "发布命令已受理，等待新鲜就绪核对；运行时未启用。",
+      applying: "正在核对发布权限、费用结算及已知副本路由；运行时未启用。",
+      applied: "租户候选目录已记录；运行时仍未启用。",
+      failed: "发布未完成，原目录保持不变；请核对错误码。",
+    };
     $("#model-connection-operation-status").textContent = operation.status.toUpperCase();
     $("#model-connection-operation-id").textContent = operation.id;
     $("#model-connection-operation-detail").textContent =
-      `${(verification ? verificationLabels : labels)[operation.status] || "未知状态，请查询原操作。"}${operation.error_code ? ` / ${operation.error_code}` : ""}`;
+      `${(publication ? publicationLabels : verification ? verificationLabels : labels)[operation.status] || "未知状态，请查询原操作。"}${operation.error_code ? ` / ${operation.error_code}` : ""}`;
     state.modelCommand.operationId = operation.id;
-    if (verification) {
-      state.modelCommand.kind = "verify_deployment";
+    if (verification || publication) {
+      state.modelCommand.kind = operation.action;
       state.modelCommand.deploymentId = operation.deployment_version_id;
     }
     saveModelCommand();
@@ -509,6 +524,9 @@
       showModelOperation(operation);
       if (operation.action === "verify_deployment" && state.context.capabilities.model_verification_enabled) {
         await loadModelVerification(operation.id);
+      }
+      if (operation.action === "publish_deployment" && state.context.capabilities.model_publication_enabled) {
+        await loadModelPublication(operation.id);
       }
     }
     else {
@@ -564,6 +582,10 @@
       }
       $("#model-test-funding-panel").hidden = !state.context.capabilities.model_test_funding_enabled;
       $("#model-verification-panel").hidden = !state.context.capabilities.model_verification_enabled;
+      $("#model-publication-panel").hidden = !state.context.capabilities.model_publication_enabled;
+      if (state.context.capabilities.model_publication_enabled && state.modelPublicationTenant) {
+        await loadModelPublicationCatalog(state.modelPublicationTenant);
+      }
       if (state.context.capabilities.model_test_funding_enabled) {
         await loadModelTestFunding().catch((error) => toast(error.message, "error"));
       }
@@ -574,7 +596,7 @@
             state.modelCommand = {
               idempotencyKey: stored.idempotencyKey,
               operationId: /^[a-f0-9-]{36}$/.test(stored.operationId) ? stored.operationId : null,
-              ...(stored.kind === "verify_deployment" && /^[a-f0-9-]{36}$/.test(stored.deploymentId)
+              ...(["verify_deployment", "publish_deployment"].includes(stored.kind) && /^[a-f0-9-]{36}$/.test(stored.deploymentId)
                 ? { kind: stored.kind, deploymentId: stored.deploymentId } : {}),
             };
           }
@@ -652,20 +674,110 @@
       list.append(recordRow({
         title: item.display_name, identifier: item.public_model_id, status: item.projection_status,
         meta: [`版本 V${item.generation}`, item.wire_api, `输出 ≤ ${item.max_output_tokens}`,
-          `验证：${item.verification_status}`, "未发布 · 运行时未启用", `配置 ${shortId(item.configuration_sha256)}`],
-        actions: state.context.capabilities.model_verification_enabled ? [
+          `验证：${item.verification_status}`, "运行时未启用", `配置 ${shortId(item.configuration_sha256)}`],
+        actions: [
+          ...(state.context.capabilities.model_verification_enabled ? [
           actionButton("执行受限验证", () => runModelCommand(() => startModelVerification(item)), {
             testId: "model-verification-start",
           }),
           ...(item.verification_operation_id ? [actionButton("查看验证回执", () => loadModelVerification(item.verification_operation_id), {
             testId: "model-verification-inspect",
           })] : []),
-        ] : [],
+          ] : []),
+          ...(state.context.capabilities.model_publication_enabled ? [
+            actionButton("发布到已核对租户", () => runModelCommand(() => startModelPublication(item)), {
+              testId: "model-publication-start",
+            }),
+          ] : []),
+        ],
       }));
       const button = list.lastElementChild.querySelector('[data-testid="model-verification-start"]');
       if (button) button.dataset.deploymentId = item.id;
+      const publish = list.lastElementChild.querySelector('[data-testid="model-publication-start"]');
+      if (publish) publish.dataset.deploymentId = item.id;
     }
     configureModelConnectionButtons();
+  }
+
+  async function loadModelPublicationCatalog(tenantId) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(tenantId)) {
+      throw new Error("请输入有效的租户 UUID");
+    }
+    state.modelPublicationTenant = null;
+    state.modelPublications = [];
+    configureModelConnectionButtons();
+    $("#model-publication-status").textContent = "LOADING";
+    try {
+      const value = await api(`/v2/platform-admin/model-publications?tenant_id=${encodeURIComponent(tenantId)}`);
+      state.modelPublications = value.items;
+      state.modelPublicationTenant = tenantId;
+      $("#model-publication-tenant").value = tenantId;
+      $("#model-publication-status").textContent = "SCOPE CHECKED";
+      const list = $("#model-publication-list");
+      list.replaceChildren(...(value.items.length ? value.items.map((item) => recordRow({
+        title: item.display_name, identifier: item.public_model_id, status: "runtime_off",
+        meta: [`目录 V${item.generation}`, item.wire_api, `租户 ${item.tenant_id}`, "DeepSeek · LiteLLM · 运行时未启用"], actions: [],
+      })) : [emptyRecord("该租户尚无候选目录版本。运行时未启用。") ]));
+    } catch (error) {
+      $("#model-publication-status").textContent = "SCOPE UNAVAILABLE";
+      $("#model-publication-list").replaceChildren(emptyRecord("目录查询失败，发布保持禁用。"));
+      throw error;
+    } finally {
+      configureModelConnectionButtons();
+    }
+  }
+
+  async function startModelPublication(item) {
+    if (state.modelCommandBusy || state.modelCommand || !state.modelPublicationTenant ||
+      !mutationReady("platform.model_provider.publish")) return;
+    const tenantId = state.modelPublicationTenant;
+    const generation = state.modelPublications.find((row) =>
+      row.public_model_id === item.public_model_id && row.wire_api === item.wire_api)?.generation || 0;
+    const approved = await openAction({
+      title: "记录租户候选发布版本",
+      summary: `${item.display_name} · ${item.wire_api} → 租户 ${tenantId}，目录 V${generation} → V${generation + 1}。引用已结算验证，由可信 Worker 重新核对权限和副本；不额外执行付费推理，运行时仍关闭。`,
+      risk: "CRITICAL", confirm: "PUBLISH", fields: [],
+    });
+    if (!approved || state.modelCommandBusy || state.modelCommand) return;
+    state.modelCommandBusy = true;
+    state.modelCommand = { idempotencyKey: idempotency("model-publish"), operationId: null,
+      kind: "publish_deployment", deploymentId: item.id };
+    saveModelCommand();
+    configureModelConnectionButtons();
+    try {
+      const operation = await api(`/v2/platform-admin/model-deployments/${encodeURIComponent(item.id)}/publish`, {
+        method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey },
+        body: { tenant_id: tenantId, expected_generation: generation,
+          verification_operation_id: item.verification_operation_id,
+          configuration_sha256: item.configuration_sha256 },
+      });
+      showModelOperation(operation);
+      await loadModelPublication(operation.id);
+    } catch (error) {
+      $("#model-connection-operation-status").textContent = "CHECK RECEIPT";
+      $("#model-connection-operation-detail").textContent = "发布提交未确认或被拒绝，请刷新核对原命令；不自动重发。";
+      throw error;
+    } finally {
+      state.modelCommandBusy = false;
+      configureModelConnectionButtons();
+    }
+  }
+
+  async function loadModelPublication(operationId) {
+    const value = await api(`/v2/platform-admin/model-operations/${encodeURIComponent(operationId)}/publication`);
+    await loadModelPublicationCatalog(value.tenant_id);
+    $("#model-publication-status").textContent = value.operation.status.toUpperCase();
+    const fields = [
+      ["操作编号", value.operation.id], ["目标租户", value.tenant_id],
+      ["预期目录", `V${value.expected_generation} → V${value.expected_generation + 1}`],
+      ["结果", value.publication ? `目录 V${value.publication.generation} 已记录，运行时未启用` : "未完成，原目录保持不变"],
+      ["错误码", value.operation.error_code || "—"],
+    ];
+    $("#model-publication-detail").replaceChildren(...fields.map(([label, content]) => {
+      const row = node("div", "model-verification-field");
+      row.append(node("dt", "", label), node("dd", "", content));
+      return row;
+    }));
   }
 
   async function startModelVerification(item) {
@@ -1579,6 +1691,14 @@
   $("#model-test-funding-refresh").addEventListener("click", () => void runModelCommand(loadModelTestFunding));
   $("#model-verification-refresh").addEventListener("click", () => {
     if (state.modelVerificationId) void runModelCommand(() => loadModelVerification(state.modelVerificationId));
+  });
+  $("#model-publication-scope").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void runModelCommand(() => loadModelPublicationCatalog($("#model-publication-tenant").value.trim().toLowerCase()));
+  });
+  $("#model-publication-tenant").addEventListener("input", () => {
+    state.modelPublicationTenant = null;
+    configureModelConnectionButtons();
   });
   $("#model-connection-new-command").addEventListener("click", () => {
     state.modelCommand = null;

@@ -17,8 +17,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.control_plane.model_deployments import CompiledModelDeploymentDraft
+from saas.control_plane.model_verification_contract import (
+    STORED_ATTESTATION_CONTRACT,
+    STORED_ATTESTATION_SCOPE,
+)
 
-ATTESTATION_CONTRACT = "litellm-1.105.1-aes-gcm-v1"
+ATTESTATION_CONTRACT = STORED_ATTESTATION_CONTRACT
 ATTESTATION_LOGIN = "omnigent_litellm_attestor"
 ATTESTATION_ROLE = "omnigent_litellm_attestation_read"
 _CIPHER_PREFIX = "v2:gcm:"
@@ -65,12 +69,12 @@ class LiteLLMConfigurationAttestation:
     stored_state_sha256: str
     observed_at: datetime
     contract: str = ATTESTATION_CONTRACT
-    scope: str = "stored_model_credential_and_database_overlays"
+    scope: str = STORED_ATTESTATION_SCOPE
 
     def require_binding(self, draft: CompiledModelDeploymentDraft) -> None:
         if (
             self.contract != ATTESTATION_CONTRACT
-            or self.scope != "stored_model_credential_and_database_overlays"
+            or self.scope != STORED_ATTESTATION_SCOPE
             or self.deployment_id != draft.deployment_id
             or self.credential_version_id != draft.credential_version_id
             or self.configuration_sha256 != draft.configuration_sha256

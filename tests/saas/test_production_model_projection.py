@@ -399,13 +399,34 @@ class _ReadOnlyAttestor:
         self.validated += 1
 
 
+@pytest.mark.parametrize("publication_enabled", (False, True))
 def test_storage_attestation_is_composed_only_in_trusted_worker_with_separate_database(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, publication_enabled
 ):
+    from saas.control_plane.outbox import OutboxPublishError
+    from tests.saas.test_model_verifications import _pricing
+
     source, engines, users, disposed = _attestation_environment(tmp_path), [], [], []
     monkeypatch.setattr(production, "verify_model_projection_postgresql_state", lambda **_: None)
     monkeypatch.setattr(production, "_inspect_service_login", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(production, "LiteLLMConfigurationAttestor", _ReadOnlyAttestor)
+    monkeypatch.setattr(production, "load_platform_model_pricing", lambda _: _pricing())
+    source["OMNIGENT_SAAS_MODEL_PUBLICATION_ENABLED"] = "true" if publication_enabled else "false"
+    inventory = tmp_path / "replica-inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_sha": source["OMNIGENT_SAAS_SOURCE_SHA"],
+                "replicas": [
+                    {"replica_id": f"replica-{n}", "base_url": f"https://replica-{n}.litellm.test"}
+                    for n in range(2)
+                ],
+            }
+        )
+    )
+    inventory.chmod(0o400)
+    source["OMNIGENT_SAAS_LITELLM_REPLICA_INVENTORY_FILE"] = str(inventory)
 
     def build(url):
         users.append(sa.make_url(url).username)
@@ -429,6 +450,23 @@ def test_storage_attestation_is_composed_only_in_trusted_worker_with_separate_da
     assert wrapped.storage_attestation.validated == 1
     assert wrapped.verification._attestor is wrapped.storage_attestation
     assert "isolated-litellm-at-rest-salt-key-only" not in repr(wrapped)
+    assert (wrapped.publication is not None) is publication_enabled
+    publication_event = {
+        "event_id": uuid4(),
+        "event_type": "platform.model_publication.requested",
+        "aggregate_type": "platform_model",
+        "aggregate_key": "opaque-operation",
+        "payload": {},
+    }
+    if publication_enabled:
+        target = _Fallback()
+        wrapped.publication = target
+        wrapped.publish(**publication_event)
+        assert target.events == [publication_event]
+    else:
+        with pytest.raises(OutboxPublishError, match="model_publication_unavailable"):
+            wrapped.publish(**publication_event)
+    assert wrapped.fallback.events == []
     wrapped.close()
     assert len(disposed) == 3
 

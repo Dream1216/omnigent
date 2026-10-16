@@ -28,9 +28,16 @@ from saas.production.litellm_configuration_attestation import (
     ATTESTATION_LOGIN,
     LiteLLMConfigurationAttestor,
 )
+from saas.production.litellm_replica_readiness import LiteLLMReplicaReadinessAuthority
 from saas.production.model_protocol_probe import (
     ModelProtocolProbe,
     ModelProtocolProbeConfiguration,
+)
+from saas.production.model_publication import (
+    MODEL_PUBLICATION_ROUTE,
+    ModelPublicationPublisher,
+    load_litellm_replica_inventory,
+    model_publication_enabled,
 )
 from saas.production.model_verification import (
     MODEL_VERIFICATION_ROUTE,
@@ -39,6 +46,7 @@ from saas.production.model_verification import (
     model_verification_enabled,
 )
 from saas.production.onboarding import _read_bytes, _regular_file, build_production_secret_cipher
+from saas.production.platform_model_gateway import load_platform_model_pricing
 from saas.production.postgresql_migration import (
     _inspect_service_login,
     verify_model_projection_postgresql_state,
@@ -158,6 +166,7 @@ class ProductionModelProjectionPublisher:
     verification: ModelVerificationPublisher | None = field(default=None, repr=False)
     billing_engine: sa.Engine | None = field(default=None, repr=False)
     storage_attestation: LiteLLMConfigurationAttestor | None = field(default=None, repr=False)
+    publication: ModelPublicationPublisher | None = field(default=None, repr=False)
 
     def validate_outbox_configuration(self) -> None:
         verify_model_projection_postgresql_state(
@@ -201,6 +210,16 @@ class ProductionModelProjectionPublisher:
                     "model_verification_unavailable", retryable=True, pre_side_effect=False
                 )
             target = self.verification
+        publication_route = MODEL_PUBLICATION_ROUTE
+        if (
+            event_type == publication_route.event_type
+            or payload.get("event_type") == publication_route.payload_event_type
+        ):
+            if self.publication is None:
+                raise OutboxPublishError(
+                    "model_publication_unavailable", retryable=True, pre_side_effect=True
+                )
+            target = self.publication
         target.publish(
             event_id=event_id,
             event_type=event_type,
@@ -239,7 +258,11 @@ def wrap_production_model_projection(
     """Projection owns its login; optional priced tests use a separate Billing login."""
 
     if not model_projection_enabled(source):
-        if model_verification_enabled(source) or model_configuration_attestation_enabled(source):
+        if (
+            model_verification_enabled(source)
+            or model_configuration_attestation_enabled(source)
+            or model_publication_enabled(source)
+        ):
             raise ProductionModelProjectionError("model_verification_requires_projection")
         return fallback
     engine: sa.Engine | None = None
@@ -255,6 +278,9 @@ def wrap_production_model_projection(
         storage_attestation = None
         verification_enabled = model_verification_enabled(source)
         attestation_enabled = model_configuration_attestation_enabled(source)
+        publication_enabled = model_publication_enabled(source)
+        if publication_enabled and not (verification_enabled and attestation_enabled):
+            raise ValueError
         if (attestation_enabled and not verification_enabled) or (
             verification_enabled
             and config.control_plane_schema_revision != CONTROL_PLANE_SCHEMA_REVISION
@@ -305,6 +331,19 @@ def wrap_production_model_projection(
                 attestor=storage_attestation,
                 secret_cipher=cipher if storage_attestation is not None else None,
             )
+        publication = None
+        if publication_enabled:
+            if storage_attestation is None:
+                raise ValueError
+            publication = ModelPublicationPublisher(
+                engine,
+                secret_cipher=cipher,
+                readiness=LiteLLMReplicaReadinessAuthority(
+                    load_litellm_replica_inventory(source, management=config.management),
+                    storage=storage_attestation,
+                ),
+                pricing=load_platform_model_pricing(source),
+            )
         publisher = ProductionModelProjectionPublisher(
             config,
             engine,
@@ -315,6 +354,7 @@ def wrap_production_model_projection(
             verification,
             billing_engine,
             storage_attestation,
+            publication,
         )
         publisher.validate_outbox_configuration()
         return publisher

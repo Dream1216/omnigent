@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "0ecc902489def4d0151d7647463176ee96665beb2217d91a047e19462cca8bc4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "5faefd9f138f7b8d3b1e11b07dcd39bd9dac7fb645a5b5f4e0cc39db46d580f5",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -362,6 +373,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "dbfc959e1d6bf64d1730b6f2422d9c7d7ebf4230245b7748d65be9440273295a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "85e10e44347b1f89160696695c60153f0a35ed464d99cf1658ed8009d962f514",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -508,6 +530,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "2d43590b944a71c3b827c0ff74d6cb6555055f0f45ed5f94b8dcaf7951d46490",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "8f047164618ed8e073b28936432b41166ca511ec6078c0d580aa79b47f0f633b",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -624,6 +657,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "a3feb325df540c5d1ea49b9dc1129825204a75aa28c0f8980b2d1d3ad9837716",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "c380a1b24213dbb95765576c911f4b5ee43748e33fa65c3a2c3bb284ac040cbf",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -735,6 +779,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "943163ed51b2f2242c91831020b380b95000ded65cce13dc5abb899dfc617899",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "958dcde5966990068f93c7576ed74d445482515a7df255409e5b14e4dad6e211",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -821,6 +876,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "f449476944e3074caa95168534c25ce98ab63fa93907ea776950c2a917d1f3bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "75d43675f05f81bc9350272af2e6a5602e340881823d9102b8b6c40a0152045e",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -914,6 +980,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "626ed582906166f37f6571d13ce9809606afe1a6e433d0facce2db1c821f8aca",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "7f5952e8a4e16dffd85e686ce211d23fca6f85336397cf10e0ebb76aec388b06",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,
@@ -972,6 +1049,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "e577d74759159c592859b333be9e1cbfb0c92cf96ef67ed86161592f888aef01",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "af25421cd340c59f3f37b31197f13457ee1d42776b383838af033c1199f82596",
     # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
     (
         16,

@@ -17,6 +17,8 @@ from saas.control_plane.model_usage import ModelTokenUsage
 
 PROBE_INPUT_TOKEN_CEILING = 1024
 PROBE_OUTPUT_TOKEN_CEILING = 32
+STORED_ATTESTATION_CONTRACT = "litellm-1.105.1-aes-gcm-v1"
+STORED_ATTESTATION_SCOPE = "stored_model_credential_and_database_overlays"
 
 
 def canonical_verification_document(value: dict[str, object]) -> str:

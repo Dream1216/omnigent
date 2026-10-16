@@ -132,6 +132,64 @@ its separately reviewed reload and topology settings.
 
 ## Verification and recovery
 
+### Tenant candidate publication
+
+The default-off `OMNIGENT_SAAS_MODEL_PUBLICATION_ENABLED` flag composes the Staff
+publication API and its trusted Outbox consumer. It requires current schema
+`lm2a00000001`, priced verification and storage attestation. Deploy every new
+consumer before enabling Staff admission. Only a fresh `platform_operator`
+session has `platform.model_provider.publish`; Tenant Owner is not a substitute.
+
+The Worker additionally needs
+`OMNIGENT_SAAS_LITELLM_REPLICA_INVENTORY_FILE`, an absolute owner-readable regular
+file with mode `0400`. Its exact schema is:
+
+```json
+{
+  "schema_version": 1,
+  "source_sha": "<exact 40-character candidate source SHA>",
+  "replicas": [
+    {"replica_id": "replica-0", "base_url": "https://replica-0.internal.example"},
+    {"replica_id": "replica-1", "base_url": "https://replica-1.internal.example"}
+  ]
+}
+```
+
+The SHA must match `OMNIGENT_SAAS_SOURCE_SHA`. Use two to sixteen unique
+individual endpoints, not a shared load balancer. HTTPS is required outside the
+explicit internal Pod/StatefulSet DNS suffixes in the loader. The inventory has
+no secret fields; the Worker reuses its restricted management configuration.
+Keep inventory, management key, storage DSN and salt out of the Web and Runner.
+The deployment operator must bind this inventory to the actual serving fleet;
+the file alone does not establish Kubernetes membership.
+
+Staff supplies only tenant, draft, settled verification receipt, configuration
+fingerprint and expected generation. The browser cannot submit a provider key,
+replica URL or readiness proof. In one transaction the API retains an immutable
+command and reference-only Outbox event. The Worker rechecks the live Staff
+session, tenant, current credential, approved provider-cost revision, settled
+budget and fresh replica proof before appending the next immutable tenant
+catalog generation. Repeated delivery cannot create another generation. A
+stale expected generation or changed authority preserves the prior catalog.
+Replica unavailability permits only read-only reconciliation while the admitted
+fresh-auth window remains valid; publication never sends paid inference.
+
+These candidate versions deliberately return `runtime_enabled=false`. Tenant
+selector integration, runtime authorization/revocation, capability acceptance
+and the production release gates remain separate requirements. Customer prices
+and the customer ledger are not replaced by the retained provider-cost snapshot.
+An empty downgrade restores the previous authority; retained commands or
+publication versions block destructive schema downgrade and require the normal
+schema-forward rollback/recovery procedure.
+
+To verify the UI in the isolated Staff fixture, choose a target tenant, inspect
+its catalog, confirm a verified draft and refresh its original receipt. APPLIED
+must show the same tenant and one new generation with runtime disabled. Repeat
+the refresh and reload: neither a second generation nor another inference may
+appear. A security auditor can inspect but cannot publish.
+
+### Focused checks
+
 Run the focused regression from the repository root:
 
 ```sh
@@ -139,6 +197,7 @@ Run the focused regression from the repository root:
   tests/saas/test_litellm_configuration_attestation.py \
   tests/saas/test_litellm_replica_readiness.py \
   tests/saas/test_model_verification_worker.py \
+  tests/saas/test_model_publications.py \
   tests/saas/test_production_model_projection.py
 ```
 

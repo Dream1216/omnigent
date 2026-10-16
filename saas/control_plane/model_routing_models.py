@@ -112,13 +112,13 @@ class ModelProjectionOperationRecord(SaasBase):
         ),
         sa.CheckConstraint(
             "action IN ('create_connection', 'rotate_credential', "
-            "'create_deployment', 'verify_deployment')",
+            "'create_deployment', 'verify_deployment', 'publish_deployment')",
             name="ck_model_projection_action",
         ),
         sa.CheckConstraint(
             "(action IN ('create_connection', 'rotate_credential') "
             "AND deployment_version_id IS NULL) "
-            "OR (action IN ('create_deployment', 'verify_deployment') "
+            "OR (action IN ('create_deployment', 'verify_deployment', 'publish_deployment') "
             "AND deployment_version_id IS NOT NULL)",
             name="ck_model_projection_deployment_scope",
         ),
@@ -371,4 +371,106 @@ class ModelVerificationReceiptRecord(SaasBase):
             name="ck_model_verification_receipt_outcome",
         ),
         sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_verification_receipt_hash"),
+    )
+
+
+class ModelPublicationCommandRecord(SaasBase):
+    """Append-only Staff intent for one tenant and one immutable verified draft."""
+
+    __tablename__ = "saas_model_publication_commands"
+
+    operation_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    verification_operation_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_verification_receipts.operation_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    expected_generation: Mapped[int] = mapped_column(nullable=False)
+    staff_session_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    staff_security_version: Mapped[int] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "operation_id", "tenant_id", name="uq_model_publication_command_scope"
+        ),
+        sa.CheckConstraint(
+            "expected_generation >= 0 AND staff_security_version > 0",
+            name="ck_model_publication_command_versions",
+        ),
+        sa.CheckConstraint("expires_at > created_at", name="ck_model_publication_command_expiry"),
+    )
+
+
+class ModelPublicationVersionRecord(SaasBase):
+    """Append-only tenant catalog version; latest generation is its release pointer."""
+
+    __tablename__ = "saas_model_publication_versions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    operation_id: Mapped[UUID] = mapped_column(nullable=False, unique=True)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    deployment_version_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_deployment_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    generation: Mapped[int] = mapped_column(nullable=False)
+    configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    price_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    inventory_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    canonical_snapshot: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    snapshot_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    canonical_readiness: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    readiness_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["operation_id", "tenant_id"],
+            [
+                "saas_model_publication_commands.operation_id",
+                "saas_model_publication_commands.tenant_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_model_publication_version_scope",
+        ),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "public_model_id",
+            "wire_api",
+            "generation",
+            name="uq_model_publication_generation",
+        ),
+        sa.CheckConstraint("generation > 0", name="ck_model_publication_generation"),
+        sa.CheckConstraint(
+            "wire_api IN ('openai_chat_completions', 'openai_responses')",
+            name="ck_model_publication_wire_api",
+        ),
+        sa.CheckConstraint(
+            " AND ".join(
+                _hex64(name)
+                for name in (
+                    "configuration_sha256",
+                    "price_sha256",
+                    "inventory_sha256",
+                    "snapshot_sha256",
+                    "readiness_sha256",
+                )
+            ),
+            name="ck_model_publication_hashes",
+        ),
+        sa.CheckConstraint(
+            "length(canonical_snapshot) BETWEEN 1 AND 16384 "
+            "AND length(canonical_readiness) BETWEEN 1 AND 16384",
+            name="ck_model_publication_documents",
+        ),
     )

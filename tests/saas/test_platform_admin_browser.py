@@ -58,14 +58,21 @@ from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
+from saas.control_plane.model_publications import ModelPublicationService
 from saas.control_plane.model_test_funding import ModelTestFundingService
 from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
+from saas.production.litellm_configuration_attestation import LiteLLMConfigurationAttestation
+from saas.production.litellm_replica_readiness import (
+    LiteLLMReplicaEndpoint,
+    LiteLLMReplicaReadinessAuthority,
+)
 from saas.production.model_protocol_probe import (
     ModelProtocolProbe,
     ModelProtocolProbeConfiguration,
 )
+from saas.production.model_publication import ModelPublicationPublisher
 from saas.production.model_verification import ModelVerificationPublisher
 from tests.saas.test_model_protocol_probe import _body, _events
 from tests.saas.test_model_verifications import _pricing
@@ -429,7 +436,7 @@ def platform_admin_server(
         if getattr(request, "param", False)
         else None,
         model_deployments=ModelDeploymentService(engine, authorization=authorization)
-        if getattr(request, "param", False) in {"deployments", "verification"}
+        if getattr(request, "param", False) in {"deployments", "verification", "publication"}
         else None,
         model_test_funding=ModelTestFundingService(engine, authorization=authorization)
         if getattr(request, "param", False)
@@ -437,7 +444,12 @@ def platform_admin_server(
         model_verifications=ModelVerificationService(
             engine, authorization=authorization, pricing=_pricing("deepseek-v4-pro")
         )
-        if getattr(request, "param", False) == "verification"
+        if getattr(request, "param", False) in {"verification", "publication"}
+        else None,
+        model_publications=ModelPublicationService(
+            engine, authorization=authorization, pricing=_pricing("deepseek-v4-pro")
+        )
+        if getattr(request, "param", False) == "publication"
         else None,
     )
     model_projection_calls: list[str] = []
@@ -490,6 +502,7 @@ def platform_admin_server(
                         (
                             "platform.model_projection.requested",
                             "platform.model_verification.requested",
+                            "platform.model_publication.requested",
                         )
                     )
                 )
@@ -504,6 +517,19 @@ def platform_admin_server(
                 }
                 for event in events
             ]
+
+        class StoredAttestor:
+            def attest(self, *, draft, credential_name, expected_api_key, **_kwargs):
+                assert expected_api_key == "browser-draft-secret-never-public"
+                assert credential_name
+                return LiteLLMConfigurationAttestation(
+                    draft.deployment_id,
+                    draft.credential_version_id,
+                    draft.configuration_sha256,
+                    "a" * 64,
+                    datetime.now(timezone.utc),
+                )
+
         verifier = ModelVerificationPublisher(
             engine,
             management=LiteLLMManagementClient(
@@ -513,14 +539,43 @@ def platform_admin_server(
                 transport=httpx.MockTransport(synthetic_management),
             ),
             budget=ModelProviderBudgetAdmissionService(factory),
+            attestor=StoredAttestor()
+            if getattr(request, "param", False) == "publication"
+            else None,
+            secret_cipher=_BrowserSecretCipher()
+            if getattr(request, "param", False) == "publication"
+            else None,
             probe=ModelProtocolProbe(
                 ModelProtocolProbeConfiguration(base_url="https://litellm.test"),
                 transport=httpx.MockTransport(synthetic_inference),
             ),
         )
+        publication = ModelPublicationPublisher(
+            engine,
+            secret_cipher=_BrowserSecretCipher(),
+            pricing=_pricing("deepseek-v4-pro"),
+            readiness=LiteLLMReplicaReadinessAuthority(
+                tuple(
+                    LiteLLMReplicaEndpoint(
+                        f"replica-{n}",
+                        LiteLLMManagementConfiguration(
+                            base_url=f"https://replica-{n}.litellm.test",
+                            management_key="isolated-browser-test-only",
+                        ),
+                    )
+                    for n in range(2)
+                ),
+                storage=StoredAttestor(),
+                client_factory=lambda config: LiteLLMManagementClient(
+                    config, transport=httpx.MockTransport(synthetic_management)
+                ),
+            ),
+        )
         for envelope in envelopes:
             target = (
-                verifier
+                publication
+                if envelope["event_type"] == "platform.model_publication.requested"
+                else verifier
                 if envelope["event_type"] == "platform.model_verification.requested"
                 else publisher
             )
@@ -1126,7 +1181,7 @@ def _model_deployment_journey(browser: Browser, fixture: PlatformAdminFixture) -
         page.locator("#model-connections-refresh").click()
         expect(page.locator("#model-connection-operation-status")).to_have_text("APPLIED")
         expect(page.locator("#model-deployment-list")).to_contain_text("not_tested")
-        expect(page.locator("#model-deployment-list")).to_contain_text("未发布")
+        expect(page.locator("#model-deployment-list")).to_contain_text("运行时未启用")
         listing = page.request.get(fixture.origin + "/v2/platform-admin/model-deployments").json()
         assert len(listing["items"]) == 1
         assert listing["items"][0]["runtime_enabled"] is False
@@ -1365,3 +1420,100 @@ def test_real_chromium_model_verification_recovery_cost_and_readonly_receipt(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _model_verification_journey)
+
+
+def _model_publication_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    _model_deployment_journey(browser, fixture)
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-verification-status")).to_have_text("REQUESTED")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        page.locator("#model-connection-new-command").click()
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+        page.get_by_role("button", name="核对租户候选目录", exact=False).click()
+        expect(page.locator("#model-publication-status")).to_have_text("SCOPE CHECKED")
+        expect(page.get_by_test_id("model-publication-start")).to_be_enabled()
+        page.get_by_test_id("model-publication-start").click()
+        expect(page.locator("#dialog-summary")).to_contain_text(str(fixture.tenant_id))
+        page.locator("#dialog-cancel").click()
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments/*/publish", lose_receipt, times=1)
+        page.get_by_test_id("model-publication-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.reload()
+        expect(page.locator("#model-publication-status")).to_have_text("REQUESTED")
+        operation = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-publication-status")).to_have_text("APPLIED")
+        expect(page.locator("#model-publication-detail")).to_contain_text("目录 V1 已记录")
+        expect(page.locator("#model-publication-list")).to_contain_text("DeepSeek · LiteLLM")
+        response = page.request.get(
+            fixture.origin + f"/v2/platform-admin/model-operations/{operation}/publication"
+        )
+        receipt = response.json()
+        assert receipt["publication"]["tenant_id"] == str(fixture.tenant_id)
+        assert receipt["runtime_enabled"] is False
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+        assert "browser-draft-secret-never-public" not in page.evaluate(
+            "JSON.stringify(sessionStorage)"
+        )
+        page.reload()
+        expect(page.locator("#model-publication-status")).to_have_text("APPLIED")
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-publication-panel").evaluate(
+                "element => element.scrollIntoView({block: 'center'})"
+            )
+            page.locator("#model-publication-panel").screenshot(
+                path=str(directory / "model-publication-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(path=str(directory / "model-publication-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+        page.get_by_role("button", name="核对租户候选目录", exact=False).click()
+        expect(page.locator("#model-publication-list")).to_contain_text("目录 V1")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_tenant_model_publication_lost_receipt_and_readonly_catalog(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_publication_journey)

@@ -437,6 +437,16 @@
             <dl id="model-verification-detail" aria-live="polite"><div class="empty-record">尚未选择验证回执。测试可能产生真实供应商费用，不会自动重试。</div></dl>
             <button class="quiet-button" id="model-verification-refresh" type="button">核对验证回执 ↻</button>
           </section>
+          <section class="work-panel model-connection-form" id="model-publication-panel" hidden>
+            <div class="panel-heading"><span>08 / 租户候选目录</span><small id="model-publication-status" role="status">NO SCOPE</small></div>
+            <p class="model-connection-help">先核对明确的租户范围，再从草稿清单发布已验证版本。可信 Worker 会重新检查权限、费用结算及已知副本路由；目录记录成功不表示运行时已启用。</p>
+            <form id="model-publication-scope" class="model-connection-form">
+              <label><span>目标租户 ID</span><input id="model-publication-tenant" maxlength="36" required placeholder="租户 UUID" autocomplete="off"></label>
+              <button class="quiet-button" type="submit">核对租户候选目录 ↻</button>
+            </form>
+            <div class="record-list" id="model-publication-list" aria-live="polite"><div class="empty-record">尚未核对发布范围。</div></div>
+            <dl id="model-publication-detail" aria-live="polite"><div class="empty-record">尚无发布回执。运行时保持关闭。</div></dl>
+          </section>
         </section>
 
         <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>

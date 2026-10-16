@@ -14,7 +14,7 @@ from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
-from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.db_models import ControlPlaneOutboxEvent, Tenant
 from saas.control_plane.litellm_client import (
     LiteLLMManagementClient,
     LiteLLMManagementConfiguration,
@@ -26,6 +26,7 @@ from saas.control_plane.model_deployments import (
     compile_stored_model_deployment,
 )
 from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
+from saas.control_plane.model_publications import ModelPublicationService
 from saas.control_plane.model_routing_models import (
     ModelDeploymentVersionRecord,
     ModelProjectionOperationRecord,
@@ -34,14 +35,17 @@ from saas.control_plane.model_routing_models import (
 from saas.control_plane.model_test_funding import ModelTestFundingPolicy, ModelTestFundingService
 from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.platform_security import PlatformAuthorizationService
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.production.model_protocol_probe import (
     ModelProtocolProbe,
     ModelProtocolProbeConfiguration,
 )
+from saas.production.model_publication import ModelPublicationPublisher
 from saas.production.model_verification import ModelVerificationPublisher
 from tests.saas.test_model_connections import _KEY, _fixture
 from tests.saas.test_model_deployments import _command
 from tests.saas.test_model_protocol_probe import _body, _events
+from tests.saas.test_model_publications import _Readiness
 from tests.saas.test_model_verification_worker import _StoredAttestor
 from tests.saas.test_model_verifications import _pricing
 
@@ -119,7 +123,7 @@ def test_real_postgresql_empty_verification_downgrade_restores_authority(
             connection.exec_driver_sql(roles)
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "lm1f00000001"
+                == CONTROL_PLANE_SCHEMA_REVISION
             )
     finally:
         engine.dispose()
@@ -311,6 +315,40 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
         publisher.publish(**envelope(operation.id))
         assert inference_calls == ["/v1/chat/completions"]
         assert service.receipt(actor, operation.id)["operation"]["status"] == "verified"
+        tenant_id = uuid4()
+        with factory.begin() as db:
+            db.add(
+                Tenant(id=tenant_id, slug="pg-publication", name="Isolated", home_region="test")
+            )
+        publications = ModelPublicationService(
+            staff, authorization=authorization, pricing=_pricing()
+        )
+        publication_request = {
+            "deployment_id": draft.deployment_id,
+            "tenant_id": tenant_id,
+            "verification_operation_id": operation.id,
+            "configuration_sha256": draft.configuration_sha256,
+            "expected_generation": 0,
+            "idempotency_key": "pg-tenant-publication",
+        }
+        publication = publications.admit(actor, **publication_request)
+        assert publications.admit(actor, **publication_request).id == publication.id
+        with pytest.raises(DBAPIError) as premature, worker.begin() as connection:
+            connection.execute(
+                sa.update(ModelProjectionOperationRecord)
+                .where(ModelProjectionOperationRecord.id == publication.id)
+                .values(status="applied", version=2)
+            )
+        assert getattr(premature.value.orig, "sqlstate", None) == "23514"
+        publication_worker = ModelPublicationPublisher(
+            worker, secret_cipher=cipher, readiness=_Readiness(), pricing=_pricing()
+        )
+        publication_worker.publish(**envelope(publication.id))
+        publication_worker.publish(**envelope(publication.id))
+        assert publications.receipt(actor, publication.id)["operation"]["status"] == "applied"
+        assert len(publications.list(actor, tenant_id=tenant_id)) == 1
+        assert publications.list(actor, tenant_id=uuid4()) == ()
+        assert inference_calls == ["/v1/chat/completions"]
         for engine, statement in (
             (staff, "INSERT INTO saas_model_verification_receipts DEFAULT VALUES"),
             (staff, "UPDATE saas_model_verification_commands SET requested_tokens=1"),
@@ -319,6 +357,11 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
             (worker, "UPDATE saas_model_provider_budget_reservations SET settled_microusd=0"),
             (billing, "SELECT api_key_ciphertext FROM saas_model_credential_versions"),
             (billing, "SET ROLE saas_model_projection"),
+            (staff, "INSERT INTO saas_model_publication_versions DEFAULT VALUES"),
+            (worker, "UPDATE saas_model_publication_versions SET generation=2"),
+            (worker, "SELECT token_hash FROM saas_platform_auth_sessions"),
+            (staff, "SELECT tenant_id FROM saas_tenant_memberships"),
+            (worker, "SELECT tenant_id FROM saas_tenant_memberships"),
         ):
             with pytest.raises(DBAPIError) as denied, engine.connect() as connection:
                 connection.exec_driver_sql(statement)
@@ -352,7 +395,7 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
                 )
             )
         assert getattr(wrong_binding.value.orig, "sqlstate", None) == "23503"
-        with pytest.raises(RuntimeError, match="retained model verification evidence"):
+        with pytest.raises(RuntimeError, match="retained evidence"):
             with owner.begin() as connection:
                 config.attributes["connection"] = connection
                 command.downgrade(config, "lm1e00000001")
