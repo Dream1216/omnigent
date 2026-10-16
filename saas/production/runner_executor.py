@@ -44,6 +44,7 @@ from saas.control_plane.runner_execution_spec import (
 )
 from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.control_plane.scheduling_models import RunDispatchRecord
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.control_plane.worktree_models import WorktreeInstanceRecord
 from saas.control_plane.worktrees import (
     WorktreeControlPlane,
@@ -742,7 +743,7 @@ def _verify_runner_agent_database_authority(
             ).one()
             if (
                 required_registration_status not in {"draining", "online"}
-                or revision != "p0s000000015"
+                or revision != CONTROL_PLANE_SCHEMA_REVISION
                 or tuple(identity_matches)
                 != (
                     True,
@@ -1695,7 +1696,7 @@ def runner_agent_database_authority_contract_sha256(*, server_major: int = 18) -
         "policy_relation_count": _RUNNER_AGENT_POLICY_RELATION_COUNT,
         "policy_sha256s": sorted(_RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR[server_major]),
         "role": _RUNNER_AGENT_DATABASE_ROLE,
-        "schema_revision": "p0s000000015",
+        "schema_revision": CONTROL_PLANE_SCHEMA_REVISION,
         "select_columns": sorted(_RUNNER_AGENT_SELECT_COLUMNS),
         "select_tables": sorted(_RUNNER_AGENT_SELECT_TABLES),
         "server_major": server_major,

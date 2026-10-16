@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
@@ -23,6 +24,15 @@ from saas.production.service_bindings import (
 from saas.scripts.run_postgresql_migration import _write_exclusive
 
 _REVISION = "a" * 40
+
+
+def test_runner_schema_binding_matches_migrations_and_cluster_bootstrap() -> None:
+    assert migration._expected_head("saas") == CONTROL_PLANE_SCHEMA_REVISION
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "saas/control_plane/postgresql_runner_agent_cluster.sql"
+    ).read_text()
+    assert f"IF schema_head <> '{CONTROL_PLANE_SCHEMA_REVISION}' THEN" in source
 
 
 def _bindings() -> ProductionServiceRoleBindings:

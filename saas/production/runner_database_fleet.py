@@ -38,6 +38,9 @@ from saas.control_plane.scheduling_models import (
     RunnerPoolRecord,
     RunnerRegistrationRecord,
 )
+from saas.control_plane.schema_revision import (
+    CONTROL_PLANE_SCHEMA_REVISION as _CONTROL_PLANE_SCHEMA_REVISION,
+)
 from saas.production.admission import admission_signature_payload
 
 RUNNER_DATABASE_FLEET_FILE_ENV = "OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_FILE"
@@ -92,7 +95,6 @@ RUNNER_DATABASE_FLEET_RECEIPT_PRIVATE_KEY_FILE_ENV = (
     "OMNIGENT_SAAS_RUNNER_DATABASE_FLEET_ADMISSION_RECEIPT_PRIVATE_KEY_FILE"
 )
 
-_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
 _SCHEMA_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RUNNER_BASE_ROLE = "saas_runner_agent"
 _RUNNER_ROLE_PATTERN = r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$"
