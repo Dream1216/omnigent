@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.db.query_context import query_name_scope
 from saas.control_plane.billing import BillingControlPlane
 from saas.control_plane.billing_models import (
     BillingMeteringReceiptRecord,
@@ -226,6 +227,18 @@ class BillingMeteringAuthority:
             raise BillingMeteringError(
                 "metering_time_invalid", "occurred_at is beyond the allowed clock skew"
             )
+        request_values: dict[str, object] = {
+            "meter": clean_meter,
+            "quantity": str(units),
+            "unit": clean_unit,
+            "provider": clean_provider,
+            "provider_request_id": provider_request,
+            "occurred_at": happened.isoformat(),
+            "attributes": clean_attributes,
+            "model_budget_reservation_id": (
+                str(model_budget_reservation_id) if model_budget_reservation_id else None
+            ),
+        }
 
         with self._session_factory.begin() as db:
             self._set_exact_identity_context(
@@ -257,7 +270,7 @@ class BillingMeteringAuthority:
                 .where(CapabilityTokenRecord.token_hash == capability_digest)
                 .with_for_update()
             )
-            self._require_machine_identity(
+            self._require_machine_binding(
                 runner=runner,
                 certificate=certificate,
                 capability=capability,
@@ -274,6 +287,16 @@ class BillingMeteringAuthority:
                 db,
                 RlsContext(tenant_id=capability.tenant_id, space_id=capability.space_id),
             )
+            # Recover an already committed fact without reviving its Run or capability.
+            replayed = self._replay_committed_usage(
+                db, capability=capability, run_id=run_id, key=key, request_values=request_values
+            )
+            if replayed is not None:
+                return replayed
+            if capability.revoked_at is not None or _as_utc(capability.expires_at) <= checked_at:
+                raise BillingMeteringError(
+                    "metering_capability_expired", "capability is expired or revoked"
+                )
             run = self._run_authority(db, run_id)
             self._set_authoritative_usage_context(
                 db,
@@ -305,6 +328,11 @@ class BillingMeteringAuthority:
                     f"{provider_request}:{clean_meter}"
                 ),
             )
+            replayed = self._replay_committed_usage(
+                db, capability=capability, run_id=run_id, key=key, request_values=request_values
+            )
+            if replayed is not None:
+                return replayed
             pricing = self._effective_pricing(
                 db,
                 tenant_id=capability.tenant_id,
@@ -318,51 +346,20 @@ class BillingMeteringAuthority:
                 unit=clean_unit,
             )
             payload: dict[str, object] = {
-                "tenant_id": str(capability.tenant_id),
-                "space_id": str(run.space_id),
-                "project_id": str(run.project_id),
-                "session_id": str(run.session_id) if run.session_id else None,
-                "run_id": str(run_id),
-                "actor_kind": ("user" if run.created_by is not None else "service_account"),
-                "user_id": str(run.created_by) if run.created_by is not None else None,
-                "service_account_id": (
-                    str(run.created_by_service_account_id)
-                    if run.created_by_service_account_id is not None
-                    else None
+                **self._usage_identity_payload(
+                    tenant_id=capability.tenant_id,
+                    space_id=run.space_id,
+                    project_id=run.project_id,
+                    session_id=run.session_id,
+                    run_id=run_id,
+                    user_id=run.created_by,
+                    service_account_id=run.created_by_service_account_id,
+                    runner_id=runner_id,
+                    pricing_snapshot_id=pricing.id,
                 ),
-                "runner_id": str(runner_id),
-                "pricing_snapshot_id": str(pricing.id),
-                "meter": clean_meter,
-                "model_budget_reservation_id": (
-                    str(model_budget_reservation_id)
-                    if model_budget_reservation_id is not None
-                    else None
-                ),
-                "quantity": str(units),
-                "unit": clean_unit,
-                "provider": clean_provider,
-                "provider_request_id": provider_request,
-                "occurred_at": happened.isoformat(),
-                "attributes": clean_attributes,
+                **request_values,
             }
             digest = _request_hash(payload)
-            receipt = db.scalar(
-                sa.select(BillingMeteringReceiptRecord).where(
-                    BillingMeteringReceiptRecord.tenant_id == capability.tenant_id,
-                    BillingMeteringReceiptRecord.idempotency_key == key,
-                )
-            )
-            if receipt is not None:
-                if receipt.request_hash != digest:
-                    raise BillingMeteringError(
-                        "metering_idempotency_conflict", "idempotency key was already used"
-                    )
-                usage = db.get(UsageEventRecord, receipt.usage_event_id)
-                if usage is None:
-                    raise BillingMeteringError(
-                        "metering_invariant_broken", "metering receipt is orphaned"
-                    )
-                return self._view(receipt, usage, replayed=True)
 
             duplicate = db.scalar(
                 sa.select(UsageEventRecord).where(
@@ -459,6 +456,121 @@ class BillingMeteringAuthority:
             return self._view(receipt, usage)
 
     @staticmethod
+    def _usage_identity_payload(
+        *,
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        session_id: UUID | None,
+        run_id: UUID,
+        user_id: UUID | None,
+        service_account_id: UUID | None,
+        runner_id: UUID,
+        pricing_snapshot_id: UUID,
+    ) -> dict[str, object]:
+        return {
+            "tenant_id": str(tenant_id),
+            "space_id": str(space_id),
+            "project_id": str(project_id),
+            "session_id": str(session_id) if session_id else None,
+            "run_id": str(run_id),
+            "actor_kind": "user" if user_id is not None else "service_account",
+            "user_id": str(user_id) if user_id is not None else None,
+            "service_account_id": str(service_account_id)
+            if service_account_id is not None
+            else None,
+            "runner_id": str(runner_id),
+            "pricing_snapshot_id": str(pricing_snapshot_id),
+        }
+
+    @classmethod
+    def _replay_committed_usage(
+        cls,
+        db: Session,
+        *,
+        capability: CapabilityTokenRecord,
+        run_id: UUID,
+        key: str,
+        request_values: dict[str, object],
+    ) -> MeteredUsage | None:
+        with query_name_scope("saas.billing_metering.recover_committed_receipt"):
+            receipt = db.scalar(
+                sa.select(BillingMeteringReceiptRecord).where(
+                    BillingMeteringReceiptRecord.tenant_id == capability.tenant_id,
+                    BillingMeteringReceiptRecord.idempotency_key == key,
+                )
+            )
+        if receipt is None:
+            return None
+        if (
+            receipt.run_id != run_id
+            or receipt.runner_id != capability.runner_id
+            or receipt.capability_id != capability.id
+            or receipt.runner_connection_generation != capability.runner_connection_generation
+            or receipt.dispatch_generation != capability.dispatch_generation
+            or receipt.fence_token != capability.fence_token
+            or receipt.space_id != capability.space_id
+            or receipt.project_id != capability.project_id
+        ):
+            raise BillingMeteringError(
+                "metering_capability_binding_invalid", "receipt belongs to another execution"
+            )
+        with query_name_scope("saas.billing_metering.read_committed_usage"):
+            usage = db.get(UsageEventRecord, receipt.usage_event_id)
+        if (
+            usage is None
+            or usage.space_id is None
+            or usage.project_id is None
+            or usage.tenant_id != receipt.tenant_id
+            or usage.space_id != receipt.space_id
+            or usage.project_id != receipt.project_id
+            or usage.run_id != run_id
+            or usage.idempotency_key != key
+        ):
+            raise BillingMeteringError("metering_invariant_broken", "metering receipt is orphaned")
+        committed_values = {
+            "meter": usage.meter,
+            "quantity": request_values["quantity"],
+            "unit": usage.unit,
+            "provider": usage.provider,
+            "provider_request_id": usage.provider_request_id,
+            "occurred_at": _as_utc(usage.occurred_at).isoformat(),
+            "attributes": usage.attributes,
+            "model_budget_reservation_id": (
+                str(receipt.model_budget_reservation_id)
+                if receipt.model_budget_reservation_id
+                else None
+            ),
+        }
+        if (
+            usage.quantity != Decimal(cast(str, request_values["quantity"]))
+            or committed_values != request_values
+        ):
+            raise BillingMeteringError(
+                "metering_idempotency_conflict", "idempotency key was already used"
+            )
+        # Identity and pricing come from the immutable fact, not today's subscription.
+        payload = {
+            **cls._usage_identity_payload(
+                tenant_id=usage.tenant_id,
+                space_id=usage.space_id,
+                project_id=usage.project_id,
+                session_id=usage.session_id,
+                run_id=run_id,
+                user_id=usage.user_id,
+                service_account_id=usage.service_account_id,
+                runner_id=capability.runner_id,
+                pricing_snapshot_id=usage.pricing_snapshot_id,
+            ),
+            **committed_values,
+        }
+        if receipt.request_hash != _request_hash(payload):
+            raise BillingMeteringError(
+                "metering_idempotency_conflict", "idempotency key was already used"
+            )
+        return cls._view(receipt, usage, replayed=True)
+
+    @staticmethod
     def _set_exact_identity_context(
         db: Session,
         *,
@@ -500,7 +612,7 @@ class BillingMeteringAuthority:
         )
 
     @staticmethod
-    def _require_machine_identity(
+    def _require_machine_binding(
         *,
         runner: RunnerRegistrationRecord | None,
         certificate: RunnerCertificateRecord | None,
@@ -534,13 +646,13 @@ class BillingMeteringAuthority:
             raise BillingMeteringError(
                 "metering_certificate_denied", "Runner certificate is not authorized"
             )
-        if capability.revoked_at is not None or _as_utc(capability.expires_at) <= checked_at:
-            raise BillingMeteringError(
-                "metering_capability_expired", "capability is expired or revoked"
-            )
         if capability.runner_id != runner_id or capability.run_id != run_id:
             raise BillingMeteringError(
                 "metering_capability_binding_invalid", "capability binding is invalid"
+            )
+        if capability.runner_connection_generation != runner.connection_generation:
+            raise BillingMeteringError(
+                "metering_capability_binding_invalid", "capability incarnation is stale"
             )
         if _ACTION not in capability.allowed_actions:
             raise BillingMeteringError(

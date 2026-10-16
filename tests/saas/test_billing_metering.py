@@ -468,6 +468,91 @@ def test_machine_metering_rejects_revoked_or_expired_capabilities(metering: _Fix
     assert expired.value.code == "metering_capability_expired"
 
 
+@pytest.mark.parametrize("expired", [False, True], ids=["terminal", "expired-capability"])
+def test_committed_metering_receipt_can_be_recovered_without_reviving_execution(
+    metering: _Fixture, expired: bool
+) -> None:
+    created = _record(metering)
+    recovery_time = metering.now + timedelta(minutes=11) if expired else metering.now
+    if not expired:
+        with metering.factory() as db:
+            run = db.get(RunRecord, metering.run_id)
+            lease_token, fence_token = run.lease_token, run.fence_token
+        execution = ExecutionControlPlane(metering.factory)
+        for status in ("starting", "running", "succeeded"):
+            execution.transition_run(
+                run_id=metering.run_id,
+                lease_token=lease_token,
+                fence_token=fence_token,
+                target_status=status,
+                trace_id="committed-metering-recovery",
+                now=metering.now,
+            )
+    replayed = _record(metering, now=recovery_time)
+    assert replayed.replayed
+    assert replayed.receipt_id == created.receipt_id
+    assert replayed.usage_event_id == created.usage_event_id
+    with pytest.raises(BillingMeteringError):
+        _record(metering, quantity="1501", now=recovery_time)
+    with pytest.raises(BillingMeteringError):
+        _record(
+            metering,
+            provider_request_id="not-previously-recorded",
+            idempotency_key="new-fact",
+            now=recovery_time,
+        )
+    with metering.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 1
+        assert db.scalar(sa.select(sa.func.count()).select_from(BillingMeteringReceiptRecord)) == 1
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"quantity": "1501"},
+        {"unit": "requests"},
+        {"provider_request_id": "other-request"},
+        {"attributes": {"model": "different-model"}},
+        {"idempotency_key": "never-recorded"},
+        {"run_id": UUID(int=1)},
+        {"runner_id": UUID(int=1)},
+        {"certificate_fingerprint_sha256": "f" * 64},
+    ],
+)
+def test_receipt_recovery_never_accepts_changed_facts_or_machine_identity(
+    metering: _Fixture, changed: dict[str, object]
+) -> None:
+    _record(metering)
+    with pytest.raises(BillingMeteringError):
+        _record(metering, now=metering.now + timedelta(minutes=11), **changed)
+    with metering.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 1
+
+
+@pytest.mark.parametrize("change", ["revoked-certificate", "reconnected-runner", "offline-runner"])
+def test_receipt_recovery_still_requires_a_current_authenticated_machine(
+    metering: _Fixture, change: str
+) -> None:
+    _record(metering)
+    with metering.factory.begin() as db:
+        if change == "revoked-certificate":
+            certificate = db.scalar(
+                sa.select(RunnerCertificateRecord).where(
+                    RunnerCertificateRecord.fingerprint_sha256 == metering.fingerprint
+                )
+            )
+            certificate.status = "revoked"
+            certificate.revoked_at = metering.now
+        else:
+            runner = db.get(RunnerRegistrationRecord, metering.runner_id)
+            if change == "reconnected-runner":
+                runner.connection_generation += 1
+            else:
+                runner.status = "offline"
+    with pytest.raises(BillingMeteringError):
+        _record(metering)
+
+
 def test_machine_metering_rejects_wrong_action_revoked_certificate_and_reconnect(
     metering: _Fixture,
 ) -> None:

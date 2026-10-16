@@ -19,7 +19,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.llms.client import Client, _ResponsesNamespace
 from omnigent.llms.types import MessageOutput, OutputText, Response, Usage
-from saas.billing_metering_transport import MutualTlsBillingMeteringServer
+from saas.billing_metering_transport import (
+    BillingMeteringTransportError,
+    MutualTlsBillingMeteringServer,
+)
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     BillingControlPlane,
@@ -43,6 +46,7 @@ from saas.control_plane import (
     Tenant,
     TenantMembership,
 )
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.runner_adapter.metering import (
     ManagedMeteringGrant,
     ProviderUsageMeter,
@@ -93,22 +97,37 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         name: f"saas_{name}_metering_acceptance_{suffix}"
         for name in ("platform", "app", "billing", "executor", "metering")
     }
+    metering_password = "isolated-receipt-recovery-test-only"
     with engine.begin() as connection:
         _migrate(connection, root)
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         for base, child in roles.items():
+            authentication = (
+                f"LOGIN PASSWORD '{metering_password}'" if base == "metering" else "NOLOGIN"
+            )
             connection.exec_driver_sql(
-                f"CREATE ROLE {child} NOLOGIN NOSUPERUSER NOBYPASSRLS INHERIT; "
+                f"CREATE ROLE {child} {authentication} NOSUPERUSER NOBYPASSRLS INHERIT; "
                 f"GRANT saas_{base} TO {child}"
             )
+        connection.exec_driver_sql(
+            f'GRANT CONNECT ON DATABASE "{sa.make_url(isolated_postgres_url).database}" '
+            f"TO {roles['metering']}"
+        )
 
     platform_factory = _role_factory(engine, roles["platform"])
     app_factory = _role_factory(engine, roles["app"])
     billing_factory = _role_factory(engine, roles["billing"])
     executor_factory = _role_factory(engine, roles["executor"])
-    metering_factory = _role_factory(engine, roles["metering"])
+    metering_engine = sa.create_engine(
+        sa.make_url(isolated_postgres_url).set(
+            username=roles["metering"], password=metering_password
+        )
+    )
+    metering_factory = sessionmaker(metering_engine, expire_on_commit=False)
+    with metering_engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT current_user=session_user").scalar_one()
     execution = ExecutionControlPlane(app_factory)
     platform_scheduling = SchedulingControlPlane(platform_factory)
     scheduling = SchedulingControlPlane(executor_factory)
@@ -528,16 +547,15 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         ttl=timedelta(minutes=5),
         now=now + timedelta(seconds=2),
     )
-    model_usage = authority.record_usage(
-        **{
-            **request,
-            "provider": "deepseek",
-            "provider_request_id": f"deepseek-provider-{suffix}",
-            "idempotency_key": f"deepseek-metering-{suffix}",
-            "quantity": "1000",
-            "model_budget_reservation_id": reservation.id,
-        }
-    )
+    model_request = {
+        **request,
+        "provider": "deepseek",
+        "provider_request_id": f"deepseek-provider-{suffix}",
+        "idempotency_key": f"deepseek-metering-{suffix}",
+        "quantity": "1000",
+        "model_budget_reservation_id": reservation.id,
+    }
+    model_usage = authority.record_usage(**model_request)
     assert model_usage.model_budget_reservation_id == reservation.id
     finalized = model_budget.release(
         reservation_id=reservation.id,
@@ -575,8 +593,8 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
     )
     assert after_change.customer_charge_minor == (38 if freeze_before_run else 375)
     assert (after_change.pricing_snapshot_id == changed.id) is not freeze_before_run
+    assert authority.record_usage(**request).receipt_id == created.receipt_id
     if freeze_before_run:
-        assert authority.record_usage(**request).receipt_id == created.receipt_id
         original_pricing = BillingMeteringAuthority._effective_pricing
 
         def legacy_pricing(db, *, tenant_id, happened, run):
@@ -667,6 +685,76 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         )
     assert stale.value.code == "metering_fence_stale"
 
+    def financial_counts():
+        with engine.connect() as connection:
+            return connection.exec_driver_sql(
+                "SELECT (SELECT count(*) FROM saas_usage_events),"
+                "(SELECT count(*) FROM saas_billing_metering_receipts),"
+                "(SELECT count(*) FROM saas_control_plane_outbox "
+                "WHERE event_type='billing.usage.recorded')"
+            ).one()
+
+    counts_before_recovery = financial_counts()
+
+    # A lost confirmation remains recoverable after the actual Run terminalizes.
+    with platform_factory() as db:
+        row = db.execute(
+            sa.text("SELECT lease_token,fence_token FROM saas_runs WHERE id=:run"),
+            {"run": run_id},
+        ).one()
+    terminalizer = ExecutionControlPlane(platform_factory)
+    for status in ("starting", "running", "succeeded"):
+        terminalizer.transition_run(
+            run_id=run_id,
+            lease_token=row.lease_token,
+            fence_token=row.fence_token,
+            target_status=status,
+            trace_id="receipt-recovery",
+            now=now + timedelta(seconds=3),
+        )
+    recovered = authority.record_usage(**request)
+    assert recovered.replayed and recovered.receipt_id == created.receipt_id
+    assert recovered.customer_charge_minor == created.customer_charge_minor
+    assert (
+        authority.record_usage(**{**request, "now": now + timedelta(minutes=11)}).receipt_id
+        == created.receipt_id
+    )
+    for changed_request in (
+        {"quantity": "1501"},
+        {"idempotency_key": f"late-new-fact-{suffix}"},
+        {"provider_request_id": f"different-provider-request-{suffix}"},
+        {"certificate_fingerprint_sha256": "f" * 64},
+    ):
+        with pytest.raises(BillingMeteringError):
+            authority.record_usage(**{**request, **changed_request})
+    assert authority.record_usage(**model_request).receipt_id == model_usage.receipt_id
+    assert model_budget.release(reservation_id=reservation.id).settled_microusd == 250_000
+
+    recovery_server = MutualTlsBillingMeteringServer(
+        authority, _server_context(certificates["server"]), certificate_metering
+    )
+    recovery_thread = _ServerThread(recovery_server)
+    recovery_thread.start()
+    recovery_client = build_metering_client(
+        replace(grant, metering_base_url=f"https://127.0.0.1:{recovery_server.port}")
+    )
+    wire_request = {
+        key: value
+        for key, value in request.items()
+        if key not in {"certificate_fingerprint_sha256", "now"}
+    }
+    try:
+        wire_receipt = recovery_client.record_usage(**wire_request)
+        assert wire_receipt.replayed and wire_receipt.receipt_id == created.receipt_id
+        with pytest.raises(BillingMeteringTransportError):
+            recovery_client.record_usage(
+                **{**wire_request, "idempotency_key": f"terminal-new-fact-{suffix}"}
+            )
+    finally:
+        recovery_client.close()
+        recovery_thread.close()
+    assert financial_counts() == counts_before_recovery
+
     with pytest.raises(sa.exc.DBAPIError, match="Billing fact is append-only"):
         with platform_factory.begin() as db:
             db.execute(
@@ -677,7 +765,12 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
                 {"receipt": created.receipt_id},
             )
 
+    metering_engine.dispose()
     with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f'REVOKE CONNECT ON DATABASE "{sa.make_url(isolated_postgres_url).database}" '
+            f"FROM {roles['metering']}"
+        )
         posture = connection.execute(
             sa.text(
                 "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles "
@@ -711,7 +804,7 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
                     command.downgrade(config, "p6a000000008")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "lm2d00000001"
+                == CONTROL_PLANE_SCHEMA_REVISION
             )
             for base, child in reversed(tuple(roles.items())):
                 connection.exec_driver_sql(f"REVOKE saas_{base} FROM {child}")
