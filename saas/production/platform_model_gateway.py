@@ -33,6 +33,7 @@ from saas.control_plane.model_budget import (
     ModelProviderBudgetReservationView,
 )
 from saas.control_plane.model_gateway_evidence import GatewayRequestEvidence
+from saas.control_plane.model_inference_requests import decode_inference_request
 from saas.control_plane.model_pricing import (
     PlatformModelPrice,
     PlatformModelPricingPolicy,
@@ -724,12 +725,7 @@ def main() -> None:
 def _request_document(raw: bytes, *, responses: bool = False) -> dict[str, object]:
     if not 0 < len(raw) <= _MAX_REQUEST_BYTES:
         raise ValueError("Platform model request size is invalid")
-    try:
-        document = json.loads(raw)
-    except (UnicodeError, json.JSONDecodeError):
-        raise ValueError("Platform model request is invalid") from None
-    if not isinstance(document, dict):
-        raise ValueError("Platform model request is invalid")
+    document = decode_inference_request(raw, responses=responses)
     model = document.get("model")
     if not isinstance(model, str) or not model or len(model) > 128:
         raise ValueError("Platform model request model is invalid")

@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from omnigent.inner.executor import ExecutorConfig, ExecutorError, TextChunk, TurnComplete
 from omnigent.inner.openai_agents_sdk_executor import OpenAIAgentsSDKExecutor
 from omnigent.spec.types import RetryPolicy
-from saas.production.platform_model_gateway import _streaming_document
+from saas.production.platform_model_gateway import _request_document, _streaming_document
 
 
 class ProbeHTTPTransport(httpx.AsyncBaseTransport):
@@ -33,11 +33,12 @@ class ProbeHTTPTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         try:
-            document = json.loads(request.content)
-        except (ValueError, UnicodeError):
-            document = {}
-        if not isinstance(document, dict):
-            document = {}
+            document = _request_document(
+                request.content, responses=self.url.path.endswith("/responses")
+            )
+        except ValueError:
+            self.blocked = True
+            raise httpx.TransportError("probe_request_contract_rejected") from None
         limit = (
             document.get("max_output_tokens")
             if self.url.path.endswith("/responses")

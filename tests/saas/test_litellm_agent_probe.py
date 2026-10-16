@@ -51,6 +51,7 @@ def test_agent_probe_bounds_each_protocol_and_closes_clients(
                     "model": "probe",
                     "stream": True,
                     "max_output_tokens" if self.protocol else "max_tokens": 32,
+                    "input" if self.protocol else "messages": "hello" if self.protocol else [],
                 },
             )
             yield TextChunk(text="OK")
@@ -81,7 +82,7 @@ def test_chat_probe_reuses_platform_usage_enforcement() -> None:
         async with httpx.AsyncClient(transport=transport) as client:
             await client.post(
                 "https://probe/v1/chat/completions",
-                json={"model": "probe", "stream": True, "max_tokens": 32},
+                json={"model": "probe", "stream": True, "max_tokens": 32, "messages": []},
             )
 
     asyncio.run(run())
@@ -100,7 +101,12 @@ def test_probe_transport_prevents_hidden_second_request() -> None:
             ),
         )
         async with httpx.AsyncClient(transport=transport) as client:
-            document = {"model": "probe", "stream": True, "max_output_tokens": 32}
+            document = {
+                "model": "probe",
+                "stream": True,
+                "max_output_tokens": 32,
+                "input": "hello",
+            }
             await client.post("https://probe/v1/responses", json=document)
             with pytest.raises(httpx.TransportError, match="contract_rejected"):
                 await client.post("https://probe/v1/responses", json=document)
@@ -117,6 +123,10 @@ def test_probe_transport_prevents_hidden_second_request() -> None:
         {"tools": [{"type": "function"}]},
         {"stream": False},
         {"model": "other"},
+        {"api_key": "caller-override"},
+        {"extra_body": {"model": "other"}},
+        {"num_retries": 2},
+        {"store": True},
     ),
 )
 def test_probe_transport_rejects_unbounded_or_unapproved_payload(overrides) -> None:
@@ -130,7 +140,13 @@ def test_probe_transport_rejects_unbounded_or_unapproved_payload(overrides) -> N
             with pytest.raises(httpx.TransportError, match="contract_rejected"):
                 await client.post(
                     "https://probe/v1/responses",
-                    json={"model": "probe", "stream": True, "max_output_tokens": 32, **overrides},
+                    json={
+                        "model": "probe",
+                        "stream": True,
+                        "max_output_tokens": 32,
+                        "input": "hello",
+                        **overrides,
+                    },
                 )
         assert transport.attempts == 0
 
