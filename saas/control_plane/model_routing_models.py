@@ -114,3 +114,36 @@ class ModelProjectionOperationRecord(SaasBase):
         sa.CheckConstraint("version > 0", name="ck_model_projection_version"),
         sa.Index("ix_model_projection_status", "status", "created_at"),
     )
+
+
+class ModelProjectionTransitionRecord(SaasBase):
+    """Append-only domain receipt written with its operation's state change."""
+
+    __tablename__ = "saas_model_projection_transitions"
+
+    operation_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    version: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_control_plane_outbox.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    actor_principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    previous_status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(sa.String(128))
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint("version > 1", name="ck_model_projection_transition_version"),
+        sa.CheckConstraint(
+            "(previous_status = 'requested' AND status IN ('applying', 'failed')) OR "
+            "(previous_status = 'applying' AND status IN ('applied', 'failed', 'uncertain'))",
+            name="ck_model_projection_transition_edge",
+        ),
+    )

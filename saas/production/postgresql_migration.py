@@ -34,6 +34,7 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -214,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 four-authority replay source 0c88bfbf, including the projection receipt.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "561c4f917b9f6c4452ef3b21e7407f205d2439ac5e0cfa69a228e2b098210dea",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "9f29baaae9fc589622089831a668a89c5354d0f857f4df8b8f616f51e04bf9af",
     (
         16,
         "mm1a2b3c4d5e",
@@ -309,6 +321,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "852647e15383916271ec758c48d79988be55f94fb98ce0d9cbe0e3bc734989c4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "793c86853718d18e8dc3a6ffe0ceed96f1f914088972d53b660bbead3eccbecd",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm1a00000001",
     ): "1db51154613388ab5f620d768c83e4a0b6684664646dc233a07a762931b42e1f",
     (
@@ -401,6 +423,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "db382ec680257bf24c46afbdadef564e6fef178bd3dc88ba39432c47e8cb032a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "64ce3621f3d15dd1430b2ca030ab6adb6cab80c4fa35887ed6f45b0787945d25",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm1a00000001",
     ): "c8060cc83f22fefbd96080d84759f319a9d3ef1336a1a3f9f2cf516ab5b67698",
     (
@@ -463,6 +495,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "69cd74dcd6f9f108976c23d34c0ad855656fe14df5522806a94634ae68793cc0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "56e62554598d37276cce8a198f3fe341bf8b695768d722ab51ca4e4ddee7d8bb",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm1a00000001",
     ): "e50bc4dfbcd82634b4f08600a66d25b8720603e3cf1ea7e7d8e11e5f0e283656",
     (
@@ -520,6 +562,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "76e11002abece6e57fba25394afae87a8bfc136b0e3c9bc4a8353a4d1a7f8eb4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "df702a4ec3578d5cb8d53820066c2f02d9dc6f5f31aea3a25904f616f9041cb1",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm1a00000001",
     ): "536e22fb65125271c1644ac28117e941fb556f6f6b2dc8f4e288bc288c54a8da",
     (
@@ -549,6 +601,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "043cf91b1998ba2c9032bcc9efcfd7daa56af0e6f293ea4bbc892609d6f2562a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "38b7c4a8a0a0b71bc79ae47e52617167d4eb20f183591243cae9d511f1b57a06",
     (
         16,
         "mm1a2b3c4d5e",
@@ -587,6 +649,32 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 }
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
+_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "372608b04a82544dfe85e98a705d254f5e9aa4394a5fc2314e196f79f9f05af6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "f95bcf25de167188742047c9e63b2253e74f1b14b7ed4a46364d42dfe82c7506",
+}
+_PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
+    tuple[int, str, str], str
+] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "e1fa4316e74e6b0cf61d8475c6762fd0901d983c0bd48d8da916caf76a270f1b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "2046e9e8550bf5dafab2111e24cb4276418f483a2b0ef169fea3881a750622db",
+}
 _CAPABILITY_ROLES = (
     "saas_app",
     "saas_authenticator",
@@ -595,6 +683,7 @@ _CAPABILITY_ROLES = (
     "saas_dispatcher_n1_compat",
     "saas_executor",
     "saas_runner_agent",
+    "saas_model_projection",
     "saas_secret_broker",
     "saas_preview_gateway",
     "saas_preview_edge",
@@ -663,6 +752,7 @@ class ProductionPostgreSqlPlan:
     service_role_bindings: ProductionServiceRoleBindings
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
     platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
+    model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
 
@@ -678,6 +768,7 @@ class ProductionPostgreSqlPlan:
         service_role_bindings: ProductionServiceRoleBindings,
         platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
         platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
     ) -> ProductionPostgreSqlPlan:
@@ -706,6 +797,7 @@ class ProductionPostgreSqlPlan:
             service_role_bindings=service_role_bindings,
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
+            model_projection_service_role_bindings=model_projection_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
         )
@@ -727,6 +819,7 @@ class ProductionPostgreSqlPlan:
                 self.service_role_bindings,
                 self.platform_model_service_role_bindings,
                 self.platform_admin_service_role_bindings,
+                self.model_projection_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -938,6 +1031,17 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
             )
             or set(logins) & {binding.login for binding in platform_admin_bindings.bindings}
             or _SHA256.fullmatch(platform_admin_bindings.sha256) is None
+        ):
+            raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    projection_bindings = plan.model_projection_service_role_bindings
+    if projection_bindings is not None:
+        if (
+            {binding.service: binding.base_role for binding in projection_bindings.bindings}
+            != dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)
+            or len(projection_bindings.bindings) != 1
+            or any(binding.login in _CAPABILITY_ROLES for binding in projection_bindings.bindings)
+            or set(logins) & {binding.login for binding in projection_bindings.bindings}
+            or _SHA256.fullmatch(projection_bindings.sha256) is None
         ):
             raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     graph = plan.service_role_graph
@@ -1181,6 +1285,8 @@ def _source_security_catalog_baselines(
     platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
     if observed == platform_admin:
         return _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+    if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
+        return _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
@@ -2540,6 +2646,7 @@ def _verify_source_security_catalog_digest(
     """Reject ACL/policy/role drift against a clean-replay source anchor."""
 
     normalized = _normalize_source_catalog(catalog, role_aliases=role_aliases)
+    normalized = _source_catalog_without_dormant_projection_role(normalized, saas_head=key[2])
     if key[2] not in _LEGACY_ORDERED_SOURCE_SECURITY_HEADS:
         normalized = _sort_normalized_source_catalog_rows(normalized)
     digest = hashlib.sha256(
@@ -2557,9 +2664,68 @@ def _verify_source_security_catalog_digest(
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
+        if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
+            accepted_digests.add(
+                _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+            )
     if digest not in accepted_digests:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
+
+
+def _source_catalog_without_dormant_projection_role(catalog: object, *, saas_head: str) -> object:
+    """Preserve old anchors only for a newly staged role with no business authority."""
+
+    if saas_head not in {
+        "p0s000000011",
+        "p0s000000012",
+        "p0s000000013",
+        "p0s000000014",
+        "p0s000000015",
+        "lm1a00000001",
+    } or not isinstance(catalog, dict):
+        return catalog
+    security = catalog.get("control_plane_security")
+    if not isinstance(security, dict):
+        return catalog
+    role = "saas_model_projection"
+    roles = security.get("roles")
+    if not isinstance(roles, list) or not any(
+        isinstance(row, list) and role in row for row in roles
+    ):
+        return catalog
+    expected_role = [role, False, False, False, False, False, False, True, -1, "null"]
+    management = [role, "authority:principal_operator", "authority:bootstrap", True, False, False]
+    usage = [role, "pg_database_owner", "USAGE", False]
+    admitted = {"roles": expected_role, "memberships": management, "schema_acls": usage}
+    projected = dict(security)
+    for key, expected in admitted.items():
+        rows = security.get(key)
+        if not isinstance(rows, list):
+            raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+        matching = [row for row in rows if isinstance(row, list) and role in row]
+        if matching != [expected] and not (key == "schema_acls" and matching == []):
+            raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+        projected[key] = [row for row in rows if row not in matching]
+    result = {**catalog, "control_plane_security": projected}
+
+    def references_role(value: object) -> bool:
+        if isinstance(value, str):
+            return (
+                re.search(r"(?<![A-Za-z0-9_])saas_model_projection(?![A-Za-z0-9_])", value)
+                is not None
+            )
+        if isinstance(value, dict):
+            return any(
+                references_role(key) or references_role(item) for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(references_role(item) for item in value)
+        return False
+
+    if references_role(result):
+        raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+    return result
 
 
 _PREVIEW_OWNER_LEASE_DEFINER_SHA256 = {

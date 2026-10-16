@@ -21,6 +21,7 @@ DECLARE
         'saas_dispatcher_n1_compat',
         'saas_executor',
         'saas_runner_agent',
+        'saas_model_projection',
         'saas_secret_broker',
         'saas_preview_gateway',
         'saas_preview_edge',
@@ -211,7 +212,7 @@ BEGIN
         'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -652,6 +653,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'lm1a00000001' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'lm1b00000001' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -738,7 +741,7 @@ BEGIN
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
               'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-              'p0s000000014', 'p0s000000015', 'lm1a00000001'
+              'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -835,6 +838,7 @@ DECLARE
         'saas_dispatcher_n1_compat',
         'saas_executor',
         'saas_runner_agent',
+        'saas_model_projection',
         'saas_secret_broker',
         'saas_preview_gateway',
         'saas_preview_edge',
@@ -1091,7 +1095,7 @@ DECLARE
     named_principals constant text[] := ARRAY[
         'saas_app', 'saas_authenticator', 'saas_governance', 'saas_dispatcher',
         'saas_dispatcher_n1_compat', 'saas_executor', 'saas_runner_agent',
-        'saas_secret_broker', 'saas_preview_gateway', 'saas_preview_edge',
+        'saas_model_projection', 'saas_secret_broker', 'saas_preview_gateway', 'saas_preview_edge',
         'saas_preview_owner', 'saas_webhook_dispatcher', 'saas_billing',
         'saas_metering', 'saas_public_api', 'saas_platform',
         'saas_platform_authenticator', 'saas_platform_app',
@@ -1112,14 +1116,14 @@ BEGIN
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         IF schema_revision IN (
-            'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+            'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001'
         ) THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
     IF schema_revision NOT IN (
-        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     )
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
@@ -1175,7 +1179,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'lm1a00000001') THEN
+    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001') THEN
         IF to_regclass('public.saas_platform_password_credentials') IS NULL THEN
             RAISE EXCEPTION 'P0S14 Staff password authority object contract rejected';
         END IF;
@@ -1220,6 +1224,7 @@ DECLARE
     target_roles constant text[] := ARRAY[
         'saas_app', 'saas_authenticator', 'saas_governance', 'saas_dispatcher',
         'saas_dispatcher_n1_compat', 'saas_executor', 'saas_runner_agent',
+        'saas_model_projection',
         'saas_secret_broker',
         'saas_preview_gateway', 'saas_preview_edge', 'saas_preview_owner',
         'saas_webhook_dispatcher', 'saas_billing', 'saas_metering',
@@ -1267,7 +1272,7 @@ BEGIN
         'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -2194,6 +2199,7 @@ DECLARE
         'saas_onboarding',
         'saas_executor',
         'saas_runner_agent',
+        'saas_model_projection',
         'saas_onboarding_status'
     ];
     caller_role oid;
@@ -2360,19 +2366,19 @@ $$;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
         saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
-        saas_onboarding_status;
+        saas_model_projection, saas_onboarding_status;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON SEQUENCES FROM
         saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
-        saas_onboarding_status;
+        saas_model_projection, saas_onboarding_status;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
         saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
-        saas_onboarding_status;
+        saas_model_projection, saas_onboarding_status;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TYPES FROM
         saas_registration, saas_onboarding, saas_executor, saas_runner_agent,
-        saas_onboarding_status;
+        saas_model_projection, saas_onboarding_status;
 
 -- Application-owned objects are default-deny to PUBLIC as well as to every
 -- service capability.  Extension members are excluded from the existing
@@ -4113,7 +4119,7 @@ BEGIN
     IF schema_revision NOT IN (
         'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
@@ -4636,7 +4642,7 @@ BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
     IF schema_revision IN (
-        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     ) THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
@@ -4669,7 +4675,7 @@ BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
     IF schema_revision IN (
-        'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001'
+        'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001'
     ) THEN
         IF to_regclass('public.saas_model_provider_configurations') IS NULL
            OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
@@ -4736,7 +4742,7 @@ BEGIN
         'saas_model_connections', 'saas_model_credential_versions',
         'saas_model_projection_operations'
     );
-    IF schema_revision <> 'lm1a00000001' THEN
+    IF schema_revision NOT IN ('lm1a00000001', 'lm1b00000001') THEN
         IF present_count <> 0 THEN
             RAISE EXCEPTION 'model connection revision/object contract rejected';
         END IF;
@@ -4760,5 +4766,42 @@ BEGIN
         idempotency_key, request_hash, attempt_count, available_at, claimed_at,
         claim_token, published_at, created_at
     ) ON saas_control_plane_outbox TO saas_platform_app;
+END
+$$;
+
+-- Projection can acknowledge only an admitted operation. It cannot edit the
+-- canonical key, claim an Outbox lease, or manufacture publication evidence.
+DO $$
+DECLARE
+    schema_revision text;
+    receipt_table oid := to_regclass('public.saas_model_projection_transitions');
+BEGIN
+    SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
+    IF schema_revision <> 'lm1b00000001' THEN
+        IF receipt_table IS NOT NULL THEN
+            RAISE EXCEPTION 'model projection revision/object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+    IF receipt_table IS NULL OR NOT EXISTS (
+        SELECT 1 FROM pg_class WHERE oid = receipt_table
+        AND relkind = 'r' AND relrowsecurity AND relforcerowsecurity
+    ) THEN
+        RAISE EXCEPTION 'model projection revision/object contract rejected';
+    END IF;
+    GRANT SELECT ON saas_model_projection_operations, saas_model_credential_versions
+    TO saas_model_projection;
+    GRANT UPDATE (status, error_code, version, updated_at)
+    ON saas_model_projection_operations TO saas_model_projection;
+    GRANT SELECT, INSERT ON saas_model_projection_transitions TO saas_model_projection;
+    GRANT SELECT ON saas_model_projection_transitions
+    TO saas_platform_app, saas_platform, saas_platform_governance;
+    GRANT SELECT (id, status) ON saas_platform_staff_principals TO saas_model_projection;
+    GRANT SELECT (principal_id, role, status, expires_at)
+    ON saas_platform_role_assignments TO saas_model_projection;
+    GRANT SELECT (principal_id, token_hash, revoked_at, expires_at)
+    ON saas_platform_support_sessions TO saas_model_projection;
+    GRANT SELECT (id, tenant_id, aggregate_type, aggregate_key, event_type, payload, request_hash)
+    ON saas_control_plane_outbox TO saas_model_projection;
 END
 $$;

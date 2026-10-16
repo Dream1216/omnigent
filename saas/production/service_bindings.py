@@ -50,6 +50,9 @@ EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
         "platform_governance": "saas_platform_governance",
     }
 )
+EXPECTED_MODEL_PROJECTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
+    {"model_projection": "saas_model_projection"}
+)
 
 
 class ProductionServiceRoleBindingsError(ValueError):
@@ -143,11 +146,16 @@ def compose_production_service_role_graph(
     production: ProductionServiceRoleBindings,
     platform_model: ProductionServiceRoleBindings | None = None,
     platform_admin: ProductionServiceRoleBindings | None = None,
+    model_projection: ProductionServiceRoleBindings | None = None,
 ) -> ProductionServiceRoleGraph:
     """Compose profiles without permitting an overlap or login to change meaning."""
 
+    if model_projection is not None and (platform_model is None or platform_admin is None):
+        raise ProductionServiceRoleBindingsError(
+            "model projection requires both Platform model and Staff admin profiles"
+        )
     by_service = {binding.service: binding for binding in production.bindings}
-    for extension in (platform_model, platform_admin):
+    for extension in (platform_model, platform_admin, model_projection):
         if extension is None:
             continue
         for binding in extension.bindings:
@@ -209,6 +217,18 @@ def load_platform_admin_service_role_bindings(
         source,
         name="OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE",
         expected_roles=EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+    )
+
+
+def load_model_projection_service_role_bindings(
+    source: Mapping[str, str],
+) -> ProductionServiceRoleBindings:
+    """Load the opt-in credential-projection worker's one-login profile."""
+
+    return _load_service_role_bindings(
+        source,
+        name="OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE",
+        expected_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     )
 
 
@@ -292,6 +312,7 @@ def _load_service_role_bindings(
 
 
 __all__ = [
+    "EXPECTED_MODEL_PROJECTION_SERVICE_ROLES",
     "EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES",
     "EXPECTED_PLATFORM_MODEL_SERVICE_ROLES",
     "EXPECTED_PRODUCTION_SERVICE_ROLES",
@@ -300,6 +321,7 @@ __all__ = [
     "ProductionServiceRoleBindingsError",
     "ProductionServiceRoleGraph",
     "compose_production_service_role_graph",
+    "load_model_projection_service_role_bindings",
     "load_platform_admin_service_role_bindings",
     "load_platform_model_service_role_bindings",
     "load_production_service_role_bindings",

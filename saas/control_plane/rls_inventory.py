@@ -97,6 +97,7 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_model_connections",
         "saas_model_credential_versions",
         "saas_model_projection_operations",
+        "saas_model_projection_transitions",
         "saas_platform_lifecycle_operations",
         "saas_platform_admin_operations",
         "saas_platform_support_grants",
