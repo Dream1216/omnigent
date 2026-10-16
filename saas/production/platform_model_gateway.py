@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
+import anyio
 import httpx
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
@@ -362,33 +363,35 @@ class PlatformModelGateway:
             parser.finish()
             completed = True
         finally:
-            await upstream.aclose()
-            await client.aclose()
-            if completed and parser.total_tokens is not None:
-                actual_tokens = max(1, parser.total_tokens)
-                cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
-                actual_cost = max(
-                    1,
-                    _microusd(parser.prompt_cache_hit_tokens or 0, cache_hit_rate)
-                    + _microusd(parser.prompt_cache_miss_tokens or 0, cache_miss_rate)
-                    + _microusd(parser.completion_tokens or 0, output_rate),
-                )
-                # The reservation uses the maximum configured rate and a byte-
-                # bounded token ceiling. A malformed Provider usage frame can
-                # never expand authority after egress.
-                if (
-                    actual_tokens <= reservation.admitted_tokens
-                    and actual_cost <= reservation.admitted_microusd
-                ):
-                    await self._settle(reservation, actual_cost, actual_tokens)
-                else:
+            # A peer disconnect must not cancel transport cleanup or accounting.
+            with anyio.CancelScope(shield=True):
+                await upstream.aclose()
+                await client.aclose()
+                if completed and parser.total_tokens is not None:
+                    actual_tokens = max(1, parser.total_tokens)
+                    cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
+                    actual_cost = max(
+                        1,
+                        _microusd(parser.prompt_cache_hit_tokens or 0, cache_hit_rate)
+                        + _microusd(parser.prompt_cache_miss_tokens or 0, cache_miss_rate)
+                        + _microusd(parser.completion_tokens or 0, output_rate),
+                    )
+                    # The reservation uses the maximum configured rate and a byte-
+                    # bounded token ceiling. A malformed Provider usage frame can
+                    # never expand authority after egress.
+                    if (
+                        actual_tokens <= reservation.admitted_tokens
+                        and actual_cost <= reservation.admitted_microusd
+                    ):
+                        await self._settle(reservation, actual_cost, actual_tokens)
+                    else:
+                        await self._settle_full(reservation)
+                elif output_observed:
+                    # A disconnect after output is financially ambiguous. Charge
+                    # the admitted ceiling instead of silently releasing spend.
                     await self._settle_full(reservation)
-            elif output_observed:
-                # A disconnect after output is financially ambiguous. Charge
-                # the admitted ceiling instead of silently releasing spend.
-                await self._settle_full(reservation)
-            else:
-                await self._release(reservation)
+                else:
+                    await self._release(reservation)
 
     async def _settle(
         self,
