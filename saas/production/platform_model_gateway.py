@@ -14,9 +14,7 @@ import logging
 import os
 import stat
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -34,6 +32,7 @@ from saas.control_plane.model_budget import (
     ModelProviderBudgetError,
     ModelProviderBudgetReservationView,
 )
+from saas.control_plane.model_gateway_evidence import GatewayRequestEvidence
 from saas.control_plane.model_pricing import (
     PlatformModelPrice,
     PlatformModelPricingPolicy,
@@ -85,14 +84,22 @@ class BudgetAuthority(Protocol):
         requested_tokens: int,
         ttl: timedelta,
         now: datetime | None = None,
+        gateway_request: GatewayRequestEvidence | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
     def begin_attempt(
-        self, *, reservation_id: UUID, now: datetime | None = None
+        self,
+        *,
+        reservation_id: UUID,
+        now: datetime | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
     def mark_uncertain(
-        self, *, reservation_id: UUID, now: datetime | None = None
+        self,
+        *,
+        reservation_id: UUID,
+        now: datetime | None = None,
+        reason: str = "provider_outcome_unknown",
     ) -> ModelProviderBudgetReservationView: ...
 
     def resolve_attempt(
@@ -101,8 +108,9 @@ class BudgetAuthority(Protocol):
         reservation_id: UUID,
         actual_microusd: int,
         actual_tokens: int,
-        evidence_sha256: str,
+        evidence_sha256: str | None,
         now: datetime | None = None,
+        gateway_usage: ModelTokenUsage | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
     def release(
@@ -210,6 +218,15 @@ class PlatformModelGateway:
                 requested_tokens=requested_tokens,
                 ttl=self._reservation_ttl,
                 now=requested_at,
+                gateway_request=GatewayRequestEvidence(
+                    model,
+                    "openai_responses"
+                    if upstream_path == "responses"
+                    else "openai_chat_completions",
+                    self._pricing.revision,
+                    price,
+                    _output_token_limit(document, responses=upstream_path == "responses"),
+                ),
             )
         except ModelProviderBudgetError as error:
             return _error(429, error.code)
@@ -252,7 +269,7 @@ class PlatformModelGateway:
         try:
             upstream = await client.send(outbound_request, stream=True)
         except httpx.HTTPError:
-            await self._retain_uncertain(reservation)
+            await self._retain_uncertain(reservation, reason="provider_unreachable")
             await self._close_transport(client)
             return _error(502, "platform_model_provider_unreachable")
         except BaseException:
@@ -261,7 +278,7 @@ class PlatformModelGateway:
                 await self._close_transport(client)
             raise
         if upstream.status_code != 200:
-            await self._retain_uncertain(reservation)
+            await self._retain_uncertain(reservation, reason="provider_rejected")
             await self._close_transport(client, upstream)
             return _error(502, "platform_model_provider_rejected")
 
@@ -272,7 +289,6 @@ class PlatformModelGateway:
                 reservation=reservation,
                 price=price,
                 requested_at=requested_at,
-                model=model,
                 responses=upstream_path == "responses",
             ),
             status_code=200,
@@ -298,7 +314,6 @@ class PlatformModelGateway:
         reservation: ModelProviderBudgetReservationView,
         price: PlatformModelPrice,
         requested_at: datetime,
-        model: str,
         responses: bool,
     ) -> AsyncIterator[bytes]:
         parser = _UsageParser(responses=responses)
@@ -313,15 +328,13 @@ class PlatformModelGateway:
                 try:
                     usage = parser.final_usage
                     if usage is None:
-                        await self._retain_uncertain(reservation)
+                        await self._retain_uncertain(reservation, reason="stream_incomplete")
                     else:
                         await self._resolve_usage(
                             reservation,
                             usage,
                             price=price,
                             requested_at=requested_at,
-                            model=model,
-                            responses=responses,
                         )
                 finally:
                     await self._close_transport(client, upstream)
@@ -333,8 +346,6 @@ class PlatformModelGateway:
         *,
         price: PlatformModelPrice,
         requested_at: datetime,
-        model: str,
-        responses: bool,
     ) -> None:
         try:
             actual = price.cost(usage, at=requested_at)
@@ -343,37 +354,27 @@ class PlatformModelGateway:
                 or usage.total_tokens > reservation.admitted_tokens
             ):
                 raise ValueError("Usage exceeds admitted budget")
-            evidence = {
-                "contract": "platform-model-gateway-usage-v1",
-                "reservation_id": str(reservation.id),
-                "tenant_id": str(reservation.tenant_id),
-                "session_id": str(reservation.run_id),
-                "provider_id": reservation.provider_id,
-                "configuration_version": reservation.configuration_version,
-                "public_model_id": model,
-                "wire_api": "openai_responses" if responses else "openai_chat_completions",
-                "pricing_revision": self._pricing.revision,
-                "model_price": asdict(price),
-                "requested_at": requested_at.isoformat(),
-                "usage": asdict(usage),
-                "actual_microusd": actual,
-            }
-            witness = sha256(
-                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("ascii")
-            ).hexdigest()
             await asyncio.to_thread(
                 self._budgets.resolve_attempt,
                 reservation_id=reservation.id,
                 actual_microusd=actual,
                 actual_tokens=usage.total_tokens,
-                evidence_sha256=witness,
+                evidence_sha256=None,
+                gateway_usage=usage,
             )
         except Exception:  # noqa: BLE001 - retain the hold rather than inventing a cost.
-            await self._retain_uncertain(reservation)
+            await self._retain_uncertain(reservation, reason="settlement_unavailable")
 
-    async def _retain_uncertain(self, reservation: ModelProviderBudgetReservationView) -> None:
+    async def _retain_uncertain(
+        self,
+        reservation: ModelProviderBudgetReservationView,
+        *,
+        reason: str = "provider_outcome_unknown",
+    ) -> None:
         try:
-            await asyncio.to_thread(self._budgets.mark_uncertain, reservation_id=reservation.id)
+            await asyncio.to_thread(
+                self._budgets.mark_uncertain, reservation_id=reservation.id, reason=reason
+            )
         except Exception:  # noqa: BLE001 - in-flight fences remain held if storage is unavailable.
             _LOG.warning(
                 "platform_model_budget_reconciliation_required",

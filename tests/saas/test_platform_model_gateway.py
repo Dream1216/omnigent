@@ -111,9 +111,16 @@ class _Budgets:
     def resolve_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
         assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
         witness = kwargs["evidence_sha256"]
+        if kwargs.get("gateway_usage") is not None:
+            assert witness is None
+            witness = "f" * 64
         assert isinstance(witness, str) and len(witness) == 64
         self.settled.append(
-            {name: value for name, value in kwargs.items() if name != "evidence_sha256"}
+            {
+                name: value
+                for name, value in kwargs.items()
+                if name not in {"evidence_sha256", "gateway_usage"}
+            }
         )
         return self._replace(
             kwargs,

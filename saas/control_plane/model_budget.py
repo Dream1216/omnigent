@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -14,7 +14,18 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.query_context import query_name_scope
+from saas.control_plane.model_gateway_evidence import (
+    GatewayEvidenceView,
+    GatewayRequestEvidence,
+    decode_gateway_evidence,
+    gateway_request_record,
+    retain_gateway_evidence,
+    retained_gateway_request,
+)
+from saas.control_plane.model_pricing import token_cost_microusd
+from saas.control_plane.model_usage import ModelTokenUsage
 from saas.control_plane.platform_models import (
+    ModelGatewayEvidenceRecord,
     ModelProviderBudgetReservationRecord,
     ModelProviderConfigurationRecord,
     ModelProviderMonthlyBudgetRecord,
@@ -78,6 +89,7 @@ class ModelProviderBudgetAdmissionService:
         requested_tokens: int,
         ttl: timedelta,
         now: datetime | None = None,
+        gateway_request: GatewayRequestEvidence | None = None,
     ) -> ModelProviderBudgetReservationView:
         at = _aware(now or datetime.now(timezone.utc))
         _positive_uuid(tenant_id, "tenant")
@@ -85,6 +97,16 @@ class ModelProviderBudgetAdmissionService:
         _operation_key(operation_key)
         _positive_amount(requested_microusd, "microusd")
         _positive_amount(requested_tokens, "tokens")
+        if gateway_request is not None and (
+            not isinstance(gateway_request, GatewayRequestEvidence)
+            or requested_tokens < gateway_request.output_token_limit
+            or requested_microusd
+            != token_cost_microusd(requested_tokens, gateway_request.model_price.reservation_rate)
+        ):
+            raise ModelProviderBudgetError(
+                "platform_model_gateway_request_evidence_invalid",
+                "Gateway cost binding is invalid",
+            )
         if ttl <= timedelta(0) or ttl > _MAX_RESERVATION_TTL:
             raise ModelProviderBudgetError(
                 "platform_model_budget_request_invalid",
@@ -98,6 +120,9 @@ class ModelProviderBudgetAdmissionService:
             operation_key=operation_key,
             requested_microusd=requested_microusd,
             requested_tokens=requested_tokens,
+            **(
+                {"gateway_request": asdict(gateway_request)} if gateway_request is not None else {}
+            ),
         )
         with self._sessions.begin() as db:
             # Serialize every Provider admission without granting Billing
@@ -212,6 +237,8 @@ class ModelProviderBudgetAdmissionService:
                 daily.updated_at = at
             db.add(record)
             db.flush()
+            if gateway_request is not None:
+                retain_gateway_evidence(db, record, at=at, request=gateway_request)
             return _view(record)
 
     def reserve_platform_test(
@@ -421,7 +448,7 @@ class ModelProviderBudgetAdmissionService:
         _positive_amount(actual_tokens, "tokens")
         with self._sessions.begin() as db:
             record = self._locked_reservation(db, reservation_id)
-            if record.purpose != "tenant_run":
+            if record.purpose != "tenant_run" or gateway_request_record(db, record.id) is not None:
                 raise ModelProviderBudgetError(
                     "platform_model_budget_outcome_required",
                     "Platform test settlement requires attempt evidence",
@@ -513,16 +540,31 @@ class ModelProviderBudgetAdmissionService:
                 )
             record.status, record.updated_at = "in_flight", at
             record.version += 1
+            retain_gateway_evidence(db, record, at=at)
             db.flush()
             return _view(record)
 
     def mark_uncertain(
-        self, *, reservation_id: UUID, now: datetime | None = None
+        self,
+        *,
+        reservation_id: UUID,
+        now: datetime | None = None,
+        reason: str = "provider_outcome_unknown",
     ) -> ModelProviderBudgetReservationView:
         """Retain the full hold; expiry and ordinary release cannot settle unknown costs."""
 
         at = _aware(now or datetime.now(timezone.utc))
         _positive_uuid(reservation_id, "reservation")
+        if not isinstance(reason, str) or reason not in {
+            "provider_outcome_unknown",
+            "provider_rejected",
+            "provider_unreachable",
+            "stream_incomplete",
+            "settlement_unavailable",
+        }:
+            raise ModelProviderBudgetError(
+                "platform_model_budget_outcome_invalid", "Invalid outcome reason"
+            )
         with (
             query_name_scope("saas.model_budget.retain_uncertain_inference"),
             self._sessions.begin() as db,
@@ -537,6 +579,7 @@ class ModelProviderBudgetAdmissionService:
                 )
             record.status, record.updated_at = "uncertain", at
             record.version += 1
+            retain_gateway_evidence(db, record, at=at, reason=reason)
             db.flush()
             return _view(record)
 
@@ -546,16 +589,23 @@ class ModelProviderBudgetAdmissionService:
         reservation_id: UUID,
         actual_microusd: int,
         actual_tokens: int,
-        evidence_sha256: str,
+        evidence_sha256: str | None,
         now: datetime | None = None,
+        gateway_usage: ModelTokenUsage | None = None,
     ) -> ModelProviderBudgetReservationView:
         """Resolve one sent attempt from trusted usage or authoritative no-usage evidence."""
 
         at = _aware(now or datetime.now(timezone.utc))
         _positive_uuid(reservation_id, "reservation")
         if (
-            not isinstance(evidence_sha256, str)
-            or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+            (evidence_sha256 is None and gateway_usage is None)
+            or (
+                evidence_sha256 is not None
+                and (
+                    not isinstance(evidence_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+                )
+            )
             or type(actual_microusd) is not int
             or type(actual_tokens) is not int
             or not 0 <= actual_microusd <= (1 << 63) - 1
@@ -570,7 +620,42 @@ class ModelProviderBudgetAdmissionService:
             self._sessions.begin() as db,
         ):
             record = self._locked_reservation(db, reservation_id)
+            request = gateway_request_record(db, reservation_id)
+            if gateway_usage is not None:
+                try:
+                    if request is None or not isinstance(gateway_usage, ModelTokenUsage):
+                        raise ValueError("Missing gateway request")
+                    bound = retained_gateway_request(request, record)
+                    if (
+                        gateway_usage.total_tokens != actual_tokens
+                        or gateway_usage.output_tokens > bound.output_token_limit
+                        or bound.model_price.cost(
+                            gateway_usage, at=_stored_time(record.created_at)
+                        )
+                        != actual_microusd
+                    ):
+                        raise ValueError("Invalid gateway usage binding")
+                except (ValueError, TypeError, KeyError):
+                    raise ModelProviderBudgetError(
+                        "platform_model_budget_outcome_invalid",
+                        "Gateway usage evidence is invalid",
+                    ) from None
             if record.status in {"settled", "released"}:
+                if gateway_usage is not None:
+                    receipt = db.scalar(
+                        sa.select(ModelGatewayEvidenceRecord).where(
+                            ModelGatewayEvidenceRecord.reservation_id == record.id,
+                            ModelGatewayEvidenceRecord.phase == record.status,
+                        )
+                    )
+                    if receipt is None or json.loads(receipt.canonical_evidence)[
+                        "usage"
+                    ] != asdict(gateway_usage):
+                        raise ModelProviderBudgetError(
+                            "platform_model_budget_settlement_conflict",
+                            "Gateway usage conflicts with its receipt",
+                        )
+                    evidence_sha256 = evidence_sha256 or receipt.evidence_sha256
                 if (
                     record.outcome_evidence_sha256 != evidence_sha256
                     or record.settled_microusd != actual_microusd
@@ -581,6 +666,11 @@ class ModelProviderBudgetAdmissionService:
                         "Inference outcome conflicts with its receipt",
                     )
                 return _view(record, replayed=True)
+            if request is not None and (gateway_usage is None or evidence_sha256 is not None):
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_outcome_invalid",
+                    "Gateway requires normalized usage evidence",
+                )
             pre_egress_zero = (
                 record.purpose == "platform_test"
                 and record.status == "reserved"
@@ -614,8 +704,50 @@ class ModelProviderBudgetAdmissionService:
             record.status = "settled" if actual_tokens else "released"
             record.outcome_evidence_sha256 = evidence_sha256
             record.updated_at, record.version = at, record.version + 1
+            retain_gateway_evidence(db, record, at=at, usage=gateway_usage)
             db.flush()
             return _view(record)
+
+    def gateway_evidence(
+        self,
+        *,
+        reservation_id: UUID,
+        tenant_id: UUID,
+        run_id: UUID,
+    ) -> tuple[GatewayEvidenceView, ...]:
+        for value in (reservation_id, tenant_id, run_id):
+            _positive_uuid(value, "evidence scope")
+        with query_name_scope("saas.model_budget.read_gateway_evidence"), self._sessions() as db:
+            record = db.get(ModelProviderBudgetReservationRecord, reservation_id)
+            if record is None or record.tenant_id != tenant_id or record.run_id != run_id:
+                raise ModelProviderBudgetError(
+                    "platform_model_budget_binding_invalid", "Gateway evidence scope is invalid"
+                )
+            rows = db.scalars(
+                sa.select(ModelGatewayEvidenceRecord)
+                .where(
+                    ModelGatewayEvidenceRecord.reservation_id == record.id,
+                    ModelGatewayEvidenceRecord.tenant_id == tenant_id,
+                )
+                .order_by(ModelGatewayEvidenceRecord.budget_version)
+            ).all()
+            try:
+                for row in rows:
+                    decode_gateway_evidence(row, record)
+            except (ValueError, KeyError, TypeError):
+                raise ModelProviderBudgetError(
+                    "platform_model_gateway_evidence_drift", "Gateway evidence digest changed"
+                ) from None
+            return tuple(
+                GatewayEvidenceView(
+                    row.id,
+                    row.reservation_id,
+                    row.phase,
+                    row.canonical_evidence,
+                    row.evidence_sha256,
+                )
+                for row in rows
+            )
 
     def apply_metered_usage(
         self,
@@ -749,6 +881,7 @@ class ModelProviderBudgetAdmissionService:
             record.status = target_status
             record.updated_at = at
             record.version += 1
+            retain_gateway_evidence(db, record, at=at, reason="not_sent")
             db.flush()
             return _view(record)
 

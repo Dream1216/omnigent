@@ -10,6 +10,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
+from saas.control_plane.db_models import Tenant
 from saas.control_plane.model_pricing import PlatformModelPrice, PlatformModelPricingPolicy
 from saas.control_plane.platform_models import (
     ModelProviderBudgetReservationRecord,
@@ -34,6 +35,17 @@ from tests.saas.test_platform_model_gateway import (
 def _fixture(tmp_path, handler, *, responses=False, client_factory=None, budget_database=None):
     budgets, sessions = _service(tmp_path) if budget_database is None else budget_database
     with sessions.begin() as db:
+        if db.get(Tenant, TENANT_ID) is None:
+            db.add(
+                Tenant(
+                    id=TENANT_ID,
+                    slug="gateway-fixture",
+                    name="Gateway fixture",
+                    status="active",
+                    plan="test",
+                    home_region="test",
+                )
+            )
         row = db.get(ModelProviderConfigurationRecord, "deepseek")
         row.version, row.monthly_budget_microusd, row.per_tenant_daily_token_limit = (
             7,

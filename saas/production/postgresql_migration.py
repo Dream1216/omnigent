@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e592868bb88080fbf9f071d293359f34e3a08f57e7b0b43bafa0f922246f47af",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e3d0f903ef1792d2cfb8c8af5e20b198bf53604c27a727309182627c295214ba",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -373,6 +384,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "46b1e0ca4cb7e296d4e7e3838d4da36db5194d900e9b11f1e9cf5b151cdf1bd5",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "c3cb9f1fc36f6ce21652a35121c9fdd73b0739a1cc3dc5a19b1e1e7b00ec3a3f",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -530,6 +552,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "fc0dfd301fcd842d066a4601b24620155765159ba55508a7f247f2313344aac3",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e72c9d007416d75654c729ad838eab8e1a69eb635738cfe1d22f2313229badce",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -657,6 +690,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "13b3d53a77bfa3b4603b9a0ea6e5cad1fbf639bf2aa41518a3bf3d1530892941",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "af7bae30fa7b1e55afed4c5bb9f6b4c700e8a62316657cf473d38129498d3944",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -779,6 +823,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "7fb84329d90ffa91a188c3b9ad6da69b9373a191c5d38a9795121e19ebcfb110",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "f6d4b0763368a313f06c5ac041788bc04d85c1cc0affa40c4ae05fb0e2b0b841",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -876,6 +931,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "61f6983a59170c38fa18e17ee270623c9a53c0345e6b94202ebd9cf6683ce58d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "d273c85556296a19624da3a4679c2b6b2ca87f8ee8bae965efc74f87234ecdd1",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -980,6 +1046,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "c13017fd6599a6a26db9b8b1882e9ed2a6ef6d45246d55d1204bf6462b866c1b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "32e46a1ac2d80b7da6aa0344b845888a2d46978141af5a164a945e66e30fb0f3",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,
@@ -1049,6 +1126,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "ee6b90425d0ede040d8b1d22b42c662ed55ccfdd94ffc721f2ddc7d450986b4d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "eeda2fd90804bff220d0dabc72580ce9de5d765e18ec233f15a1a252aa651574",
     # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
     (
         16,

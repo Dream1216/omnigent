@@ -751,6 +751,48 @@ class ModelProviderBudgetReservationRecord(SaasBase):
     )
 
 
+class ModelGatewayEvidenceRecord(SaasBase):
+    """Append-only, content-blind facts behind a gateway budget transition."""
+
+    __tablename__ = "saas_model_gateway_evidence"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    reservation_id: Mapped[UUID] = mapped_column(nullable=False)
+    phase: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    budget_version: Mapped[int] = mapped_column(nullable=False)
+    canonical_evidence: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("tenant_id", "reservation_id"),
+            (
+                "saas_model_provider_budget_reservations.tenant_id",
+                "saas_model_provider_budget_reservations.id",
+            ),
+            ondelete="RESTRICT",
+            name="fk_model_gateway_evidence_budget",
+        ),
+        sa.UniqueConstraint("reservation_id", "phase", name="uq_model_gateway_evidence_phase"),
+        sa.UniqueConstraint(
+            "reservation_id", "budget_version", name="uq_model_gateway_evidence_version"
+        ),
+        sa.CheckConstraint(
+            "phase IN ('request', 'in_flight', 'uncertain', 'settled', 'released', 'expired')",
+            name="ck_model_gateway_evidence_phase",
+        ),
+        sa.CheckConstraint("budget_version > 0", name="ck_model_gateway_evidence_version"),
+        sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_gateway_evidence_hash"),
+        sa.CheckConstraint(
+            "length(canonical_evidence) BETWEEN 1 AND 16384",
+            name="ck_model_gateway_evidence_bound",
+        ),
+        sa.Index("ix_model_gateway_evidence_scope", "tenant_id", "reservation_id", "created_at"),
+    )
+
+
 class PlatformLifecycleOperationRecord(SaasBase):
     """Immutable receipt for one high-risk PC2 platform lifecycle command."""
 

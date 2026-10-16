@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,15 +15,22 @@ from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
+from saas.control_plane.db_models import ControlPlaneOutboxEvent, Tenant
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
-from saas.control_plane.platform_models import ModelProviderConfigurationRecord
+from saas.control_plane.model_usage import ModelTokenUsage
+from saas.control_plane.platform_models import (
+    ModelProviderConfigurationRecord,
+)
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from tests.saas.test_model_connections import _fixture as _staff_fixture
+from tests.saas.test_platform_model_gateway import SESSION_ID, TENANT_ID
 from tests.saas.test_platform_model_gateway_attempts import _body, _fixture, _row
 
 
 @pytest.mark.parametrize("responses", (False, True))
+@pytest.mark.parametrize("zero", (False, True))
 def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
-    tmp_path, isolated_postgres_url, responses
+    tmp_path, isolated_postgres_url, responses, zero
 ):
     root = Path(__file__).resolve().parents[2]
     owner = sa.create_engine(isolated_postgres_url)
@@ -77,6 +87,24 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
             sessionmaker(billing, expire_on_commit=False)
         )
         calls = []
+        outcome_visible = []
+
+        def observe_outcome(connection, _cursor, statement, parameters, _context, _executemany):
+            if (
+                statement.startswith("INSERT INTO saas_model_gateway_evidence")
+                and parameters["phase"] in {"settled", "released"}
+                and json.loads(parameters["canonical_evidence"])["usage"] is not None
+            ):
+                retained = connection.execute(
+                    sa.text(
+                        "SELECT outcome_evidence_sha256 "
+                        "FROM saas_model_provider_budget_reservations WHERE id=:id"
+                    ),
+                    {"id": parameters["reservation_id"]},
+                ).scalar_one()
+                outcome_visible.append(retained == parameters["evidence_sha256"])
+
+        sa.event.listen(billing, "before_cursor_execute", observe_outcome)
 
         def handler(_request):
             calls.append(_request)
@@ -91,23 +119,73 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
                     )
                     == "in_flight"
                 )
+            body = _body(responses=responses, terminal=len(calls) == 1)
+            if zero:
+                body = body.replace(b":10", b":0").replace(b":3", b":0").replace(b":13", b":0")
             return httpx.Response(
                 200,
-                content=_body(responses=responses, terminal=len(calls) == 1),
+                content=body,
                 headers={"content-type": "text/event-stream"},
             )
 
         client, path, request, _, _, _ = _fixture(
             tmp_path, handler, responses=responses, budget_database=(budgets, factory)
         )
+
+        def corrupt_wire(_connection, _cursor, statement, parameters, _context, _executemany):
+            if (
+                statement.startswith("INSERT INTO saas_model_gateway_evidence")
+                and parameters["phase"] == "request"
+            ):
+                value = json.loads(parameters["canonical_evidence"])
+                value["request"]["wire_api"] = None
+                canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+                parameters = {
+                    **parameters,
+                    "canonical_evidence": canonical,
+                    "evidence_sha256": sha256(canonical.encode()).hexdigest(),
+                }
+            return statement, parameters
+
+        rejected_codes = []
+
+        def record_rejection(context):
+            rejected_codes.append(context.original_exception.sqlstate)
+
+        sa.event.listen(billing, "before_cursor_execute", corrupt_wire, retval=True)
+        sa.event.listen(billing, "handle_error", record_rejection)
+        try:
+            assert client.post(path, **request).status_code == 503
+            assert calls == []
+            assert rejected_codes == ["23514"]
+            with billing.connect() as connection:
+                for table in (
+                    "saas_model_provider_budget_reservations",
+                    "saas_model_gateway_evidence",
+                    "saas_model_provider_monthly_budgets",
+                ):
+                    assert (
+                        connection.exec_driver_sql(f"SELECT count(*) FROM {table}").scalar() == 0
+                    )
+        finally:
+            sa.event.remove(billing, "before_cursor_execute", corrupt_wire)
+            sa.event.remove(billing, "handle_error", record_rejection)
         assert client.post(path, **request).status_code == 200
+        assert outcome_visible == [True]
         row = _row(factory)
-        assert row.status == "settled" and row.settled_microusd == row.settled_tokens == 13
+        actual = 0 if zero else 13
+        status = "released" if zero else "settled"
+        assert row.status == status and row.settled_microusd == row.settled_tokens == actual
         assert row.outcome_evidence_sha256 is not None
+        facts = budgets.gateway_evidence(
+            reservation_id=row.id, tenant_id=TENANT_ID, run_id=SESSION_ID
+        )
+        assert [fact.phase for fact in facts] == ["request", "in_flight", status]
+        assert facts[-1].evidence_sha256 == row.outcome_evidence_sha256
         assert budgets.resolve_attempt(
             reservation_id=row.id,
-            actual_microusd=13,
-            actual_tokens=13,
+            actual_microusd=actual,
+            actual_tokens=actual,
             evidence_sha256=row.outcome_evidence_sha256,
         ).replayed
         assert client.post(path, **request).status_code == 200
@@ -121,7 +199,117 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
                 "SELECT reserved_microusd,settled_microusd "
                 "FROM saas_model_provider_monthly_budgets"
             ).one()
-            assert held > 0 and settled == 13
+            assert held > 0 and settled == actual
+            assert (
+                connection.scalar(sa.text("SELECT count(*) FROM saas_model_gateway_evidence")) == 6
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT count(*) FROM saas_control_plane_outbox "
+                        "WHERE event_type='model_gateway.evidence_retained'"
+                    )
+                )
+                == 6
+            )
+            pending = connection.exec_driver_sql(
+                "SELECT id FROM saas_model_provider_budget_reservations WHERE status='uncertain'"
+            ).scalar_one()
+        usage = ModelTokenUsage(0, 0, 0, 0, 0) if zero else ModelTokenUsage(10, 0, 10, 3, 13)
+
+        def resolve(_index):
+            return budgets.resolve_attempt(
+                reservation_id=pending,
+                actual_microusd=actual,
+                actual_tokens=actual,
+                evidence_sha256=None,
+                gateway_usage=usage,
+            ).replayed
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(resolve, range(2))) == [False, True]
+        with billing.connect() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT reserved_microusd,settled_microusd "
+                "FROM saas_model_provider_monthly_budgets"
+            ).one() == (0, actual * 2)
+            assert (
+                connection.scalar(sa.text("SELECT count(*) FROM saas_model_gateway_evidence")) == 7
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT count(*) FROM saas_control_plane_outbox "
+                        "WHERE event_type='model_gateway.evidence_retained'"
+                    )
+                )
+                == 7
+            )
+        assert outcome_visible == [True, True]
+        with pytest.raises(DBAPIError) as immutable, owner.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE saas_model_gateway_evidence SET canonical_evidence='{}'"
+            )
+        assert immutable.value.orig.sqlstate == "23514"
+        with pytest.raises(DBAPIError) as denied, billing.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE saas_model_gateway_evidence SET canonical_evidence='{}'"
+            )
+        assert denied.value.orig.sqlstate == "42501"
+        with (
+            pytest.raises(RuntimeError, match="retained gateway evidence"),
+            owner.begin() as connection,
+        ):
+            config.attributes["connection"] = connection
+            command.downgrade(config, "lm2a00000001")
+        with owner.connect() as connection:
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == CONTROL_PLANE_SCHEMA_REVISION
+            )
+            assert connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_class "
+                    "WHERE oid='saas_model_gateway_evidence'::regclass"
+                )
+            )
+            assert (
+                connection.scalar(sa.text("SELECT count(*) FROM saas_customer_ledger_entries"))
+                == 0
+            )
+        with factory.begin() as db:
+            other = uuid4()
+            db.add(
+                Tenant(
+                    id=other,
+                    slug="other-" + other.hex,
+                    name="Other fixture",
+                    status="active",
+                    plan="test",
+                    home_region="test",
+                )
+            )
+        with factory() as db:
+            event = db.scalar(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.event_type == "model_gateway.evidence_retained"
+                )
+            )
+        with pytest.raises(DBAPIError) as foreign, sessionmaker(billing).begin() as db:
+            db.add(
+                ControlPlaneOutboxEvent(
+                    id=uuid4(),
+                    tenant_id=other,
+                    aggregate_type=event.aggregate_type,
+                    aggregate_key=event.aggregate_key,
+                    event_type=event.event_type,
+                    payload={**event.payload, "tenant_id": str(other)},
+                    idempotency_key=event.idempotency_key,
+                    request_hash=event.request_hash,
+                    attempt_count=0,
+                )
+            )
+        assert foreign.value.orig.sqlstate == "42501"
         for sql in (
             "SELECT api_key_ciphertext FROM saas_model_provider_configurations",
             "SELECT * FROM saas_model_credential_versions",
@@ -141,4 +329,41 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
                 )
                 connection.exec_driver_sql(f"REVOKE saas_billing FROM {quoted(login)}")
                 connection.exec_driver_sql(f"DROP ROLE {quoted(login)}")
+        owner.dispose()
+
+
+def test_real_postgresql_empty_gateway_downgrade_restores_previous_authority(
+    isolated_postgres_url,
+):
+    owner = sa.create_engine(isolated_postgres_url)
+    root = Path(__file__).resolve().parents[2]
+    config = Config(root / "saas/control_plane/alembic.ini")
+    try:
+        with owner.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_roles.sql").read_text()
+            )
+            command.downgrade(config, "lm2a00000001")
+            assert (
+                connection.scalar(
+                    sa.text("SELECT to_regclass('public.saas_model_gateway_evidence')")
+                )
+                is None
+            )
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_roles.sql").read_text()
+            )
+            command.upgrade(config, "head")
+            connection.exec_driver_sql(
+                (root / "saas/control_plane/postgresql_roles.sql").read_text()
+            )
+            assert connection.scalar(
+                sa.text(
+                    "SELECT relforcerowsecurity FROM pg_class "
+                    "WHERE oid='saas_model_gateway_evidence'::regclass"
+                )
+            )
+    finally:
         owner.dispose()
