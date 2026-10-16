@@ -39,6 +39,7 @@ from saas.control_plane.public_api_models import (
     PublicApiRateLimitRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.public_api_contract import CursorError, FilterBoundCursorCodec
 
 _LEASED_STATUSES = frozenset(
@@ -512,6 +513,7 @@ class PublicApiExecutionService:
                 queue_class=clean_queue,
                 priority=priority,
             )
+            freeze_sqlite_customer_pricing(db, run)
             db.add(run)
             db.flush()
             reservation = QuotaReservationRecord(
@@ -890,6 +892,7 @@ class PublicApiExecutionService:
                 adapter_contract_version=source.adapter_contract_version,
                 fence_token=0,
             )
+            freeze_sqlite_customer_pricing(db, run)
             db.add(run)
             db.flush()
             reservation = QuotaReservationRecord(

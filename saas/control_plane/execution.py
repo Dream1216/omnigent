@@ -33,6 +33,7 @@ from saas.control_plane.execution_models import (
     TaskRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
 
 _LEASED_STATUSES = frozenset(
@@ -211,17 +212,17 @@ class ExecutionControlPlane:
         session_id = uuid4()
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            db.add(
-                ExecutionSessionRecord(
-                    id=session_id,
-                    tenant_id=request.tenant_id,
-                    space_id=request.space_id,
-                    project_id=project_id,
-                    created_by=request.actor_id,
-                    status="active",
-                    version=1,
-                )
+            row = ExecutionSessionRecord(
+                id=session_id,
+                tenant_id=request.tenant_id,
+                space_id=request.space_id,
+                project_id=project_id,
+                created_by=request.actor_id,
+                status="active",
+                version=1,
             )
+            freeze_sqlite_customer_pricing(db, row)
+            db.add(row)
         return session_id
 
     def attach_task(
@@ -451,6 +452,7 @@ class ExecutionControlPlane:
                 adapter_contract_version=revisions.adapter_contract_version,
                 fence_token=0,
             )
+            freeze_sqlite_customer_pricing(db, run)
             db.add(run)
             db.flush()
             reservation_id = uuid4()

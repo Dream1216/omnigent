@@ -98,6 +98,8 @@ class _RunAuthority:
     lease_owner: str | None
     lease_expires_at: datetime | None
     created_at: datetime
+    customer_pricing_frozen: bool
+    customer_pricing_snapshot_id: UUID | None
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -307,6 +309,7 @@ class BillingMeteringAuthority:
                 db,
                 tenant_id=capability.tenant_id,
                 happened=happened,
+                run=run,
             )
             charge = self._charge(
                 pricing=pricing,
@@ -668,6 +671,8 @@ class BillingMeteringAuthority:
                 RunRecord.lease_owner,
                 RunRecord.lease_expires_at,
                 RunRecord.created_at,
+                RunRecord.customer_pricing_frozen,
+                RunRecord.customer_pricing_snapshot_id,
             )
             .where(RunRecord.id == run_id)
             .with_for_update()
@@ -739,7 +744,7 @@ class BillingMeteringAuthority:
 
     @staticmethod
     def _effective_pricing(
-        db: Session, *, tenant_id: UUID, happened: datetime
+        db: Session, *, tenant_id: UUID, happened: datetime, run: _RunAuthority
     ) -> PricingSnapshotRecord:
         subscription = db.scalar(
             sa.select(BillingSubscriptionRecord)
@@ -750,6 +755,18 @@ class BillingMeteringAuthority:
             raise BillingMeteringError(
                 "metering_subscription_unavailable", "subscription does not accept usage"
             )
+        if run.customer_pricing_frozen:
+            pricing = db.scalar(
+                sa.select(PricingSnapshotRecord).where(
+                    PricingSnapshotRecord.tenant_id == tenant_id,
+                    PricingSnapshotRecord.id == run.customer_pricing_snapshot_id,
+                )
+            )
+            if pricing is None:
+                raise BillingMeteringError(
+                    "metering_pricing_unavailable", "Run has no admitted customer pricing snapshot"
+                )
+            return pricing
         candidates = list(
             db.scalars(
                 sa.select(PricingSnapshotRecord)

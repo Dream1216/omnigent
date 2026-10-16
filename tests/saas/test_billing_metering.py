@@ -220,6 +220,37 @@ def metering() -> Iterator[_Fixture]:
             )
         )
 
+    billing.configure_subscription(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        plan_key="team-v1",
+        status="active",
+        current_period_start=now - timedelta(hours=1),
+        current_period_end=now + timedelta(days=30),
+        expected_version=None,
+        idempotency_key="metering-subscription",
+    )
+    billing.create_pricing_snapshot(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        plan_key="team-v1",
+        currency="USD",
+        rates={
+            "llm.input_tokens": {
+                "unit": "tokens",
+                "unit_size": "1000",
+                "minor_per_unit": 25,
+            },
+            "llm.output_tokens": {
+                "unit": "tokens",
+                "unit_size": "1000",
+                "minor_per_unit": 50,
+            },
+        },
+        effective_from=now - timedelta(hours=1),
+        effective_until=now + timedelta(days=30),
+        idempotency_key="metering-pricing",
+    )
     execution.configure_quota(
         context,
         project_id=project_id,
@@ -313,37 +344,6 @@ def metering() -> Iterator[_Fixture]:
                 activated_at=now,
             )
         )
-    billing.configure_subscription(
-        actor_id=owner_id,
-        tenant_id=tenant_id,
-        plan_key="team-v1",
-        status="active",
-        current_period_start=now - timedelta(hours=1),
-        current_period_end=now + timedelta(days=30),
-        expected_version=None,
-        idempotency_key="metering-subscription",
-    )
-    billing.create_pricing_snapshot(
-        actor_id=owner_id,
-        tenant_id=tenant_id,
-        plan_key="team-v1",
-        currency="USD",
-        rates={
-            "llm.input_tokens": {
-                "unit": "tokens",
-                "unit_size": "1000",
-                "minor_per_unit": 25,
-            },
-            "llm.output_tokens": {
-                "unit": "tokens",
-                "unit_size": "1000",
-                "minor_per_unit": 50,
-            },
-        },
-        effective_from=now - timedelta(hours=1),
-        effective_until=now + timedelta(days=30),
-        idempotency_key="metering-pricing",
-    )
     yield _Fixture(
         factory=factory,
         authority=BillingMeteringAuthority(factory),

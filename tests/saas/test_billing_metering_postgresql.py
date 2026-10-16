@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -78,10 +79,12 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
     return factory
 
 
+@pytest.mark.parametrize("freeze_before_run", (False, True), ids=("legacy", "frozen-price"))
 def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     isolated_postgres_url: str,
+    freeze_before_run: bool,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=2)
@@ -276,6 +279,40 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
             )
         )
 
+    def configure_pricing():
+        for current_tenant, current_owner, label in (
+            (tenant_id, owner_id, "a"),
+            (other_tenant, other_owner, "b"),
+        ):
+            billing.configure_subscription(
+                actor_id=current_owner,
+                tenant_id=current_tenant,
+                plan_key="team-v1",
+                status="active",
+                current_period_start=now - timedelta(hours=1),
+                current_period_end=now + timedelta(days=30),
+                expected_version=None,
+                idempotency_key=f"metering-subscription-{label}-{suffix}",
+            )
+            billing.create_pricing_snapshot(
+                actor_id=current_owner,
+                tenant_id=current_tenant,
+                plan_key="team-v1",
+                currency="USD",
+                rates={
+                    "llm.input_tokens": {
+                        "unit": "tokens",
+                        "unit_size": "1000",
+                        "minor_per_unit": 25,
+                    }
+                },
+                effective_from=now - timedelta(hours=1),
+                effective_until=now + timedelta(days=30),
+                idempotency_key=f"metering-pricing-{label}-{suffix}",
+            )
+
+    if freeze_before_run:
+        configure_pricing()
     execution.configure_quota(
         context,
         project_id=project_id,
@@ -368,36 +405,8 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         now=now,
     )
     fingerprint = activated.fingerprint_sha256
-    for current_tenant, current_owner, label in (
-        (tenant_id, owner_id, "a"),
-        (other_tenant, other_owner, "b"),
-    ):
-        billing.configure_subscription(
-            actor_id=current_owner,
-            tenant_id=current_tenant,
-            plan_key="team-v1",
-            status="active",
-            current_period_start=now - timedelta(hours=1),
-            current_period_end=now + timedelta(days=30),
-            expected_version=None,
-            idempotency_key=f"metering-subscription-{label}-{suffix}",
-        )
-        billing.create_pricing_snapshot(
-            actor_id=current_owner,
-            tenant_id=current_tenant,
-            plan_key="team-v1",
-            currency="USD",
-            rates={
-                "llm.input_tokens": {
-                    "unit": "tokens",
-                    "unit_size": "1000",
-                    "minor_per_unit": 25,
-                }
-            },
-            effective_from=now - timedelta(hours=1),
-            effective_until=now + timedelta(days=30),
-            idempotency_key=f"metering-pricing-{label}-{suffix}",
-        )
+    if not freeze_before_run:
+        configure_pricing()
     platform_model_principal = uuid4()
     with platform_factory.begin() as db:
         db.add(
@@ -537,6 +546,60 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
     assert (finalized.settled_microusd, finalized.settled_tokens) == (250_000, 1_000)
     assert (finalized.released_microusd, finalized.released_tokens) == (250_000, 1_000)
 
+    billing.configure_subscription(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        plan_key="team-v2",
+        status="active",
+        current_period_start=now - timedelta(hours=1),
+        current_period_end=now + timedelta(days=30),
+        expected_version=1,
+        idempotency_key=f"plan-change-{suffix}",
+    )
+    changed = billing.create_pricing_snapshot(
+        actor_id=owner_id,
+        tenant_id=tenant_id,
+        plan_key="team-v2",
+        currency="USD",
+        rates={"llm.input_tokens": {"unit": "tokens", "unit_size": "1000", "minor_per_unit": 250}},
+        effective_from=now - timedelta(hours=1),
+        effective_until=now + timedelta(days=30),
+        idempotency_key=f"changed-price-{suffix}",
+    )
+    after_change = authority.record_usage(
+        **{
+            **request,
+            "provider_request_id": f"changed-{suffix}",
+            "idempotency_key": f"changed-{suffix}",
+        }
+    )
+    assert after_change.customer_charge_minor == (38 if freeze_before_run else 375)
+    assert (after_change.pricing_snapshot_id == changed.id) is not freeze_before_run
+    if freeze_before_run:
+        assert authority.record_usage(**request).receipt_id == created.receipt_id
+        original_pricing = BillingMeteringAuthority._effective_pricing
+
+        def legacy_pricing(db, *, tenant_id, happened, run):
+            return original_pricing(
+                db,
+                tenant_id=tenant_id,
+                happened=happened,
+                run=replace(run, customer_pricing_frozen=False, customer_pricing_snapshot_id=None),
+            )
+
+        with monkeypatch.context() as legacy:
+            legacy.setattr(
+                BillingMeteringAuthority, "_effective_pricing", staticmethod(legacy_pricing)
+            )
+            with pytest.raises(sa.exc.DBAPIError, match="frozen customer pricing"):
+                authority.record_usage(
+                    **{
+                        **request,
+                        "provider_request_id": f"legacy-producer-{suffix}",
+                        "idempotency_key": f"legacy-producer-{suffix}",
+                    }
+                )
+
     capability_hash = sha256(lease.capability_token.encode()).hexdigest()
     with engine.begin() as connection:
         connection.exec_driver_sql(f"SET LOCAL ROLE {roles['metering']}")
@@ -642,32 +705,48 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection
-        command.downgrade(config, "p6a000000008")
-        assert not sa.inspect(connection).has_table("saas_billing_metering_receipts")
-        assert (
-            connection.execute(
-                sa.text(
-                    "SELECT count(*) FROM saas_runner_certificates "
-                    "WHERE fingerprint_sha256 = :fingerprint"
-                ),
-                {"fingerprint": fingerprint},
-            ).scalar_one()
-            == 0
-        )
-        assert (
-            connection.execute(
-                sa.text(
-                    "SELECT tgenabled FROM pg_trigger "
-                    "WHERE tgname = 'trg_reject_runner_certificate_delete'"
-                )
-            ).scalar_one()
-            == "O"
-        )
-        command.upgrade(config, "head")
-        connection.exec_driver_sql(
-            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
-        )
-        for base, child in reversed(tuple(roles.items())):
-            connection.exec_driver_sql(f"REVOKE saas_{base} FROM {child}")
-            connection.exec_driver_sql(f"DROP ROLE {child}")
+        if freeze_before_run:
+            with pytest.raises(RuntimeError, match="cannot remove retained"):
+                with connection.begin_nested():
+                    command.downgrade(config, "p6a000000008")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == "lm2d00000001"
+            )
+            for base, child in reversed(tuple(roles.items())):
+                connection.exec_driver_sql(f"REVOKE saas_{base} FROM {child}")
+                connection.exec_driver_sql(f"DROP ROLE {child}")
+        else:
+            _verify_legacy_metering_downgrade(connection, config, root, fingerprint, roles)
     engine.dispose()
+
+
+def _verify_legacy_metering_downgrade(connection, config, root, fingerprint, roles):
+    command.downgrade(config, "p6a000000008")
+    assert not sa.inspect(connection).has_table("saas_billing_metering_receipts")
+    assert (
+        connection.execute(
+            sa.text(
+                "SELECT count(*) FROM saas_runner_certificates "
+                "WHERE fingerprint_sha256 = :fingerprint"
+            ),
+            {"fingerprint": fingerprint},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        connection.execute(
+            sa.text(
+                "SELECT tgenabled FROM pg_trigger "
+                "WHERE tgname = 'trg_reject_runner_certificate_delete'"
+            )
+        ).scalar_one()
+        == "O"
+    )
+    command.upgrade(config, "head")
+    connection.exec_driver_sql(
+        (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+    )
+    for base, child in reversed(tuple(roles.items())):
+        connection.exec_driver_sql(f"REVOKE saas_{base} FROM {child}")
+        connection.exec_driver_sql(f"DROP ROLE {child}")
