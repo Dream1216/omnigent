@@ -12,6 +12,8 @@ on:
       - saas/control_plane/model_pricing.py
       - saas/control_plane/model_budget.py
       - saas/control_plane/model_gateway_evidence.py
+      - saas/control_plane/model_gateway_audit.py
+      - saas/outbox_worker.py
       - saas/control_plane/model_verification_contract.py
       - saas/production/model_protocol_probe.py
       - saas/production/litellm_configuration_attestation.py
@@ -28,6 +30,7 @@ on:
       - tests/saas/test_platform_model_gateway.py
       - tests/saas/test_platform_model_gateway_attempts.py
       - tests/saas/test_model_gateway_evidence.py
+      - tests/saas/test_model_gateway_audit.py
       - tests/saas/fixtures/litellm/**
       - uv.lock
       - pyproject.toml
@@ -82,6 +85,7 @@ jobs:
           tests/saas/test_platform_model_gateway.py
           tests/saas/test_platform_model_gateway_attempts.py
           tests/saas/test_model_gateway_evidence.py
+          tests/saas/test_model_gateway_audit.py
       - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
           version: v0.22.1

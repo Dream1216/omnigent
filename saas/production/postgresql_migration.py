@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "0d7fd85a98d6ccbb90c1d5d38c768d616f75dc5fda4637a6ad07def460e0534e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8cf7deb85a90d6102c2f9339aabadc0defd0adb02836e21222c8cd5f628e94b4",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -384,6 +395,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8dd1e3fe78cbd83bb20d1672ef30bddad5048b40c67eb02b59041d11db6c0a40",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "07deca6e9766ebd561ef7210536b62805993b2473e49789af576357e1db4b0bb",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -552,6 +574,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8053df3700ad175de0eb1af9c5adddb5d611668865d45d196e33d2e7a6bf81b6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "c8a61f0a085f55bc861a9a08e78ff5c0df2c2dd06a5e24b977b2f2871d09038f",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -690,6 +723,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "a7a23fd84f6aef66dd4fe576b174625188e931c7aee46541cf17ce740ecc47e1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "0ce5cf0a46a2b543e87809f1f4b7fc3ff7eb92b59f109d05d4f5dfaa313edd79",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -823,6 +867,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "7e76357715c6d41f9c6e84c99ec79efd6650d86a74296c70921167c3605d74d3",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "9af5b9d5783f9ea4c05867da65fed373efd1797dbe9d9a17b3e2feb61f4324a0",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -931,6 +986,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "46acb52f70b7280cad055a8b70a3a268563dfd6908bfdda6eb3d6445e82534b4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "ac36d43dc8aea4932f7a17c0422dbb3a6314f83fdf75709434a8041155b16bfe",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -1046,6 +1112,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "1e8ce6e73ea7160fddb0b70a4288d151fc265b63edfe38af4f7e7a5e161851f1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "9d5473b3d89e3ee4db7305521feecbe1ce1f97269d92f93a30c8c1e968748044",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
@@ -1126,6 +1203,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "e996fdcbd94397f3ee56180f9a44a48ce035fff2032ec6014b977d6cbb57d3e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "cd7a69c9c08dce9c35f490791dcd57f49107437456782c8a41dd381dbcfd1ca7",
     # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
     (
         16,
