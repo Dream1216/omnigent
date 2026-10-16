@@ -188,7 +188,36 @@ must show the same tenant and one new generation with runtime disabled. Repeat
 the refresh and reload: neither a second generation nor another inference may
 appear. A security auditor can inspect but cannot publish.
 
-### Focused checks
+### Gateway financial attempts
+
+The platform gateway commits the existing budget single-attempt fence before
+inference egress. Only valid terminal Chat or Responses usage can resolve actual
+provider cost. A sent request with missing, malformed or over-limit usage,
+upstream rejection, timeout or client cancellation retains the hold as uncertain.
+Ordinary reservation expiry cannot release sent attempts. Explicit terminal zero
+usage can release the hold with a bound outcome hash; silence is not zero usage.
+
+The outcome hash binds the reservation, tenant/session, model, protocol,
+configuration and approved price revision to normalized usage. A lost settlement
+acknowledgement does not resend inference or charge the reservation again.
+This slice does not yet provide the full persistent usage journal, supplier
+reconciliation workflow or customer-ledger/Audit Outbox integration. Keep those
+P2 requirements open before enabling LiteLLM tenant inference.
+
+To verify without paid calls, run the gateway attempt tests below. With
+`OMNIGENT_SAAS_TEST_POSTGRES_URL` set to a disposable PostgreSQL 16 or 18 cluster,
+the PostgreSQL file verifies the gateway through an actual restricted Billing
+LOGIN, including replay, retained unknown cost and denied secret/projection
+access. Never point these destructive fixture tests at production.
+
+```sh
+.venv/bin/python -m pytest -q \
+  tests/saas/test_platform_model_gateway.py \
+  tests/saas/test_platform_model_gateway_attempts.py \
+  tests/saas/test_platform_model_gateway_attempts_postgresql.py
+```
+
+### Component and publication checks
 
 Run the focused regression from the repository root:
 

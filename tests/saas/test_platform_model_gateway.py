@@ -62,6 +62,8 @@ class _Budgets:
         self.reserved: list[dict[str, object]] = []
         self.settled: list[dict[str, object]] = []
         self.released: list[dict[str, object]] = []
+        self.uncertain: list[dict[str, object]] = []
+        self.reservations: dict[UUID, ModelProviderBudgetReservationView] = {}
 
     def reserve(self, **kwargs: object) -> ModelProviderBudgetReservationView:
         self.reserved.append(kwargs)
@@ -69,7 +71,7 @@ class _Budgets:
         requested_tokens = kwargs["requested_tokens"]
         assert isinstance(requested_microusd, int)
         assert isinstance(requested_tokens, int)
-        return ModelProviderBudgetReservationView(
+        view = ModelProviderBudgetReservationView(
             id=uuid4(),
             provider_id="deepseek",
             tenant_id=TENANT_ID,
@@ -88,18 +90,43 @@ class _Budgets:
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             version=1,
         )
+        self.reservations[view.id] = view
+        return view
 
-    def settle(self, **kwargs: object) -> ModelProviderBudgetReservationView:
-        self.settled.append(kwargs)
-        raise_if_called = kwargs.pop("raise_if_called", False)
-        assert not raise_if_called
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+    def _replace(self, kwargs, **changes):
+        identity = kwargs["reservation_id"]
+        view = replace(self.reservations[identity], **changes)
+        self.reservations[identity] = view
+        return view
+
+    def begin_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
+        return self._replace(kwargs, status="in_flight")
+
+    def mark_uncertain(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        self.uncertain.append(kwargs)
+        return self._replace(kwargs, status="uncertain")
+
+    def resolve_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        witness = kwargs["evidence_sha256"]
+        assert isinstance(witness, str) and len(witness) == 64
+        self.settled.append(
+            {name: value for name, value in kwargs.items() if name != "evidence_sha256"}
+        )
+        return self._replace(
+            kwargs,
+            status="settled",
+            settled_microusd=kwargs["actual_microusd"],
+            settled_tokens=kwargs["actual_tokens"],
+            outcome_evidence_sha256=witness,
+        )
 
     def release(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
         self.released.append(kwargs)
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+        return self._replace(kwargs, status="released")
 
 
 def _configuration() -> PlatformManagedModelRuntimeConfiguration:
@@ -384,7 +411,7 @@ def test_ambiguous_or_multisample_limits_fail_before_budget_or_provider(
     assert not calls and not budgets.reserved and not budgets.settled and not budgets.released
 
 
-def test_provider_rejection_releases_budget_without_leaking_body() -> None:
+def test_provider_rejection_retains_uncertain_budget_without_leaking_body() -> None:
     async def upstream(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "contains-sensitive-provider-detail"})
 
@@ -397,8 +424,8 @@ def test_provider_rejection_releases_budget_without_leaking_body() -> None:
 
     assert response.status_code == 502
     assert "contains-sensitive-provider-detail" not in response.text
-    assert len(budgets.released) == 1
-    assert not budgets.settled
+    assert len(budgets.uncertain) == 1
+    assert not budgets.settled and not budgets.released
 
 
 def test_unconfigured_provider_is_ready_but_requests_fail_closed() -> None:
