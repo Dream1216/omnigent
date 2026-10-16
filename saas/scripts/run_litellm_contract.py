@@ -774,6 +774,7 @@ class Probe:
                         "input_tokens": result.usage.input_tokens,
                         "output_tokens": result.usage.output_tokens,
                         "total_tokens": result.usage.total_tokens,
+                        "response_id_length": result.response_id_length,
                     }
                 )
                 self.check(

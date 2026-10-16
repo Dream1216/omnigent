@@ -185,6 +185,48 @@ def test_probe_never_increases_a_smaller_draft_output_limit():
     assert result.output_token_limit == 3
 
 
+def test_responses_accepts_a_bounded_long_managed_id_without_retaining_it():
+    draft, admission = _fixture(responses=True)
+    events = _events(draft)
+    identifier = "resp_" + "a" * 1024
+    for event in events:
+        if isinstance(event, dict) and isinstance(event.get("response"), dict):
+            event["response"]["id"] = identifier
+    result = asyncio.run(
+        _probe(
+            lambda _: httpx.Response(
+                200,
+                content=_body(events),
+                headers={"content-type": "text/event-stream"},
+            )
+        ).run_admitted_probe(
+            admission=admission, draft=draft, inference_key=LiteLLMInferenceKey(_KEY)
+        )
+    )
+    assert result.response_id_length == len(identifier)
+    assert result.request_id_sha256 == sha256(identifier.encode()).hexdigest()
+    assert identifier not in repr(result)
+
+
+@pytest.mark.parametrize("identifier", ("x" * 2049, "unsafe\nidentifier"))
+def test_responses_identity_size_and_control_character_limits_remain_enforced(identifier):
+    draft, admission = _fixture(responses=True)
+    events = _events(draft)
+    events[0]["response"]["id"] = identifier
+    with pytest.raises(ModelProtocolProbeError, match="identity_invalid"):
+        asyncio.run(
+            _probe(
+                lambda _: httpx.Response(
+                    200,
+                    content=_body(events),
+                    headers={"content-type": "text/event-stream"},
+                )
+            ).run_admitted_probe(
+                admission=admission, draft=draft, inference_key=LiteLLMInferenceKey(_KEY)
+            )
+        )
+
+
 @pytest.mark.parametrize(
     "change",
     (

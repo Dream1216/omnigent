@@ -24,6 +24,7 @@ PROBE_INPUT_TOKEN_CEILING = 1024
 PROBE_OUTPUT_TOKEN_CEILING = 32
 _MAX_RESPONSE_BYTES = 64 * 1024
 _MAX_LINE_BYTES = 16 * 1024
+_MAX_RESPONSE_ID_BYTES = 2048
 
 
 class ModelProtocolProbeError(RuntimeError):
@@ -77,6 +78,7 @@ class ModelProtocolProbeResult:
     latency_millis: int
     request_id_sha256: str | None
     request_attempts: int = 1
+    response_id_length: int = 0
 
 
 class _ProbeStream:
@@ -122,11 +124,12 @@ class _ProbeStream:
         if identifier is not None:
             if (
                 not isinstance(identifier, str)
-                or not 1 <= len(identifier) <= 256
+                or not 1 <= len(identifier) <= _MAX_RESPONSE_ID_BYTES
                 or any(ord(char) < 33 or ord(char) > 126 for char in identifier)
-                or (self.identifier is not None and self.identifier != identifier)
             ):
                 raise ModelProtocolProbeError("litellm_probe_identity_invalid")
+            if self.identifier is not None and self.identifier != identifier:
+                raise ModelProtocolProbeError("litellm_probe_identity_changed")
             self.identifier = identifier
         if document.get("error") is not None:
             raise ModelProtocolProbeError("litellm_probe_upstream_error")
@@ -353,4 +356,5 @@ class ModelProtocolProbe:
             usage,
             max(0, round((time.monotonic() - started) * 1000)),
             sha256(stream.identifier.encode()).hexdigest() if stream.identifier else None,
+            response_id_length=len(stream.identifier) if stream.identifier else 0,
         )
