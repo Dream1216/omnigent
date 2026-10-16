@@ -742,6 +742,30 @@ class Probe:
                     credential_name=credential_name,
                     provider_base_url=provider_base,
                 )
+                await management.reconcile_deepseek_deployment(
+                    deployment_id=draft.deployment_id,
+                    alias=draft.alias,
+                    model=draft.public_model_id,
+                    credential_name=credential_name,
+                    provider_base_url=provider_base,
+                )
+                suffix = "responses" if responses else "chat"
+                self.check("bounded_model_readback_" + suffix, True)
+                try:
+                    await management.reconcile_deepseek_deployment(
+                        deployment_id=draft.deployment_id,
+                        alias=draft.alias,
+                        model=draft.public_model_id,
+                        credential_name="not-the-approved-credential",
+                        provider_base_url=provider_base,
+                    )
+                except LiteLLMManagementError as rejected:
+                    self.check(
+                        "bounded_model_readback_drift_rejected_" + suffix,
+                        rejected.code == "litellm_deployment_drift",
+                    )
+                else:
+                    self.check("bounded_model_readback_drift_rejected_" + suffix, False)
                 key = await management.create_inference_key(
                     aliases=(draft.alias,),
                     key_alias=self.run_id
@@ -783,6 +807,7 @@ class Probe:
                 )
             after = (await observer.get(upstream_url + "/evidence")).json()["requests"]
             self.check("bounded_model_probe_attempts_observed", len(after) - len(before) == 2)
+            self.report["masked_credentials_attested"] = False
         self.report["bounded_model_protocol_probe"] = {
             "scope": "synthetic_provider_transport_not_staff_or_budget_acceptance",
             "results": results,

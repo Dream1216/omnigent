@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         ModelProviderConfigurationView,
     )
     from saas.control_plane.model_test_funding import ModelTestFundingService
+    from saas.control_plane.model_verifications import ModelVerificationService
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
@@ -283,6 +284,13 @@ class _ModelTestFundingCommand(BaseModel):
     daily_test_attempt_limit: int = Field(ge=1, le=1000)
 
 
+class _ModelVerificationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    configuration_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_funding_policy_version: int = Field(ge=1, lt=(1 << 31))
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -416,6 +424,7 @@ def create_platform_admin_app(
     model_connections: ModelConnectionService | None = None,
     model_deployments: ModelDeploymentService | None = None,
     model_test_funding: ModelTestFundingService | None = None,
+    model_verifications: ModelVerificationService | None = None,
     password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
@@ -589,6 +598,13 @@ def create_platform_admin_app(
                 "platform_model_test_funding_unavailable", "Platform test funding is unavailable"
             )
         return model_test_funding
+
+    def model_verification_service() -> ModelVerificationService:
+        if model_verifications is None:
+            raise PlatformSecurityError(
+                "platform_model_verification_unavailable", "Priced model testing is unavailable"
+            )
+        return model_verifications
 
     async def privacy_operation_command_context(
         request: Request,
@@ -787,6 +803,7 @@ def create_platform_admin_app(
                 "model_connections_enabled": model_connections is not None,
                 "model_deployments_enabled": model_deployments is not None,
                 "model_test_funding_enabled": model_test_funding is not None,
+                "model_verification_enabled": model_verifications is not None,
             },
         }
 
@@ -965,6 +982,35 @@ def create_platform_admin_app(
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
             **asdict(value),
+        }
+
+    @app.post("/v2/platform-admin/model-deployments/{deployment_id}/test", status_code=202)
+    async def test_model_deployment(request: Request, deployment_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _ModelVerificationCommand,
+        )
+        operation = model_verification_service().admit(
+            principal,
+            deployment_id=deployment_id,
+            **command.model_dump(),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(operation),
+        }
+
+    @app.get("/v2/platform-admin/model-operations/{operation_id}/verification")
+    def get_model_verification(request: Request, operation_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_verification_service().receipt(principal, operation_id),
         }
 
     @app.get("/v2/platform-admin/model-operations/{operation_id}")

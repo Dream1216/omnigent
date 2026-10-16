@@ -431,6 +431,12 @@
             <button class="quiet-button" id="model-test-funding-refresh" type="button">核对预算策略 ↻</button>
             <p class="model-connection-help" id="model-test-funding-receipt">尚未配置测试资金，不允许发出测试请求。响应未确认时先核对原策略，不再次提交。</p>
           </section>
+          <section class="work-panel model-connection-form" id="model-verification-panel" hidden>
+            <div class="panel-heading"><span>07 / 受限验证回执</span><small id="model-verification-status" role="status">NO TEST</small></div>
+            <p class="model-connection-help">在草稿清单明确发起测试。VERIFIED 仅表示有界协议与费用结算通过，不代表完整 Agent 能力验收或发布。可见配置读回不证明隐藏密钥一致；发布前仍须核对可信凭据版本。</p>
+            <dl id="model-verification-detail" aria-live="polite"><div class="empty-record">尚未选择验证回执。测试可能产生真实供应商费用，不会自动重试。</div></dl>
+            <button class="quiet-button" id="model-verification-refresh" type="button">核对验证回执 ↻</button>
+          </section>
         </section>
 
         <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>

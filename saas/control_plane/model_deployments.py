@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -165,6 +165,31 @@ class ModelCredentialVersionMetadata:
     projected: bool
 
 
+def compile_stored_model_deployment(
+    row: ModelDeploymentVersionRecord,
+) -> CompiledModelDeploymentDraft:
+    compiled = compile_model_deployment_draft(
+        CreateModelDeploymentDraft(
+            row.public_model_id,
+            row.display_name,
+            row.connection_id,
+            row.credential_version_id,
+            row.generation - 1,
+            cast(ModelWireApi, row.wire_api),
+            row.max_output_tokens,
+        ),
+        deployment_id=row.id,
+    )
+    if (
+        row.provider_model != compiled.public_model_id
+        or row.deployment_alias != compiled.alias
+        or row.configuration_sha256 != compiled.configuration_sha256
+        or row.canonical_configuration != compiled.canonical_configuration
+    ):
+        raise ModelDeploymentValidationError("platform_model_deployment_invalid")
+    return compiled
+
+
 @dataclass(frozen=True, slots=True)
 class ModelDeploymentVersionView:
     id: UUID
@@ -180,6 +205,7 @@ class ModelDeploymentVersionView:
     projection_status: str
     runtime_enabled: bool = False
     verification_status: str = "not_tested"
+    verification_operation_id: UUID | None = None
 
 
 class ModelDeploymentService:
@@ -254,6 +280,23 @@ class ModelDeploymentService:
                 )
                 .limit(100)
             ).all()
+            verification_rows = db.scalars(
+                sa.select(ModelProjectionOperationRecord)
+                .where(
+                    ModelProjectionOperationRecord.action == "verify_deployment",
+                    ModelProjectionOperationRecord.deployment_version_id.in_(
+                        [record.id for record, _operation in rows]
+                    ),
+                )
+                .order_by(
+                    ModelProjectionOperationRecord.created_at.desc(),
+                    ModelProjectionOperationRecord.id.desc(),
+                )
+            ).all()
+            latest: dict[UUID, ModelProjectionOperationRecord] = {}
+            for verification in verification_rows:
+                if verification.deployment_version_id is not None:
+                    latest.setdefault(verification.deployment_version_id, verification)
             return tuple(
                 ModelDeploymentVersionView(
                     record.id,
@@ -267,6 +310,12 @@ class ModelDeploymentService:
                     record.configuration_sha256,
                     operation.id,
                     operation.status,
+                    verification_status=latest[record.id].status
+                    if record.id in latest
+                    else "not_tested",
+                    verification_operation_id=latest[record.id].id
+                    if record.id in latest
+                    else None,
                 )
                 for record, operation in rows
             )

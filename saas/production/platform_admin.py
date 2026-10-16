@@ -19,6 +19,7 @@ from saas.control_plane.client_network import TrustedClientNetworkConfig
 from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.model_test_funding import ModelTestFundingService
+from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
 from saas.control_plane.platform_security import (
@@ -26,7 +27,10 @@ from saas.control_plane.platform_security import (
     PlatformProjectionService,
     PlatformSessionService,
 )
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+from saas.production.model_verification import model_verification_enabled
 from saas.production.onboarding import build_production_secret_cipher
+from saas.production.platform_model_gateway import load_platform_model_pricing
 from saas.production.postgresql_migration import PostgreSqlMigrationError, _inspect_service_login
 from saas.production.server_config import (
     ProductionServerConfigError,
@@ -163,6 +167,16 @@ def build_platform_admin(
         model_connections = None
         model_deployments = None
         model_test_funding = None
+        model_verifications = None
+        verification_enabled = model_verification_enabled(environ)
+        if verification_enabled and enabled != "true":
+            raise ValueError("Priced model testing requires model connections")
+        if (
+            verification_enabled
+            and environ.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
+            != CONTROL_PLANE_SCHEMA_REVISION
+        ):
+            raise ValueError("Priced model testing requires the current control-plane schema")
         if enabled == "true":
             try:
                 cipher = build_production_secret_cipher(environ)
@@ -175,6 +189,12 @@ def build_platform_admin(
             )
             model_deployments = ModelDeploymentService(engines[1], authorization=authorization)
             model_test_funding = ModelTestFundingService(engines[1], authorization=authorization)
+            if verification_enabled:
+                model_verifications = ModelVerificationService(
+                    engines[1],
+                    authorization=authorization,
+                    pricing=load_platform_model_pricing(environ),
+                )
         app = create_platform_admin_app(
             config=config,
             sessions=sessions,
@@ -182,6 +202,7 @@ def build_platform_admin(
             model_connections=model_connections,
             model_deployments=model_deployments,
             model_test_funding=model_test_funding,
+            model_verifications=model_verifications,
             projections=PlatformProjectionService(application),
             password_authentication=PlatformPasswordAuthenticationService(
                 authenticator,

@@ -20,6 +20,7 @@ from saas.control_plane.model_routing_models import (
     ModelProjectionOperationRecord,
 )
 from saas.control_plane.model_test_funding import ModelTestFundingService
+from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
@@ -53,7 +54,7 @@ class _Cipher:
         return value
 
 
-def _fixture(*, enabled=True, engine=None):
+def _fixture(*, enabled=True, engine=None, pricing=None):
     if engine is None:
         engine = sa.create_engine(
             "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -98,6 +99,11 @@ def _fixture(*, enabled=True, engine=None):
         else None,
         model_test_funding=ModelTestFundingService(engine, authorization=authorization)
         if enabled
+        else None,
+        model_verifications=ModelVerificationService(
+            engine, authorization=authorization, pricing=pricing
+        )
+        if enabled and pricing is not None
         else None,
     )
     client = TestClient(app, base_url=_ORIGIN)

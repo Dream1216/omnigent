@@ -54,12 +54,21 @@ from saas.control_plane.litellm_client import (
     LiteLLMManagementClient,
     LiteLLMManagementConfiguration,
 )
+from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_connections import ModelConnectionService
 from saas.control_plane.model_deployments import ModelDeploymentService
 from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
 from saas.control_plane.model_test_funding import ModelTestFundingService
+from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
+from saas.production.model_protocol_probe import (
+    ModelProtocolProbe,
+    ModelProtocolProbeConfiguration,
+)
+from saas.production.model_verification import ModelVerificationPublisher
+from tests.saas.test_model_protocol_probe import _body, _events
+from tests.saas.test_model_verifications import _pricing
 
 _AUDIENCE = "omnigent-platform-admin"
 _COOKIE = "__Host-omnigent_platform_session"
@@ -91,6 +100,7 @@ class PlatformAdminFixture:
     privacy_manifest_id: UUID
     project_models: Callable[[], None]
     model_projection_calls: list[str]
+    model_inference_status: list[int]
 
 
 class _BrowserSecretCipher:
@@ -419,17 +429,48 @@ def platform_admin_server(
         if getattr(request, "param", False)
         else None,
         model_deployments=ModelDeploymentService(engine, authorization=authorization)
-        if getattr(request, "param", False) == "deployments"
+        if getattr(request, "param", False) in {"deployments", "verification"}
         else None,
         model_test_funding=ModelTestFundingService(engine, authorization=authorization)
         if getattr(request, "param", False)
         else None,
+        model_verifications=ModelVerificationService(
+            engine, authorization=authorization, pricing=_pricing("deepseek-v4-pro")
+        )
+        if getattr(request, "param", False) == "verification"
+        else None,
     )
     model_projection_calls: list[str] = []
+    projected_models: list[dict] = []
+    model_inference_status = [200]
 
     def synthetic_management(request: httpx.Request) -> httpx.Response:
         model_projection_calls.append(request.url.path)
+        if request.url.path == "/model/new":
+            projected_models.append(json.loads(request.content))
+        if request.url.path == "/model/info":
+            return httpx.Response(200, json={"data": projected_models})
+        if request.url.path == "/key/generate":
+            return httpx.Response(200, json={"key": "isolated-browser-inference-test-key"})
         return httpx.Response(200, json={"status": "success"})
+
+    def synthetic_inference(request: httpx.Request) -> httpx.Response:
+        from types import SimpleNamespace
+
+        model_projection_calls.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer isolated-browser-inference-test-key"
+        body = json.loads(request.content)
+        assert body["max_tokens"] == 32
+        if model_inference_status[0] != 200:
+            return httpx.Response(
+                model_inference_status[0], json={"error": "private upstream response"}
+            )
+        model = SimpleNamespace(
+            wire_api="openai_chat_completions", public_model_id="deepseek-v4-pro"
+        )
+        return httpx.Response(
+            200, headers={"Content-Type": "text/event-stream"}, content=_body(_events(model))
+        )
 
     def project_models() -> None:
         publisher = ModelCredentialProjectionPublisher(
@@ -445,7 +486,12 @@ def platform_admin_server(
         with factory() as db:
             events = db.scalars(
                 sa.select(ControlPlaneOutboxEvent).where(
-                    ControlPlaneOutboxEvent.event_type == "platform.model_projection.requested"
+                    ControlPlaneOutboxEvent.event_type.in_(
+                        (
+                            "platform.model_projection.requested",
+                            "platform.model_verification.requested",
+                        )
+                    )
                 )
             ).all()
             envelopes = [
@@ -458,8 +504,27 @@ def platform_admin_server(
                 }
                 for event in events
             ]
+        verifier = ModelVerificationPublisher(
+            engine,
+            management=LiteLLMManagementClient(
+                LiteLLMManagementConfiguration(
+                    base_url="https://litellm.test", management_key="isolated-browser-test-only"
+                ),
+                transport=httpx.MockTransport(synthetic_management),
+            ),
+            budget=ModelProviderBudgetAdmissionService(factory),
+            probe=ModelProtocolProbe(
+                ModelProtocolProbeConfiguration(base_url="https://litellm.test"),
+                transport=httpx.MockTransport(synthetic_inference),
+            ),
+        )
         for envelope in envelopes:
-            publisher.publish(**envelope)
+            target = (
+                verifier
+                if envelope["event_type"] == "platform.model_verification.requested"
+                else publisher
+            )
+            target.publish(**envelope)
 
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
@@ -499,6 +564,7 @@ def platform_admin_server(
             privacy_manifest_id=privacy_manifest.manifest_id,
             project_models=project_models,
             model_projection_calls=model_projection_calls,
+            model_inference_status=model_inference_status,
         )
     finally:
         server.should_exit = True
@@ -531,9 +597,11 @@ def _context(
     return context
 
 
-def _open_console(context: BrowserContext, fixture: PlatformAdminFixture) -> Page:
+def _open_console(
+    context: BrowserContext, fixture: PlatformAdminFixture, *, fragment: str = ""
+) -> Page:
     page = context.new_page()
-    response = page.goto(f"{fixture.origin}/platform-admin")
+    response = page.goto(f"{fixture.origin}/platform-admin{fragment}")
     assert response is not None and response.status == 200
     expect(page.locator("#console-shell")).to_have_attribute("aria-busy", "false")
     return page
@@ -1180,3 +1248,120 @@ def test_real_chromium_platform_test_funding_and_lost_receipt_recovery(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _model_test_funding_journey)
+
+
+def _model_verification_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    _model_deployment_journey(browser, fixture)
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.get_by_test_id("model-verification-start")).to_be_disabled()
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        expect(page.get_by_test_id("model-verification-start")).to_be_enabled()
+        # Cancelling the cost confirmation must not admit or send any request.
+        page.get_by_test_id("model-verification-start").click()
+        expect(page.locator("#dialog-summary")).to_contain_text("真实供应商费用")
+        page.locator("#dialog-cancel").click()
+        assert fixture.model_projection_calls == ["/credentials", "/model/new"]
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments/*/test", lose_receipt, times=1)
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        page.reload()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-verification-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-verification-detail")).to_contain_text("未确认")
+        operation = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        expect(page.locator("#model-connection-operation-detail")).to_contain_text("费用结算通过")
+        expect(page.locator("#model-verification-detail")).to_contain_text(
+            "10 输入 / 3 输出 / 13 总计"
+        )
+        receipt = page.request.get(
+            fixture.origin + f"/v2/platform-admin/model-operations/{operation}/verification"
+        ).json()
+        assert receipt["runtime_enabled"] is False
+        assert receipt["evidence"]["actual_microusd"] == 3
+        assert receipt["evidence"]["request_attempts"] == 1
+        expect(page.locator("#model-verification-panel")).to_contain_text(
+            "不代表完整 Agent 能力验收或发布"
+        )
+        page.reload()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        assert "browser-draft-secret-never-public" not in page.evaluate(
+            "JSON.stringify(sessionStorage)"
+        )
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-verification-panel").screenshot(
+                path=str(directory / "model-verification-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(directory / "model-verification-mobile.png"), full_page=True)
+
+        fixture.model_inference_status[0] = 401
+        page.locator("#model-connection-new-command").click()
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        expect(page.locator("#model-verification-detail")).to_contain_text("未确认")
+        expect(page.locator("#model-verification-panel")).not_to_contain_text("codex login")
+        expect(page.locator("#model-verification-panel")).not_to_contain_text(
+            "private upstream response"
+        )
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(
+                path=str(directory / "model-verification-uncertain-mobile.png"), full_page=True
+            )
+        page.reload()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 2
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.get_by_test_id("model-verification-start")).to_be_disabled()
+        page.get_by_test_id("model-verification-inspect").click()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        expect(page.locator("#model-connection-operation-status")).to_have_text("NO COMMAND")
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["verification"], indirect=True)
+def test_real_chromium_model_verification_recovery_cost_and_readonly_receipt(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_verification_journey)

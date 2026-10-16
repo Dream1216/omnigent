@@ -24,6 +24,7 @@
     modelCommand: null,
     modelCommandBusy: false,
     modelCommandNotice: null,
+    modelVerificationId: null,
     modelRotation: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
@@ -431,7 +432,8 @@
 
   function configureModelConnectionButtons() {
     const disabled = !mutationReady("platform.model_provider.manage") ||
-      state.modelCommandBusy || Boolean(state.modelCommand?.operationId);
+      state.modelCommandBusy || Boolean(state.modelCommand?.operationId) ||
+      state.modelCommand?.kind === "verify_deployment";
     $("#model-connection-submit").disabled = disabled;
     $("#model-connection-rotation-submit").disabled = disabled;
     for (const selector of ["#model-connection-name", "#model-connection-key", "#model-connection-rotation-key"]) {
@@ -447,6 +449,17 @@
     for (const element of $("#model-deployment-create").elements) {
       element.disabled = draftDisabled;
     }
+    document.querySelectorAll('[data-testid="model-verification-start"]').forEach((button) => {
+      const item = state.modelDeployments.find((value) => value.id === button.dataset.deploymentId);
+      const compatibleCommand = !state.modelCommand || (
+        state.modelCommand.kind === "verify_deployment" &&
+        state.modelCommand.deploymentId === item?.id && !state.modelCommand.operationId
+      );
+      button.disabled = !mutationReady("platform.model_provider.test") ||
+        !state.modelTestFundingLoaded || state.modelTestFundingBusy ||
+        !state.modelTestFunding?.policy?.enabled || state.modelCommandBusy ||
+        item?.projection_status !== "applied" || !compatibleCommand;
+    });
   }
 
   function showModelOperation(operation) {
@@ -462,11 +475,23 @@
       failed: "操作失败，请依据错误码处理；不要重复建立相同对象。",
       uncertain: "外部结果未确认，必须核对；不会自动重放写入。",
     };
+    const verification = operation.action === "verify_deployment";
+    const verificationLabels = {
+      requested: "测试已受理，等待预算准入及单次执行；尚未发布。",
+      applying: "正在执行受限测试或核对结算；不要重复发起请求。",
+      verified: "有界协议与费用结算通过；不代表完整能力验收或发布。",
+      failed: "测试失败，请查看验证回执；不会重放用户任务。",
+      uncertain: "测试或核对结果未确认，请查看费用回执；不会自动重放请求。",
+    };
     $("#model-connection-operation-status").textContent = operation.status.toUpperCase();
     $("#model-connection-operation-id").textContent = operation.id;
     $("#model-connection-operation-detail").textContent =
-      `${labels[operation.status] || "未知状态，请查询原操作。"}${operation.error_code ? ` / ${operation.error_code}` : ""}`;
+      `${(verification ? verificationLabels : labels)[operation.status] || "未知状态，请查询原操作。"}${operation.error_code ? ` / ${operation.error_code}` : ""}`;
     state.modelCommand.operationId = operation.id;
+    if (verification) {
+      state.modelCommand.kind = "verify_deployment";
+      state.modelCommand.deploymentId = operation.deployment_version_id;
+    }
     saveModelCommand();
     configureModelConnectionButtons();
   }
@@ -480,7 +505,12 @@
       const result = await api(`/v2/platform-admin/model-operations?idempotency_key=${encodeURIComponent(state.modelCommand.idempotencyKey)}`);
       operation = result.operation;
     }
-    if (operation) showModelOperation(operation);
+    if (operation) {
+      showModelOperation(operation);
+      if (operation.action === "verify_deployment" && state.context.capabilities.model_verification_enabled) {
+        await loadModelVerification(operation.id);
+      }
+    }
     else {
       $("#model-connection-operation-status").textContent = "NOT FOUND";
       $("#model-connection-operation-id").textContent = state.modelCommand.idempotencyKey;
@@ -533,6 +563,7 @@
         renderModelDeployments();
       }
       $("#model-test-funding-panel").hidden = !state.context.capabilities.model_test_funding_enabled;
+      $("#model-verification-panel").hidden = !state.context.capabilities.model_verification_enabled;
       if (state.context.capabilities.model_test_funding_enabled) {
         await loadModelTestFunding().catch((error) => toast(error.message, "error"));
       }
@@ -543,6 +574,8 @@
             state.modelCommand = {
               idempotencyKey: stored.idempotencyKey,
               operationId: /^[a-f0-9-]{36}$/.test(stored.operationId) ? stored.operationId : null,
+              ...(stored.kind === "verify_deployment" && /^[a-f0-9-]{36}$/.test(stored.deploymentId)
+                ? { kind: stored.kind, deploymentId: stored.deploymentId } : {}),
             };
           }
         } catch {
@@ -620,7 +653,97 @@
         title: item.display_name, identifier: item.public_model_id, status: item.projection_status,
         meta: [`版本 V${item.generation}`, item.wire_api, `输出 ≤ ${item.max_output_tokens}`,
           `验证：${item.verification_status}`, "未发布 · 运行时未启用", `配置 ${shortId(item.configuration_sha256)}`],
+        actions: state.context.capabilities.model_verification_enabled ? [
+          actionButton("执行受限验证", () => runModelCommand(() => startModelVerification(item)), {
+            testId: "model-verification-start",
+          }),
+          ...(item.verification_operation_id ? [actionButton("查看验证回执", () => loadModelVerification(item.verification_operation_id), {
+            testId: "model-verification-inspect",
+          })] : []),
+        ] : [],
       }));
+      const button = list.lastElementChild.querySelector('[data-testid="model-verification-start"]');
+      if (button) button.dataset.deploymentId = item.id;
+    }
+    configureModelConnectionButtons();
+  }
+
+  async function startModelVerification(item) {
+    if (state.modelCommandBusy || !mutationReady("platform.model_provider.test")) return;
+    if (state.modelCommand && (state.modelCommand.kind !== "verify_deployment" ||
+      state.modelCommand.deploymentId !== item.id || state.modelCommand.operationId)) {
+      throw new Error("先核对当前回执，再开始下一条独立命令");
+    }
+    if (!state.modelTestFundingLoaded || !state.modelTestFunding?.policy?.enabled) {
+      throw new Error("请先配置并核对平台测试预算");
+    }
+    const approved = await openAction({
+      title: "执行受限模型验证",
+      summary: `${item.display_name} · ${item.wire_api} · 单次请求、无工具、输出最多 32 token。由平台承担真实供应商费用，单次金额上限 USD ${microUsdInput(state.modelTestFunding.policy.max_test_microusd)}；不发布模型。`,
+      risk: "HIGH", confirm: "TEST", fields: [],
+    });
+    if (!approved || state.modelCommandBusy) return;
+    state.modelCommandBusy = true;
+    configureModelConnectionButtons();
+    try {
+      if (await recoverModelCommand()) return;
+      if (!state.modelCommand) {
+        state.modelCommand = {
+          idempotencyKey: idempotency("model-test"), operationId: null,
+          kind: "verify_deployment", deploymentId: item.id,
+        };
+        saveModelCommand();
+      }
+      const operation = await api(`/v2/platform-admin/model-deployments/${encodeURIComponent(item.id)}/test`, {
+        method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey },
+        body: {
+          configuration_sha256: item.configuration_sha256,
+          expected_funding_policy_version: state.modelTestFunding.version,
+        },
+      });
+      showModelOperation(operation);
+      await loadModelConnections();
+    } catch (error) {
+      $("#model-connection-operation-status").textContent = "CHECK RECEIPT";
+      $("#model-connection-operation-detail").textContent = "测试提交未确认或被拒绝。先刷新查询原命令，不另建请求或重放用户任务。";
+      throw error;
+    } finally {
+      state.modelCommandBusy = false;
+      configureModelConnectionButtons();
+    }
+  }
+
+  async function loadModelVerification(operationId) {
+    state.modelVerificationId = operationId;
+    $("#model-verification-status").textContent = "LOADING";
+    $("#model-verification-detail").replaceChildren(emptyRecord("正在查询验证回执…"));
+    try {
+      const value = await api(`/v2/platform-admin/model-operations/${encodeURIComponent(operationId)}/verification`);
+      if (state.modelVerificationId !== operationId) return;
+      const evidence = value.evidence;
+      $("#model-verification-status").textContent = value.operation.status.toUpperCase();
+      const details = $("#model-verification-detail");
+      const fields = [
+        ["操作编号", value.operation.id], ["配置指纹", value.configuration_sha256],
+        ["价格版本", value.pricing_revision], ["资金策略", `V${value.funding_policy_version}`],
+        ["预留额度", `USD ${microUsdInput(value.requested_microusd)} / ${value.requested_tokens} token`],
+        ["实际费用", evidence?.actual_microusd == null ? "未确认" : `USD ${microUsdInput(evidence.actual_microusd)}（协议证据；结算以操作状态为准）`],
+        ["实际用量", evidence?.usage ? `${evidence.usage.input_tokens} 输入 / ${evidence.usage.output_tokens} 输出 / ${evidence.usage.total_tokens} 总计` : "未确认"],
+        ["请求次数", evidence ? String(evidence.request_attempts) : "尚无执行回执"],
+        ["输出上限", `${value.output_token_limit} token`],
+        ["错误码", evidence?.error_code || value.operation.error_code || "—"],
+      ];
+      details.replaceChildren(...fields.map(([label, content]) => {
+        const row = node("div", "model-verification-field");
+        row.append(node("dt", "", label), node("dd", "", content));
+        return row;
+      }));
+    } catch (error) {
+      if (state.modelVerificationId === operationId) {
+        $("#model-verification-status").textContent = "CHECK RECEIPT";
+        $("#model-verification-detail").replaceChildren(emptyRecord("回执查询失败，不能据此判定零费用或重新执行。请稍后核对。"));
+      }
+      throw error;
     }
   }
 
@@ -682,6 +805,7 @@
       !state.modelTestFundingLoaded || state.modelTestFundingBusy;
     for (const element of $("#model-test-funding-form").elements) element.disabled = disabled;
     $("#model-test-funding-refresh").disabled = state.modelTestFundingBusy;
+    configureModelConnectionButtons();
   }
 
   function microUsdInput(value) {
@@ -1453,6 +1577,9 @@
   $("#model-connections-refresh").addEventListener("click", () => void runModelCommand(loadModelConnections));
   $("#model-test-funding-form").addEventListener("submit", (event) => void runModelCommand(() => submitModelTestFunding(event)));
   $("#model-test-funding-refresh").addEventListener("click", () => void runModelCommand(loadModelTestFunding));
+  $("#model-verification-refresh").addEventListener("click", () => {
+    if (state.modelVerificationId) void runModelCommand(() => loadModelVerification(state.modelVerificationId));
+  });
   $("#model-connection-new-command").addEventListener("click", () => {
     state.modelCommand = null;
     state.modelCommandNotice?.remove();

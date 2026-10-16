@@ -232,6 +232,69 @@ def test_inference_key_is_scoped_and_not_rendered() -> None:
     assert key not in repr(value)
 
 
+def _readback_row():
+    return {
+        "model_name": "managed-test-model",
+        "model_info": {"id": str(_ID)},
+        "litellm_params": {
+            "model": "deepseek/deepseek-contract",
+            "api_base": "https://api.deepseek.com",
+            "litellm_credential_name": "managed-test-credential",
+            "num_retries": 0,
+            "max_retries": 0,
+            "allow_client_keepalive_override": False,
+            "use_in_pass_through": False,
+            "use_litellm_proxy": False,
+            "use_xai_oauth": False,
+            "merge_reasoning_content_in_choices": False,
+        },
+    }
+
+
+def _reconcile(rows):
+    return asyncio.run(
+        _client(lambda _: httpx.Response(200, json={"data": rows})).reconcile_deepseek_deployment(
+            deployment_id=_ID,
+            alias="managed-test-model",
+            model="deepseek-contract",
+            credential_name="managed-test-credential",
+        )
+    )
+
+
+def test_visible_transport_readback_accepts_only_the_exact_managed_deployment():
+    assert _reconcile([_readback_row()]) is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        {"num_retries": True},
+        {"max_retries": 1},
+        {"litellm_credential_name": "another"},
+        {"api_base": "https://unapproved.test"},
+        {"api_key": _PROVIDER_KEY},
+        {"mock_response": "fake"},
+        {"fallbacks": ["other"]},
+        {"use_litellm_proxy": True},
+        {"headers": {"X-Api-Key": _PROVIDER_KEY}},
+    ),
+)
+def test_visible_transport_drift_is_rejected_without_returning_values(change):
+    row = _readback_row()
+    row["litellm_params"].update(change)
+    with pytest.raises(LiteLLMManagementError) as rejected:
+        _reconcile([row])
+    assert rejected.value.code == "litellm_deployment_drift"
+    assert _PROVIDER_KEY not in str(rejected.value)
+
+
+def test_duplicate_aliases_or_identities_fail_closed():
+    for rows in ([], [_readback_row(), _readback_row()]):
+        with pytest.raises(LiteLLMManagementError, match="deployment_drift"):
+            _reconcile(rows)
+
+
 @pytest.mark.parametrize("duration", (True, -1, 0, 59, 86401, 3600.5, "3600"))
 def test_invalid_key_duration_never_reaches_management_api(duration: int) -> None:
     def upstream(request: httpx.Request) -> httpx.Response:

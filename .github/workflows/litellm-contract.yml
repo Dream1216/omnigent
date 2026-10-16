@@ -8,6 +8,9 @@ on:
       - deploy/litellm/**
       - saas/control_plane/litellm_client.py
       - saas/control_plane/model_usage.py
+      - saas/control_plane/model_deployments.py
+      - saas/control_plane/model_pricing.py
+      - saas/control_plane/model_verification_contract.py
       - saas/production/model_protocol_probe.py
       - saas/production/litellm_release.json
       - saas/production/platform_model_gateway.py

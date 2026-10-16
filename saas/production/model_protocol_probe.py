@@ -19,9 +19,11 @@ from saas.control_plane.model_deployments import (
     compile_model_deployment_draft,
 )
 from saas.control_plane.model_usage import ModelTokenUsage, ModelUsageError, normalize_model_usage
+from saas.control_plane.model_verification_contract import (
+    PROBE_INPUT_TOKEN_CEILING,
+    PROBE_OUTPUT_TOKEN_CEILING,
+)
 
-PROBE_INPUT_TOKEN_CEILING = 1024
-PROBE_OUTPUT_TOKEN_CEILING = 32
 _MAX_RESPONSE_BYTES = 64 * 1024
 _MAX_LINE_BYTES = 16 * 1024
 _MAX_RESPONSE_ID_BYTES = 2048

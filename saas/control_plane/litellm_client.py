@@ -157,6 +157,72 @@ class LiteLLMManagementClient:
             },
         )
 
+    async def reconcile_deepseek_deployment(
+        self,
+        *,
+        deployment_id: UUID,
+        alias: str,
+        model: str,
+        credential_name: str,
+        provider_base_url: str = "https://api.deepseek.com",
+    ) -> None:
+        """Check visible transport fields; masked credentials need separate evidence."""
+
+        if (
+            deployment_id.int == 0
+            or provider_base_url not in self._configuration.allowed_provider_base_urls
+        ):
+            raise ValueError("LiteLLM deployment is not admitted")
+        _name(alias), _name(model), _name(credential_name)
+        payload = await self._request("GET", "/model/info")
+        rows = payload.get("data")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise LiteLLMManagementError("litellm_contract_invalid", uncertain=False)
+        matches = [
+            row
+            for row in rows
+            if row.get("model_name") == alias
+            or (
+                isinstance(row.get("model_info"), dict)
+                and row["model_info"].get("id") == str(deployment_id)
+            )
+        ]
+        if len(matches) != 1:
+            raise LiteLLMManagementError("litellm_deployment_drift", uncertain=False)
+        row = matches[0]
+        info, params = row.get("model_info"), row.get("litellm_params")
+        expected = {
+            "model": "deepseek/" + model,
+            "api_base": provider_base_url,
+            "litellm_credential_name": credential_name,
+            "num_retries": 0,
+            "max_retries": 0,
+        }
+        disabled_flags = {
+            "allow_client_keepalive_override",
+            "use_in_pass_through",
+            "use_litellm_proxy",
+            "use_xai_oauth",
+            "merge_reasoning_content_in_choices",
+        }
+        if (
+            row.get("model_name") != alias
+            or not isinstance(info, dict)
+            or info.get("id") != str(deployment_id)
+            or not isinstance(params, dict)
+            or any(
+                params.get(name) != value
+                or (name in {"num_retries", "max_retries"} and type(params.get(name)) is not int)
+                for name, value in expected.items()
+            )
+            or any(
+                value is not None and not (name in disabled_flags and value is False)
+                for name, value in params.items()
+                if name not in expected
+            )
+        ):
+            raise LiteLLMManagementError("litellm_deployment_drift", uncertain=False)
+
     async def create_deepseek_deployment(
         self,
         *,
@@ -235,7 +301,7 @@ class LiteLLMManagementClient:
                     timeout=configuration.timeout_seconds,
                     follow_redirects=False,
                     trust_env=False,
-                    transport=self._transport,
+                    transport=self._transport or httpx.AsyncHTTPTransport(retries=0),
                 ) as client,
                 client.stream(method, path, json=document) as response,
             ):

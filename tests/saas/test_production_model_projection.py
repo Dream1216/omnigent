@@ -225,3 +225,148 @@ def test_projection_failed_startup_disposes_only_its_engine_and_redacts_cause(
     assert disposed == [True] and not fallback.closed
     assert str(rejected.value) == "model_projection_startup_rejected"
     assert rejected.value.__suppress_context__
+
+
+def _verification_environment(tmp_path):
+    from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+
+    source = _environment(tmp_path)
+    source["OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED"] = "true"
+    source["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] = CONTROL_PLANE_SCHEMA_REVISION
+    receipt_path = Path(source["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])
+    receipt = json.loads(receipt_path.read_text())
+    receipt["saas_head"] = CONTROL_PLANE_SCHEMA_REVISION
+    receipt_path.chmod(0o600)
+    receipt_path.write_text(json.dumps(receipt))
+    receipt_path.chmod(0o400)
+    path = tmp_path / "billing-dsn"
+    path.write_text(
+        "postgresql+psycopg://platform_model_billing_login:isolated-billing-test-only@db.example:5432/omnigent?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt"
+    )
+    path.chmod(0o400)
+    source["OMNIGENT_SAAS_BILLING_DATABASE_URL_FILE"] = str(path)
+    return source
+
+
+def test_verification_consumer_owns_separate_billing_login_and_routes_only_its_domain(
+    tmp_path, monkeypatch
+):
+    source, fallback, calls, inspections, disposed = (
+        _verification_environment(tmp_path),
+        _Fallback(),
+        [],
+        [],
+        [],
+    )
+    engines = [sa.create_engine("sqlite://"), sa.create_engine("sqlite://")]
+    for index, engine in enumerate(engines):
+        sa.event.listen(engine, "engine_disposed", lambda _, index=index: disposed.append(index))
+
+    def engine_factory(url):
+        calls.append(sa.make_url(url).username)
+        return engines[len(calls) - 1]
+
+    monkeypatch.setattr(production, "verify_model_projection_postgresql_state", lambda **_: None)
+    monkeypatch.setattr(
+        production,
+        "_inspect_service_login",
+        lambda engine, **kwargs: inspections.append((engine, kwargs)),
+    )
+    wrapped = production.wrap_production_model_projection(
+        source,
+        fallback=fallback,
+        engine_factory=engine_factory,
+        secret_cipher_loader=lambda _: _Cipher(),
+    )
+    assert calls == ["model_projection_login", "platform_model_billing_login"]
+    assert inspections == [
+        (
+            engines[1],
+            {"expected_login": "platform_model_billing_login", "expected_role": "saas_billing"},
+        )
+    ]
+    assert wrapped.verification is not None and wrapped.billing_engine is engines[1]
+    verification = _Fallback()
+    wrapped.verification = verification
+    event = {
+        "event_id": uuid4(),
+        "event_type": "platform.model_verification.requested",
+        "aggregate_type": "platform_model",
+        "aggregate_key": "opaque-operation",
+        "payload": {},
+    }
+    wrapped.publish(**event)
+    assert verification.events == [event] and fallback.events == []
+    wrapped.publish(**{**event, "event_type": "unrelated"})
+    assert len(fallback.events) == 1 and len(verification.events) == 1
+    wrapped.close()
+    assert sorted(disposed) == [0, 1] and fallback.closed
+
+
+@pytest.mark.parametrize("change", ("missing_billing", "wrong_login", "billing_inspection"))
+def test_verification_consumer_failed_startup_disposes_owned_engines_not_fallback(
+    tmp_path, monkeypatch, change
+):
+    source, fallback, engines, disposed = _verification_environment(tmp_path), _Fallback(), [], []
+    if change == "missing_billing":
+        del source["OMNIGENT_SAAS_BILLING_DATABASE_URL_FILE"]
+    elif change == "wrong_login":
+        path = Path(source["OMNIGENT_SAAS_BILLING_DATABASE_URL_FILE"])
+        path.chmod(0o600)
+        path.write_text(
+            path.read_text().replace("platform_model_billing_login", "model_projection_login")
+        )
+        path.chmod(0o400)
+
+    def engine_factory(_url):
+        engine = sa.create_engine("sqlite://")
+        engines.append(engine)
+        sa.event.listen(engine, "engine_disposed", lambda _: disposed.append(True))
+        return engine
+
+    def reject(*_args, **_kwargs):
+        raise ValueError("isolated-billing-test-only")
+
+    monkeypatch.setattr(production, "verify_model_projection_postgresql_state", lambda **_: None)
+    monkeypatch.setattr(production, "_inspect_service_login", reject)
+    with pytest.raises(production.ProductionModelProjectionError) as error:
+        production.wrap_production_model_projection(
+            source,
+            fallback=fallback,
+            engine_factory=engine_factory,
+            secret_cipher_loader=lambda _: _Cipher(),
+        )
+    assert (
+        str(error.value) == "model_projection_startup_rejected"
+        and error.value.__suppress_context__
+    )
+    assert len(disposed) == len(engines) == (2 if change == "billing_inspection" else 1)
+    assert not fallback.closed and not fallback.events
+
+
+def test_verification_event_cannot_fall_through_when_consumer_is_disabled(tmp_path, monkeypatch):
+    from saas.control_plane.outbox import OutboxPublishError
+
+    monkeypatch.setattr(production, "verify_model_projection_postgresql_state", lambda **_: None)
+    wrapped = production.wrap_production_model_projection(
+        _environment(tmp_path),
+        fallback=_Fallback(),
+        engine_factory=lambda _: sa.create_engine("sqlite://"),
+        secret_cipher_loader=lambda _: _Cipher(),
+    )
+    with pytest.raises(OutboxPublishError, match="model_verification_unavailable"):
+        wrapped.publish(
+            event_id=uuid4(),
+            event_type="platform.model_verification.requested",
+            aggregate_type="platform_model",
+            aggregate_key="opaque-operation",
+            payload={},
+        )
+    assert wrapped.fallback.events == []
+    wrapped.close()
+    with pytest.raises(
+        production.ProductionModelProjectionError, match="model_verification_requires_projection"
+    ):
+        production.wrap_production_model_projection(
+            {"OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED": "true"}, fallback=_Fallback()
+        )

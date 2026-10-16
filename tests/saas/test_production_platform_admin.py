@@ -101,6 +101,97 @@ def _environment() -> dict[str, str]:
     }
 
 
+@pytest.mark.parametrize("verification_enabled", (False, True))
+def test_staff_priced_test_composition_loads_only_approved_prices(
+    monkeypatch, verification_enabled
+):
+    from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+    from tests.saas.test_model_connections import _fixture
+    from tests.saas.test_model_verifications import _pricing
+
+    _service, factory, _actor, cipher, _client, _headers = _fixture()
+    engine = factory.kw["bind"]
+    bindings = ProductionServiceRoleBindings(
+        path=Path("/isolated-staff-bindings.json"),
+        sha256="a" * 64,
+        bindings=tuple(
+            ProductionServiceRoleBinding(service, service + "_login", "saas_" + service)
+            for service in ("platform_app", "platform_authenticator")
+        ),
+    )
+    monkeypatch.setattr(platform_admin, "_engines", lambda *_: ((engine, engine), bindings))
+    monkeypatch.setattr(platform_admin, "_inspect_service_login", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(platform_admin, "build_production_secret_cipher", lambda _: cipher)
+    prices_loaded = []
+
+    def approved_prices(source):
+        assert not any("BILLING_DATABASE" in key or "MANAGEMENT_KEY" in key for key in source)
+        prices_loaded.append(True)
+        return _pricing()
+
+    monkeypatch.setattr(platform_admin, "load_platform_model_pricing", approved_prices)
+    app, _engines = platform_admin.build_platform_admin(
+        {
+            **_environment(),
+            "OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED": "true",
+            "OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED": "true"
+            if verification_enabled
+            else "false",
+            "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": CONTROL_PLANE_SCHEMA_REVISION,
+        }
+    )
+    client = TestClient(app, base_url=ORIGIN)
+    assert (
+        client.post(
+            "/v2/platform-admin/session/login",
+            headers={"Origin": ORIGIN},
+            json={
+                "username": "model-operator",
+                "password": "model-operator-test-password",
+            },
+        ).status_code
+        == 201
+    )
+    assert (
+        client.get("/v2/platform-admin/context").json()["capabilities"][
+            "model_verification_enabled"
+        ]
+        is verification_enabled
+    )
+    assert prices_loaded == ([True] if verification_enabled else [])
+    engine.dispose()
+
+
+@pytest.mark.parametrize("change", ("connections_disabled", "stale_schema", "invalid_flag"))
+def test_staff_priced_test_requires_current_schema_and_explicit_connections(monkeypatch, change):
+    from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+    from tests.saas.test_model_connections import _fixture
+
+    _service, factory, _actor, _cipher, _client, _headers = _fixture()
+    engine = factory.kw["bind"]
+    bindings = ProductionServiceRoleBindings(
+        path=Path("/unused-bindings"), sha256="a" * 64, bindings=()
+    )
+    monkeypatch.setattr(platform_admin, "_engines", lambda *_: ((engine, engine), bindings))
+    source = {
+        **_environment(),
+        "OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED": "true",
+        "OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED": "true",
+        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": CONTROL_PLANE_SCHEMA_REVISION,
+    }
+    source[
+        {
+            "connections_disabled": "OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED",
+            "stale_schema": "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION",
+            "invalid_flag": "OMNIGENT_SAAS_MODEL_VERIFICATION_ENABLED",
+        }[change]
+    ] = {"connections_disabled": "false", "stale_schema": "lm1e00000001", "invalid_flag": "TRUE"}[
+        change
+    ]
+    with pytest.raises(ValueError):
+        platform_admin.build_platform_admin(source)
+
+
 def _engine() -> sa.Engine:
     engine = sa.create_engine(
         "sqlite+pysqlite://",

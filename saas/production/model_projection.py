@@ -9,20 +9,35 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
 
 from omnigent.stores.credential_store.secret_cipher import SecretCipher
 from saas.control_plane.litellm_client import (
     LiteLLMManagementClient,
     LiteLLMManagementConfiguration,
 )
+from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_projection import (
     MODEL_CREDENTIAL_PROJECTION_ROUTE,
     ModelCredentialProjectionPublisher,
 )
-from saas.control_plane.outbox import OutboxPublisher
+from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.onboarding_composition import validate_production_outbox_publisher
+from saas.production.model_protocol_probe import (
+    ModelProtocolProbe,
+    ModelProtocolProbeConfiguration,
+)
+from saas.production.model_verification import (
+    MODEL_VERIFICATION_ROUTE,
+    ModelVerificationPublisher,
+    model_verification_enabled,
+)
 from saas.production.onboarding import _read_bytes, _regular_file, build_production_secret_cipher
-from saas.production.postgresql_migration import verify_model_projection_postgresql_state
+from saas.production.postgresql_migration import (
+    _inspect_service_login,
+    verify_model_projection_postgresql_state,
+)
 from saas.production.server_config import (
     ProductionMigrationReceipt,
     load_production_database_url_file,
@@ -135,11 +150,19 @@ class ProductionModelProjectionPublisher:
     engine: sa.Engine = field(repr=False)
     projection: ModelCredentialProjectionPublisher = field(repr=False)
     fallback: OutboxPublisher = field(repr=False)
+    verification: ModelVerificationPublisher | None = field(default=None, repr=False)
+    billing_engine: sa.Engine | None = field(default=None, repr=False)
 
     def validate_outbox_configuration(self) -> None:
         verify_model_projection_postgresql_state(
             engine=self.engine, database_url=self.config.database_url, config=self.config
         )
+        if self.billing_engine is not None:
+            _inspect_service_login(
+                self.billing_engine,
+                expected_login=self.config.service_role_graph.login_for("billing"),
+                expected_role="saas_billing",
+            )
         validate_production_outbox_publisher(self.fallback)
 
     def publish(
@@ -160,6 +183,16 @@ class ProductionModelProjectionPublisher:
             )
             else self.fallback
         )
+        verification_route = MODEL_VERIFICATION_ROUTE
+        if (
+            event_type == verification_route.event_type
+            or payload.get("event_type") == verification_route.payload_event_type
+        ):
+            if self.verification is None:
+                raise OutboxPublishError(
+                    "model_verification_unavailable", retryable=True, pre_side_effect=False
+                )
+            target = self.verification
         target.publish(
             event_id=event_id,
             event_type=event_type,
@@ -174,6 +207,8 @@ class ProductionModelProjectionPublisher:
             if callable(close):
                 close()
         finally:
+            if self.billing_engine is not None and self.billing_engine is not self.engine:
+                self.billing_engine.dispose()
             self.engine.dispose()
 
 
@@ -188,17 +223,41 @@ def wrap_production_model_projection(
         [Mapping[str, str]], SecretCipher | None
     ] = build_production_secret_cipher,
 ) -> OutboxPublisher:
-    """Keep disabled deployments unchanged; enabled workers need only one new DSN."""
+    """Projection owns its login; optional priced tests use a separate Billing login."""
 
     if not model_projection_enabled(source):
+        if model_verification_enabled(source):
+            raise ProductionModelProjectionError("model_verification_requires_projection")
         return fallback
     engine: sa.Engine | None = None
+    billing_engine: sa.Engine | None = None
     try:
         config = load_production_model_projection_config(source)
         cipher = secret_cipher_loader(source)
         if cipher is None:
             raise ValueError
         engine = engine_factory(config.database_url)
+        verification = None
+        if model_verification_enabled(source):
+            if config.control_plane_schema_revision != CONTROL_PLANE_SCHEMA_REVISION:
+                raise ValueError
+            billing_url, parsed, _path = load_production_database_url_file(source, "billing")
+            if parsed.username != config.service_role_graph.login_for("billing"):
+                raise ValueError
+            billing_engine = engine_factory(billing_url)
+            verification = ModelVerificationPublisher(
+                engine,
+                management=LiteLLMManagementClient(config.management),
+                budget=ModelProviderBudgetAdmissionService(
+                    sessionmaker(billing_engine, expire_on_commit=False)
+                ),
+                probe=ModelProtocolProbe(
+                    ModelProtocolProbeConfiguration(
+                        base_url=config.management.base_url,
+                        allowed_http_hosts=config.management.allowed_http_hosts,
+                    )
+                ),
+            )
         publisher = ProductionModelProjectionPublisher(
             config,
             engine,
@@ -206,6 +265,8 @@ def wrap_production_model_projection(
                 engine, secret_cipher=cipher, management=LiteLLMManagementClient(config.management)
             ),
             fallback,
+            verification,
+            billing_engine,
         )
         publisher.validate_outbox_configuration()
         return publisher
@@ -213,4 +274,7 @@ def wrap_production_model_projection(
         if engine is not None:
             with suppress(Exception):
                 engine.dispose()
+        if billing_engine is not None and billing_engine is not engine:
+            with suppress(Exception):
+                billing_engine.dispose()
         raise ProductionModelProjectionError("model_projection_startup_rejected") from None

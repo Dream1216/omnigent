@@ -224,6 +224,7 @@ class ModelProviderBudgetAdmissionService:
         requested_microusd: int,
         requested_tokens: int,
         ttl: timedelta,
+        expected_policy_version: int | None = None,
         now: datetime | None = None,
     ) -> ModelProviderBudgetReservationView:
         """Fund a trusted verification command, never a customer Run or invoice."""
@@ -238,6 +239,10 @@ class ModelProviderBudgetAdmissionService:
             not isinstance(configuration_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", configuration_sha256) is None
             or not timedelta(0) < ttl <= timedelta(minutes=5)
+            or (
+                expected_policy_version is not None
+                and (type(expected_policy_version) is not int or expected_policy_version < 1)
+            )
         ):
             raise ModelProviderBudgetError(
                 "platform_model_budget_request_invalid", "Model test funding request is invalid"
@@ -250,6 +255,11 @@ class ModelProviderBudgetAdmissionService:
             operation_key=operation_key,
             requested_microusd=requested_microusd,
             requested_tokens=requested_tokens,
+            **(
+                {"expected_policy_version": expected_policy_version}
+                if expected_policy_version is not None
+                else {}
+            ),
         )
         with (
             query_name_scope("saas.model_budget.reserve_platform_test"),
@@ -286,6 +296,11 @@ class ModelProviderBudgetAdmissionService:
                 raise ModelProviderBudgetError(
                     "platform_model_test_funding_unavailable",
                     "Platform-funded model tests are unavailable",
+                )
+            if expected_policy_version is not None and policy.version != expected_policy_version:
+                raise ModelProviderBudgetError(
+                    "platform_model_test_funding_changed",
+                    "Model test funding changed before reservation",
                 )
             if (
                 requested_microusd > policy.max_test_microusd
@@ -566,7 +581,12 @@ class ModelProviderBudgetAdmissionService:
                         "Inference outcome conflicts with its receipt",
                     )
                 return _view(record, replayed=True)
-            if record.status not in {"in_flight", "uncertain"}:
+            pre_egress_zero = (
+                record.purpose == "platform_test"
+                and record.status == "reserved"
+                and actual_tokens == 0
+            )
+            if record.status not in {"in_flight", "uncertain"} and not pre_egress_zero:
                 raise ModelProviderBudgetError(
                     "platform_model_budget_reservation_inactive",
                     "No sent inference attempt awaits resolution",

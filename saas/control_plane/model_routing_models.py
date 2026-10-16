@@ -111,13 +111,15 @@ class ModelProjectionOperationRecord(SaasBase):
             "actor_principal_id", "idempotency_key", name="uq_model_projection_idempotency"
         ),
         sa.CheckConstraint(
-            "action IN ('create_connection', 'rotate_credential', 'create_deployment')",
+            "action IN ('create_connection', 'rotate_credential', "
+            "'create_deployment', 'verify_deployment')",
             name="ck_model_projection_action",
         ),
         sa.CheckConstraint(
             "(action IN ('create_connection', 'rotate_credential') "
             "AND deployment_version_id IS NULL) "
-            "OR (action = 'create_deployment' AND deployment_version_id IS NOT NULL)",
+            "OR (action IN ('create_deployment', 'verify_deployment') "
+            "AND deployment_version_id IS NOT NULL)",
             name="ck_model_projection_deployment_scope",
         ),
         sa.CheckConstraint(
@@ -160,7 +162,8 @@ class ModelProjectionTransitionRecord(SaasBase):
         sa.CheckConstraint("version > 1", name="ck_model_projection_transition_version"),
         sa.CheckConstraint(
             "(previous_status = 'requested' AND status IN ('applying', 'failed')) OR "
-            "(previous_status = 'applying' AND status IN ('applied', 'failed', 'uncertain'))",
+            "(previous_status = 'applying' "
+            "AND status IN ('applied', 'verified', 'failed', 'uncertain'))",
             name="ck_model_projection_transition_edge",
         ),
     )
@@ -225,4 +228,147 @@ class ModelDeploymentVersionRecord(SaasBase):
             "length(canonical_configuration) BETWEEN 1 AND 16384",
             name="ck_model_deployment_configuration",
         ),
+    )
+
+
+class ModelVerificationCommandRecord(SaasBase):
+    """Append-only approved cost and funding snapshot for one bounded test."""
+
+    __tablename__ = "saas_model_verification_commands"
+
+    operation_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"), primary_key=True
+    )
+    provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    canonical_price: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    price_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    pricing_revision: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    funding_policy_version: Mapped[int] = mapped_column(nullable=False)
+    requested_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    requested_tokens: Mapped[int] = mapped_column(nullable=False)
+    output_token_limit: Mapped[int] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("provider_id", "funding_policy_version"),
+            (
+                "saas_model_test_funding_policies.provider_id",
+                "saas_model_test_funding_policies.version",
+            ),
+            name="fk_model_verification_funding",
+            ondelete="RESTRICT",
+        ),
+        sa.UniqueConstraint(
+            "operation_id",
+            "configuration_sha256",
+            "funding_policy_version",
+            name="uq_model_verification_command_scope",
+        ),
+        sa.CheckConstraint(
+            "provider_id = 'deepseek' AND funding_policy_version > 0",
+            name="ck_model_verification_funding",
+        ),
+        sa.CheckConstraint(
+            _hex64("configuration_sha256") + " AND " + _hex64("price_sha256"),
+            name="ck_model_verification_command_hashes",
+        ),
+        sa.CheckConstraint(
+            "requested_microusd > 0 AND requested_tokens BETWEEN 1 AND 1056 "
+            "AND output_token_limit BETWEEN 1 AND 32 "
+            "AND length(canonical_price) BETWEEN 1 AND 8192 "
+            "AND length(pricing_revision) BETWEEN 1 AND 32",
+            name="ck_model_verification_command_bounds",
+        ),
+    )
+
+
+class ModelVerificationBudgetBindingRecord(SaasBase):
+    """Append-only binding to a real platform-test hold before external effects."""
+
+    __tablename__ = "saas_model_verification_budget_bindings"
+
+    operation_id: Mapped[UUID] = mapped_column(primary_key=True)
+    budget_reservation_id: Mapped[UUID] = mapped_column(nullable=False, unique=True)
+    configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    funding_policy_version: Mapped[int] = mapped_column(nullable=False)
+    admitted_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("operation_id", "configuration_sha256", "funding_policy_version"),
+            (
+                "saas_model_verification_commands.operation_id",
+                "saas_model_verification_commands.configuration_sha256",
+                "saas_model_verification_commands.funding_policy_version",
+            ),
+            name="fk_model_verification_binding_command",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            (
+                "operation_id",
+                "budget_reservation_id",
+                "configuration_sha256",
+                "funding_policy_version",
+            ),
+            (
+                "saas_model_provider_budget_reservations.test_operation_id",
+                "saas_model_provider_budget_reservations.id",
+                "saas_model_provider_budget_reservations.test_configuration_sha256",
+                "saas_model_provider_budget_reservations.test_policy_version",
+            ),
+            name="fk_model_verification_binding_budget",
+            ondelete="RESTRICT",
+        ),
+        sa.UniqueConstraint(
+            "operation_id", "budget_reservation_id", name="uq_model_verification_budget_binding"
+        ),
+    )
+
+
+class ModelVerificationReceiptRecord(SaasBase):
+    """Immutable protocol evidence; financial resolution may resume without inference."""
+
+    __tablename__ = "saas_model_verification_receipts"
+
+    operation_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_verification_commands.operation_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    budget_reservation_id: Mapped[UUID | None] = mapped_column()
+    outcome: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    actual_microusd: Mapped[int | None] = mapped_column(sa.BigInteger)
+    request_attempts: Mapped[int] = mapped_column(nullable=False)
+    error_code: Mapped[str | None] = mapped_column(sa.String(128))
+    canonical_evidence: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("operation_id", "budget_reservation_id"),
+            (
+                "saas_model_verification_budget_bindings.operation_id",
+                "saas_model_verification_budget_bindings.budget_reservation_id",
+            ),
+            name="fk_model_verification_receipt_budget",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(
+            "request_attempts IN (0, 1) "
+            "AND (actual_microusd IS NULL OR actual_microusd >= 0) "
+            "AND length(canonical_evidence) BETWEEN 1 AND 8192",
+            name="ck_model_verification_receipt_bounds",
+        ),
+        sa.CheckConstraint(
+            "(outcome = 'passed' AND error_code IS NULL AND request_attempts = 1 "
+            "AND actual_microusd IS NOT NULL AND actual_microusd > 0 "
+            "AND budget_reservation_id IS NOT NULL) OR "
+            "(outcome IN ('failed', 'uncertain') AND error_code IS NOT NULL "
+            "AND length(error_code) > 0)",
+            name="ck_model_verification_receipt_outcome",
+        ),
+        sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_verification_receipt_hash"),
     )

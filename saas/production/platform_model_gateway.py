@@ -9,13 +9,10 @@ from the final OpenAI-compatible usage frame.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import math
 import os
 import stat
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, cast
@@ -32,6 +29,11 @@ from saas.control_plane.model_budget import (
     ModelProviderBudgetAdmissionService,
     ModelProviderBudgetError,
     ModelProviderBudgetReservationView,
+)
+from saas.control_plane.model_pricing import (
+    PlatformModelPrice,
+    PlatformModelPricingPolicy,
+    token_cost_microusd,
 )
 from saas.control_plane.model_provider import (
     ModelProviderConfigurationReader,
@@ -61,104 +63,6 @@ _MAX_SSE_LINE_BYTES = 256 * 1024
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _TOKEN_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
-
-
-@dataclass(frozen=True, slots=True)
-class PlatformModelPrice:
-    model_sha256: str
-    peak_input_cache_hit_microusd_per_million_tokens: int
-    peak_input_cache_miss_microusd_per_million_tokens: int
-    peak_output_microusd_per_million_tokens: int
-    off_peak_input_cache_hit_microusd_per_million_tokens: int
-    off_peak_input_cache_miss_microusd_per_million_tokens: int
-    off_peak_output_microusd_per_million_tokens: int
-
-    def __post_init__(self) -> None:
-        if len(self.model_sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in self.model_sha256
-        ):
-            raise ValueError("Platform model price is invalid")
-        for value in (
-            self.peak_input_cache_hit_microusd_per_million_tokens,
-            self.peak_input_cache_miss_microusd_per_million_tokens,
-            self.peak_output_microusd_per_million_tokens,
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        ):
-            if isinstance(value, bool) or not 1 <= value <= 10**12:
-                raise ValueError("Platform model price is invalid")
-
-    @property
-    def reservation_rate(self) -> int:
-        """Return the maximum possible rate for fail-closed pre-egress admission."""
-
-        return max(
-            self.peak_input_cache_hit_microusd_per_million_tokens,
-            self.peak_input_cache_miss_microusd_per_million_tokens,
-            self.peak_output_microusd_per_million_tokens,
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        )
-
-    def rates_at(self, at: datetime) -> tuple[int, int, int]:
-        """Resolve the pinned DeepSeek weekday UTC peak-window contract."""
-
-        normalized = at.astimezone(timezone.utc)
-        peak = normalized.weekday() < 5 and (1 <= normalized.hour < 4 or 6 <= normalized.hour < 10)
-        if peak:
-            return (
-                self.peak_input_cache_hit_microusd_per_million_tokens,
-                self.peak_input_cache_miss_microusd_per_million_tokens,
-                self.peak_output_microusd_per_million_tokens,
-            )
-        return (
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PlatformModelPricingPolicy:
-    revision: str
-    catalog_sha256: str
-    prices: tuple[PlatformModelPrice, ...]
-
-    def __post_init__(self) -> None:
-        if (
-            not self.revision
-            or len(self.revision) > 32
-            or any(ord(character) < 0x21 or ord(character) > 0x7E for character in self.revision)
-            or len(self.catalog_sha256) != 64
-            or any(character not in "0123456789abcdef" for character in self.catalog_sha256)
-            or not self.prices
-        ):
-            raise ValueError("Platform model pricing policy is invalid")
-        sealed_models = tuple(price.model_sha256 for price in self.prices)
-        if len(set(sealed_models)) != len(sealed_models):
-            raise ValueError("Platform model pricing policy is invalid")
-
-    def for_catalog(self, models: tuple[str, ...]) -> Mapping[str, PlatformModelPrice]:
-        """Return rates for a unique configured subset of the sealed catalog."""
-
-        indexed = {price.model_sha256: price for price in self.prices}
-        model_hashes = tuple(hashlib.sha256(model.encode("utf-8")).hexdigest() for model in models)
-        if (
-            not models
-            or len(set(models)) != len(models)
-            or any(model_hash not in indexed for model_hash in model_hashes)
-        ):
-            raise ValueError("Platform model pricing catalog is unavailable")
-        if len(models) == len(self.prices):
-            canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
-            if hashlib.sha256(canonical).hexdigest() != self.catalog_sha256:
-                raise ValueError("Platform model pricing catalog is unavailable")
-        return {
-            model: indexed[model_hash]
-            for model, model_hash in zip(models, model_hashes, strict=True)
-        }
 
 
 class ConfigurationReader(Protocol):
@@ -747,9 +651,7 @@ def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> i
 
 
 def _microusd(tokens: int, rate_per_million: int) -> int:
-    if tokens <= 0:
-        return 0
-    return math.ceil(tokens * rate_per_million / 1_000_000)
+    return token_cost_microusd(tokens, rate_per_million)
 
 
 def _error(status: int, code: str) -> JSONResponse:

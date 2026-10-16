@@ -646,6 +646,13 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             ondelete="RESTRICT",
         ),
         sa.UniqueConstraint("test_operation_id", name="uq_model_budget_test_operation"),
+        sa.UniqueConstraint(
+            "test_operation_id",
+            "id",
+            "test_configuration_sha256",
+            "test_policy_version",
+            name="uq_model_budget_verification_binding",
+        ),
         sa.CheckConstraint(
             "(purpose = 'tenant_run' AND tenant_id IS NOT NULL AND run_id IS NOT NULL "
             "AND test_operation_id IS NULL AND test_actor_principal_id IS NULL "
