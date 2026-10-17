@@ -15,6 +15,33 @@ _LOCK = threading.Lock()
 _KEY = os.environ["PROBE_PROVIDER_KEY"]
 
 
+def managed_terminal_tool(document):
+    messages = document.get("messages", [])
+    latest = next((r for r in reversed(messages) if r.get("role") == "user"), {})
+    if "P0_MANAGED_TOOL" not in str(latest.get("content", "")):
+        return None
+    returned = {r.get("tool_call_id") for r in messages if r.get("role") == "tool"}
+    if "call_managed_send" in returned:
+        return None
+    sending = "call_managed_launch" in returned
+    name = "sys_terminal_send" if sending else "sys_terminal_launch"
+    candidates = [
+        row.get("function", {}).get("name")
+        for row in document.get("tools") or []
+        if row.get("function", {}).get("name") in {name, "mcp__omnigent__" + name}
+    ]
+    if len(candidates) != 1:
+        raise ValueError("managed_probe_terminal_tool_missing")
+    arguments = {"terminal": "shell", "session": "managed-probe"}
+    if sending:
+        arguments["text"] = "printf '%s\\n' LITELLM_TOOL_ONCE >> /workspace/litellm-once.txt"
+    return {
+        "id": "call_managed_send" if sending else "call_managed_launch",
+        "type": "function",
+        "function": {"name": candidates[0], "arguments": json.dumps(arguments)},
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args: object) -> None:
         pass
@@ -57,6 +84,13 @@ class Handler(BaseHTTPRequestHandler):
             if "P0_TOOL" in text and not tool_returned
             else "text"
         )
+        try:
+            managed_tool = managed_terminal_tool(document)
+        except ValueError:
+            self._send(422, b'{"error":{"message":"managed_probe_terminal_tool_missing"}}')
+            return
+        if managed_tool is not None:
+            mode = "tool"
         with _LOCK:
             _REQUESTS.append(
                 {
@@ -65,6 +99,12 @@ class Handler(BaseHTTPRequestHandler):
                     "stream": document.get("stream"),
                     "max_tokens": document.get("max_tokens"),
                     "mode": mode,
+                    "tool_names": [
+                        r.get("function", {}).get("name") for r in document.get("tools") or []
+                    ],
+                    "tool_result_ids": [
+                        r.get("tool_call_id") for r in messages if r.get("role") == "tool"
+                    ],
                 }
             )
         if mode == "rate-limit":
@@ -88,6 +128,8 @@ class Handler(BaseHTTPRequestHandler):
             "type": "function",
             "function": {"name": "p0_add", "arguments": '{"a":1,"b":2}'},
         }
+        if managed_tool is not None:
+            tool = managed_tool
         if not document.get("stream"):
             message = {"role": "assistant", "content": "OK"}
             if mode == "tool":

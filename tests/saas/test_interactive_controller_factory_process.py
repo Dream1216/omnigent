@@ -10,8 +10,9 @@ import ssl
 import subprocess
 import threading
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -78,7 +79,7 @@ from saas.production.runner_control import (
     TlsRunnerControlReadinessServer,
 )
 from saas.production.runner_readiness import assert_postgresql_runner_fleet_ready
-from tests.saas import test_tenant_model_catalog_postgresql
+from tests.saas import test_model_deployments, test_tenant_model_catalog_postgresql
 from tests.saas.test_billing_metering_transport import _server_context, _ServerThread
 from tests.saas.test_execution_control_plane import _execution_fixture
 from tests.saas.test_gateway_machine_metering import (
@@ -94,6 +95,7 @@ from tests.saas.test_interactive_factory_fleet_postgresql import _application_lo
 from tests.saas.test_model_connections import _KEY
 from tests.saas.test_model_run_evidence import _enable_budget
 from tests.saas.test_model_run_evidence_postgresql import _billing_login
+from tests.saas.test_model_run_gateway import _document
 from tests.saas.test_model_run_inference import _fund_synthetic_gateway_calls
 from tests.saas.test_model_run_inference_postgresql import _real_litellm
 from tests.saas.test_official_http_integration import _official_dependencies
@@ -171,6 +173,20 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
     exchange = Path(os.environ["OMNIGENT_SAAS_PHYSICAL_TEST_EXCHANGE"])
     assert exchange == Path("/exchange")
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
+    scenario = getattr(case, "scenario", "single")
+    assert scenario in {"single", "tools_cross_run"}
+    if scenario == "tools_cross_run":
+        command = test_model_deployments._command
+        monkeypatch.setattr(
+            test_model_deployments, "_command", lambda: replace(command(), max_output_tokens=256)
+        )
+        credential_init = ModelRunCredentialService.__init__
+
+        def short_lived_credentials(self, **kwargs):
+            # Observe natural expiry without altering immutable credential records.
+            credential_init(self, **kwargs, ttl=timedelta(seconds=90))
+
+        monkeypatch.setattr(ModelRunCredentialService, "__init__", short_lived_credentials)
     original = test_tenant_model_catalog_postgresql._fixture
 
     def funded():
@@ -228,6 +244,20 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     name="controller-agent",
                     executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
                     include_llm=False,
+                    max_iterations=8 if scenario == "tools_cross_run" else None,
+                    terminals={
+                        "shell": {
+                            "command": "bash",
+                            "args": ["--noprofile", "--norc"],
+                            "os_env": {
+                                "type": "caller_process",
+                                "cwd": "/workspace",
+                                "sandbox": {"type": "none"},
+                            },
+                        }
+                    }
+                    if scenario == "tools_cross_run"
+                    else None,
                 ),
             )
             host_token = secrets.token_urlsafe(32)
@@ -368,6 +398,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     tmp_path,
                     exchange,
                     monkeypatch,
+                    scenario=scenario,
                 )
                 attestor.attest(
                     draft=draft, credential_name=credential_name, expected_api_key=_KEY
@@ -375,7 +406,16 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                 after_calls = httpx.get(
                     actual["upstream_url"] + "/evidence", trust_env=False
                 ).json()
-                assert len(after_calls["requests"]) - len(before_calls["requests"]) == 1
+                assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
+                    4 if scenario == "tools_cross_run" else 1
+                )
+                if scenario == "tools_cross_run":
+                    assert [r["mode"] for r in after_calls["requests"]] == [
+                        "tool",
+                        "tool",
+                        "text",
+                        "text",
+                    ]
             finally:
                 metering_thread.close()
                 attestation_engine.dispose()
@@ -400,6 +440,8 @@ def _serve_controller(
     tmp_path,
     exchange,
     monkeypatch,
+    *,
+    scenario="single",
 ):
     control = MutualTlsRunnerControlServer(
         ProductionRunnerMachineAuthority(
@@ -492,8 +534,39 @@ def _serve_controller(
             authn_method="isolated_controller_acceptance",
             expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         )
+        gateway_app = create_platform_model_gateway_app(gateway)
+        observed, private_bearers = [], []
+        if scenario == "tools_cross_run":
+
+            @gateway_app.middleware("http")
+            async def observe_model_request(request, call_next):
+                bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+                body = await request.body()
+                row = {
+                    "bearer_sha256": sha256(bearer.encode()).hexdigest(),
+                    "body_sha256": sha256(body).hexdigest(),
+                    "call_id": request.headers.get("X-Omnigent-Gateway-Call"),
+                }
+                observed.append(row)
+                private_bearers.append(bearer)
+                if len(observed) == 2:
+                    with factory() as db:
+                        token = db.scalars(
+                            sa.select(ModelRunTokenRecord).where(
+                                ModelRunTokenRecord.token_hash == row["bearer_sha256"]
+                            )
+                        ).one()
+                        assert token.expires_at - token.issued_at == timedelta(seconds=90)
+                        expires_at = token.expires_at
+                    await asyncio.sleep(
+                        max(0, (expires_at - datetime.now(timezone.utc)).total_seconds()) + 0.1
+                    )
+                response = await call_next(request)
+                row["status"] = response.status_code
+                return response
+
         with (
-            _listener(create_platform_model_gateway_app(gateway), port=8090),
+            _listener(gateway_app, port=8090),
             _listener(app, port=443, certificate=certificate, key=key),
         ):
             pending_ready = exchange / "ready.pending"
@@ -552,7 +625,11 @@ def _serve_controller(
                 )
                 result = client.post(
                     f"/v1/sessions/{conversation.id}/events",
-                    json=_message(),
+                    json=_message(
+                        text="P0_MANAGED_TOOL: write one unique marker"
+                        if scenario == "tools_cross_run"
+                        else "Build the requested page"
+                    ),
                     headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
                 )
                 assert result.status_code in {200, 202}, result.text
@@ -563,6 +640,8 @@ def _serve_controller(
                 == 1
             )
 
+            expected_runs = 1
+
             def released():
                 if adapter._task.done():
                     error = adapter._task.exception()
@@ -571,31 +650,101 @@ def _serve_controller(
                         f"code={getattr(error, 'code', None)}"
                     )
                 with factory() as db:
-                    status = db.scalar(sa.select(RunRecord.status))
-                    assert status not in {"failed", "orphaned", "cancelled"}, status
-                    return db.scalar(sa.select(RunDispatchRecord.status)) == "released"
+                    statuses = db.scalars(sa.select(RunRecord.status)).all()
+                    assert all(s not in {"failed", "orphaned", "cancelled"} for s in statuses), (
+                        statuses
+                    )
+                    dispatches = db.scalars(sa.select(RunDispatchRecord.status)).all()
+                    return len(dispatches) == expected_runs and all(
+                        s == "released" for s in dispatches
+                    )
 
             _wait(released, "actual controller Run completion", timeout=150)
+            if scenario == "tools_cross_run":
+                with factory() as db:
+                    first_run = db.scalars(sa.select(RunRecord)).one()
+                with bind_runtime_context(runtime):
+                    first_runner = delegate.get_conversation(conversation.id).runner_id
+                assert first_runner
+                assert [r["status"] for r in observed] == [200, 401, 200, 200]
+                assert observed[1]["call_id"] == observed[2]["call_id"]
+                assert observed[1]["body_sha256"] == observed[2]["body_sha256"]
+                assert observed[1]["bearer_sha256"] != observed[2]["bearer_sha256"]
+                old_bearer = private_bearers[-1]
+
+                def deny_terminal_bearer():
+                    denied = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + old_bearer},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert (
+                        denied.status_code == 403
+                        and denied.json()["error"]["code"]
+                        == "platform_model_run_authority_unavailable"
+                    )
+
+                deny_terminal_bearer()
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    for _ in range(2):
+                        result = client.post(
+                            f"/v1/sessions/{conversation.id}/events",
+                            json=_message("d" * 32, "Follow up without writing the marker again"),
+                            headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                        )
+                        assert result.status_code in {200, 202}, result.text
+                assert (
+                    _queued_worker(workers["dispatcher"], workers["executor"])
+                    .dispatch_once()
+                    .published
+                    == 1
+                )
+                expected_runs = 2
+                _wait(released, "cross-Run reuse and credential rollover", timeout=150)
+                with bind_runtime_context(runtime):
+                    assert delegate.get_conversation(conversation.id).runner_id == first_runner
+                deny_terminal_bearer()
             with factory() as db:
-                run = db.scalars(sa.select(RunRecord)).one()
-                assert run.status == "succeeded"
+                runs = db.scalars(sa.select(RunRecord)).all()
+                assert len(runs) == expected_runs and all(r.status == "succeeded" for r in runs)
+                run = next(r for r in runs if scenario == "single" or r.id != first_run.id)
                 assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
+                calls = 4 if scenario == "tools_cross_run" else 1
                 for model, count in (
-                    (TaskRecord, 1),
-                    (ModelRunTokenRecord, 1),
-                    (UsageEventRecord, 2),
-                    (BillingMeteringReceiptRecord, 2),
+                    (TaskRecord, expected_runs),
+                    (ModelRunTokenRecord, 3 if scenario == "tools_cross_run" else 1),
+                    (UsageEventRecord, 2 * calls),
+                    (BillingMeteringReceiptRecord, 2 * calls),
                 ):
                     assert db.scalar(sa.select(sa.func.count()).select_from(model)) == count
                 assert (
-                    db.scalar(sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))) == 2
+                    db.scalar(sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor)))
+                    == 2 * calls
                 )
-                budget = db.scalars(
+                budgets = db.scalars(
                     sa.select(ModelProviderBudgetReservationRecord).where(
                         ModelProviderBudgetReservationRecord.purpose == "tenant_run"
                     )
-                ).one()
-                assert budget.status == "settled" and budget.settled_tokens == 22
+                ).all()
+                assert len(budgets) == calls and all(
+                    b.status == "settled" and b.settled_tokens == 22 for b in budgets
+                )
+                if scenario == "tools_cross_run":
+                    tokens = db.scalars(sa.select(ModelRunTokenRecord)).all()
+                    assert (
+                        len({t.token_hash for t in tokens}) == 3
+                        and len({t.run_id for t in tokens}) == 2
+                    )
+                    assert sorted(t.generation for t in tokens) == [0, 0, 1]
+                    assert all(t.expires_at - t.issued_at == timedelta(seconds=90) for t in tokens)
+                    assert [r["status"] for r in observed] == [200, 401, 200, 200, 403, 200, 403]
             with bind_runtime_context(runtime):
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
@@ -613,9 +762,17 @@ def _serve_controller(
                         "physical_host": True,
                         "actual_litellm": True,
                         "production_pki": False,
-                        "task_count": 1,
-                        "usage_facts": 2,
-                        "settled_tokens": 22,
+                        "scenario": scenario,
+                        "test_model_token_ttl_seconds": 90
+                        if scenario == "tools_cross_run"
+                        else 28800,
+                        "task_count": expected_runs,
+                        "usage_facts": 2 * calls,
+                        "settled_tokens": 22 * calls,
+                        "supplier_calls": calls,
+                        "controlled_expiry_restored": scenario == "tools_cross_run",
+                        "gateway_request_statuses": [r["status"] for r in observed],
+                        "same_runner_cross_run": scenario == "tools_cross_run",
                         "host_stop_acknowledged": True,
                         "manual_run_heartbeat": False,
                     }
@@ -648,6 +805,7 @@ def _delegate(case, tmp_path):
                 "placement_id": str(case.placement_id),
                 "schema_revision": case.schema_revision,
                 "connection_token": case.connection_token,
+                "scenario": os.environ.get("OMNIGENT_SAAS_TEST_CONTROLLER_SCENARIO", "single"),
             },
             default=str,
         ),
@@ -686,6 +844,7 @@ def test_actual_controller_factory_host_litellm_and_pg18_billing(
                 )
             }
         )
+        case.scenario = document.get("scenario", "single")
         case.engine, case.runner_engine = (
             engine(document["database_url"]),
             engine(document["runner_url"]),
