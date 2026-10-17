@@ -18,8 +18,8 @@ from uuid import UUID
 import sqlalchemy as sa
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from sqlalchemy.orm import sessionmaker
 
-from omnigent.db.utils import make_named_managed_session_maker
 from saas.control_plane.interactive_run_route import interactive_session_identity
 from saas.production.interactive_controller import ProductionInteractiveExecutor, _unavailable
 from saas.production.interactive_driver import OfficialInteractiveDriver
@@ -105,9 +105,7 @@ class ProductionInteractiveControllerAdapter:
         self._engine = sa.create_engine(
             database_url, pool_pre_ping=True, pool_size=4, max_overflow=4
         )
-        self._sessions = make_named_managed_session_maker(
-            self._engine, query_name_prefix="saas.interactive_controller"
-        )
+        self._sessions = sessionmaker(self._engine, expire_on_commit=False)
         try:
             self._client = build_runner_client(self._config)
         except Exception:

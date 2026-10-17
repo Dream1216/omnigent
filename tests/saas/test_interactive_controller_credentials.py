@@ -158,3 +158,55 @@ async def test_adapter_binds_metering_paths_to_grant_and_recovery(
         assert len(recovered) == len(pulses) == 1
     finally:
         adapter._journal.close()
+
+
+def test_actual_adapter_constructs_the_runtime_session_factory_contract(
+    credentials, tmp_path, monkeypatch
+):
+    from omnigent import _build_info
+    from saas.production.interactive_controller_adapter import (
+        ProductionInteractiveControllerAdapter,
+    )
+
+    runner_id, control, _, _, _ = credentials
+    control.private_key.chmod(0o600)
+
+    def secret(name, value):
+        path = tmp_path / name
+        path.write_text(value)
+        path.chmod(0o400)
+        return str(path)
+
+    for name, value in {
+        "OMNIGENT_SAAS_RUNNER_READINESS_HOST": "readiness.svc",
+        "OMNIGENT_SAAS_RUNNER_READINESS_SERVER_NAME": "readiness.svc",
+        "OMNIGENT_SAAS_RUNNER_READINESS_PORT": "9445",
+        "OMNIGENT_SAAS_RUNNER_READINESS_CA_CERTIFICATE_FILE": str(control.ca),
+    }.items():
+        monkeypatch.setenv(name, value)
+    source = {
+        "OMNIGENT_SAAS_RUNNER_ID": str(runner_id),
+        "OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION": "1",
+        "OMNIGENT_SAAS_RUNNER_CONNECTION_TOKEN_FILE": secret("connection", "x" * 48),
+        "OMNIGENT_SAAS_RUNNER_AGENT_DATABASE_URL_FILE": secret(
+            "database-url",
+            f"postgresql+psycopg://runner_{runner_id.hex}_g1:isolated@postgresql.lab/fleet"
+            "?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt",
+        ),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_HOST": "localhost",
+        "OMNIGENT_SAAS_RUNNER_CONTROL_SERVER_NAME": "localhost",
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CA_CERTIFICATE_FILE": str(control.ca),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_CERTIFICATE_FILE": str(control.certificate),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_KEY_FILE": str(control.private_key),
+    }
+    release = SimpleNamespace(
+        product_revision=_build_info.COMMIT_SHA, image_digest="sha256:" + "a" * 64
+    )
+    adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
+    try:
+        assert adapter._sessions.kw["bind"] is adapter._engine
+        assert adapter._sessions.kw["expire_on_commit"] is False
+        with adapter._sessions() as database:
+            assert database.get_bind() is adapter._engine
+    finally:
+        adapter.close()

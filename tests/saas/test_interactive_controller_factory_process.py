@@ -1,0 +1,712 @@
+"""Own-container controller composition; local PKI/Fleet are not production receipts."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import secrets
+import ssl
+import subprocess
+import threading
+from contextlib import contextmanager
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
+
+import httpx
+import pytest
+import sqlalchemy as sa
+import uvicorn
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
+from sqlalchemy.orm import sessionmaker
+
+from omnigent.stores.host_store import HostStore
+from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
+from saas.application import create_omnigent_saas_app
+from saas.billing_metering_transport import MutualTlsBillingMeteringServer
+from saas.compatibility import OmnigentStoreAdapter, bind_runtime_context
+from saas.control_plane import (
+    IdentityManagementService,
+    MembershipLifecycleService,
+    PasswordCredentialService,
+    SaasCookieConfig,
+    SqlAlchemyContextResolver,
+    create_saas_http_integration,
+)
+from saas.control_plane.billing_metering import BillingMeteringAuthority
+from saas.control_plane.billing_models import BillingMeteringReceiptRecord, UsageEventRecord
+from saas.control_plane.certificates import RunnerCertificateAuthority
+from saas.control_plane.execution import ExecutionControlPlane
+from saas.control_plane.execution_models import RunRecord, TaskRecord
+from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
+from saas.control_plane.model_deployments import compile_stored_model_deployment
+from saas.control_plane.model_routing_models import (
+    ModelCredentialVersionRecord,
+    ModelDeploymentVersionRecord,
+    ModelPublicationVersionRecord,
+    ModelRunTokenRecord,
+)
+from saas.control_plane.platform_models import (
+    ModelProviderBudgetReservationRecord,
+    ModelProviderConfigurationRecord,
+)
+from saas.control_plane.resolver import load_runtime_compatibility_policy
+from saas.control_plane.scheduling import SchedulingControlPlane
+from saas.control_plane.scheduling_models import RunDispatchRecord, RunnerRegistrationRecord
+from saas.production.external_host_credential import arm_external_host_credential
+from saas.production.interactive_controller_adapter import ProductionInteractiveControllerAdapter
+from saas.production.interactive_execution import InteractiveConversationStore
+from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
+from saas.production.litellm_configuration_attestation import LiteLLMConfigurationAttestor
+from saas.production.model_run_credentials import ModelRunCredentialService
+from saas.production.model_run_inference import LiteLLMRunInference
+from saas.production.platform_model_gateway import (
+    PlatformModelGateway,
+    create_platform_model_gateway_app,
+)
+from saas.production.runner_control import (
+    DurableRunnerControlCertificateAuthorizer,
+    MutualTlsRunnerControlServer,
+    ProductionRunnerMachineAuthority,
+    TlsRunnerControlReadinessServer,
+)
+from saas.production.runner_readiness import assert_postgresql_runner_fleet_ready
+from tests.saas import test_tenant_model_catalog_postgresql
+from tests.saas.test_billing_metering_transport import _server_context, _ServerThread
+from tests.saas.test_execution_control_plane import _execution_fixture
+from tests.saas.test_gateway_machine_metering import (
+    _customer_prices,
+    _register_metering_certificate,
+)
+from tests.saas.test_gateway_machine_metering_postgresql import _metering_login
+from tests.saas.test_interactive_controller_process import _tls, _wait
+from tests.saas.test_interactive_dispatch_postgresql import _worker_logins
+from tests.saas.test_interactive_execution_http import _message, _queued_worker, _scheduling
+from tests.saas.test_interactive_execution_postgresql import _interactive_postgresql_case
+from tests.saas.test_interactive_factory_fleet_postgresql import _application_logins, _signed_fleet
+from tests.saas.test_model_connections import _KEY
+from tests.saas.test_model_run_evidence import _enable_budget
+from tests.saas.test_model_run_evidence_postgresql import _billing_login
+from tests.saas.test_model_run_inference import _fund_synthetic_gateway_calls
+from tests.saas.test_model_run_inference_postgresql import _real_litellm
+from tests.saas.test_official_http_integration import _official_dependencies
+from tests.saas.test_production_runner_control import _certificates
+from tests.saas.test_production_runner_control import _server_context as _control_server_context
+from tests.server.helpers import build_agent_bundle
+
+ORIGIN = "https://next.test"
+
+
+@contextmanager
+def _listener(app, *, port=0, certificate=None, key=None):
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=port,
+            ssl_certfile=str(certificate) if certificate else None,
+            ssl_keyfile=str(key) if key else None,
+            log_level="warning",
+            access_log=False,
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        _wait(lambda: server.started or not thread.is_alive(), "owned HTTP listener", timeout=30)
+        assert thread.is_alive() and server.started
+        yield server
+    finally:
+        server.should_exit = True
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "owned HTTP listener did not shut down"
+
+
+def _readiness_tls(root):
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "readiness.svc")])
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(hours=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("readiness.svc")]), False)
+        .sign(key, hashes.SHA256())
+    )
+    cert, private = root / "readiness.pem", root / "readiness-key.pem"
+    cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    private.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    private.chmod(0o600)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
+    context.load_cert_chain(cert, private)
+    return context, cert
+
+
+def _private(path, value):
+    path.write_text(value)
+    path.chmod(0o400)
+    return str(path)
+
+
+def _physical_controller(case, db_uri, tmp_path, monkeypatch):
+    exchange = Path(os.environ["OMNIGENT_SAAS_PHYSICAL_TEST_EXCHANGE"])
+    assert exchange == Path("/exchange")
+    monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
+    original = test_tenant_model_catalog_postgresql._fixture
+
+    def funded():
+        result = original()
+        _fund_synthetic_gateway_calls(result[2], result[3])
+        return result
+
+    monkeypatch.setattr(test_tenant_model_catalog_postgresql, "_fixture", funded)
+    with _application_logins(case) as applications, _worker_logins(case) as workers:
+        factory, _, scope, request = _execution_fixture(case.engine)
+        base = SimpleNamespace(
+            engine=case.engine,
+            factory=factory,
+            scope=scope,
+            context=request,
+            app=applications["app"],
+            app_factory=sessionmaker(applications["app"], expire_on_commit=False),
+        )
+        with _billing_login(base) as billing, _metering_login(base) as metering:
+            manifest = json.loads((case.root / "saas/upstream-baseline.json").read_text())
+            fixture = _interactive_postgresql_case(
+                base,
+                monkeypatch,
+                placement_id=case.placement_id,
+                product_revision=case.product_revision,
+                upstream_revision=manifest["upstream_revision"],
+                schema_revision=case.schema_revision,
+                runtime_version=manifest["upstream_version"],
+            )
+            runtime = fixture.runtime
+            _customer_prices(factory, actor=runtime.actor_id, tenant=runtime.tenant_id)
+            _scheduling(factory, runtime, runtime.project_id, pool_id=case.pool_id)
+            dependencies = _official_dependencies(db_uri, tmp_path)
+            permissions, projects = (
+                SqlAlchemyPermissionStore(db_uri),
+                SqlAlchemyProjectStore(db_uri),
+            )
+            host_store = HostStore(db_uri)
+            delegate = dependencies["conversation_store"]
+            template = fixture.conversation
+            with bind_runtime_context(runtime):
+                projects.create(
+                    template.project_id, "Physical controller", runtime.runtime_user_key
+                )
+                dependencies["agent_store"].create(
+                    "b" * 32, "controller-agent", "controller/bundle"
+                )
+                host_store.upsert_on_connect(
+                    "c" * 32, "isolated-controller-host", runtime.runtime_user_key
+                )
+                host_store.set_offline("c" * 32)
+            dependencies["artifact_store"].put(
+                "controller/bundle",
+                build_agent_bundle(
+                    name="controller-agent",
+                    executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+                    include_llm=False,
+                ),
+            )
+            host_token = secrets.token_urlsafe(32)
+            arm_external_host_credential(
+                host_store._engine,
+                workspace_id=runtime.physical_workspace_id,
+                host_id="c" * 32,
+                token=host_token,
+                ttl_seconds=3600,
+            )
+            _private(exchange / "host-token", host_token)
+            authentication = sessionmaker(applications["authenticator"], expire_on_commit=False)
+            compatibility = load_runtime_compatibility_policy(
+                case.root / "saas/upstream-baseline.json"
+            )
+            lifecycle = MembershipLifecycleService(authentication)
+            integration = create_saas_http_integration(
+                lifecycle=lifecycle,
+                identities=IdentityManagementService(authentication),
+                passwords=PasswordCredentialService(authentication),
+                context_resolver=SqlAlchemyContextResolver(base.app_factory, compatibility),
+                cookie_config=SaasCookieConfig(secure=True, trusted_origins=frozenset({ORIGIN})),
+                runtime_store_adapter=OmnigentStoreAdapter("0.2.0"),
+            )
+            store = InteractiveConversationStore(
+                delegate, fixture.service, permission_store=permissions, public_origin=ORIGIN
+            )
+            app = create_omnigent_saas_app(
+                integration=integration,
+                suppress_context_free_builtin_seed=True,
+                **{**dependencies, "conversation_store": store},
+                host_store=host_store,
+                permission_store=permissions,
+                project_store=projects,
+            )
+            app.state.production_interactive_conversation_store = store
+            runtime_factory = ProductionInteractiveRuntimeFactory(
+                product_revision=case.product_revision,
+                image_digest=case.image_digest,
+                app_sessions=base.app_factory,
+                authenticator_sessions=authentication,
+                compatibility=compatibility,
+                conversation_store=delegate,
+                permission_store=permissions,
+            )
+            credentials = ModelRunCredentialService(
+                app_sessions=base.app_factory,
+                authenticator_sessions=authentication,
+                compatibility=compatibility,
+            )
+            with factory() as db:
+                publication = json.loads(
+                    db.scalars(sa.select(ModelPublicationVersionRecord.canonical_snapshot)).one()
+                )
+                draft = compile_stored_model_deployment(
+                    db.get(ModelDeploymentVersionRecord, UUID(publication["deployment_id"]))
+                )
+                credential_name = db.get(
+                    ModelCredentialVersionRecord, draft.credential_version_id
+                ).credential_name
+            actual = _real_litellm(publication, credential_name=credential_name)
+            assert actual is not None
+            before_calls = httpx.get(actual["upstream_url"] + "/evidence", trust_env=False).json()
+            attestation_engine = sa.create_engine(
+                actual["attestation_database_url"], hide_parameters=True
+            )
+            attestor = LiteLLMConfigurationAttestor(
+                attestation_engine, salt_key=actual["salt_key"], expected_database="probe"
+            )
+            attestor.validate_authority()
+            attestor.attest(draft=draft, credential_name=credential_name, expected_api_key=_KEY)
+            _enable_budget(factory)
+            with factory.begin() as db:
+                configuration = db.get(ModelProviderConfigurationRecord, "deepseek")
+                (
+                    configuration.monthly_budget_microusd,
+                    configuration.per_tenant_daily_token_limit,
+                ) = 1_000_000, 100_000
+            meter_root, control_root = tmp_path / "metering", tmp_path / "control"
+            meter_root.mkdir()
+            control_root.mkdir()
+            meter_certificates, _ = _register_metering_certificate(
+                factory, case.member.runner_id, case.member.connection_generation, meter_root
+            )
+            control_certificates = _certificates(control_root, runner_id=case.member.runner_id)
+            control_certificates["runner"].private_key.chmod(0o600)
+            meter_certificates["runner-0"].private_key.chmod(0o600)
+            RunnerCertificateAuthority(
+                factory, accepted_trust_bundle_versions=("test-v1",)
+            ).activate_certificate(
+                runner_id=case.member.runner_id,
+                runner_connection_generation=case.member.connection_generation,
+                purpose="runner_control",
+                trust_bundle_version="test-v1",
+                certificate_der=x509.load_pem_x509_certificate(
+                    control_certificates["runner"].certificate.read_bytes()
+                ).public_bytes(serialization.Encoding.DER),
+            )
+            gateway = PlatformModelGateway(
+                tokens=None,
+                configurations=None,
+                pricing=None,
+                budgets=ModelProviderBudgetAdmissionService(billing),
+                run_credentials=credentials,
+                run_inference=LiteLLMRunInference(
+                    actual["proxy_url"],
+                    actual["inference_key"],
+                    (draft.alias,),
+                    billing,
+                    ("127.0.0.1",),
+                ),
+            )
+            metering_server = MutualTlsBillingMeteringServer(
+                BillingMeteringAuthority(metering),
+                _server_context(meter_certificates["server"]),
+                RunnerCertificateAuthority(metering, accepted_trust_bundle_versions=("test-v1",)),
+                expected_host="localhost",
+            )
+            metering_thread = _ServerThread(metering_server)
+            metering_thread.start()
+            try:
+                _serve_controller(
+                    case,
+                    workers,
+                    app,
+                    runtime_factory,
+                    dependencies,
+                    host_store,
+                    control_certificates,
+                    meter_certificates,
+                    metering_server,
+                    lifecycle,
+                    runtime,
+                    template,
+                    delegate,
+                    factory,
+                    gateway,
+                    tmp_path,
+                    exchange,
+                    monkeypatch,
+                )
+                attestor.attest(
+                    draft=draft, credential_name=credential_name, expected_api_key=_KEY
+                )
+                after_calls = httpx.get(
+                    actual["upstream_url"] + "/evidence", trust_env=False
+                ).json()
+                assert len(after_calls["requests"]) - len(before_calls["requests"]) == 1
+            finally:
+                metering_thread.close()
+                attestation_engine.dispose()
+
+
+def _serve_controller(
+    case,
+    workers,
+    app,
+    runtime_factory,
+    dependencies,
+    host_store,
+    control_certificates,
+    meter_certificates,
+    metering_server,
+    lifecycle,
+    runtime,
+    conversation,
+    delegate,
+    factory,
+    gateway,
+    tmp_path,
+    exchange,
+    monkeypatch,
+):
+    control = MutualTlsRunnerControlServer(
+        ProductionRunnerMachineAuthority(
+            SchedulingControlPlane(workers["executor"]),
+            ExecutionControlPlane(workers["executor"]),
+            product_revision=case.product_revision,
+            image_digest=case.image_digest,
+        ),
+        _control_server_context(control_certificates["server"]),
+        DurableRunnerControlCertificateAuthorizer(
+            RunnerCertificateAuthority(
+                workers["executor"], accepted_trust_bundle_versions=("test-v1",)
+            )
+        ),
+    )
+    # The task-owned listener thread exposes both protocol servers on one event loop.
+    ready_context, ready_ca = _readiness_tls(tmp_path)
+    readiness = TlsRunnerControlReadinessServer(
+        ready_context,
+        lambda: assert_postgresql_runner_fleet_ready(
+            workers["executor"].kw["bind"],
+            product_revision=case.product_revision,
+            official_schema_revision=case.schema_revision,
+            adapter_contract_version="0.2.0",
+        ),
+    )
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    asyncio.run_coroutine_threadsafe(control.start(), loop).result(10)
+    asyncio.run_coroutine_threadsafe(readiness.start(host="0.0.0.0"), loop).result(10)
+    source = {
+        **case.source,
+        "OMNIGENT_SAAS_RUNNER_ID": str(case.member.runner_id),
+        "OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION": str(case.member.connection_generation),
+        "OMNIGENT_SAAS_RUNNER_CONNECTION_TOKEN_FILE": _private(
+            tmp_path / "runner-token", case.connection_token
+        ),
+        "OMNIGENT_SAAS_RUNNER_AGENT_DATABASE_URL_FILE": _private(
+            tmp_path / "runner-url", case.runner_engine.url.render_as_string(hide_password=False)
+        ),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_HOST": "localhost",
+        "OMNIGENT_SAAS_RUNNER_CONTROL_SERVER_NAME": "localhost",
+        "OMNIGENT_SAAS_RUNNER_CONTROL_PORT": str(control.port),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CA_CERTIFICATE_FILE": str(control_certificates["runner"].ca),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_CERTIFICATE_FILE": str(
+            control_certificates["runner"].certificate
+        ),
+        "OMNIGENT_SAAS_RUNNER_CONTROL_CLIENT_KEY_FILE": str(
+            control_certificates["runner"].private_key
+        ),
+        "OMNIGENT_SAAS_INTERACTIVE_METERING_URL": f"https://localhost:{metering_server.port}",
+        "OMNIGENT_SAAS_INTERACTIVE_METERING_CA_FILE": str(meter_certificates["runner-0"].ca),
+        "OMNIGENT_SAAS_INTERACTIVE_METERING_CLIENT_CERTIFICATE_FILE": str(
+            meter_certificates["runner-0"].certificate
+        ),
+        "OMNIGENT_SAAS_INTERACTIVE_METERING_CLIENT_KEY_FILE": str(
+            meter_certificates["runner-0"].private_key
+        ),
+        "OMNIGENT_SAAS_INTERACTIVE_RECOVERY_DIRECTORY": str(tmp_path / "controller-journal"),
+        "OMNIGENT_SAAS_RUNNER_POLL_SECONDS": "0.1",
+        "OMNIGENT_SAAS_RUNNER_HEARTBEAT_SECONDS": "5",
+    }
+    for name, value in {
+        "OMNIGENT_SAAS_RUNNER_READINESS_HOST": "readiness.svc",
+        "OMNIGENT_SAAS_RUNNER_READINESS_SERVER_NAME": "readiness.svc",
+        "OMNIGENT_SAAS_RUNNER_READINESS_PORT": str(readiness.port),
+        "OMNIGENT_SAAS_RUNNER_READINESS_CA_CERTIFICATE_FILE": str(ready_ca),
+    }.items():
+        monkeypatch.setenv(name, value)
+    release = SimpleNamespace(
+        product_revision=case.product_revision,
+        image_digest=case.image_digest,
+        public_origin=ORIGIN,
+        adapter_contract_version="0.2.0",
+    )
+    adapter = None
+    try:
+        adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
+        adapter.bind_runtime(
+            app=app,
+            runtime=runtime_factory,
+            official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
+            auth_provider=app.state.saas_http_integration.auth_provider,
+        )
+        certificate, key = _tls(tmp_path)
+        (exchange / "ca.pem").write_bytes(certificate.read_bytes())
+        issued = lifecycle.issue_auth_session(
+            user_id=runtime.actor_id,
+            authn_method="isolated_controller_acceptance",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        with (
+            _listener(create_platform_model_gateway_app(gateway), port=8090),
+            _listener(app, port=443, certificate=certificate, key=key),
+        ):
+            pending_ready = exchange / "ready.pending"
+            pending_ready.write_text(
+                json.dumps(
+                    {
+                        "origin": ORIGIN,
+                        "host_id": "c" * 32,
+                        "workspace_id": runtime.physical_workspace_id,
+                    }
+                )
+            )
+            pending_ready.replace(exchange / "ready.json")
+
+            async def connected():
+                with bind_runtime_context(runtime):
+                    return app.state.host_registry.get("c" * 32) is not None
+
+            # The HTTP app's lifespan owns the controller task/event loop.
+            app_loop = adapter._task.get_loop()
+            _wait(
+                lambda: asyncio.run_coroutine_threadsafe(connected(), app_loop).result(5),
+                "owned Host WebSocket",
+            )
+            adapter.assert_production_ready()
+            with httpx.Client(
+                base_url=ORIGIN,
+                trust_env=False,
+                verify=ssl.create_default_context(cafile=str(certificate)),
+                cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                timeout=60,
+            ) as client:
+                marker = conversation.inference_snapshot["managed_execution"]
+                created = client.post(
+                    "/v1/sessions",
+                    json={
+                        "agent_id": "b" * 32,
+                        "project_id": conversation.project_id,
+                        "host_type": "external",
+                        "host_id": "c" * 32,
+                        "workspace": "/workspace",
+                        "model_override": marker["public_model_id"],
+                        "inference_configuration_revision": (
+                            f"managed-model:{marker['wire_api']}:{marker['generation']}:"
+                            f"{marker['snapshot_sha256']}"
+                        ),
+                        "initial_items": [],
+                    },
+                    headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                )
+                assert created.status_code == 201, created.text
+                with bind_runtime_context(runtime):
+                    conversation = delegate.get_conversation(created.json()["id"])
+                assert (
+                    conversation.inference_snapshot["managed_launch"]["harness"] == "openai-agents"
+                )
+                result = client.post(
+                    f"/v1/sessions/{conversation.id}/events",
+                    json=_message(),
+                    headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                )
+                assert result.status_code in {200, 202}, result.text
+            assert (
+                _queued_worker(workers["dispatcher"], workers["executor"])
+                .dispatch_once()
+                .published
+                == 1
+            )
+
+            def released():
+                if adapter._task.done():
+                    error = adapter._task.exception()
+                    pytest.fail(
+                        f"Controller exited: {type(error).__name__}, "
+                        f"code={getattr(error, 'code', None)}"
+                    )
+                with factory() as db:
+                    status = db.scalar(sa.select(RunRecord.status))
+                    assert status not in {"failed", "orphaned", "cancelled"}, status
+                    return db.scalar(sa.select(RunDispatchRecord.status)) == "released"
+
+            _wait(released, "actual controller Run completion", timeout=150)
+            with factory() as db:
+                run = db.scalars(sa.select(RunRecord)).one()
+                assert run.status == "succeeded"
+                assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
+                for model, count in (
+                    (TaskRecord, 1),
+                    (ModelRunTokenRecord, 1),
+                    (UsageEventRecord, 2),
+                    (BillingMeteringReceiptRecord, 2),
+                ):
+                    assert db.scalar(sa.select(sa.func.count()).select_from(model)) == count
+                assert (
+                    db.scalar(sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))) == 2
+                )
+                budget = db.scalars(
+                    sa.select(ModelProviderBudgetReservationRecord).where(
+                        ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                    )
+                ).one()
+                assert budget.status == "settled" and budget.settled_tokens == 22
+            with bind_runtime_context(runtime):
+                assert "OK" in str(delegate.list_items(conversation.id, limit=100))
+            record = adapter._journal.read(run.id)
+            assert record.phase == "terminal" and record.outcome == "succeeded"
+            assert asyncio.run_coroutine_threadsafe(
+                adapter._executor._driver.stop(record), app_loop
+            ).result(20)
+            adapter.assert_production_ready()
+            (exchange / "result.json").write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "production_factory": True,
+                        "controller_adapter": True,
+                        "physical_host": True,
+                        "actual_litellm": True,
+                        "production_pki": False,
+                        "task_count": 1,
+                        "usage_facts": 2,
+                        "settled_tokens": 22,
+                        "host_stop_acknowledged": True,
+                        "manual_run_heartbeat": False,
+                    }
+                )
+            )
+    finally:
+        if adapter is not None:
+            adapter.close()
+        asyncio.run_coroutine_threadsafe(control.aclose(), loop).result(10)
+        asyncio.run_coroutine_threadsafe(readiness.aclose(), loop).result(10)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=10)
+        loop.close()
+
+
+def _delegate(case, tmp_path):
+    command = json.loads(os.environ["OMNIGENT_SAAS_TEST_CONTROLLER_BRIDGE"])
+    path = tmp_path / "controller-case.json"
+    _private(
+        path,
+        json.dumps(
+            {
+                "database_url": case.engine.url.render_as_string(hide_password=False),
+                "runner_url": case.runner_engine.url.render_as_string(hide_password=False),
+                "member": asdict(case.member),
+                "source": case.source,
+                "product_revision": case.product_revision,
+                "image_digest": case.image_digest,
+                "pool_id": str(case.pool_id),
+                "placement_id": str(case.placement_id),
+                "schema_revision": case.schema_revision,
+                "connection_token": case.connection_token,
+            },
+            default=str,
+        ),
+    )
+    try:
+        subprocess.run([*command, str(path)], check=True, timeout=420)
+    finally:
+        path.unlink()
+
+
+def test_actual_controller_factory_host_litellm_and_pg18_billing(
+    tmp_path, db_uri, monkeypatch, request
+):
+    private = os.environ.get("OMNIGENT_SAAS_TEST_CONTROLLER_CASE_FILE")
+    if private is not None:
+        document = json.loads(Path(private).read_text())
+
+        def engine(value):
+            return sa.create_engine(
+                sa.engine.make_url(value)
+                .set(host="postgresql.lab", port=5432)
+                .update_query_dict(
+                    {"sslmode": "verify-full", "sslrootcert": "/runtime/postgresql-ca.crt"}
+                )
+            )
+
+        case = SimpleNamespace(
+            **{
+                k: document[k]
+                for k in (
+                    "source",
+                    "product_revision",
+                    "image_digest",
+                    "schema_revision",
+                    "connection_token",
+                )
+            }
+        )
+        case.engine, case.runner_engine = (
+            engine(document["database_url"]),
+            engine(document["runner_url"]),
+        )
+        case.member = SimpleNamespace(**document["member"])
+        case.member.runner_id = UUID(case.member.runner_id)
+        case.pool_id, case.placement_id, case.root = (
+            UUID(document["pool_id"]),
+            UUID(document["placement_id"]),
+            Path.cwd(),
+        )
+        try:
+            _physical_controller(case, db_uri, tmp_path, monkeypatch)
+        finally:
+            case.engine.dispose()
+            case.runner_engine.dispose()
+    elif "OMNIGENT_SAAS_TEST_CONTROLLER_BRIDGE" in os.environ:
+        _signed_fleet(
+            request.getfixturevalue("isolated_postgres_url"),
+            tmp_path,
+            runtime_probe=lambda case: _delegate(case, tmp_path),
+        )
+    else:
+        pytest.skip("requires the task-owned signed Fleet/PG18, actual LiteLLM and Host harness")
