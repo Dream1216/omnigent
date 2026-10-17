@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import contextmanager
 from datetime import timezone
+from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -27,6 +29,14 @@ from saas.control_plane.platform_models import (
     ModelProviderConfigurationRecord,
 )
 from saas.control_plane.scheduling_models import CapabilityTokenRecord
+from saas.production.interactive_model_channel import (
+    ModelChannelScope,
+    SessionModelChannelMiddleware,
+    SessionModelChannels,
+    consume_host_model_channel,
+    host_model_channel,
+    prepare_host_model_channel,
+)
 from saas.production.model_run_credentials import ModelRunCredentialService
 from saas.production.model_run_inference import LiteLLMRunInference
 from saas.production.platform_model_gateway import (
@@ -51,6 +61,7 @@ from tests.saas.test_interactive_dispatch_postgresql import _worker_logins
 from tests.saas.test_interactive_execution_postgresql import (
     interactive_postgresql as interactive_postgresql,
 )
+from tests.saas.test_interactive_model_channel import ORIGIN, _launch
 from tests.saas.test_model_run_credentials_postgresql import _authenticator_login, _claim
 from tests.saas.test_model_run_evidence import _enable_budget
 from tests.saas.test_model_run_evidence_postgresql import (
@@ -267,21 +278,42 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
         async def provision():
             return await asyncio.to_thread(credentials.issue, authorized, lease)
 
+        scope = ModelChannelScope(
+            tenant_id=authorized.runtime.tenant_id,
+            space_id=authorized.runtime.space_id,
+            project_id=authorized.runtime.project_id,
+            actor_id=authorized.runtime.actor_id,
+            session_id=published.execution_session_id,
+            partition_id=authorized.runtime.runtime_partition_id,
+            official_session_id=authorized.session_id,
+            publication_sha256=authorized.publication["snapshot_sha256"],
+        )
+        launch = _launch(scope)
+        channel = host_model_channel(launch, scope=scope, public_origin=ORIGIN)
+        clean, received = consume_host_model_channel(
+            prepare_host_model_channel(launch, channel=channel), server_url=ORIGIN
+        )
+        assert received == channel and channel.secret_value not in json.dumps(
+            clean.inference_config
+        )
+        assert lease.capability_token not in json.dumps(clean.inference_config)
+        channels = SessionModelChannels(public_origin=ORIGIN)
         relay = PlatformModelRelay.for_run(
             run_id=lease.run_id,
             fence_token=lease.fence_token,
             credential_provider=provision,
             metering=meter,
+            capability=channel.secret_value,
             client_factory=lambda: httpx.AsyncClient(transport=httpx.ASGITransport(app=app)),
         )
         try:
-            with TestClient(relay.app) as client:
+            with _channel_client(app, channels, scope, lease, relay) as client:
                 result = client.post(
-                    "/v1/responses" if responses else "/v1/chat/completions",
+                    channel.base_url + ("/responses" if responses else "/chat/completions"),
                     json=_document(
                         published.configuration["public_model_id"], responses=responses, limit=32
                     ),
-                    headers={"Authorization": "Bearer " + relay.capability},
+                    headers={"Authorization": "Bearer " + channel.secret_value},
                 )
                 assert result.status_code == (200 if send else 503), result.text
                 if actual and send:
@@ -301,11 +333,11 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
                     fingerprint_sha256=fingerprint, reason="isolated revoked machine"
                 )
                 denied = client.post(
-                    "/v1/responses" if responses else "/v1/chat/completions",
+                    channel.base_url + ("/responses" if responses else "/chat/completions"),
                     json=_document(
                         published.configuration["public_model_id"], responses=responses, limit=32
                     ),
-                    headers={"Authorization": "Bearer " + relay.capability},
+                    headers={"Authorization": "Bearer " + channel.secret_value},
                 )
                 assert (
                     denied.status_code == 503
@@ -336,3 +368,30 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
             relay.close()
             meter.close(timeout_seconds=0)
             thread.close()
+
+
+@contextmanager
+def _channel_client(app, channels, scope, lease, relay):
+    channel_app = SessionModelChannelMiddleware(app, channels=channels)
+    with TestClient(channel_app) as client:
+        client.portal.call(
+            partial(
+                channels.bind,
+                scope,
+                secret_value=relay.capability,
+                run_id=lease.run_id,
+                fence_token=lease.fence_token,
+                relay=relay,
+            )
+        )
+        try:
+            yield client
+        finally:
+            assert client.portal.call(
+                partial(
+                    channels.suspend,
+                    scope.session_id,
+                    run_id=lease.run_id,
+                    fence_token=lease.fence_token,
+                )
+            )

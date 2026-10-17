@@ -14,10 +14,20 @@ from uuid import UUID
 from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
 from omnigent.host.connect import HostProcess, run_host_process
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
-from omnigent.host.frames import HarnessAvailability
+from omnigent.host.frames import (
+    HarnessAvailability,
+    HostLaunchRunnerFrame,
+    HostLaunchRunnerResultFrame,
+)
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+from saas.production.interactive_model_channel import (
+    CHANNEL_CONTROL_KEY,
+    HostModelChannel,
+    consume_host_model_channel,
+    model_channel_origin,
+)
 from saas.production.platform_model_relay import PlatformModelRelay
 from saas.runner_adapter.platform_model_gateway import (
     DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
@@ -33,6 +43,7 @@ _SERVER_URL_ENV = "OMNIGENT_SAAS_SERVER_URL"
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _SIGNING_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _TOKEN_TTL_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"
+CONTROLLER_BOUND_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND"
 
 
 class PlatformModelHostConfigurationError(ValueError):
@@ -49,8 +60,9 @@ class PlatformModelHostProcess(HostProcess):
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
-        token_authority: PlatformModelGatewayTokenAuthority,
+        token_authority: PlatformModelGatewayTokenAuthority | None,
         token_ttl_seconds: int,
+        controller_bound: bool = False,
     ) -> None:
         super().__init__(
             identity,
@@ -60,6 +72,40 @@ class PlatformModelHostProcess(HostProcess):
         )
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
+        self._controller_bound = controller_bound
+        self._pending_model_channels: dict[str, HostModelChannel] = {}
+        if type(controller_bound) is not bool or controller_bound == (token_authority is not None):
+            raise PlatformModelHostConfigurationError("Platform model Host authority is invalid")
+        if controller_bound:
+            model_channel_origin(server_url)
+
+    async def _handle_launch(self, frame: HostLaunchRunnerFrame) -> HostLaunchRunnerResultFrame:
+        if not self._controller_bound:
+            if (
+                isinstance(frame.inference_config, dict)
+                and CHANNEL_CONTROL_KEY in frame.inference_config
+            ):
+                return self._launch_failed(
+                    frame,
+                    "Controller model channel requires managed mode",
+                    error_code="interactive_model_channel_unavailable",
+                )
+            return await super()._handle_launch(frame)
+        try:
+            clean, channel = consume_host_model_channel(frame, server_url=self._server_url)
+            if channel.session_id in self._pending_model_channels:
+                raise ValueError("interactive_model_channel_busy")
+        except (TypeError, ValueError, KeyError):
+            return self._launch_failed(
+                frame,
+                "Controller model channel is unavailable",
+                error_code="interactive_model_channel_unavailable",
+            )
+        self._pending_model_channels[channel.session_id] = channel
+        try:
+            return await super()._handle_launch(clean)
+        finally:
+            self._pending_model_channels.pop(channel.session_id, None)
 
     async def _probe_configured_harnesses(
         self,
@@ -110,6 +156,16 @@ class PlatformModelHostProcess(HostProcess):
             raise OSError("Platform model Runner requires a canonical session identity") from None
         if env.get(PLATFORM_MODEL_CREDENTIAL_ENV) or env.get(PLATFORM_MODEL_RELAY_BASE_URL_ENV):
             raise OSError("Platform model Runner credential is already present")
+        if self._controller_bound:
+            channel = self._pending_model_channels.get(session_id.hex)
+            if channel is None:
+                raise OSError("Controller model channel is unavailable")
+            try:
+                env[PLATFORM_MODEL_CREDENTIAL_ENV] = channel.secret_value
+                return super()._spawn_runner_proc(env, session_slug, workspace)
+            finally:
+                env.pop(PLATFORM_MODEL_CREDENTIAL_ENV, None)
+        assert self._platform_model_tokens is not None
         relay = PlatformModelRelay(
             authority=self._platform_model_tokens,
             session_id=session_id,
@@ -143,20 +199,39 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
     """Validate all authorities, then run the official Host composition."""
 
     server_url = _required(environ, _SERVER_URL_ENV)
+    controller_bound = controller_bound_enabled(environ)
     try:
-        tenant_id = UUID(_required(environ, _TENANT_ID_ENV))
         token_ttl = int(environ.get(_TOKEN_TTL_ENV, str(DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS)))
     except ValueError:
         raise PlatformModelHostConfigurationError(
             "Platform model Host identity is invalid"
         ) from None
-    if tenant_id.int == 0 or not 60 <= token_ttl <= 8 * 60 * 60:
+    if not 60 <= token_ttl <= 8 * 60 * 60:
         raise PlatformModelHostConfigurationError("Platform model Host identity is invalid")
-    signing_key = _secret_file(environ, _SIGNING_KEY_FILE_ENV)
-    authority = PlatformModelGatewayTokenAuthority(
-        signing_key=signing_key,
-        tenant_id=tenant_id,
-    )
+    authority = None
+    if controller_bound:
+        try:
+            model_channel_origin(server_url)
+        except ValueError:
+            raise PlatformModelHostConfigurationError(
+                "Controller model origin is invalid"
+            ) from None
+        if environ.get(_SIGNING_KEY_FILE_ENV) or environ.get(_TENANT_ID_ENV):
+            raise PlatformModelHostConfigurationError(
+                "Controller Host must not receive signing authority"
+            )
+    else:
+        try:
+            tenant_id = UUID(_required(environ, _TENANT_ID_ENV))
+            if not tenant_id.int:
+                raise ValueError
+        except ValueError:
+            raise PlatformModelHostConfigurationError(
+                "Platform model Host identity is invalid"
+            ) from None
+        authority = PlatformModelGatewayTokenAuthority(
+            signing_key=_secret_file(environ, _SIGNING_KEY_FILE_ENV), tenant_id=tenant_id
+        )
 
     # The direct-spawn policy prevents a session bearer from ever entering a
     # long-lived forkserver snapshot.
@@ -176,9 +251,17 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
             interactive_shells=interactive_shells,
             token_authority=authority,
             token_ttl_seconds=token_ttl,
+            controller_bound=controller_bound,
         )
 
     run_host_process(server_url, host_factory=factory)
+
+
+def controller_bound_enabled(environ: Mapping[str, str]) -> bool:
+    value = environ.get(CONTROLLER_BOUND_ENV, "false")
+    if value not in {"true", "false"}:
+        raise PlatformModelHostConfigurationError("Controller model mode is invalid")
+    return value == "true"
 
 
 def _required(source: Mapping[str, str], name: str) -> str:

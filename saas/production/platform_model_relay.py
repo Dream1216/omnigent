@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hmac
 import json
+import re
 import secrets
 import socket
 import threading
@@ -58,8 +59,16 @@ class PlatformModelRelay:
         run_id: UUID | None = None,
         fence_token: int | None = None,
         metering: ProviderUsageMeter | None = None,
+        capability: str | None = None,
     ) -> None:
         managed = credential_provider is not None
+        if capability is not None and (
+            not managed
+            or not isinstance(capability, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", capability) is None
+        ):
+            raise ValueError("Platform model relay capability is invalid")
+        self.run_id, self.fence_token = run_id, fence_token
         if metering is not None and (
             not managed or not metering.gateway_managed or metering.run_id != run_id
         ):
@@ -93,7 +102,7 @@ class PlatformModelRelay:
             raise ValueError("Platform model relay authority is invalid")
         # Cache below the issuer's renewal window; credential expiry remains server-owned.
         cache_age = min(60, ttl_seconds / 20) if managed else ttl_seconds
-        self.capability = secrets.token_urlsafe(32)
+        self.capability = capability or secrets.token_urlsafe(32)
         self._last_token = ""
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(
@@ -149,6 +158,10 @@ class PlatformModelRelay:
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
 
+    @property
+    def metering_run_id(self) -> UUID | None:
+        return self._metering.run_id if self._metering is not None else None
+
     @classmethod
     def for_run(
         cls,
@@ -160,6 +173,7 @@ class PlatformModelRelay:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         clock: Callable[[], float] = time.time,
         metering: ProviderUsageMeter | None = None,
+        capability: str | None = None,
     ) -> PlatformModelRelay:
         """Use a trusted controller callback, never a public bearer-refresh endpoint."""
         return cls(
@@ -170,6 +184,7 @@ class PlatformModelRelay:
             client_factory=client_factory,
             clock=clock,
             metering=metering,
+            capability=capability,
         )
 
     def _create_app(self) -> FastAPI:
