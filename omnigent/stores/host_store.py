@@ -1101,6 +1101,7 @@ class HostStore:
         transfer_from_host_id: str | None = None,
         *,
         require_account_owner: bool = False,
+        expected_external_inference_snapshot: dict | None = None,
     ) -> None:
         """Order final launch authorization with account deletion across replicas.
 
@@ -1108,6 +1109,8 @@ class HostStore:
         during resolution. Same-host restarts must not opt into this exception.
         Accounts deployments also require a live session owner able to mint
         runner credentials; other auth modes retain their own owner lifecycle.
+        A trusted controller may pin an external inference snapshot; the locked
+        stored value must still match, and public launch routes never supply it.
         """
 
         def write(session: Session) -> None:
@@ -1164,7 +1167,14 @@ class HostStore:
                 raise OmnigentError(
                     "session is no longer bound to this host", code=ErrorCode.UNAUTHORIZED
                 )
-            if meta.inference_snapshot is not None and host.sandbox_provider is None:
+            if (
+                meta.inference_snapshot is not None
+                and host.sandbox_provider is None
+                and (
+                    expected_external_inference_snapshot is None
+                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
+                )
+            ):
                 raise OmnigentError(
                     "This session has a saved sandbox inference profile. "
                     "Choose a managed sandbox host or start a new session to use this host.",

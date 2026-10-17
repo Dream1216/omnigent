@@ -1,5 +1,5 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..916d1d20e 100644
+index 9b3cde274..5ec813552 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
 @@ -21 +21 @@ from typing import cast
@@ -33,3 +33,18 @@ index 9b3cde274..916d1d20e 100644
 @@ -1077 +1090 @@ class HostStore:
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():
+@@ -1090,0 +1104 @@ class HostStore:
++        expected_external_inference_snapshot: dict | None = None,
+@@ -1097,0 +1112,2 @@ class HostStore:
++        A trusted controller may pin an external inference snapshot; the locked
++        stored value must still match, and public launch routes never supply it.
+@@ -1154 +1170,8 @@ class HostStore:
+-            if meta.inference_snapshot is not None and host.sandbox_provider is None:
++            if (
++                meta.inference_snapshot is not None
++                and host.sandbox_provider is None
++                and (
++                    expected_external_inference_snapshot is None
++                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
++                )
++            ):

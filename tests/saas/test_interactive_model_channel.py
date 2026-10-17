@@ -20,6 +20,7 @@ from omnigent.host.frames import (
     encode_host_frame,
 )
 from omnigent.host.identity import HostIdentity
+from omnigent.onboarding.provider_config import load_providers
 from omnigent.runtime.telemetry import _payload_to_attribute
 from saas.production import platform_model_host, platform_model_sandbox_host
 from saas.production.interactive_model_channel import (
@@ -30,6 +31,7 @@ from saas.production.interactive_model_channel import (
     channel_url,
     consume_host_model_channel,
     host_model_channel,
+    model_channel_configuration,
     prepare_host_model_channel,
 )
 from saas.production.model_run_credentials import IssuedModelRunCredential
@@ -44,6 +46,27 @@ from tests.saas.test_gateway_usage_delivery import ReferenceClient
 from tests.saas.test_provider_usage_metering import _grant
 
 ORIGIN = "https://model-channel.invalid"
+
+
+@pytest.mark.parametrize(
+    ("publication_wire", "official_wire"),
+    [("openai_chat_completions", "chat"), ("openai_responses", "responses")],
+)
+def test_channel_projection_is_accepted_by_official_provider_parser(
+    publication_wire, official_wire
+):
+    configuration = model_channel_configuration(
+        public_origin=ORIGIN,
+        session_id=uuid4(),
+        harness="openai-agents",
+        publication={
+            "wire_api": publication_wire,
+            "public_model_id": "synthetic-channel-model",
+            "max_output_tokens": 64,
+        },
+    )
+    provider = load_providers(configuration)["platform-deepseek"]
+    assert provider.families["openai"].wire_api == official_wire
 
 
 def _scope():

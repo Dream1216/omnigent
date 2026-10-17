@@ -127,7 +127,7 @@ def model_channel_configuration(
                 "openai": {
                     "base_url": channel_url(public_origin, session_id),
                     "api_key_ref": "env:" + PLATFORM_MODEL_CREDENTIAL_ENV,
-                    "wire_api": "responses" if wire == "openai_responses" else "chat_completions",
+                    "wire_api": "responses" if wire == "openai_responses" else "chat",
                     "max_output_tokens": maximum,
                     "models": {"default": model},
                 },

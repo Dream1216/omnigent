@@ -35,6 +35,13 @@ not replace either security boundary. Patch 0003 owns the complete
 shell inventory and external workspace propagation remain one replayable file;
 patch 0005 owns the remaining external Host bridge paths.
 
+Patch 0003 also admits a Controller-pinned external inference snapshot only
+when it equals the value read under the original Host/session ownership locks.
+Ordinary launch routes do not supply this override and still reject Sandbox
+profiles on external hosts. The Controller additionally pins the exact Run's
+publication, session, Host and workspace; `tests/saas/test_interactive_host_admission.py`
+covers drift and refusal, alongside the original Host-store/binding regressions.
+
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
 Registration accepts either a provider plus live sandbox id (including a

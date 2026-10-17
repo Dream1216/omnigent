@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -93,9 +94,46 @@ class _LaunchRegistry:
             wire,
             tasks,
         )
+        self._snapshot = copy.deepcopy(authorized.conversation.inference_snapshot)
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
+
+    async def admit_launch(
+        self, connection, session_id, *, allow_unbound=False, transfer_from_host_id=None
+    ):
+        authorized = self._authorized
+        if authorized.launch["host_type"] != "external":
+            await self._delegate.admit_launch(
+                connection,
+                session_id,
+                allow_unbound=allow_unbound,
+                transfer_from_host_id=transfer_from_host_id,
+            )
+            return
+        if (
+            session_id != authorized.session_id
+            or connection.host_id != authorized.launch["host_id"]
+            or connection.workspace_id != authorized.runtime.physical_workspace_id
+            or allow_unbound
+            or transfer_from_host_id is not None
+            or not isinstance(self._snapshot, dict)
+            or not isinstance(authorized.publication, dict)
+            or self._snapshot.get("managed_execution") != authorized.publication
+            or self._delegate.launch_authorizer is None
+        ):
+            raise _unavailable()
+        # Preserve locked ownership checks, adding only this frozen Server-authorized profile.
+        await asyncio.to_thread(
+            self._delegate.launch_authorizer,
+            connection.host_id,
+            session_id,
+            connection.owner,
+            connection.account_generation,
+            False,
+            None,
+            expected_external_inference_snapshot=self._snapshot,
+        )
 
     def send_text(self, connection, data):
         frame = decode_host_frame(data)
