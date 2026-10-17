@@ -23,6 +23,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from omnigent.inner.model_auth import ProviderAuthRequired
 from omnigent.inner.model_credential import CredentialLifecycle
+from saas.billing_metering_transport import BillingMeteringTransportError
+from saas.runner_adapter.metering import ManagedMeteringError, ProviderUsageMeter
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
 from saas.runner_adapter.platform_models import PLATFORM_MODEL_GATEWAY_BASE_URL
 
@@ -55,8 +57,14 @@ class PlatformModelRelay:
         credential_provider: Callable[[], Awaitable[IssuedModelRunCredential]] | None = None,
         run_id: UUID | None = None,
         fence_token: int | None = None,
+        metering: ProviderUsageMeter | None = None,
     ) -> None:
         managed = credential_provider is not None
+        if metering is not None and (
+            not managed or not metering.gateway_managed or metering.run_id != run_id
+        ):
+            raise ValueError("Platform model metering binding is invalid")
+        self._metering = metering
         if (
             type(ttl_seconds) is not int
             or not 1 <= ttl_seconds <= 28800
@@ -151,6 +159,7 @@ class PlatformModelRelay:
         ttl_seconds: int = 28800,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         clock: Callable[[], float] = time.time,
+        metering: ProviderUsageMeter | None = None,
     ) -> PlatformModelRelay:
         """Use a trusted controller callback, never a public bearer-refresh endpoint."""
         return cls(
@@ -160,6 +169,7 @@ class PlatformModelRelay:
             ttl_seconds=ttl_seconds,
             client_factory=client_factory,
             clock=clock,
+            metering=metering,
         )
 
     def _create_app(self) -> FastAPI:
@@ -197,6 +207,11 @@ class PlatformModelRelay:
         response: httpx.Response | None = None
         try:
             token = await self.credentials.token_for_request()
+            call_id = (
+                await asyncio.to_thread(self._metering.prepare_gateway_call)
+                if self._metering is not None
+                else None
+            )
             for attempt in range(2):
                 response = await self._client.send(
                     self._client.build_request(
@@ -206,6 +221,11 @@ class PlatformModelRelay:
                             "Authorization": f"Bearer {token}",
                             "Content-Type": "application/json",
                             "Accept": "text/event-stream",
+                            **(
+                                {"X-Omnigent-Gateway-Call": str(call_id)}
+                                if call_id is not None
+                                else {}
+                            ),
                         },
                         content=bytes(body),
                     ),
@@ -220,6 +240,11 @@ class PlatformModelRelay:
                 error_body = await self._error_body(response)
                 await response.aclose()
                 if not self._expired(response.status_code, error_body):
+                    if call_id is not None and response.status_code in {400, 401, 403}:
+                        assert self._metering is not None
+                        await asyncio.to_thread(
+                            self._metering.discard_unadmitted_gateway_call, call_id
+                        )
                     return Response(
                         error_body,
                         status_code=response.status_code,
@@ -227,6 +252,11 @@ class PlatformModelRelay:
                         headers={"Cache-Control": "no-store"},
                     )
                 if attempt == 1:
+                    if call_id is not None:
+                        assert self._metering is not None
+                        await asyncio.to_thread(
+                            self._metering.discard_unadmitted_gateway_call, call_id
+                        )
                     break
                 # Only the gateway's pre-admission expiry rejection is replayable.
                 # A concurrent request may already have replaced this exact token.
@@ -238,6 +268,10 @@ class PlatformModelRelay:
                 503,
                 "platform_model_authentication_recovery_failed",
                 "会话认证恢复失败，请联系管理员；未重放用户任务",
+            )
+        except (BillingMeteringTransportError, ManagedMeteringError, OSError):
+            return self._error(
+                503, "platform_model_metering_unavailable", "计量通道不可用；未发送模型请求"
             )
         except httpx.HTTPError:
             if response is not None:

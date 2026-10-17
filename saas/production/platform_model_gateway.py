@@ -27,12 +27,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.billing_metering import BillingMeteringError
 from saas.control_plane.model_budget import (
     ModelProviderBudgetAdmissionService,
     ModelProviderBudgetError,
     ModelProviderBudgetReservationView,
 )
 from saas.control_plane.model_gateway_evidence import GatewayRequestEvidence
+from saas.control_plane.model_gateway_metering import gateway_call_reservation_id
 from saas.control_plane.model_inference_requests import decode_inference_request
 from saas.control_plane.model_pricing import (
     PlatformModelPrice,
@@ -44,11 +46,13 @@ from saas.control_plane.model_provider import (
     PlatformManagedModelRuntimeConfiguration,
 )
 from saas.control_plane.model_usage import ModelTokenUsage, normalize_model_usage
+from saas.control_plane.resolver import RuntimeCompatibilityPolicy
 from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 from saas.production.model_run_credentials import (
     MODEL_RUN_TOKEN_PREFIX,
     ModelRunCredentialService,
 )
+from saas.production.model_run_inference import LiteLLMRunInference, load_litellm_run_inference
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import _inspect_service_login
 from saas.production.server_config import (
@@ -90,6 +94,7 @@ class BudgetAuthority(Protocol):
         ttl: timedelta,
         now: datetime | None = None,
         gateway_request: GatewayRequestEvidence | None = None,
+        gateway_call_id: UUID | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
     def begin_attempt(
@@ -155,6 +160,7 @@ class PlatformModelGateway:
         readiness_check: Callable[[], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         run_credentials: ModelRunCredentialService | None = None,
+        run_inference: LiteLLMRunInference | None = None,
     ) -> None:
         if reservation_ttl <= timedelta(0) or reservation_ttl > timedelta(hours=24):
             raise ValueError("Platform model reservation TTL is invalid")
@@ -169,6 +175,7 @@ class PlatformModelGateway:
         self._readiness_check = readiness_check
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._run_credentials = run_credentials
+        self._run_inference = run_inference
 
     def require_ready(self) -> None:
         if self._readiness_check is not None:
@@ -339,8 +346,9 @@ class PlatformModelGateway:
             return _error(403, "platform_model_run_authority_unavailable")
         except Exception:  # noqa: BLE001 - redact current-scope and catalog diagnostics.
             return _error(503, "platform_model_gateway_unavailable")
+        raw = await request.body()
         try:
-            document = _request_document(await request.body(), responses=responses)
+            document = _request_document(raw, responses=responses)
         except ValueError:
             return _error(400, "platform_model_request_invalid")
         try:
@@ -361,8 +369,113 @@ class PlatformModelGateway:
                 return _error(400, "platform_model_output_limit_exceeded")
         except (KeyError, TypeError):
             return _error(503, "platform_model_gateway_unavailable")
-        # This path stays closed until true-Run evidence and sole metering are wired.
-        return _error(503, "platform_model_run_execution_unavailable")
+        inference = self._run_inference
+        if inference is None:
+            return _error(503, "platform_model_run_execution_unavailable")
+        try:
+            call_text = request.headers.get("X-Omnigent-Gateway-Call", "")
+            call_id = UUID(call_text)
+            if str(call_id) != call_text or not call_id.int:
+                raise ValueError
+            if not any(document.get(name) is not None for name in output_fields):
+                document[output_fields[0]] = min(
+                    maximum, _output_token_limit(document, responses=responses)
+                )
+            evidence = authorized.gateway_request(
+                output_token_limit=_output_token_limit(document, responses=responses)
+            )
+            await asyncio.to_thread(inference.require_financial_scope, authorized)
+        except BillingMeteringError:
+            return _error(403, "platform_model_customer_billing_unavailable")
+        except (ValueError, TypeError, KeyError):
+            return _error(400, "platform_model_call_reference_invalid")
+        except Exception:  # noqa: BLE001 - retain database and key details server-side.
+            return _error(503, "platform_model_gateway_unavailable")
+        requested_tokens = _requested_tokens(raw, document, responses=responses)
+        try:
+            reservation = await asyncio.to_thread(
+                self._budgets.reserve,
+                tenant_id=claims.tenant_id,
+                run_id=claims.run_id,
+                operation_key=f"model-gateway:{claims.run_id}:{call_id}",
+                gateway_call_id=call_id,
+                requested_microusd=_microusd(
+                    requested_tokens, evidence.model_price.reservation_rate
+                ),
+                requested_tokens=requested_tokens,
+                ttl=self._reservation_ttl,
+                now=now,
+                gateway_request=evidence,
+            )
+        except ModelProviderBudgetError as exc:
+            return _error(403, exc.code)
+        except Exception:  # noqa: BLE001 - reservation may have committed; no inference retry.
+            return _error(503, "platform_model_budget_unavailable")
+        if reservation.status == "rejected":
+            return _error(403, reservation.rejection_code or "platform_model_budget_rejected")
+        if (
+            reservation.id != gateway_call_reservation_id(claims.run_id, call_id)
+            or reservation.status != "reserved"
+        ):
+            return _error(409, "platform_model_call_already_admitted")
+        client = None
+        try:
+            outbound = _streaming_document(document, responses=responses)
+            outbound["model"] = frozen["deployment_alias"]
+            client = self._client_factory()
+            outbound_request = client.build_request(
+                "POST",
+                inference.base_url.rstrip("/")
+                + ("/v1/responses" if responses else "/v1/chat/completions"),
+                headers={
+                    "Authorization": "Bearer " + inference.inference_key,
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json=outbound,
+            )
+            await asyncio.to_thread(inference.require_financial_scope, authorized)
+        except Exception:  # noqa: BLE001 - setup failures precede the send fence.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_transport_unavailable")
+        try:
+            attempt = await asyncio.to_thread(
+                self._budgets.begin_attempt, reservation_id=reservation.id
+            )
+            if attempt.status != "in_flight" or attempt.id != reservation.id:
+                raise ValueError
+        except Exception:  # noqa: BLE001 - lost acknowledgement must not authorize another send.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_budget_attempt_unavailable")
+        try:
+            upstream = await client.send(outbound_request, stream=True)
+        except httpx.HTTPError:
+            await self._retain_uncertain(reservation, reason="provider_unreachable")
+            await self._close_transport(client)
+            return _error(502, "platform_model_provider_unreachable")
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                await self._retain_uncertain(reservation)
+                await self._close_transport(client)
+            raise
+        if upstream.status_code != 200:
+            await self._retain_uncertain(reservation, reason="provider_rejected")
+            await self._close_transport(client, upstream)
+            return _error(502, "platform_model_provider_rejected")
+        return StreamingResponse(
+            self._stream_and_settle(
+                client=client,
+                upstream=upstream,
+                reservation=reservation,
+                price=evidence.model_price,
+                requested_at=now,
+                responses=responses,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     async def _stream_and_settle(
         self,
@@ -600,7 +713,7 @@ def create_platform_model_gateway_app(gateway: PlatformModelGateway) -> FastAPI:
 
 def build_platform_model_gateway(
     environ: Mapping[str, str],
-) -> tuple[FastAPI, tuple[Engine, Engine]]:
+) -> tuple[FastAPI, tuple[Engine, ...]]:
     """Compose the standalone gateway with exact Billing and Secret Broker logins."""
 
     try:
@@ -622,6 +735,7 @@ def build_platform_model_gateway(
         raise ValueError("Platform model gateway database authority is invalid")
     secret_engine = sa.create_engine(secret_url, pool_pre_ping=True)
     billing_engine = sa.create_engine(billing_url, pool_pre_ping=True)
+    engines = [secret_engine, billing_engine]
     try:
         _inspect_service_login(
             secret_engine,
@@ -638,6 +752,41 @@ def build_platform_model_gateway(
             raise ValueError("Platform model gateway cipher is unavailable")
         secret_sessions = sessionmaker(secret_engine, expire_on_commit=False, class_=Session)
         billing_sessions = sessionmaker(billing_engine, expire_on_commit=False, class_=Session)
+        inference = load_litellm_run_inference(environ, billing_sessions)
+        run_credentials = None
+        if inference is not None:
+            factories = {}
+            for service in ("app", "authenticator"):
+                url, parsed, _ = load_production_database_url_file(environ, service)
+                if parsed.username != bindings.login_for(service):
+                    raise ValueError("Platform model gateway database authority is invalid")
+                engine = sa.create_engine(url, pool_pre_ping=True)
+                engines.append(engine)
+                _inspect_service_login(
+                    engine,
+                    expected_login=bindings.login_for(service),
+                    expected_role="saas_" + service,
+                )
+                factories[service] = sessionmaker(engine, expire_on_commit=False, class_=Session)
+            run_credentials = ModelRunCredentialService(
+                app_sessions=factories["app"],
+                authenticator_sessions=factories["authenticator"],
+                compatibility=RuntimeCompatibilityPolicy(
+                    runtime_type="omnigent",
+                    allowed_runtime_versions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_RUNTIME_VERSION")}
+                    ),
+                    allowed_source_revisions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_UPSTREAM_REVISION")}
+                    ),
+                    allowed_schema_revisions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION")}
+                    ),
+                    adapter_contract_version=_required(
+                        environ, "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION"
+                    ),
+                ),
+            )
         reader = ModelProviderConfigurationReader(secret_sessions, secret_cipher=cipher)
         budgets = ModelProviderBudgetAdmissionService(billing_sessions)
         pricing = load_platform_model_pricing(environ)
@@ -647,10 +796,9 @@ def build_platform_model_gateway(
         )
 
         def readiness() -> None:
-            with secret_engine.connect() as connection:
-                connection.execute(sa.text("SELECT 1"))
-            with billing_engine.connect() as connection:
-                connection.execute(sa.text("SELECT 1"))
+            for engine in engines:
+                with engine.connect() as connection:
+                    connection.execute(sa.text("SELECT 1"))
             configuration = reader.load()
             if configuration is not None:
                 pricing.for_catalog(configuration.allowed_models)
@@ -661,18 +809,20 @@ def build_platform_model_gateway(
             budgets=budgets,
             pricing=pricing,
             readiness_check=readiness,
+            run_credentials=run_credentials,
+            run_inference=inference,
         )
         app = create_platform_model_gateway_app(gateway)
 
         @app.on_event("shutdown")
         def close_engines() -> None:
-            secret_engine.dispose()
-            billing_engine.dispose()
+            for engine in engines:
+                engine.dispose()
 
-        return app, (secret_engine, billing_engine)
+        return app, tuple(engines)
     except Exception:
-        secret_engine.dispose()
-        billing_engine.dispose()
+        for engine in engines:
+            engine.dispose()
         raise
 
 

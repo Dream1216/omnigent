@@ -50,6 +50,7 @@ _REQUEST_FIELDS = frozenset(
         "unit",
     }
 )
+_GATEWAY_REFERENCE_FIELDS = frozenset({"action", "capability_token", "run_id", "reservation_id"})
 _RESPONSE_FIELDS = frozenset(
     {
         "currency",
@@ -75,6 +76,17 @@ _RESPONSE_FIELDS = frozenset(
 
 class BillingMeteringRecorder(Protocol):
     """Server-side authority; scope and price are deliberately not caller inputs."""
+
+    def gateway_usage(
+        self,
+        *,
+        action: str,
+        runner_id: UUID,
+        certificate_fingerprint_sha256: str,
+        capability_token: str,
+        run_id: UUID,
+        reservation_id: UUID,
+    ) -> dict[str, object]: ...
 
     def record_usage(
         self,
@@ -459,14 +471,48 @@ class MutualTlsBillingMeteringServer:
                 reader.readexactly(content_length),
                 timeout=self._request_timeout_seconds,
             )
-            request = _request_document(body)
-            usage = await asyncio.to_thread(
-                self._authority.record_usage,
-                runner_id=runner_id,
-                certificate_fingerprint_sha256=sha256(certificate_der).hexdigest(),
-                **request,
-            )
-            await _write_response(writer, status=200, body=_usage_document(usage))
+            try:
+                document = _strict_json_document(body)
+            except (ValueError, UnicodeError):
+                raise BillingMeteringTransportError(
+                    "billing_metering_request_invalid", "Billing body is invalid"
+                ) from None
+            if set(document) == _GATEWAY_REFERENCE_FIELDS:
+                if not isinstance(document["action"], str) or document["action"] not in {
+                    "check",
+                    "settle",
+                }:
+                    raise BillingMeteringTransportError(
+                        "billing_metering_request_invalid", "Gateway action is invalid"
+                    )
+                try:
+                    reference = {
+                        "action": document["action"],
+                        "capability_token": _bounded_text(document["capability_token"], 512),
+                        "run_id": _canonical_uuid(document["run_id"]),
+                        "reservation_id": _canonical_uuid(document["reservation_id"]),
+                    }
+                except (TypeError, ValueError):
+                    raise BillingMeteringTransportError(
+                        "billing_metering_request_invalid", "Gateway reference is invalid"
+                    ) from None
+                result = await asyncio.to_thread(
+                    self._authority.gateway_usage,
+                    runner_id=runner_id,
+                    certificate_fingerprint_sha256=sha256(certificate_der).hexdigest(),
+                    **reference,
+                )
+                response_body = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+            else:
+                request = _request_document(body)
+                usage = await asyncio.to_thread(
+                    self._authority.record_usage,
+                    runner_id=runner_id,
+                    certificate_fingerprint_sha256=sha256(certificate_der).hexdigest(),
+                    **request,
+                )
+                response_body = _usage_document(usage)
+            await _write_response(writer, status=200, body=response_body)
         except BillingMeteringTransportError as exc:
             status = (
                 403
@@ -554,6 +600,56 @@ class MutualTlsBillingMeteringClient:
     def close(self) -> None:
         self._client.close()
 
+    def gateway_usage(
+        self,
+        *,
+        action: str,
+        runner_id: UUID,
+        capability_token: str,
+        run_id: UUID,
+        reservation_id: UUID,
+    ) -> dict[str, object]:
+        if runner_id != self._runner_id or action not in {"check", "settle"}:
+            raise BillingMeteringTransportError(
+                "billing_metering_request_invalid", "Gateway reference is invalid"
+            )
+        document = self._exchange(
+            {
+                "action": action,
+                "capability_token": capability_token,
+                "run_id": str(run_id),
+                "reservation_id": str(reservation_id),
+            }
+        )
+        expected = {"status", "run_id", "reservation_id"} | (
+            {"receipt_ids"} if action == "settle" else set()
+        )
+        if (
+            set(document) != expected
+            or document.get("status") != ("ready" if action == "check" else "settled")
+            or document.get("run_id") != str(run_id)
+            or document.get("reservation_id") != str(reservation_id)
+        ):
+            raise BillingMeteringTransportError(
+                "billing_metering_response_invalid", "Gateway response is invalid"
+            )
+        if action == "settle":
+            receipts = document["receipt_ids"]
+            try:
+                if (
+                    not isinstance(receipts, list)
+                    or len(receipts) > 2
+                    or len(set(receipts)) != len(receipts)
+                ):
+                    raise ValueError
+                for receipt in receipts:
+                    _canonical_uuid(receipt)
+            except (ValueError, TypeError):
+                raise BillingMeteringTransportError(
+                    "billing_metering_response_invalid", "Gateway receipts are invalid"
+                ) from None
+        return document
+
     def record_usage(
         self,
         *,
@@ -575,7 +671,7 @@ class MutualTlsBillingMeteringClient:
                 "billing_metering_runner_identity_mismatch",
                 "Runner does not match the configured certificate identity",
             )
-        payload = {
+        payload: dict[str, object] = {
             "attributes": attributes or {},
             "capability_token": capability_token,
             "idempotency_key": idempotency_key,
@@ -592,6 +688,9 @@ class MutualTlsBillingMeteringClient:
             "run_id": str(run_id),
             "unit": unit,
         }
+        return _parse_usage_document(self._exchange(payload))
+
+    def _exchange(self, payload: dict[str, object]) -> dict[str, object]:
         try:
             encoded_payload = json.dumps(
                 payload,
@@ -650,7 +749,7 @@ class MutualTlsBillingMeteringClient:
                 if _ERROR_CODE.fullmatch(candidate):
                     code = candidate
             raise BillingMeteringTransportError(code, "Billing Metering request failed")
-        return _parse_usage_document(document)
+        return document
 
 
 def _parse_usage_document(document: dict[str, object]) -> MeteredUsage:

@@ -23,6 +23,7 @@ from saas.control_plane.model_gateway_evidence import (
     retain_gateway_evidence,
     retained_gateway_request,
 )
+from saas.control_plane.model_gateway_metering import gateway_call_reservation_id
 from saas.control_plane.model_pricing import token_cost_microusd
 from saas.control_plane.model_usage import ModelTokenUsage
 from saas.control_plane.platform_models import (
@@ -91,6 +92,7 @@ class ModelProviderBudgetAdmissionService:
         ttl: timedelta,
         now: datetime | None = None,
         gateway_request: GatewayRequestEvidence | None = None,
+        gateway_call_id: UUID | None = None,
     ) -> ModelProviderBudgetReservationView:
         at = _aware(now or datetime.now(timezone.utc))
         _positive_uuid(tenant_id, "tenant")
@@ -98,6 +100,16 @@ class ModelProviderBudgetAdmissionService:
         _operation_key(operation_key)
         _positive_amount(requested_microusd, "microusd")
         _positive_amount(requested_tokens, "tokens")
+        if gateway_call_id is not None and (
+            not isinstance(gateway_call_id, UUID)
+            or not gateway_call_id.int
+            or not isinstance(gateway_request, GatewayRunRequestEvidence)
+            or operation_key != f"model-gateway:{run_id}:{gateway_call_id}"
+        ):
+            raise ModelProviderBudgetError(
+                "platform_model_gateway_request_evidence_invalid",
+                "Gateway call identity is invalid",
+            )
         if gateway_request is not None and (
             not isinstance(gateway_request, GatewayRequestEvidence)
             or requested_tokens < gateway_request.output_token_limit
@@ -125,6 +137,7 @@ class ModelProviderBudgetAdmissionService:
             operation_key=operation_key,
             requested_microusd=requested_microusd,
             requested_tokens=requested_tokens,
+            **({"gateway_call_id": str(gateway_call_id)} if gateway_call_id is not None else {}),
             **(
                 {"gateway_request": asdict(gateway_request)} if gateway_request is not None else {}
             ),
@@ -209,7 +222,9 @@ class ModelProviderBudgetAdmissionService:
                 rejection_code = "platform_model_tenant_daily_tokens_exhausted"
             admitted = rejection_code is None
             record = ModelProviderBudgetReservationRecord(
-                id=uuid4(),
+                id=gateway_call_reservation_id(run_id, gateway_call_id)
+                if gateway_call_id is not None
+                else uuid4(),
                 provider_id=_PROVIDER_ID,
                 tenant_id=tenant_id,
                 run_id=run_id,

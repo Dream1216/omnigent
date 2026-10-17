@@ -778,9 +778,11 @@ def test_host_gateway_config_contains_only_synthetic_bearer_name() -> None:
     assert "sk-" not in rendered
 
 
+@pytest.mark.parametrize("managed", [False, True])
 def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
     tmp_path: Path,
     monkeypatch,
+    managed,
 ) -> None:
     from saas.production import platform_model_gateway as module
 
@@ -806,6 +808,10 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         path=tmp_path / "platform-model-bindings.json",
         sha256="0" * 64,
         bindings=(
+            ProductionServiceRoleBinding("app", "next_beta_app", "saas_app"),
+            ProductionServiceRoleBinding(
+                "authenticator", "next_beta_authenticator", "saas_authenticator"
+            ),
             ProductionServiceRoleBinding("billing", "next_beta_billing", "saas_billing"),
             ProductionServiceRoleBinding(
                 "secret_broker", "next_beta_secret_broker", "saas_secret_broker"
@@ -840,15 +846,31 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         lambda *_args, **_kwargs: _ConfigurationReader(None),
     )
 
-    app, built_engines = build_platform_model_gateway(
-        {
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
-        }
-    )
+    source = {
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
+    }
+    if managed:
+        inference_key = tmp_path / "inference-only-key"
+        inference_key.write_text("isolated-runtime-inference-key")
+        inference_key.chmod(0o400)
+        source.update(
+            {
+                "OMNIGENT_SAAS_MODEL_RUN_INFERENCE_ENABLED": "true",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_BASE_URL": "http://omnigent-litellm",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_KEY_FILE": str(inference_key),
+                "OMNIGENT_SAAS_LITELLM_RUN_ALIASES": "platform-model-" + "1" * 32,
+                "OMNIGENT_SAAS_RUNTIME_VERSION": "isolated-version",
+                "OMNIGENT_SAAS_UPSTREAM_REVISION": "a" * 40,
+                "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "isolated-schema",
+                "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": "isolated-contract",
+            }
+        )
+    app, built_engines = build_platform_model_gateway(source)
 
     assert app is not None
     assert built_engines == tuple(engines)
+    assert len(built_engines) == (4 if managed else 2)
     health = TestClient(app).get("/healthz")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "provider_secret_exported": False}

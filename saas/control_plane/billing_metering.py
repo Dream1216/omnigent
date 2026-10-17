@@ -30,6 +30,7 @@ from saas.control_plane.model_gateway_metering import (
     GATEWAY_EXECUTION_ACTIONS,
     GATEWAY_METERS,
     read_gateway_metering_fact,
+    read_gateway_not_sent_request,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling_models import (
@@ -184,6 +185,169 @@ class BillingMeteringAuthority:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def gateway_usage(
+        self,
+        *,
+        action: str,
+        runner_id: UUID,
+        certificate_fingerprint_sha256: str,
+        capability_token: str,
+        run_id: UUID,
+        reservation_id: UUID,
+    ) -> dict[str, object]:
+        """Preflight or deliver a retained call; never accept caller-selected usage."""
+        if (
+            action not in {"check", "settle"}
+            or not isinstance(reservation_id, UUID)
+            or not reservation_id.int
+        ):
+            raise BillingMeteringError(
+                "metering_gateway_request_invalid", "Gateway reference is invalid"
+            )
+        now = datetime.now(timezone.utc)
+        fingerprint = certificate_fingerprint_sha256.strip().lower()
+        if _HEX_SHA256.fullmatch(fingerprint) is None:
+            raise BillingMeteringError("metering_certificate_invalid", "Certificate is invalid")
+        with (
+            query_name_scope("saas.billing_metering.gateway_reference"),
+            self._session_factory.begin() as db,
+        ):
+            self._set_exact_identity_context(
+                db,
+                fingerprint=fingerprint,
+                capability_digest=_capability_hash(capability_token),
+                idempotency_key="",
+                provider="deepseek",
+                provider_request_id=f"model-gateway:{reservation_id}",
+                meter="llm.input_tokens",
+                model_budget_reservation_id=reservation_id,
+            )
+            runner = db.scalar(
+                sa.select(RunnerRegistrationRecord)
+                .where(RunnerRegistrationRecord.id == runner_id)
+                .with_for_update()
+            )
+            certificate = db.scalar(
+                sa.select(RunnerCertificateRecord)
+                .where(
+                    RunnerCertificateRecord.runner_id == runner_id,
+                    RunnerCertificateRecord.fingerprint_sha256 == fingerprint,
+                    RunnerCertificateRecord.purpose == "billing_metering",
+                )
+                .with_for_update()
+            )
+            capability = db.scalar(
+                sa.select(CapabilityTokenRecord)
+                .where(CapabilityTokenRecord.token_hash == _capability_hash(capability_token))
+                .with_for_update()
+            )
+            self._require_machine_binding(
+                runner=runner,
+                certificate=certificate,
+                capability=capability,
+                runner_id=runner_id,
+                run_id=run_id,
+                meter="llm.input_tokens",
+                checked_at=now,
+                gateway=True,
+            )
+            assert capability is not None and runner is not None and certificate is not None
+            apply_rls_context(
+                db, RlsContext(tenant_id=capability.tenant_id, space_id=capability.space_id)
+            )
+            run = self._run_authority(db, run_id)
+            if (
+                run.queue_class != "managed_interactive"
+                or not run.customer_pricing_frozen
+                or run.customer_pricing_snapshot_id is None
+            ):
+                raise BillingMeteringError(
+                    "metering_gateway_scope_denied", "Gateway Run is unavailable"
+                )
+            self._set_authoritative_usage_context(
+                db, run, run_id=run_id, model_budget_reservation_id=reservation_id
+            )
+            if action == "check":
+                if (
+                    capability.revoked_at is not None
+                    or _as_utc(capability.expires_at) <= now
+                    or run.status != "running"
+                ):
+                    raise BillingMeteringError(
+                        "metering_capability_expired", "Gateway execution is unavailable"
+                    )
+                dispatch = db.scalar(
+                    sa.select(RunDispatchRecord)
+                    .where(RunDispatchRecord.run_id == run_id)
+                    .with_for_update()
+                )
+                self._require_execution_authority(
+                    runner=runner,
+                    certificate=certificate,
+                    capability=capability,
+                    run=run,
+                    dispatch=dispatch,
+                    runner_id=runner_id,
+                    run_id=run_id,
+                    happened=now,
+                    checked_at=now,
+                )
+                pricing = self._effective_pricing(
+                    db, tenant_id=capability.tenant_id, happened=now, run=run
+                )
+                for meter in GATEWAY_METERS:
+                    self._charge(pricing=pricing, meter=meter, quantity=Decimal(1), unit="tokens")
+                return {
+                    "status": "ready",
+                    "run_id": str(run_id),
+                    "reservation_id": str(reservation_id),
+                }
+            try:
+                fact = read_gateway_metering_fact(
+                    db, reservation_id=reservation_id, capability=capability
+                )
+                request = fact.request
+                submissions = fact.submissions()
+            except ValueError:
+                try:
+                    request = read_gateway_not_sent_request(
+                        db, reservation_id=reservation_id, capability=capability
+                    )
+                    submissions = ()
+                except ValueError:
+                    raise BillingMeteringError(
+                        "metering_gateway_evidence_unavailable", "Gateway outcome is pending"
+                    ) from None
+            binding = request.run_binding
+            if (
+                str(run.session_id),
+                str(run.created_by),
+                str(run.customer_pricing_snapshot_id),
+            ) != (
+                binding.session_id,
+                binding.actor_id,
+                binding.customer_pricing_snapshot_id,
+            ) or run.created_by_service_account_id is not None:
+                raise BillingMeteringError(
+                    "metering_gateway_scope_denied", "Gateway reference differs from Run"
+                )
+        receipts = [
+            self.record_usage(
+                runner_id=runner_id,
+                certificate_fingerprint_sha256=fingerprint,
+                capability_token=capability_token,
+                run_id=run_id,
+                **submission,
+            )
+            for submission in submissions
+        ]
+        return {
+            "status": "settled",
+            "run_id": str(run_id),
+            "reservation_id": str(reservation_id),
+            "receipt_ids": [str(receipt.receipt_id) for receipt in receipts],
+        }
 
     def record_usage(
         self,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from uuid import UUID
+from typing import TypedDict
+from uuid import UUID, uuid5
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -25,6 +26,30 @@ GATEWAY_METERS = frozenset({"llm.input_tokens", "llm.output_tokens"})
 GATEWAY_EXECUTION_ACTIONS = frozenset({"run.execute", "runtime.interactive.execute"})
 
 
+class GatewayMeteringSubmission(TypedDict):
+    meter: str
+    quantity: str
+    unit: str
+    provider: str
+    provider_request_id: str
+    idempotency_key: str
+    occurred_at: datetime
+    attributes: dict[str, object]
+    model_budget_reservation_id: UUID
+
+
+def gateway_call_reservation_id(run_id: UUID, call_id: UUID) -> UUID:
+    """Let the trusted Relay persist a correlation before any inference is sent."""
+    if (
+        not isinstance(run_id, UUID)
+        or not run_id.int
+        or not isinstance(call_id, UUID)
+        or not call_id.int
+    ):
+        raise ValueError("metering_gateway_call_invalid")
+    return uuid5(run_id, f"model-gateway:{call_id}")
+
+
 def _utc(value: datetime) -> datetime:
     return (
         value.replace(tzinfo=timezone.utc)
@@ -42,7 +67,7 @@ class GatewayMeteringFact:
     occurred_at: datetime
     admitted_at: datetime
 
-    def submissions(self) -> tuple[dict[str, object], ...]:
+    def submissions(self) -> tuple[GatewayMeteringSubmission, ...]:
         return tuple(
             self.submission(meter)
             for meter, quantity in (
@@ -52,7 +77,7 @@ class GatewayMeteringFact:
             if quantity > 0
         )
 
-    def submission(self, meter: str) -> dict[str, object]:
+    def submission(self, meter: str) -> GatewayMeteringSubmission:
         if meter not in GATEWAY_METERS:
             raise ValueError("metering_gateway_meter_denied")
         quantity = (
@@ -156,3 +181,67 @@ def read_gateway_metering_fact(
     return GatewayMeteringFact(
         budget.id, capability.tenant_id, request, usage, occurred, authorized
     )
+
+
+def read_gateway_not_sent_request(
+    db: Session, *, reservation_id: UUID, capability: CapabilityTokenRecord
+) -> GatewayRunRequestEvidence:
+    """A closed pre-send fence is zero cost; absence or unknown outcome is not."""
+    budget = db.get(ModelProviderBudgetReservationRecord, reservation_id)
+    if (
+        budget is None
+        or budget.tenant_id != capability.tenant_id
+        or budget.run_id != capability.run_id
+        or budget.purpose != "tenant_run"
+        or budget.status not in {"rejected", "released", "expired"}
+        or budget.settled_microusd != 0
+        or budget.settled_tokens != 0
+        or budget.outcome_evidence_sha256 is not None
+    ):
+        raise ValueError("metering_gateway_not_sent_unavailable")
+    rows = {
+        row.phase: row
+        for row in db.scalars(
+            sa.select(ModelGatewayEvidenceRecord).where(
+                ModelGatewayEvidenceRecord.reservation_id == reservation_id
+            )
+        )
+    }
+    try:
+        original = rows["request"]
+        request = retained_gateway_request(original, budget)
+        if not isinstance(request, GatewayRunRequestEvidence) or "in_flight" in rows:
+            raise ValueError
+        binding = request.run_binding
+        if (
+            binding.capability_id != str(capability.id)
+            or binding.fence_token != capability.fence_token
+            or binding.space_id != str(capability.space_id)
+            or binding.project_id != str(capability.project_id)
+            or not _utc(capability.issued_at)
+            <= _utc(original.created_at)
+            < _utc(capability.expires_at)
+        ):
+            raise ValueError
+        terminal = (
+            decode_gateway_evidence(rows[budget.status], budget)
+            if budget.status != "rejected"
+            else decode_gateway_evidence(original, budget)
+        )
+        if (
+            terminal["status"] != budget.status
+            or terminal["budget_version"] != budget.version
+            or terminal["usage"] is not None
+            or terminal["actual_microusd"] is not None
+            or (
+                budget.status != "rejected"
+                and (
+                    terminal["reason"] != "not_sent"
+                    or terminal["request_evidence_sha256"] != original.evidence_sha256
+                )
+            )
+        ):
+            raise ValueError
+    except (KeyError, ValueError, TypeError):
+        raise ValueError("metering_gateway_not_sent_unavailable") from None
+    return request
