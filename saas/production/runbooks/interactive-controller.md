@@ -38,6 +38,22 @@ overwrite referenced files or revoke them before the recovery/rotation policy
 has reconciled pending records. This configuration change is not a rotation or
 retention acceptance receipt.
 
+## Database admission during a leased Run
+
+Fleet bootstrap and the default direct Runner admission still require the
+configured registration status and zero active leases. The interactive
+factory's catalog recheck also accepts its pinned single-slot Runner while
+online or draining with zero or one active lease. This permits current-Run
+authorization, renewal and orphan recovery after the scheduler has reserved
+the slot; it does not grant permission to claim another Run.
+
+The live mTLS lease heartbeat, Run/capability/fence, human/project/session
+authorization and publication checks remain required before model issuance.
+Recovery still requires the exact historical ownership binding and cannot
+issue a model credential. Catalog checks retain the same signed Fleet and
+exact function, policy, ownership and ACL validation; a foreign incarnation,
+offline Runner, expanded capacity or unexpected grant is not admitted.
+
 ## Verification boundaries
 
 Run configuration and grant/recovery wiring checks from the checkout root:

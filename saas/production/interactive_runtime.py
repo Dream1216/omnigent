@@ -582,6 +582,7 @@ class ProductionInteractiveRuntimeFactory:
                     runner_id=identity.runner_id,
                     connection_generation=identity.connection_generation,
                     fleet_members=members,
+                    allow_leased_interactive=True,
                 )
                 verify_runner_database_fleet_runtime_catalog_binding(
                     admission, runtime_authority_contract_sha256=contract

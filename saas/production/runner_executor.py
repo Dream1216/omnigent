@@ -627,6 +627,7 @@ def _verify_runner_agent_database_authority(
     connection_generation: int,
     fleet_members: tuple[tuple[UUID, int], tuple[UUID, int]] | None = None,
     required_registration_status: str = "online",
+    allow_leased_interactive: bool = False,
 ) -> str:
     """Admit only one direct, non-escalatable Runner-incarnation login."""
 
@@ -737,11 +738,25 @@ def _verify_runner_agent_database_authority(
             server_major = identity[2] // 10_000
             registration_state = connection.execute(
                 sa.text(
-                    "SELECT status, connection_generation, active_leases "
+                    "SELECT status, connection_generation, active_leases, max_concurrency "
                     "FROM public.saas_runner_registrations WHERE id = :runner_id"
                 ),
                 {"runner_id": runner_id},
             ).one()
+            if type(allow_leased_interactive) is not bool:
+                raise ValueError("runner registration phase")
+            expected_registration_states = {
+                (required_registration_status, connection_generation, 0)
+            }
+            if allow_leased_interactive:
+                # This is a catalog recheck, not permission to claim or execute a Run.
+                if required_registration_status != "online" or registration_state[3] != 1:
+                    raise ValueError("interactive runner registration capacity")
+                expected_registration_states = {
+                    (status, connection_generation, count)
+                    for status in ("online", "draining")
+                    for count in (0, 1)
+                }
             if (
                 required_registration_status not in {"draining", "online"}
                 or revision != CONTROL_PLANE_SCHEMA_REVISION
@@ -752,8 +767,7 @@ def _verify_runner_agent_database_authority(
                     True,
                     False,
                 )
-                or tuple(registration_state)
-                != (required_registration_status, connection_generation, 0)
+                or tuple(registration_state[:3]) not in expected_registration_states
             ):
                 raise ValueError("runner schema identity")
 
