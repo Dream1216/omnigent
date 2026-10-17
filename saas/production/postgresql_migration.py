@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "d16fbc8570fa94113b9d4fb83ca0550f5995ada79c033b9b7f05e6835f007406",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "7b9e7cee18e9fb34d4318ea8a1a544cad5e363382174e2f9809b6be7c24723d6",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -439,6 +450,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "1f97515b335376ee9079f72dafe0f07b19e11b3ec05c323c0a80d634ff2d6168",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "f6609b9bfd3f8837c4a12c229bcd2935f458fc4d5c4131410074f048df33ee84",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -662,6 +684,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "26678caecb76d880350641e11e1aa4ba2962e4543b1360826e8f831bcf725adb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "93afcdb479ba73e828f6d1ce7bd03edb1adc068c52fc51bbd6711e657c7f5689",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -855,6 +888,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "81e061489035d5afa2d45dfbd1126cdafa2da1b966139eeaf1fc64c094101bf9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "7c054ecf4971557466de0a6b5b7bcbbbcbfe66598f6edab39624d051a71548e0",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -1043,6 +1087,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "e15c540345fa786dccb96a7827d5ac931f1cd43fdfc11d375d223a8851f76ac6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "158237c9d4f0b7c6ba28cdc249f9858595de7333900569b008a5aca06a844f12",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -1206,6 +1261,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "f532158c0d3df5eac0bd5404a80c3d7cd803060eab17c78140760779d8ec4667",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "213f5f17ada93ada12e307a4137de47aa4bf51264494acf72f70c2ca6122e5cc",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -1376,6 +1442,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "022c00909f9404b3ad0f7e0fa8213ac4598de2ccef1f1f70348c4f151e48aff1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "ab333c211f4b4ebeeb1a899a1f16c343cdde3d486d7d378d3b82d45c399bd254",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,
@@ -1511,6 +1588,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "665b149579c9777cc874771bcf5cd81e922219ff2cd10a69991e9a89481e961b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "36d48f4ade00e0fc460a6947f3890d24e1e6051e79a221c39b747cddc12f4036",
     # PG16/18 restricted source replay; true-Run gateway lineage.
     (
         16,

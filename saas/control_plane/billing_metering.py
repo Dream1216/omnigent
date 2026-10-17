@@ -26,6 +26,11 @@ from saas.control_plane.certificate_models import RunnerCertificateRecord
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.execution_models import RunRecord
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.model_gateway_metering import (
+    GATEWAY_EXECUTION_ACTIONS,
+    GATEWAY_METERS,
+    read_gateway_metering_fact,
+)
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
@@ -101,6 +106,7 @@ class _RunAuthority:
     created_at: datetime
     customer_pricing_frozen: bool
     customer_pricing_snapshot_id: UUID | None
+    queue_class: str
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -174,7 +180,7 @@ def _capability_hash(token: str) -> str:
 
 
 class BillingMeteringAuthority:
-    """Persist one Usage fact only after revalidating the live execution authority."""
+    """Persist machine usage against live execution or retained gateway call authority."""
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
@@ -270,6 +276,10 @@ class BillingMeteringAuthority:
                 .where(CapabilityTokenRecord.token_hash == capability_digest)
                 .with_for_update()
             )
+            gateway = (
+                capability is not None
+                and "runtime.interactive.execute" in capability.allowed_actions
+            )
             self._require_machine_binding(
                 runner=runner,
                 certificate=certificate,
@@ -278,10 +288,16 @@ class BillingMeteringAuthority:
                 run_id=run_id,
                 meter=clean_meter,
                 checked_at=checked_at,
+                gateway=gateway,
             )
             assert runner is not None
             assert certificate is not None
             assert capability is not None
+            if gateway and model_budget_reservation_id is None:
+                raise BillingMeteringError(
+                    "metering_gateway_evidence_required",
+                    "Gateway usage requires retained evidence",
+                )
 
             apply_rls_context(
                 db,
@@ -293,7 +309,9 @@ class BillingMeteringAuthority:
             )
             if replayed is not None:
                 return replayed
-            if capability.revoked_at is not None or _as_utc(capability.expires_at) <= checked_at:
+            if not gateway and (
+                capability.revoked_at is not None or _as_utc(capability.expires_at) <= checked_at
+            ):
                 raise BillingMeteringError(
                     "metering_capability_expired", "capability is expired or revoked"
                 )
@@ -304,22 +322,60 @@ class BillingMeteringAuthority:
                 run_id=run_id,
                 model_budget_reservation_id=model_budget_reservation_id,
             )
-            dispatch = db.scalar(
-                sa.select(RunDispatchRecord)
-                .where(RunDispatchRecord.run_id == run_id)
-                .with_for_update()
-            )
-            self._require_execution_authority(
-                runner=runner,
-                certificate=certificate,
-                capability=capability,
-                run=run,
-                dispatch=dispatch,
-                runner_id=runner_id,
-                run_id=run_id,
-                happened=happened,
-                checked_at=checked_at,
-            )
+            if gateway:
+                assert model_budget_reservation_id is not None
+                try:
+                    fact = read_gateway_metering_fact(
+                        db, reservation_id=model_budget_reservation_id, capability=capability
+                    )
+                    expected = fact.submission(clean_meter)
+                    binding = fact.request.run_binding
+                    if (
+                        run.queue_class != "managed_interactive"
+                        or (run.tenant_id, run.space_id, run.project_id)
+                        != (capability.tenant_id, capability.space_id, capability.project_id)
+                        or not run.customer_pricing_frozen
+                        or str(run.customer_pricing_snapshot_id)
+                        != binding.customer_pricing_snapshot_id
+                        or str(run.session_id) != binding.session_id
+                        or str(run.created_by) != binding.actor_id
+                        or run.created_by_service_account_id is not None
+                        or expected
+                        != {
+                            **request_values,
+                            "idempotency_key": key,
+                            "occurred_at": happened,
+                            "model_budget_reservation_id": model_budget_reservation_id,
+                        }
+                    ):
+                        raise ValueError
+                except (ValueError, TypeError, KeyError):
+                    raise BillingMeteringError(
+                        "metering_gateway_evidence_denied",
+                        "Gateway usage differs from retained evidence",
+                    ) from None
+            else:
+                if run.queue_class == "managed_interactive":
+                    raise BillingMeteringError(
+                        "metering_gateway_evidence_required",
+                        "Interactive usage requires Gateway evidence",
+                    )
+                dispatch = db.scalar(
+                    sa.select(RunDispatchRecord)
+                    .where(RunDispatchRecord.run_id == run_id)
+                    .with_for_update()
+                )
+                self._require_execution_authority(
+                    runner=runner,
+                    certificate=certificate,
+                    capability=capability,
+                    run=run,
+                    dispatch=dispatch,
+                    runner_id=runner_id,
+                    run_id=run_id,
+                    happened=happened,
+                    checked_at=checked_at,
+                )
             BillingControlPlane._transaction_locks(
                 db,
                 f"billing-metering-idempotency:{capability.tenant_id}:{key}",
@@ -398,7 +454,7 @@ class BillingMeteringAuthority:
             )
             db.add(usage)
             db.flush()
-            if model_budget_reservation_id is not None:
+            if model_budget_reservation_id is not None and not gateway:
                 self._apply_model_budget_usage(
                     db,
                     reservation_id=model_budget_reservation_id,
@@ -621,6 +677,7 @@ class BillingMeteringAuthority:
         run_id: UUID,
         meter: str,
         checked_at: datetime,
+        gateway: bool = False,
     ) -> None:
         if runner is None or certificate is None:
             raise BillingMeteringError(
@@ -654,6 +711,15 @@ class BillingMeteringAuthority:
             raise BillingMeteringError(
                 "metering_capability_binding_invalid", "capability incarnation is stale"
             )
+        if gateway:
+            if (
+                set(capability.allowed_actions) != GATEWAY_EXECUTION_ACTIONS
+                or meter not in GATEWAY_METERS
+            ):
+                raise BillingMeteringError(
+                    "metering_capability_action_denied", "Gateway capability action is denied"
+                )
+            return
         if _ACTION not in capability.allowed_actions:
             raise BillingMeteringError(
                 "metering_capability_action_denied", "capability action is denied"
@@ -785,6 +851,7 @@ class BillingMeteringAuthority:
                 RunRecord.created_at,
                 RunRecord.customer_pricing_frozen,
                 RunRecord.customer_pricing_snapshot_id,
+                RunRecord.queue_class,
             )
             .where(RunRecord.id == run_id)
             .with_for_update()
