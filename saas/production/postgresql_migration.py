@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "77c8d086691f98fa4090c57801e53938d347d84ff7727ca0dc2c54ee9a16da29",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "c726e3919bdad6ac9a52fa050dc98281dfe7e38821d988546fa00aa020acac88",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -428,6 +439,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "62c4fa24a02174947ad21c4c92e75d5a5dd7a52880d591317e6007d4c6625caf",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "9fa0d8f075fd8d185e878ad3480d1ba895eb41d61aeb6c79a88abaf17e6e81e9",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -640,6 +662,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "b5a31ab1e58390fe1be2b12a93ea9fd68105aeca9d04a60a2ddb45be67e23b68",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "4846b59cb193524a4f8f9321d6983192d649e8cea19c770768c4ba0fe16b8298",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -822,6 +855,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "3f0a59cf0c5db295b784978b3746c6fbf9069b4f37b26399a523f251c1afd4c8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "1bd5e69dfd45a3f8ab70c35b466bb3b7d9808d1041d0836721d0f5c95ca2f960",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -999,6 +1043,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "7be520e79138a1e3ef353ebab61df7605e0e19fb64440df60f3c31bb4051ce47",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "cb15b6fad2342f02986d94d765be5090667327a3456fdcd9f47927c9cd09b6f6",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -1151,6 +1206,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "2e4ebd32ae2d769ea63749564886d5c0f42fa20e82c32cf0c7c52db4b27282ef",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "dd78235a033609d469fbd2cdf09b61acaffd00153fdc65af573b474d2fbba272",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -1310,6 +1376,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "cd4b83cadfdaee5413e84522e5f2bb532466c2d2364b9f3b3265a912c94e922e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "16693838ab76097e4656e98630b87b3709e90d4b328a9a24be540facf65332e1",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,
@@ -1434,6 +1511,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "dfa9c1764c7cbfbbf62647db90c71898ece8e677fc63c602be845787859f7e17",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "5566911fb984e15bc9f441fe030649bde8d77958eecd8cd4bf874b4a767ee63b",
     # PG16/18 restricted source replay; renewable real-Run model credentials.
     (
         16,

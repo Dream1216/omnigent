@@ -17,6 +17,8 @@ from saas.compatibility import RuntimeContext
 from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.execution_models import RunRecord
 from saas.control_plane.interactive_run_route import INTERACTIVE_QUEUE_CLASS
+from saas.control_plane.model_gateway_evidence import GatewayRunBinding, GatewayRunRequestEvidence
+from saas.control_plane.model_pricing import PlatformModelPrice
 from saas.control_plane.model_routing_models import ModelRunTokenRecord
 from saas.control_plane.resolver import RuntimeCompatibilityPolicy, SqlAlchemyContextResolver
 from saas.control_plane.rls import RlsContext, apply_rls_context
@@ -95,6 +97,44 @@ class AuthorizedModelRun:
     publication: dict[str, object] = field(repr=False)
     customer_pricing_snapshot_id: UUID
     configuration: dict[str, object] = field(repr=False)
+    execution_session_id: UUID
+
+    def gateway_request(self, *, output_token_limit: int) -> GatewayRunRequestEvidence:
+        frozen = self.configuration
+        cost = frozen["provider_cost"]
+        if not isinstance(cost, dict):
+            raise ValueError("platform_model_gateway_frozen_price_invalid")
+        maximum = frozen["max_output_tokens"]
+        if (
+            type(maximum) is not int
+            or type(output_token_limit) is not int
+            or not 1 <= output_token_limit <= maximum
+        ):
+            raise ValueError("platform_model_gateway_output_limit_invalid")
+        generation = self.publication["generation"]
+        digest = self.publication["snapshot_sha256"]
+        if type(generation) is not int or not isinstance(digest, str):
+            raise ValueError("platform_model_gateway_publication_invalid")
+        return GatewayRunRequestEvidence(
+            str(frozen["public_model_id"]),
+            str(frozen["wire_api"]),
+            cost["pricing_revision"],
+            PlatformModelPrice(**cost["price"]),
+            output_token_limit,
+            GatewayRunBinding(
+                str(self.claims.run_id),
+                str(self.execution_session_id),
+                str(self.claims.space_id),
+                str(self.claims.project_id),
+                str(self.claims.actor_id),
+                str(self.claims.capability_id),
+                str(self.claims.token_id),
+                str(self.customer_pricing_snapshot_id),
+                self.claims.fence_token,
+                generation,
+                digest,
+            ),
+        )
 
 
 class ModelRunCredentialService:
@@ -257,6 +297,9 @@ class ModelRunCredentialService:
             assert isinstance(publication, dict)
             pricing_id = run.customer_pricing_snapshot_id
             assert pricing_id is not None
+            session_id = run.session_id
+            if session_id is None:
+                raise PlatformModelGatewayTokenError("model Run session is unavailable")
         try:
             runtime = resolve_interactive_run_runtime(
                 run,
@@ -267,7 +310,9 @@ class ModelRunCredentialService:
         except RunnerControlError:
             raise PlatformModelGatewayTokenError("model Run route changed") from None
         configuration = self._catalog.require_version(runtime, publication)
-        return AuthorizedModelRun(claims, runtime, publication, pricing_id, configuration)
+        return AuthorizedModelRun(
+            claims, runtime, publication, pricing_id, configuration, session_id
+        )
 
     def issue(
         self,

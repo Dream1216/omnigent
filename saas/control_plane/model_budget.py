@@ -17,6 +17,7 @@ from omnigent.db.query_context import query_name_scope
 from saas.control_plane.model_gateway_evidence import (
     GatewayEvidenceView,
     GatewayRequestEvidence,
+    GatewayRunRequestEvidence,
     decode_gateway_evidence,
     gateway_request_record,
     retain_gateway_evidence,
@@ -102,6 +103,10 @@ class ModelProviderBudgetAdmissionService:
             or requested_tokens < gateway_request.output_token_limit
             or requested_microusd
             != token_cost_microusd(requested_tokens, gateway_request.model_price.reservation_rate)
+            or (
+                isinstance(gateway_request, GatewayRunRequestEvidence)
+                and gateway_request.run_binding.run_id != str(run_id)
+            )
         ):
             raise ModelProviderBudgetError(
                 "platform_model_gateway_request_evidence_invalid",

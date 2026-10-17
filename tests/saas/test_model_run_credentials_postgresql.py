@@ -72,7 +72,7 @@ def _authenticator_login(f):
             connection.exec_driver_sql(f"DROP ROLE {login}")
 
 
-def _claim(fixture, workers):
+def _claim(fixture, workers, *, include_controller=False):
     f, runtime = fixture.base, fixture.runtime
     _, pool = _scheduling(f.factory, runtime, runtime.project_id)
     with bind_runtime_context(runtime):
@@ -131,6 +131,8 @@ def _claim(fixture, workers):
         launch=run.input["execution"]["launch"],
         publication=run.input["execution"]["model_publication"],
     )
+    if include_controller:
+        return authority, authorized, lease, control, machine
     return authority, authorized, lease
 
 

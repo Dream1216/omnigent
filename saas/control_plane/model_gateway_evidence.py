@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -22,6 +23,7 @@ from saas.control_plane.platform_models import (
 GATEWAY_EVIDENCE_EVENT = "model_gateway.evidence_retained"
 GATEWAY_EVIDENCE_AGGREGATE = "model_gateway_budget"
 _CONTRACT = "platform-model-gateway-evidence-v1"
+_RUN_CONTRACT = "platform-model-gateway-evidence-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,59 @@ class GatewayRequestEvidence:
             or not 1 <= self.output_token_limit <= 65536
         ):
             raise ValueError("platform_model_gateway_request_evidence_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayRunBinding:
+    run_id: str
+    session_id: str
+    space_id: str
+    project_id: str
+    actor_id: str
+    capability_id: str
+    model_token_id: str
+    customer_pricing_snapshot_id: str
+    fence_token: int
+    publication_generation: int
+    publication_snapshot_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "run_id",
+            "session_id",
+            "space_id",
+            "project_id",
+            "actor_id",
+            "capability_id",
+            "model_token_id",
+            "customer_pricing_snapshot_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or str(UUID(value)) != value or UUID(value).int == 0:
+                raise ValueError("platform_model_gateway_run_binding_invalid")
+        if (
+            type(self.fence_token) is not int
+            or not 1 <= self.fence_token < 2**63
+            or type(self.publication_generation) is not int
+            or not 1 <= self.publication_generation < 2**31
+            or not isinstance(self.publication_snapshot_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.publication_snapshot_sha256) is None
+        ):
+            raise ValueError("platform_model_gateway_run_binding_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayRunRequestEvidence(GatewayRequestEvidence):
+    run_binding: GatewayRunBinding
+
+    def __post_init__(self) -> None:
+        GatewayRequestEvidence.__post_init__(self)
+        if not isinstance(self.run_binding, GatewayRunBinding):
+            raise ValueError("platform_model_gateway_run_binding_invalid")
+
+
+def gateway_request_material(request: GatewayRequestEvidence) -> dict:
+    return asdict(request)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,19 +145,23 @@ def decode_gateway_evidence(
     if sha256(row.canonical_evidence.encode("ascii")).hexdigest() != row.evidence_sha256:
         raise ValueError("platform_model_gateway_evidence_drift")
     value = json.loads(row.canonical_evidence)
+    contract = value.get("contract") if isinstance(value, dict) else None
+    identity = "run_id" if contract == _RUN_CONTRACT else "session_id"
     expected = {
         "reservation_id": str(budget.id),
         "tenant_id": str(budget.tenant_id),
-        "session_id": str(budget.run_id),
+        identity: str(budget.run_id),
         "provider_id": budget.provider_id,
         "configuration_version": budget.configuration_version,
         "phase": row.phase,
         "budget_version": row.budget_version,
         "admission": gateway_admission(budget),
-        "contract": _CONTRACT,
+        "contract": contract,
     }
     if (
         not isinstance(value, dict)
+        or contract not in {_CONTRACT, _RUN_CONTRACT}
+        or ("session_id" if identity == "run_id" else "run_id") in value
         or canonical_gateway_evidence(value) != row.canonical_evidence
         or any(value.get(name) != expected_value for name, expected_value in expected.items())
     ):
@@ -113,18 +172,25 @@ def decode_gateway_evidence(
 def retained_gateway_request(
     row: ModelGatewayEvidenceRecord, budget: ModelProviderBudgetReservationRecord
 ) -> GatewayRequestEvidence:
-    value = decode_gateway_evidence(row, budget)["request"]
-    if not isinstance(value, dict) or set(value) != set(
-        GatewayRequestEvidence.__dataclass_fields__
-    ):
+    document = decode_gateway_evidence(row, budget)
+    value = document["request"]
+    managed = document["contract"] == _RUN_CONTRACT
+    request_class = GatewayRunRequestEvidence if managed else GatewayRequestEvidence
+    if not isinstance(value, dict) or set(value) != set(request_class.__dataclass_fields__):
         raise ValueError("platform_model_gateway_evidence_drift")
-    return GatewayRequestEvidence(
+    values = (
         value["public_model_id"],
         value["wire_api"],
         value["pricing_revision"],
         PlatformModelPrice(**value["model_price"]),
         value["output_token_limit"],
     )
+    if managed:
+        binding = GatewayRunBinding(**value["run_binding"])
+        if binding.run_id != str(budget.run_id):
+            raise ValueError("platform_model_gateway_evidence_drift")
+        return GatewayRunRequestEvidence(*values, binding)
+    return GatewayRequestEvidence(*values)
 
 
 def retain_gateway_evidence(
@@ -142,18 +208,23 @@ def retain_gateway_evidence(
     if budget.purpose != "tenant_run" or budget.tenant_id is None or budget.run_id is None:
         raise ValueError("platform_model_gateway_evidence_scope_invalid")
     phase = "request" if request is not None else budget.status
+    if request is not None:
+        contract = _RUN_CONTRACT if isinstance(request, GatewayRunRequestEvidence) else _CONTRACT
+    else:
+        assert first is not None
+        contract = decode_gateway_evidence(first, budget)["contract"]
     material = {
-        "contract": _CONTRACT,
+        "contract": contract,
         "phase": phase,
         "reservation_id": str(budget.id),
         "tenant_id": str(budget.tenant_id),
-        "session_id": str(budget.run_id),
+        "run_id" if contract == _RUN_CONTRACT else "session_id": str(budget.run_id),
         "provider_id": budget.provider_id,
         "configuration_version": budget.configuration_version,
         "budget_version": budget.version,
         "status": budget.status,
         "admission": gateway_admission(budget),
-        "request": asdict(request) if request is not None else None,
+        "request": gateway_request_material(request) if request is not None else None,
         "request_evidence_sha256": first.evidence_sha256 if first is not None else None,
         "usage": asdict(usage) if usage is not None else None,
         "actual_microusd": budget.settled_microusd if usage is not None else None,
