@@ -31,10 +31,27 @@ from tests.saas.test_tenant_model_catalog_postgresql import _published
 
 @pytest.fixture
 def interactive_postgresql(priced_execution, monkeypatch):
-    f = priced_execution
+    return _interactive_postgresql_case(priced_execution, monkeypatch)
+
+
+def _interactive_postgresql_case(
+    f,
+    monkeypatch,
+    *,
+    placement_id=None,
+    product_revision="c" * 40,
+    upstream_revision=None,
+    schema_revision="test-schema",
+    runtime_version="0.9.0.dev0",
+):
     _catalog, runtime = _published(f, monkeypatch)
-    placement_id, partition_id, runtime_project_id = uuid4(), uuid4(), uuid4().hex
-    runtime = replace(runtime, placement_id=placement_id, runtime_partition_id=partition_id)
+    placement_id, partition_id, runtime_project_id = placement_id or uuid4(), uuid4(), uuid4().hex
+    runtime = replace(
+        runtime,
+        placement_id=placement_id,
+        runtime_partition_id=partition_id,
+        source_revision=upstream_revision or runtime.source_revision,
+    )
     _plan(f.factory, f.scope)
     with f.factory.begin() as db:
         publication = db.scalars(sa.select(ModelPublicationVersionRecord)).one()
@@ -45,20 +62,21 @@ def interactive_postgresql(priced_execution, monkeypatch):
             "generation": publication.generation,
             "snapshot_sha256": publication.snapshot_sha256,
         }
-        db.add(
-            RuntimePlacementRecord(
-                id=placement_id,
-                runtime_type=runtime.runtime_type,
-                data_region=runtime.data_region,
-                failure_domain="isolated",
-                database_cluster_ref="isolated",
-                object_store_ref="isolated",
-                kms_key_ref="isolated",
-                official_schema_revision="test-schema",
-                capacity_class="isolated",
-                status="active",
+        if db.get(RuntimePlacementRecord, placement_id) is None:
+            db.add(
+                RuntimePlacementRecord(
+                    id=placement_id,
+                    runtime_type=runtime.runtime_type,
+                    data_region=runtime.data_region,
+                    failure_domain="isolated",
+                    database_cluster_ref="isolated",
+                    object_store_ref="isolated",
+                    kms_key_ref="isolated",
+                    official_schema_revision=schema_revision,
+                    capacity_class="isolated",
+                    status="active",
+                )
             )
-        )
         db.flush()
         db.add(
             RuntimePartitionRecord(
@@ -67,7 +85,7 @@ def interactive_postgresql(priced_execution, monkeypatch):
                 space_id=runtime.space_id,
                 placement_id=placement_id,
                 runtime_type=runtime.runtime_type,
-                runtime_version="0.9.0.dev0",
+                runtime_version=runtime_version,
                 physical_partition_key=str(runtime.physical_workspace_id),
                 placement_generation=runtime.placement_generation,
                 source_revision=runtime.source_revision,
@@ -125,7 +143,9 @@ def interactive_postgresql(priced_execution, monkeypatch):
     )
     service = RuntimeSessionRunAdmission(
         f.app_factory,
-        revisions=ExecutionRevisionSet("c" * 40, runtime.source_revision, "test-schema", "0.2.0"),
+        revisions=ExecutionRevisionSet(
+            product_revision, runtime.source_revision, schema_revision, "0.2.0"
+        ),
     )
     return SimpleNamespace(base=f, runtime=runtime, conversation=conversation, service=service)
 

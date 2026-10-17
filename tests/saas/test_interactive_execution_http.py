@@ -241,7 +241,7 @@ def _post(f, body):
     return f.client.post(f"/v1/sessions/{f.conversation.id}/events", json=body, headers=f.headers)
 
 
-def _scheduling(factory, runtime, project_id):
+def _scheduling(factory, runtime, project_id, *, pool_id=None):
     policy_id, profile_id = uuid4(), uuid4()
     with factory.begin() as db:
         placement = db.get(RuntimePlacementRecord, runtime.placement_id)
@@ -291,17 +291,18 @@ def _scheduling(factory, runtime, project_id):
             )
         )
     scheduling = SchedulingControlPlane(factory)
-    pool_id = scheduling.create_pool(
-        placement_id=runtime.placement_id,
-        name="managed-interactive",
-        queue_class="managed_interactive",
-        capacity_slots=2,
-        reserved_slots=0,
-        protocol_version=2,
-        source_revision=runtime.source_revision,
-        schema_revision=schema_revision,
-        adapter_contract_version=runtime.adapter_contract_version,
-    )
+    if pool_id is None:
+        pool_id = scheduling.create_pool(
+            placement_id=runtime.placement_id,
+            name="managed-interactive",
+            queue_class="managed_interactive",
+            capacity_slots=2,
+            reserved_slots=0,
+            protocol_version=2,
+            source_revision="c" * 40,
+            schema_revision=schema_revision,
+            adapter_contract_version=runtime.adapter_contract_version,
+        )
     scheduling.configure_tenant_share(
         tenant_id=runtime.tenant_id,
         pool_id=pool_id,
@@ -352,7 +353,7 @@ def test_actual_message_advances_through_existing_outbox_to_one_dispatch(interac
             instance_key=f"runtime-support-{claims_interactive}",
             failure_domain=failure_domain,
             protocol_version=2,
-            source_revision=f.runtime.source_revision,
+            source_revision="c" * 40,
             schema_revision=schema_revision,
             adapter_contract_version=f.runtime.adapter_contract_version,
             capabilities=required

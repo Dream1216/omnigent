@@ -848,6 +848,23 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     "'saas_app', 'pg_catalog.pg_advisory_lock(bigint)', 'EXECUTE')"
                 )
             )
+            for role in (
+                "saas_executor",
+                "saas_runner_agent",
+                "saas_app",
+                "saas_authenticator",
+                "saas_dispatcher",
+                "saas_billing",
+            ):
+                assert bool(
+                    connection.scalar(
+                        sa.text(
+                            "SELECT has_function_privilege("
+                            ":role, 'pg_catalog.pg_try_advisory_xact_lock(bigint)', 'EXECUTE')"
+                        ),
+                        {"role": role},
+                    )
+                ) is (role == "saas_executor")
             assert (
                 connection.scalar(
                     sa.text(

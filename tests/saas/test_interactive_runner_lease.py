@@ -52,12 +52,15 @@ def _register(f, scheduling, pool, domain, schema, *, key):
     with f.factory() as db:
         dispatch = db.scalars(sa.select(RunDispatchRecord)).first()
         required = dispatch.required_capabilities
+        from saas.control_plane.scheduling_models import RunnerPoolRecord
+
+        product_revision = db.get(RunnerPoolRecord, pool).source_revision
     return scheduling.register_runner(
         pool_id=pool,
         instance_key=key,
         failure_domain=domain,
         protocol_version=2,
-        source_revision=f.runtime.source_revision,
+        source_revision=product_revision,
         schema_revision=schema,
         adapter_contract_version=f.runtime.adapter_contract_version,
         capabilities=required,

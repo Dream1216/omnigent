@@ -2287,12 +2287,16 @@ BEGIN
           )
           AND NOT (
               namespace.nspname = 'pg_catalog'
-              AND routine.proname = 'pg_advisory_xact_lock'
+              AND (
+                  (routine.proname = 'pg_advisory_xact_lock'
+                   AND grantee.rolname IN (
+                       'saas_registration', 'saas_onboarding', 'saas_executor'
+                   ))
+                  OR (routine.proname = 'pg_try_advisory_xact_lock'
+                      AND grantee.rolname = 'saas_executor')
+              )
               AND pg_get_function_identity_arguments(routine.oid) = 'bigint'
               AND pg_get_userbyid(routine.proowner) = 'next_beta_bootstrap'
-              AND grantee.rolname IN (
-                  'saas_registration', 'saas_onboarding', 'saas_executor'
-              )
               AND acl.grantor = routine.proowner
               AND acl.privilege_type = 'EXECUTE'
               AND NOT acl.is_grantable

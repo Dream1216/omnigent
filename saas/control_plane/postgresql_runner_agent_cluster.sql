@@ -227,6 +227,9 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
     saas_billing,
     saas_metering;
 
+-- Interactive session serialization needs a nonblocking transaction lock.
+GRANT EXECUTE ON FUNCTION pg_catalog.pg_try_advisory_xact_lock(bigint) TO saas_executor;
+
 -- EnterpriseScimService.bulk_request is the sole blocking session-lock caller.
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_lock(bigint) TO saas_governance;
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_unlock(bigint) TO saas_governance;

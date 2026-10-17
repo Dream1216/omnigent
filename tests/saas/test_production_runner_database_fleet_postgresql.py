@@ -286,6 +286,7 @@ def _assert_interactive_factory_lifecycle(
 def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     isolated_postgres_url: str,
     tmp_path: Path,
+    runtime_probe=None,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     owner_engine = sa.create_engine(isolated_postgres_url, pool_pre_ping=True)
@@ -302,7 +303,24 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     assert len(product_revision) == 40
     image_digest = "sha256:" + "b" * 64
     schema_revision = "official-head-v1"
+    protocol_version = 1
     capabilities = ("shell",)
+    if runtime_probe is not None:
+        from saas.control_plane.run_dispatch_projection import _REQUIRED_CAPABILITIES
+
+        manifest = json.loads((root / "saas/upstream-baseline.json").read_text())
+        schema_revision = manifest["official_schema_heads"][0]
+        protocol_version = 2
+        capabilities = tuple(
+            sorted(
+                {
+                    *_REQUIRED_CAPABILITIES,
+                    "runtime.interactive.v1",
+                    "sandbox.linux_bwrap",
+                    "syscall.default-v1",
+                }
+            )
+        )
     capabilities_sha256 = _capabilities_sha256(capabilities)
     suffix = uuid4().hex[:12]
     schema_owner = f"saas_test_fleet_owner_{suffix}"
@@ -361,11 +379,13 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     placement_id=placement_id,
                     failure_domain="cn-east-1a",
                     name="runner-fleet",
-                    queue_class="interactive",
+                    queue_class="managed_interactive"
+                    if runtime_probe is not None
+                    else "interactive",
                     capacity_slots=2,
                     reserved_slots=0,
                     status="active",
-                    protocol_version=1,
+                    protocol_version=protocol_version,
                     source_revision=product_revision,
                     schema_revision=schema_revision,
                     adapter_contract_version="0.2.0",
@@ -380,7 +400,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     placement_id=placement_id,
                     instance_key=f"runner-{slot}",
                     failure_domain="cn-east-1a",
-                    protocol_version=1,
+                    protocol_version=protocol_version,
                     source_revision=product_revision,
                     schema_revision=schema_revision,
                     adapter_contract_version="0.2.0",
@@ -446,7 +466,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 placement_id=placement_id,
                 instance_key=f"runner-{slot}",
                 failure_domain="cn-east-1a",
-                protocol_version=1,
+                protocol_version=protocol_version,
                 source_revision=product_revision,
                 schema_revision=schema_revision,
                 adapter_contract_version="0.2.0",
@@ -733,6 +753,27 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
             image_digest=image_digest,
             root=root,
         )
+        if runtime_probe is not None:
+            runtime_probe(
+                SimpleNamespace(
+                    engine=owner_engine,
+                    factory=factory,
+                    runner_engine=login_engines[0],
+                    member=first_member,
+                    source=source,
+                    product_revision=product_revision,
+                    image_digest=image_digest,
+                    root=root,
+                    pool_id=pool_id,
+                    placement_id=placement_id,
+                    schema_revision=schema_revision,
+                    connection_token=next(
+                        row.connection_token
+                        for row in staged
+                        if row.runner_id == first_member.runner_id
+                    ),
+                )
+            )
 
         def verify_first_runtime() -> None:
             try:
