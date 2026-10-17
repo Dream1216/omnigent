@@ -16,7 +16,7 @@ from saas.control_plane.billing_models import (
 from saas.control_plane.execution_models import ExecutionSessionRecord, RunRecord
 from tests.saas.test_billing_metering import _record
 from tests.saas.test_billing_metering import metering as metering
-from tests.saas.test_execution_control_plane import _revisions
+from tests.saas.test_execution_control_plane import _revisions, _task_admission
 from tests.saas.test_execution_control_plane import (
     execution_control_plane as execution_control_plane,
 )
@@ -120,6 +120,25 @@ def test_missing_admission_price_cannot_borrow_a_later_price(execution_control_p
                 happened=datetime.now(timezone.utc),
                 run=BillingMeteringAuthority._run_authority(db, run),
             )
+
+
+def test_atomic_task_run_uses_original_session_price_without_writing_usage(
+    execution_control_plane,
+):
+    factory, service, scope, context = execution_control_plane
+    original = _plan(factory, scope)
+    session_id = service.create_session(context, project_id=scope.project_id)
+    changed = _plan(factory, scope, key="team-v2", version=1, rate=250)
+    service.configure_quota(
+        context, project_id=scope.project_id, resource="run_units", limit_units=1
+    )
+    admission = _task_admission(service, scope, context, session_id)
+    with factory() as db:
+        run = db.get(RunRecord, admission.run_id)
+        assert run.customer_pricing_frozen
+        assert run.customer_pricing_snapshot_id == original
+        assert run.customer_pricing_snapshot_id != changed
+        assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 0
 
 
 def test_existing_machine_entry_charges_frozen_price_and_replays_one_usage(metering):
