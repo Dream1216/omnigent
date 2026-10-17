@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "e9de5e2e33125a6f2119427571c1b74805c1a576d825a1d7648f03e4c8dae2f7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "ad8a8c8b3b8a5626d2d517c6161d8ec8446e22003c56316bd6ed0b3e7d26d027",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -417,6 +428,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "18270f45a8c64fce0cdd6c276c10cf01b2476fad219a12931329cc1bd85d83d4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "7aa2d3c3f995e047638bba61a1d4f6319847c042fa9056375368bf599bae72bf",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -618,6 +640,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "af415dce8b8f6faa023a53189d35636c4a2ee43466bb0b7069cc0e20f35074bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "978e7bef544fba72e155cc9291c5ddb15431e2fe385a0ca45f78c63b2750ea92",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -789,6 +822,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "4a2f42beb6a7be2cd867fd2e0a7ab934f459cba92a8e0480d914cb522663978c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "80629949bca2595fd939e72d363fcdcb542042e76914cbcc9d9df06c04206ff8",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -955,6 +999,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "38480c0a15fb2516bad4a5de3d8db2b4105f26c60a68b3d663147d65ff2b8a6a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "2bcde72de58e3e00973dc31f2337c777b2fb8992da25fd998031441a001bdb46",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -1096,6 +1151,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "d8b25fff1f56a05ce4f9547693bae9259f0d7e997ce3434a0c8a155808dfa878",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "dfa0fd6e5c3dcfe52fc9e5d77b9a2f9f2bce529f4f3efc11445ac53137c73241",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -1244,6 +1310,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "3b167a082035c5dee2c1579034ce3597dee11fc33b4a28ce8b631989dccc2d3b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "a818b8e2d8f53c00a37693528bd66772bacceec45ca7243fb5972b87e47553c4",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,
@@ -1357,6 +1434,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "b145028cb4333d008d7f4f33371015a66711f29a5e4b45d3e54e51c278ba51c6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "28cf65f315b5561d74d6b43c4dc4d5ebc74bc8587a3d3322840ad927b93ed73e",
     # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
     (
         16,

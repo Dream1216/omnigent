@@ -474,3 +474,52 @@ class ModelPublicationVersionRecord(SaasBase):
             name="ck_model_publication_documents",
         ),
     )
+
+
+class ModelRunTokenRecord(SaasBase):
+    """Hashed model credential; identity and financial authority stay on the real Run."""
+
+    __tablename__ = "saas_model_run_tokens"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    space_id: Mapped[UUID] = mapped_column(nullable=False)
+    project_id: Mapped[UUID] = mapped_column(nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    capability_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_capability_tokens.id", ondelete="RESTRICT"), nullable=False
+    )
+    fence_token: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    generation: Mapped[int] = mapped_column(nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_model_run_tokens.id", ondelete="RESTRICT"), unique=True
+    )
+    issued_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["run_id", "tenant_id", "space_id", "project_id"],
+            ["saas_runs.id", "saas_runs.tenant_id", "saas_runs.space_id", "saas_runs.project_id"],
+            name="fk_model_run_token_scope",
+            ondelete="RESTRICT",
+        ),
+        sa.CheckConstraint(_hex64("token_hash"), name="ck_model_run_token_hash"),
+        sa.CheckConstraint(
+            "fence_token > 0 AND generation BETWEEN 0 AND 256",
+            name="ck_model_run_token_generation",
+        ),
+        sa.CheckConstraint(
+            "(generation=0 AND parent_id IS NULL) OR (generation>0 AND parent_id IS NOT NULL)",
+            name="ck_model_run_token_parent",
+        ),
+        sa.CheckConstraint("expires_at > issued_at", name="ck_model_run_token_expiry"),
+        sa.UniqueConstraint(
+            "run_id", "fence_token", "generation", name="uq_model_run_token_generation"
+        ),
+        sa.Index("ix_model_run_token_run", "run_id", "fence_token"),
+    )

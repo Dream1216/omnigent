@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -45,6 +46,9 @@ from saas.production.runner_control import (
     RunnerControlError,
 )
 
+if TYPE_CHECKING:
+    from saas.production.model_run_credentials import IssuedModelRunCredential
+
 
 class InteractiveRunnerIdentity(Protocol):
     @property
@@ -78,7 +82,7 @@ class AuthorizedInteractiveInput:
     publication: dict[str, object] = field(repr=False)
 
 
-def _reject() -> None:
+def _reject() -> NoReturn:
     raise RunnerControlError(
         "interactive_runtime_authority_invalid", "Interactive Runtime authority changed"
     )
@@ -86,6 +90,70 @@ def _reject() -> None:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def resolve_interactive_run_runtime(
+    run: RunRecord,
+    *,
+    app_sessions: sessionmaker[Session],
+    resolver: SqlAlchemyContextResolver,
+    authorization: ProjectAuthorizer,
+) -> RuntimeContext:
+    """Recheck the same delegated Session, project and price binding for every consumer."""
+    assert run.created_by is not None
+    route = decode_interactive_run_route(run.input)
+    request = resolver.resolve_request_context(
+        actor_id=run.created_by,
+        tenant_id=run.tenant_id,
+        space_id=run.space_id,
+        trace_id=f"interactive-run:{run.id}",
+    )
+    request = authorization.bind_project_context(
+        request, action="run.create", project_id=run.project_id
+    )
+    runtime = resolver.resolve_existing_resource(
+        request, resource_type="project", saas_resource_id=run.project_id, action="run.create"
+    )
+    if (
+        runtime.runtime_partition_id != route.partition_id
+        or runtime.placement_generation != route.partition_generation
+    ):
+        _reject()
+    with query_name_scope("saas.interactive_runtime.verify_session_binding"), app_sessions() as db:
+        apply_rls_context(
+            db,
+            RlsContext(
+                actor_id=runtime.actor_id,
+                tenant_id=runtime.tenant_id,
+                space_id=runtime.space_id,
+                project_id=runtime.project_id,
+            ),
+        )
+        session = db.get(ExecutionSessionRecord, run.session_id)
+        binding = db.scalar(
+            sa.select(RuntimeResourceBindingRecord).where(
+                RuntimeResourceBindingRecord.runtime_partition_id == route.partition_id,
+                RuntimeResourceBindingRecord.saas_resource_id == run.project_id,
+                RuntimeResourceBindingRecord.resource_type == "project",
+                RuntimeResourceBindingRecord.status == "active",
+                RuntimeResourceBindingRecord.binding_generation == runtime.binding_generation,
+            )
+        )
+        if (
+            session is None
+            or session.tenant_id != run.tenant_id
+            or session.space_id != run.space_id
+            or session.project_id != run.project_id
+            or session.status != "active"
+            or session.customer_pricing_snapshot_id != run.customer_pricing_snapshot_id
+            or not session.customer_pricing_frozen
+            or binding is None
+            or binding.runtime_resource_id != route.project_id
+            or binding.project_id != run.project_id
+            or binding.partition_generation != route.partition_generation
+        ):
+            _reject()
+    return runtime
 
 
 class InteractiveRuntimeAuthority:
@@ -268,68 +336,15 @@ class InteractiveRuntimeAuthority:
             return run
 
     def _resolve_runtime(self, run: RunRecord) -> RuntimeContext:
-        assert run.created_by is not None
-        route = decode_interactive_run_route(run.input)
-        request = self._resolver.resolve_request_context(
-            actor_id=run.created_by,
-            tenant_id=run.tenant_id,
-            space_id=run.space_id,
-            trace_id=f"interactive-run:{run.id}",
+        return resolve_interactive_run_runtime(
+            run,
+            app_sessions=self._app_sessions,
+            resolver=self._resolver,
+            authorization=self._authorization,
         )
-        request = self._authorization.bind_project_context(
-            request, action="run.create", project_id=run.project_id
-        )
-        runtime = self._resolver.resolve_existing_resource(
-            request, resource_type="project", saas_resource_id=run.project_id, action="run.create"
-        )
-        if (
-            runtime.runtime_partition_id != route.partition_id
-            or runtime.placement_generation != route.partition_generation
-        ):
-            _reject()
-        with (
-            query_name_scope("saas.interactive_runtime.verify_session_binding"),
-            self._app_sessions() as db,
-        ):
-            apply_rls_context(
-                db,
-                RlsContext(
-                    actor_id=runtime.actor_id,
-                    tenant_id=runtime.tenant_id,
-                    space_id=runtime.space_id,
-                    project_id=runtime.project_id,
-                ),
-            )
-            session = db.get(ExecutionSessionRecord, run.session_id)
-            binding = db.scalar(
-                sa.select(RuntimeResourceBindingRecord).where(
-                    RuntimeResourceBindingRecord.runtime_partition_id == route.partition_id,
-                    RuntimeResourceBindingRecord.saas_resource_id == run.project_id,
-                    RuntimeResourceBindingRecord.resource_type == "project",
-                    RuntimeResourceBindingRecord.status == "active",
-                    RuntimeResourceBindingRecord.binding_generation == runtime.binding_generation,
-                )
-            )
-            if (
-                session is None
-                or session.tenant_id != run.tenant_id
-                or session.space_id != run.space_id
-                or session.project_id != run.project_id
-                or session.status != "active"
-                or session.customer_pricing_snapshot_id != run.customer_pricing_snapshot_id
-                or not session.customer_pricing_frozen
-                or binding is None
-                or binding.runtime_resource_id != route.project_id
-                or binding.project_id != run.project_id
-                or binding.partition_generation != route.partition_generation
-            ):
-                _reject()
-        return runtime
 
     async def authorize(self, lease: RunnerControlClientLease) -> AuthorizedInteractiveInput:
         """Recheck lease, current membership, project, session access and frozen input."""
-        import asyncio
-
         if self._permissions is None or self._conversations is None:
             _reject()
         if self._verify_machine_database is not None:
@@ -399,6 +414,7 @@ class ProductionInteractiveRuntimeFactory:
         product_revision: str,
         image_digest: str,
         app_sessions: sessionmaker[Session],
+        authenticator_sessions: sessionmaker[Session] | None = None,
         compatibility: RuntimeCompatibilityPolicy,
         conversation_store: Any,
         permission_store: Any,
@@ -406,9 +422,41 @@ class ProductionInteractiveRuntimeFactory:
         self._product_revision = product_revision
         self._image_digest = image_digest
         self._app_sessions = app_sessions
+        self._authenticator_sessions = authenticator_sessions
         self._compatibility = compatibility
         self._conversations = conversation_store
         self._permissions = permission_store
+
+    async def authorize_model(
+        self,
+        *,
+        lease: RunnerControlClientLease,
+        identity: InteractiveRunnerIdentity,
+        control: MutualTlsRunnerControlClient,
+        runner_sessions: sessionmaker[Session],
+        fleet_source: Mapping[str, str],
+    ) -> tuple[AuthorizedInteractiveInput, IssuedModelRunCredential]:
+        """Only the trusted mTLS controller can provision a model credential."""
+        from saas.production.model_run_credentials import ModelRunCredentialService
+
+        if self._authenticator_sessions is None or self._authenticator_sessions.kw.get(
+            "bind"
+        ) is self._app_sessions.kw.get("bind"):
+            _reject()
+        authority = self.create_authority(
+            identity=identity,
+            control=control,
+            runner_sessions=runner_sessions,
+            fleet_source=fleet_source,
+        )
+        authorized = await authority.authorize(lease)
+        credentials = ModelRunCredentialService(
+            app_sessions=self._app_sessions,
+            authenticator_sessions=self._authenticator_sessions,
+            compatibility=self._compatibility,
+        )
+        issued = await asyncio.to_thread(credentials.issue, authorized, lease)
+        return authorized, issued
 
     def create_authority(
         self,

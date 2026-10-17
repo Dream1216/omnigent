@@ -1537,6 +1537,7 @@ def build_production_server(
         product_revision=config.product_revision,
         image_digest=config.image_digest,
         app_sessions=sessions.app,
+        authenticator_sessions=sessions.authenticator,
         compatibility=RuntimeCompatibilityPolicy(
             runtime_type="omnigent",
             allowed_runtime_versions=frozenset({config.runtime_version}),
