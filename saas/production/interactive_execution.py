@@ -142,6 +142,7 @@ class InteractiveConversationStore:
         elif body.host_id is None:
             raise OmnigentError("interactive_host_required", code=ErrorCode.INVALID_INPUT)
         return {
+            "owner_id": user_id,
             "runtime_config": {},
             "harness": harness,
             MANAGED_EXECUTION_SNAPSHOT_KEY: marker,

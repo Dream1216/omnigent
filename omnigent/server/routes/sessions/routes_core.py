@@ -3163,6 +3163,11 @@ def register_core_routes(
             validate_saved_selection,
         )
 
+        owns_input = getattr(conversation_store, "owns_session_input", None)
+        if owns_input is not None and owns_input(source):
+            raise OmnigentError(
+                "interactive_fork_requires_managed_lifecycle", code=ErrorCode.INVALID_INPUT
+            )
         source_configured = configured_snapshot(source.inference_snapshot)
         if source.inference_snapshot is not None:
             from omnigent.server.auth import RESERVED_USER_LOCAL

@@ -677,6 +677,27 @@ def test_managed_create_token_cannot_retarget_an_admitted_session(interactive_ht
         assert run.input["execution"]["launch"]["workspaces"] == body["workspaces"]
 
 
+def test_managed_fork_cannot_fall_back_to_legacy_launch_or_create_an_orphan(interactive_http):
+    f = interactive_http
+    body = _managed_create(f)
+    created = f.client.post("/v1/sessions", json=body, headers=f.headers)
+    assert created.status_code == 201, created.text
+    client = TestClient(f.app, raise_server_exceptions=False)
+    client.cookies.update(f.client.cookies)
+    try:
+        response = client.post(
+            f"/v1/sessions/{created.json()['id']}/fork", json={}, headers=f.headers
+        )
+    finally:
+        client.close()
+    assert response.status_code == 400, response.text
+    assert "interactive_fork_requires_managed_lifecycle" in response.text
+    with bind_runtime_context(f.runtime):
+        assert len(f.delegate.list_conversations().data) == 2
+    with f.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 1
+
+
 def test_create_recovery_pins_publication_and_provider_across_configuration_changes(
     interactive_http,
 ):

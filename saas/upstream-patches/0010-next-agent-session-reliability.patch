@@ -595,3 +595,13 @@ index 4a4bc5f3c..7a95cc5d4 100644
          if (
              selection_spec is not None
              and not configured_snapshot(inference_snapshot)
+diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
+index e725c4aeb..f278c8b71 100644
+--- a/omnigent/server/routes/sessions/routes_core.py
++++ b/omnigent/server/routes/sessions/routes_core.py
+@@ -3165,0 +3166,5 @@ def register_core_routes(
++        owns_input = getattr(conversation_store, "owns_session_input", None)
++        if owns_input is not None and owns_input(source):
++            raise OmnigentError(
++                "interactive_fork_requires_managed_lifecycle", code=ErrorCode.INVALID_INPUT
++            )
