@@ -125,9 +125,7 @@ def interactive_postgresql(priced_execution, monkeypatch):
     )
     service = RuntimeSessionRunAdmission(
         f.app_factory,
-        revisions=ExecutionRevisionSet(
-            "candidate", runtime.source_revision, "test-schema", "0.2.0"
-        ),
+        revisions=ExecutionRevisionSet("c" * 40, runtime.source_revision, "test-schema", "0.2.0"),
     )
     return SimpleNamespace(base=f, runtime=runtime, conversation=conversation, service=service)
 

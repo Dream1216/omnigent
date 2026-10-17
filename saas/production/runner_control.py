@@ -48,6 +48,7 @@ from saas.control_plane.execution import (
     RunLease,
     RunMutation,
 )
+from saas.control_plane.interactive_run_route import INTERACTIVE_EXECUTION_KIND
 from saas.control_plane.preview_tunnel_registration import (
     PreviewTunnelRegistrationError,
     PreviewTunnelRegistrationGrant,
@@ -264,6 +265,7 @@ class _SchedulingAuthority(Protocol):
         capability_resource_scope: dict[str, str],
         expected_product_revision: str | None = None,
         product_image_digest: str | None = None,
+        interactive_capability_actions: tuple[str, ...] | None = None,
         heartbeat_timeout: timedelta = timedelta(seconds=30),
         now: datetime | None = None,
     ) -> FairRunLease | None: ...
@@ -415,6 +417,7 @@ class ProductionRunnerMachineAuthority:
             capability_resource_scope=dict(_CAPABILITY_SCOPE),
             expected_product_revision=self._product_revision,
             product_image_digest=self._image_digest,
+            interactive_capability_actions=("run.execute", "runtime.interactive.execute"),
         )
 
     def heartbeat_run(
@@ -680,7 +683,9 @@ def _lease_document(lease: FairRunLease | None) -> dict[str, object]:
             "lease_token": str(lease.lease_token),
             "run_id": str(lease.run_id),
             "execution_envelope": {
-                "change_set_id": str(envelope.change_set_id),
+                "change_set_id": str(envelope.change_set_id)
+                if envelope.change_set_id is not None
+                else None,
                 "egress_policy_hash": envelope.egress_policy_hash,
                 "egress_policy_id": str(envelope.egress_policy_id),
                 "execution_profile_hash": envelope.execution_profile_hash,
@@ -1124,7 +1129,7 @@ class MutualTlsRunnerControlClient:
             ):
                 raise ValueError("failure domain invalid")
             raw_envelope = value["execution_envelope"]
-            if not isinstance(raw_envelope, dict) or set(raw_envelope) != {
+            envelope_fields = {
                 "change_set_id",
                 "egress_policy_hash",
                 "egress_policy_id",
@@ -1143,7 +1148,8 @@ class MutualTlsRunnerControlClient:
                 "runner_id",
                 "space_id",
                 "tenant_id",
-            }:
+            }
+            if not isinstance(raw_envelope, dict) or set(raw_envelope) != envelope_fields:
                 raise ValueError("execution envelope fields invalid")
             image_digest = raw_envelope["image_digest"]
             product_revision = raw_envelope["product_revision"]
@@ -1163,14 +1169,26 @@ class MutualTlsRunnerControlClient:
                 or re.fullmatch(r"[0-9a-f]{64}", egress_hash) is None
                 or not isinstance(execution_spec_hash, str)
                 or re.fullmatch(r"[0-9a-f]{64}", execution_spec_hash) is None
-                or execution_kind not in {"omnigent.agent.v1", "omnigent.preview.v1"}
+                or execution_kind
+                not in {"omnigent.agent.v1", "omnigent.preview.v1", INTERACTIVE_EXECUTION_KIND}
                 or not isinstance(launch_argv, list)
                 or any(not isinstance(value, str) for value in launch_argv)
             ):
                 raise ValueError("execution envelope release identity invalid")
             preview_execution_id: UUID | None = None
             checkpoint_revision: str | None = None
-            if execution_kind == "omnigent.agent.v1":
+            normalized_spec = None
+            if execution_kind == INTERACTIVE_EXECUTION_KIND:
+                # The Runtime executor must fetch and hash-check the leased Run;
+                # control frames carry no user input.
+                if (
+                    launch_argv
+                    or raw_envelope["change_set_id"] is not None
+                    or raw_envelope["preview_execution_id"] is not None
+                    or raw_envelope["checkpoint_revision"] is not None
+                ):
+                    raise ValueError("execution envelope interactive fields invalid")
+            elif execution_kind == "omnigent.agent.v1":
                 if (
                     len(launch_argv) != 10
                     or raw_envelope["preview_execution_id"] is not None
@@ -1202,13 +1220,15 @@ class MutualTlsRunnerControlClient:
                         },
                     }
                 )
-            if (
+            if normalized_spec is not None and (
                 tuple(launch_argv) != normalized_spec.launch_argv
                 or execution_spec_hash != normalized_spec.spec_hash
             ):
                 raise ValueError("execution envelope launch specification invalid")
             envelope = RunnerExecutionEnvelope(
-                change_set_id=_canonical_uuid(raw_envelope["change_set_id"]),
+                change_set_id=None
+                if execution_kind == INTERACTIVE_EXECUTION_KIND
+                else _canonical_uuid(raw_envelope["change_set_id"]),
                 tenant_id=_canonical_uuid(raw_envelope["tenant_id"]),
                 space_id=_canonical_uuid(raw_envelope["space_id"]),
                 project_id=_canonical_uuid(raw_envelope["project_id"]),
@@ -1222,7 +1242,7 @@ class MutualTlsRunnerControlClient:
                 product_revision=product_revision,
                 image_digest=image_digest,
                 execution_spec_hash=execution_spec_hash,
-                launch_argv=normalized_spec.launch_argv,
+                launch_argv=tuple(launch_argv),
                 execution_kind=execution_kind,
                 preview_execution_id=preview_execution_id,
                 checkpoint_revision=checkpoint_revision,

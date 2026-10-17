@@ -22,6 +22,10 @@ on:
       - saas/control_plane/interactive_execution.py
       - saas/control_plane/interactive_launch.py
       - saas/control_plane/interactive_run_route.py
+      - saas/control_plane/runner_execution_spec.py
+      - saas/control_plane/scheduling.py
+      - saas/production/runner_control.py
+      - saas/production/runner_executor.py
       - saas/control_plane/public_api.py
       - saas/control_plane/run_dispatch_projection.py
       - saas/control_plane/migrations/versions/lm2d00000001_execution_customer_pricing.py
@@ -53,6 +57,8 @@ on:
       - tests/saas/test_interactive_execution_postgresql.py
       - tests/saas/test_interactive_dispatch_postgresql.py
       - tests/saas/test_interactive_run_route.py
+      - tests/saas/test_interactive_runner_lease.py
+      - tests/saas/test_interactive_runner_postgresql.py
       - tests/saas/test_public_api_interactive_boundary.py
       - tests/saas/test_run_dispatch_projection.py
       - tests/saas/test_billing_metering.py
@@ -116,6 +122,7 @@ jobs:
           tests/saas/test_tenant_model_catalog.py
           tests/saas/test_interactive_execution_http.py
           tests/saas/test_interactive_run_route.py
+          tests/saas/test_interactive_runner_lease.py
           tests/saas/test_public_api_interactive_boundary.py
           tests/saas/test_run_dispatch_projection.py
           tests/saas/test_billing_metering.py

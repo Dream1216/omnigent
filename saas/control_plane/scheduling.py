@@ -12,7 +12,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, RuntimePlacementRecord
 from saas.control_plane.dispatch_binding import (
@@ -20,8 +20,15 @@ from saas.control_plane.dispatch_binding import (
 )
 from saas.control_plane.execution import ExecutionControlPlane, RunLease, RunMutation
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+    decode_interactive_run_route,
+)
 from saas.control_plane.isolation_models import EgressPolicyRecord, ExecutionProfileRecord
+from saas.control_plane.outbox import OutboxPublishError
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_dispatch_projection import RunQueuedDispatchProjection
 from saas.control_plane.runner_execution_spec import (
     ManagedRunExecutionSpecError,
     production_run_execution_spec,
@@ -104,7 +111,7 @@ class RunnerConnection:
 class RunnerExecutionEnvelope:
     """Server-derived immutable facts consumed by one managed Runner launch."""
 
-    change_set_id: UUID
+    change_set_id: UUID | None
     tenant_id: UUID
     space_id: UUID
     project_id: UUID
@@ -515,6 +522,7 @@ class SchedulingControlPlane:
         heartbeat_timeout: timedelta = timedelta(seconds=30),
         expected_product_revision: str | None = None,
         product_image_digest: str | None = None,
+        interactive_capability_actions: tuple[str, ...] | None = None,
         now: datetime | None = None,
     ) -> FairRunLease | None:
         """Atomically choose a tenant by weighted virtual runtime and lease one Run."""
@@ -578,9 +586,13 @@ class SchedulingControlPlane:
                         "run_execution_envelope_invalid",
                         "Run does not have a valid managed execution specification",
                     ) from exc
+                interactive = execution_spec.kind == INTERACTIVE_EXECUTION_KIND
+                if interactive != (run.queue_class == INTERACTIVE_QUEUE_CLASS):
+                    raise SchedulingError(
+                        "interactive_run_scope_invalid", "Execution kind and queue do not match"
+                    )
                 if (
-                    change_set_id is None
-                    or change_set_id.int == 0
+                    (not interactive and (change_set_id is None or change_set_id.int == 0))
                     or expected_product_revision is None
                     or product_image_digest is None
                     or run.product_revision != expected_product_revision
@@ -596,8 +608,37 @@ class SchedulingControlPlane:
                     raise SchedulingError(
                         "run_execution_envelope_invalid", "Runner image digest is invalid"
                     )
+                if interactive:
+                    if interactive_capability_actions is None:
+                        raise SchedulingError(
+                            "interactive_executor_required",
+                            "Interactive execution requires an explicit controller policy",
+                        )
+                    actions = _normalized_values(
+                        interactive_capability_actions, field="capability_action"
+                    )
+                    if set(actions) != {"run.execute", "runtime.interactive.execute"}:
+                        raise SchedulingError(
+                            "interactive_executor_policy_invalid",
+                            "Interactive execution policy is invalid",
+                        )
+                    try:
+                        placement, _partition = RunQueuedDispatchProjection._resolve_runtime(
+                            db, run
+                        )
+                    except OutboxPublishError as error:
+                        raise SchedulingError(
+                            "interactive_runtime_route_stale", "Interactive Runtime route changed"
+                        ) from error
+                    if placement.id != pool.placement_id:
+                        raise SchedulingError(
+                            "interactive_runtime_route_stale",
+                            "Interactive Runtime placement changed",
+                        )
                 required_actions = (
-                    {"preview.serve", "run.execute", "worktree.read"}
+                    {"run.execute", "runtime.interactive.execute"}
+                    if interactive
+                    else {"preview.serve", "run.execute", "worktree.read"}
                     if execution_spec.kind == "omnigent.preview.v1"
                     else {"run.execute", "sandbox.launch", "worktree.write"}
                 )
@@ -607,6 +648,11 @@ class SchedulingControlPlane:
                         "Production Runner capability actions are incomplete",
                     )
             else:
+                if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                    raise SchedulingError(
+                        "interactive_executor_required",
+                        "Interactive execution requires an exact production release",
+                    )
                 execution_spec = None
             authoritative_scope = {
                 "tenant_id": str(run.tenant_id),
@@ -617,6 +663,18 @@ class SchedulingControlPlane:
             }
             if change_set_id is not None:
                 authoritative_scope["change_set_id"] = str(change_set_id)
+            if execution_spec is not None and execution_spec.kind == INTERACTIVE_EXECUTION_KIND:
+                route = decode_interactive_run_route(run.input)
+                authoritative_scope.update(
+                    {
+                        "session_id": str(run.session_id),
+                        "runtime_partition_id": str(route.partition_id),
+                        "runtime_partition_generation": str(route.partition_generation),
+                        "runtime_session_id": route.session_id,
+                        "runtime_project_id": route.project_id,
+                        "execution_spec_hash": execution_spec.spec_hash,
+                    }
+                )
             for key, value in authoritative_scope.items():
                 supplied = resource_scope.get(key)
                 if supplied is not None and supplied != value:
@@ -679,11 +737,7 @@ class SchedulingControlPlane:
                 trace_id=f"runner:{runner.id}",
             )
             envelope = None
-            if (
-                change_set_id is not None
-                and product_image_digest is not None
-                and execution_spec is not None
-            ):
+            if product_image_digest is not None and execution_spec is not None:
                 envelope = RunnerExecutionEnvelope(
                     change_set_id=change_set_id,
                     tenant_id=run.tenant_id,
@@ -1273,7 +1327,9 @@ class SchedulingControlPlane:
             )
 
         if active_expired:
-            if run.status == "cancelling":
+            if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                target_status = "orphaned"
+            elif run.status == "cancelling":
                 target_status = "cancelled"
             elif run.fence_token >= max_fence_token:
                 target_status = "orphaned"
@@ -1525,6 +1581,26 @@ class SchedulingControlPlane:
                 .order_by(RunRecord.priority.desc(), RunRecord.created_at, RunRecord.id)
                 .limit(64)
             )
+            if pool.queue_class == INTERACTIVE_QUEUE_CLASS:
+                predecessor = aliased(RunRecord)
+                earlier = sa.or_(
+                    predecessor.created_at < RunRecord.created_at,
+                    sa.and_(
+                        predecessor.created_at == RunRecord.created_at,
+                        predecessor.id < RunRecord.id,
+                    ),
+                )
+                dispatch_query = dispatch_query.where(
+                    ~sa.exists(
+                        sa.select(1).where(
+                            predecessor.tenant_id == RunRecord.tenant_id,
+                            predecessor.space_id == RunRecord.space_id,
+                            predecessor.session_id == RunRecord.session_id,
+                            predecessor.status == "queued",
+                            earlier,
+                        )
+                    )
+                )
             if db.bind is not None and db.bind.dialect.name == "postgresql":
                 dispatch_query = dispatch_query.with_for_update(skip_locked=True)
             for dispatch in db.scalars(dispatch_query):
@@ -1533,6 +1609,11 @@ class SchedulingControlPlane:
                 run = self._run(db, dispatch.run_id, lock=True)
                 if run.status == "queued":
                     self._apply_run_context(db, run)
+                    if (
+                        run.queue_class == INTERACTIVE_QUEUE_CLASS
+                        and not self._interactive_session_available(db, run)
+                    ):
+                        continue
                     try:
                         self._require_dispatch_profile_binding(
                             db,
@@ -1551,6 +1632,41 @@ class SchedulingControlPlane:
                         continue
                     return share, dispatch, run
         return None
+
+    @staticmethod
+    def _interactive_session_available(db: Session, run: RunRecord) -> bool:
+        if run.session_id is None:
+            return False
+        if db.get_bind().dialect.name == "postgresql":
+            locked = db.scalar(
+                sa.text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {
+                    "key": (
+                        f"interactive-run-session:{run.tenant_id}:{run.space_id}:{run.session_id}"
+                    )
+                },
+            )
+            if not locked:
+                return False
+        older = sa.or_(
+            RunRecord.created_at < run.created_at,
+            sa.and_(RunRecord.created_at == run.created_at, RunRecord.id < run.id),
+        )
+        pending = db.scalar(
+            sa.select(RunRecord.id)
+            .where(
+                RunRecord.tenant_id == run.tenant_id,
+                RunRecord.space_id == run.space_id,
+                RunRecord.session_id == run.session_id,
+                RunRecord.id != run.id,
+                sa.or_(
+                    RunRecord.status.in_((*_ACTIVE_RUN_STATUSES, "orphaned")),
+                    sa.and_(RunRecord.status == "queued", older),
+                ),
+            )
+            .limit(1)
+        )
+        return pending is None
 
     @staticmethod
     def _dispatch_requirements_hash(

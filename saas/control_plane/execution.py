@@ -33,6 +33,7 @@ from saas.control_plane.execution_models import (
     SessionTaskRecord,
     TaskRecord,
 )
+from saas.control_plane.interactive_run_route import INTERACTIVE_QUEUE_CLASS
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
@@ -962,7 +963,17 @@ class ExecutionControlPlane:
             runs = tuple(db.scalars(query))
             results: list[RunMutation] = []
             for run in runs:
-                if run.status == "cancelling":
+                apply_rls_context(
+                    db,
+                    RlsContext(
+                        tenant_id=run.tenant_id,
+                        space_id=run.space_id,
+                        project_id=run.project_id,
+                    ),
+                )
+                if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                    target = "orphaned"
+                elif run.status == "cancelling":
                     target = "cancelled"
                 elif run.fence_token >= max_fence_token:
                     target = "orphaned"
@@ -987,6 +998,8 @@ class ExecutionControlPlane:
                     trace_id="recovery:lease-expired",
                 )
                 results.append(RunMutation(run.id, run.status, run.version, run.event_sequence))
+                # Persist this scope's pending Outbox before binding the next Run.
+                db.flush()
             return tuple(results)
 
     def replay_events(

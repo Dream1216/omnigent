@@ -2188,9 +2188,18 @@ class ProductionHostIsolationExecutor:
     def _allocate_execution(
         self, lease: RunnerControlClientLease
     ) -> tuple[_ActiveExecution, tuple[str, ...]]:
+        if (
+            lease.execution_envelope is not None
+            and lease.execution_envelope.execution_kind == "omnigent.interactive.v1"
+        ):
+            raise RunnerControlError(
+                "runner_execution_kind_unsupported",
+                "Interactive execution requires a Runtime controller",
+            )
         _run, execution_spec = self._load_run(lease)
         envelope = lease.execution_envelope
         assert envelope is not None
+        assert envelope.change_set_id is not None
         preview_claim: PreviewRunnerStartClaim | None = None
         if execution_spec.kind == _PREVIEW_EXECUTION_KIND:
             if self._preview_supervisor is None:

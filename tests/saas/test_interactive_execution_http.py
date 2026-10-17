@@ -152,9 +152,7 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
     projects = SqlAlchemyProjectStore(db_uri)
     admission = RuntimeSessionRunAdmission(
         factory,
-        revisions=ExecutionRevisionSet(
-            "candidate", runtime.source_revision, "c4d5e6f7a8b9", "0.2.0"
-        ),
+        revisions=ExecutionRevisionSet("c" * 40, runtime.source_revision, "c4d5e6f7a8b9", "0.2.0"),
     )
     delegate = dependencies["conversation_store"]
     store = InteractiveConversationStore(delegate, admission, permission_store=permissions)
@@ -371,14 +369,14 @@ def test_actual_message_advances_through_existing_outbox_to_one_dispatch(interac
                 capability_resource_scope={
                     "runtime_partition_id": str(f.runtime.runtime_partition_id)
                 },
-                expected_product_revision="candidate",
+                expected_product_revision="c" * 40,
                 product_image_digest="sha256:" + "a" * 64,
             )
 
         if claims_interactive:
             with pytest.raises(SchedulingError) as rejected:
                 claim()
-            assert rejected.value.code == "run_execution_envelope_invalid"
+            assert rejected.value.code == "interactive_executor_required"
         else:
             assert claim() is None
     with f.factory() as db:
