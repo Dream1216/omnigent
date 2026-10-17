@@ -94,6 +94,7 @@ class AuthorizedModelRun:
     runtime: RuntimeContext
     publication: dict[str, object] = field(repr=False)
     customer_pricing_snapshot_id: UUID
+    configuration: dict[str, object] = field(repr=False)
 
 
 class ModelRunCredentialService:
@@ -265,8 +266,8 @@ class ModelRunCredentialService:
             )
         except RunnerControlError:
             raise PlatformModelGatewayTokenError("model Run route changed") from None
-        self._catalog.require_version(runtime, publication)
-        return AuthorizedModelRun(claims, runtime, publication, pricing_id)
+        configuration = self._catalog.require_version(runtime, publication)
+        return AuthorizedModelRun(claims, runtime, publication, pricing_id, configuration)
 
     def issue(
         self,

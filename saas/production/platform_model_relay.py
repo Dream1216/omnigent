@@ -10,9 +10,10 @@ import secrets
 import socket
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Protocol
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,9 @@ from omnigent.inner.model_auth import ProviderAuthRequired
 from omnigent.inner.model_credential import CredentialLifecycle
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
 from saas.runner_adapter.platform_models import PLATFORM_MODEL_GATEWAY_BASE_URL
+
+if TYPE_CHECKING:
+    from saas.production.model_run_credentials import IssuedModelRunCredential
 
 _MAX_BODY_BYTES = 2 * 1024 * 1024
 _MAX_ERROR_BYTES = 16 * 1024
@@ -43,12 +47,44 @@ class PlatformModelRelay:
     def __init__(
         self,
         *,
-        authority: PlatformModelGatewayTokenAuthority,
-        session_id: UUID,
+        authority: PlatformModelGatewayTokenAuthority | None = None,
+        session_id: UUID | None = None,
         ttl_seconds: int,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         clock: Callable[[], float] = time.time,
+        credential_provider: Callable[[], Awaitable[IssuedModelRunCredential]] | None = None,
+        run_id: UUID | None = None,
+        fence_token: int | None = None,
     ) -> None:
+        managed = credential_provider is not None
+        if (
+            type(ttl_seconds) is not int
+            or not 1 <= ttl_seconds <= 28800
+            or (
+                managed
+                and (
+                    authority is not None
+                    or session_id is not None
+                    or not isinstance(run_id, UUID)
+                    or run_id.int == 0
+                    or type(fence_token) is not int
+                    or fence_token <= 0
+                )
+            )
+            or (
+                not managed
+                and (
+                    authority is None
+                    or not isinstance(session_id, UUID)
+                    or session_id.int == 0
+                    or run_id is not None
+                    or fence_token is not None
+                )
+            )
+        ):
+            raise ValueError("Platform model relay authority is invalid")
+        # Cache below the issuer's renewal window; credential expiry remains server-owned.
+        cache_age = min(60, ttl_seconds / 20) if managed else ttl_seconds
         self.capability = secrets.token_urlsafe(32)
         self._last_token = ""
         self._client_factory = client_factory or (
@@ -60,20 +96,43 @@ class PlatformModelRelay:
         self._client: httpx.AsyncClient | None = None
 
         async def mint() -> str:
-            self._last_token = authority.issue(
-                session_id=session_id,
-                ttl_seconds=ttl_seconds,
-                now=int(clock()),
-            )
+            if credential_provider is not None:
+                from saas.production.model_run_credentials import IssuedModelRunCredential
+
+                issued = await credential_provider()
+                if (
+                    not isinstance(issued, IssuedModelRunCredential)
+                    or issued.run_id != run_id
+                    or issued.fence_token != fence_token
+                    or issued.expires_at.tzinfo is None
+                    or issued.expires_at.utcoffset() is None
+                    or not issued.value.startswith("mrt_")
+                    or len(issued.value) != 68
+                    or any(char not in "0123456789abcdef" for char in issued.value[4:])
+                ):
+                    raise ValueError("Model Run credential binding is invalid")
+                remaining = (
+                    issued.expires_at - datetime.fromtimestamp(clock(), timezone.utc)
+                ).total_seconds()
+                if not cache_age + min(1, cache_age / 4) < remaining <= 28805:
+                    raise ValueError("Model Run credential lifetime is invalid")
+                self._last_token = issued.value
+            else:
+                assert authority is not None and session_id is not None
+                self._last_token = authority.issue(
+                    session_id=session_id,
+                    ttl_seconds=ttl_seconds,
+                    now=int(clock()),
+                )
             return self._last_token
 
         self.credentials = CredentialLifecycle(
             helper=mint,
             auth_required=lambda: ProviderAuthRequired("会话认证恢复失败，请联系管理员"),
-            max_cache_age_s=ttl_seconds,
-            refresh_skew_s=min(300, ttl_seconds / 4),
-            min_refresh_interval_s=1,
-            backoff_base_s=1,
+            max_cache_age_s=cache_age,
+            refresh_skew_s=min(15 if managed else 300, cache_age / 4),
+            min_refresh_interval_s=min(1, cache_age / 4),
+            backoff_base_s=min(1, cache_age / 2),
             backoff_max_s=30,
             clock=clock,
         )
@@ -81,6 +140,27 @@ class PlatformModelRelay:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
+
+    @classmethod
+    def for_run(
+        cls,
+        *,
+        run_id: UUID,
+        fence_token: int,
+        credential_provider: Callable[[], Awaitable[IssuedModelRunCredential]],
+        ttl_seconds: int = 28800,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> PlatformModelRelay:
+        """Use a trusted controller callback, never a public bearer-refresh endpoint."""
+        return cls(
+            run_id=run_id,
+            fence_token=fence_token,
+            credential_provider=credential_provider,
+            ttl_seconds=ttl_seconds,
+            client_factory=client_factory,
+            clock=clock,
+        )
 
     def _create_app(self) -> FastAPI:
         @asynccontextmanager

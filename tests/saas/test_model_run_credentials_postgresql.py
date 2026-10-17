@@ -147,7 +147,7 @@ def test_real_app_and_authenticator_logins_enforce_run_credential_boundaries(
             app_sessions=f.app_factory,
             authenticator_sessions=authentication,
             compatibility=authority._resolver._compatibility_policy,
-            ttl=timedelta(seconds=3) if short_lived else timedelta(hours=8),
+            ttl=timedelta(seconds=15) if short_lived else timedelta(hours=8),
         )
         issued = service.issue(authorized, lease)
         assert issued == service.issue(authorized, lease)
@@ -155,9 +155,9 @@ def test_real_app_and_authenticator_logins_enforce_run_credential_boundaries(
         assert service.authorize(claims).claims.run_id == lease.run_id
         if not short_lived:
             assert issued.expires_at - datetime.now(timezone.utc) > timedelta(hours=7, minutes=59)
-        assert service.renew(issued.value) == issued
+            assert service.renew(issued.value) == issued
         if short_lived:
-            sleep(3.05)
+            sleep(max(0, (issued.expires_at - datetime.now(timezone.utc)).total_seconds()) + 0.1)
             with pytest.raises(PlatformModelGatewayTokenExpired):
                 service.authenticate(issued.value)
             with ThreadPoolExecutor(max_workers=3) as pool:

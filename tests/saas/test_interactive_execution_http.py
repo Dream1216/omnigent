@@ -56,7 +56,7 @@ from tests.server.helpers import build_agent_bundle
 
 
 @pytest.fixture
-def interactive_http(db_uri, tmp_path, monkeypatch):
+def interactive_http(db_uri, tmp_path, monkeypatch, request):
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", "http://testserver")
     base, scope = _build_fastapi_app()
     engine = base.state.saas_test_engine
@@ -64,7 +64,9 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
     monkeypatch.setattr(
         test_model_projection, "_fixture", lambda: _connections_fixture(engine=engine)
     )
-    service, worker, _, actor, command, calls = _publication_fixture()
+    service, worker, _, actor, command, calls = _publication_fixture(
+        responses=getattr(request, "param", False)
+    )
     command["tenant_id"] = UUID(scope["tenant_id"])
     operation = service.admit(actor, **command)
     worker.publish(**_envelope(factory, operation.id))

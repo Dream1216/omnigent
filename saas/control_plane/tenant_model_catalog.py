@@ -51,8 +51,10 @@ class TenantModelCatalog:
             raise TenantModelCatalogError("managed model catalog unavailable") from None
         return snapshot
 
-    def require_version(self, runtime: RuntimeContext, reference: Mapping[str, object]) -> None:
-        """Verify a stored reference without granting inference or billing authority."""
+    def require_version(
+        self, runtime: RuntimeContext, reference: Mapping[str, object]
+    ) -> dict[str, Any]:
+        """Read a verified frozen configuration without granting inference or billing."""
         generation = reference.get("generation")
         if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
             raise TenantModelCatalogError("managed model catalog unavailable")
@@ -87,7 +89,7 @@ class TenantModelCatalog:
             )
             if row is None or row["snapshot_sha256"] != reference.get("snapshot_sha256"):
                 raise TenantModelCatalogError("managed model catalog unavailable")
-            self._snapshot(row, runtime)
+            return self._snapshot(row, runtime)
 
     def resolve_selection(
         self, runtime: RuntimeContext, *, model_id: str, configuration_revision: str

@@ -44,6 +44,11 @@ from saas.control_plane.model_provider import (
     PlatformManagedModelRuntimeConfiguration,
 )
 from saas.control_plane.model_usage import ModelTokenUsage, normalize_model_usage
+from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
+from saas.production.model_run_credentials import (
+    MODEL_RUN_TOKEN_PREFIX,
+    ModelRunCredentialService,
+)
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import _inspect_service_login
 from saas.production.server_config import (
@@ -55,7 +60,6 @@ from saas.production.service_bindings import (
     load_platform_model_service_role_bindings,
 )
 from saas.runner_adapter.platform_model_gateway import (
-    PlatformModelGatewayClaims,
     PlatformModelGatewayTokenAuthority,
     PlatformModelGatewayTokenError,
     PlatformModelGatewayTokenExpired,
@@ -150,6 +154,7 @@ class PlatformModelGateway:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         readiness_check: Callable[[], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        run_credentials: ModelRunCredentialService | None = None,
     ) -> None:
         if reservation_ttl <= timedelta(0) or reservation_ttl > timedelta(hours=24):
             raise ValueError("Platform model reservation TTL is invalid")
@@ -163,6 +168,7 @@ class PlatformModelGateway:
         )
         self._readiness_check = readiness_check
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._run_credentials = run_credentials
 
     def require_ready(self) -> None:
         if self._readiness_check is not None:
@@ -175,7 +181,12 @@ class PlatformModelGateway:
         return await self._proxy_stream(request, upstream_path="responses")
 
     async def _proxy_stream(self, request: Request, *, upstream_path: str):
-        claims = self._authenticate(request.headers.get("authorization", ""))
+        bearer = self._bearer(request.headers.get("authorization", ""))
+        if bearer.startswith(MODEL_RUN_TOKEN_PREFIX):
+            return await self._managed_run_request(
+                request, bearer=bearer, responses=upstream_path == "responses"
+            )
+        claims = self._tokens.validate(bearer)
         raw = await request.body()
         try:
             document = _request_document(raw, responses=upstream_path == "responses")
@@ -301,11 +312,57 @@ class PlatformModelGateway:
             },
         )
 
-    def _authenticate(self, header: str) -> PlatformModelGatewayClaims:
+    @staticmethod
+    def _bearer(header: str) -> str:
         scheme, separator, token = header.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token or token != token.strip():
             raise PlatformModelGatewayTokenError("model gateway bearer is required")
-        return self._tokens.validate(token)
+        return token
+
+    async def _managed_run_request(self, request: Request, *, bearer: str, responses: bool):
+        """Never interpret a genuine Run credential as a legacy session bearer."""
+        credentials = self._run_credentials
+        if credentials is None:
+            return _error(503, "platform_model_run_authority_unavailable")
+        now = self._clock()
+        if now.tzinfo is None or now.utcoffset() is None:
+            return _error(503, "platform_model_gateway_unavailable")
+        try:
+            claims = await asyncio.to_thread(credentials.authenticate, bearer, now=now)
+        except PlatformModelGatewayTokenError:
+            raise
+        except Exception:  # noqa: BLE001 - redact authentication database diagnostics.
+            return _error(503, "platform_model_gateway_unavailable")
+        try:
+            authorized = await asyncio.to_thread(credentials.authorize, claims, now=now)
+        except (PermissionError, ValueError, TenantModelCatalogError):
+            return _error(403, "platform_model_run_authority_unavailable")
+        except Exception:  # noqa: BLE001 - redact current-scope and catalog diagnostics.
+            return _error(503, "platform_model_gateway_unavailable")
+        try:
+            document = _request_document(await request.body(), responses=responses)
+        except ValueError:
+            return _error(400, "platform_model_request_invalid")
+        try:
+            frozen = authorized.configuration
+            if document["model"] != frozen["public_model_id"] or frozen["wire_api"] != (
+                "openai_responses" if responses else "openai_chat_completions"
+            ):
+                return _error(400, "platform_model_not_allowed")
+            maximum = frozen["max_output_tokens"]
+            if type(maximum) is not int or not 1 <= maximum <= 65536:
+                return _error(503, "platform_model_gateway_unavailable")
+            output_fields = (
+                ("max_output_tokens",) if responses else ("max_tokens", "max_completion_tokens")
+            )
+            if any(document.get(name) is not None for name in output_fields) and (
+                _output_token_limit(document, responses=responses) > maximum
+            ):
+                return _error(400, "platform_model_output_limit_exceeded")
+        except (KeyError, TypeError):
+            return _error(503, "platform_model_gateway_unavailable")
+        # This path stays closed until true-Run evidence and sole metering are wired.
+        return _error(503, "platform_model_run_execution_unavailable")
 
     async def _stream_and_settle(
         self,
