@@ -374,6 +374,8 @@ async def test_managed_host_strips_metadata_and_injects_only_session_capability(
         token_ttl_seconds=28800,
         controller_bound=True,
     )
+    assert "saas.model-channel.v1" in host._hello_capabilities()
+    assert "saas.model-channel.v1" not in HostProcess._hello_capabilities(host)
     captured = []
 
     def spawn(_self, env, *_args):

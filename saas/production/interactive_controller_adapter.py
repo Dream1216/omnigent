@@ -1,0 +1,246 @@
+"""Trusted Server composition of the interactive Runner controller; opt-in only."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, cast
+from urllib.parse import urlsplit
+
+import sqlalchemy as sa
+
+from omnigent.db.utils import make_named_managed_session_maker
+from saas.control_plane.interactive_run_route import interactive_session_identity
+from saas.production.interactive_controller import ProductionInteractiveExecutor, _unavailable
+from saas.production.interactive_driver import OfficialInteractiveDriver
+from saas.production.interactive_model_channel import (
+    SessionModelChannelMiddleware,
+    SessionModelChannels,
+)
+from saas.production.interactive_recovery import InteractiveRecoveryJournal
+from saas.production.runner_agent import (
+    ProductionRunnerAgent,
+    build_runner_client,
+    load_production_runner_agent_config,
+    verify_installed_runner_agent_lineage,
+)
+from saas.production.runner_executor import _runner_agent_database_login
+from saas.production.runner_readiness import build_remote_tls_runner_control_readiness
+from saas.production.server_config import load_production_database_url_file
+from saas.runner_adapter.metering import ManagedMeteringGrant
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class ProductionInteractiveControllerAdapter:
+    def __init__(self, *, config, source):
+        self._release, self._source = config, dict(source)
+        self._readiness = build_remote_tls_runner_control_readiness(config=config)
+        # Server authority stays in the trusted composition; no App DSN enters a workload.
+        selected = {
+            key: value for key, value in source.items() if key.startswith("OMNIGENT_SAAS_RUNNER_")
+        }
+        selected.update(
+            OMNIGENT_SAAS_PRODUCT_REVISION=config.product_revision,
+            OMNIGENT_SAAS_SOURCE_SHA=config.product_revision,
+            OMNIGENT_SAAS_IMAGE_DIGEST=config.image_digest,
+            OMNIGENT_SAAS_RUNNER_EXECUTOR_FACTORY="saas.production.interactive_controller:ProductionInteractiveExecutor",
+        )
+        self._config = load_production_runner_agent_config(selected)
+        verify_installed_runner_agent_lineage(self._config)
+        database_url, parsed, _ = load_production_database_url_file(selected, "runner_agent")
+        if parsed.username != _runner_agent_database_login(
+            self._config.runner_id, self._config.connection_generation
+        ):
+            raise _unavailable()
+        self._engine = sa.create_engine(
+            database_url, pool_pre_ping=True, pool_size=4, max_overflow=4
+        )
+        self._sessions = make_named_managed_session_maker(
+            self._engine, query_name_prefix="saas.interactive_controller"
+        )
+        try:
+            self._client = build_runner_client(self._config)
+        except Exception:
+            self._engine.dispose()
+            raise
+        self._task: asyncio.Task | None = None
+        self._bound = False
+        self._executor = None
+        self._journal = None
+        self._installed = False
+
+    def assert_production_ready(self) -> None:
+        self._readiness.assert_production_ready()
+        # Composition probes dependencies before binding the app lifespan.
+        if not self._installed:
+            return
+        if not self._bound or self._executor is None or self._task is None or self._task.done():
+            raise _unavailable()
+        self._executor.assert_production_ready()
+
+    def bind_runtime(self, *, app, runtime, official, auth_provider) -> None:
+        del auth_provider
+        if self._installed:
+            raise _unavailable()
+        try:
+            self._bind_runtime(app=app, runtime=runtime, official=official)
+        except Exception:
+            self.close()
+            raise
+        self._installed = True
+
+    def _bind_runtime(self, *, app, runtime, official) -> None:
+        source = self._source
+        url = source.get("OMNIGENT_SAAS_INTERACTIVE_METERING_URL", "")
+        parsed = urlsplit(url)
+        root = Path(source.get("OMNIGENT_SAAS_INTERACTIVE_RECOVERY_DIRECTORY", ""))
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+            or not root.is_absolute()
+        ):
+            raise _unavailable()
+        journal = InteractiveRecoveryJournal(root)
+        self._journal = journal
+        cfg = self._config
+        authority = runtime.create_authority(
+            identity=cfg, control=self._client, runner_sessions=self._sessions, fleet_source=source
+        )
+        channels = SessionModelChannels(public_origin=self._release.public_origin)
+        driver = OfficialInteractiveDriver(
+            app=app, dependencies=official, contract_version=self._release.adapter_contract_version
+        )
+
+        async def authorize(lease):
+            return await runtime.authorize_model(
+                lease=lease,
+                identity=cfg,
+                control=self._client,
+                runner_sessions=self._sessions,
+                fleet_source=source,
+            )
+
+        def grant(authorized, lease):
+            context = authorized.runtime
+            return ManagedMeteringGrant(
+                session_id=interactive_session_identity(
+                    context.tenant_id,
+                    context.space_id,
+                    context.runtime_partition_id,
+                    authorized.session_id,
+                ),
+                run_id=lease.run_id,
+                runner_id=cfg.runner_id,
+                capability_token=lease.capability_token,
+                expires_at=lease.expires_at,
+                metering_base_url=url,
+                expected_host=parsed.hostname,
+                ca_certificate_path=cfg.ca_certificate_path,
+                client_certificate_path=cfg.client_certificate_path,
+                client_key_path=cfg.client_key_path,
+                spool_directory=journal.root / "usage" / str(lease.run_id),
+            )
+
+        async def verify_recovery(record):
+            if (
+                record.grant.metering_base_url != url
+                or record.grant.expected_host != parsed.hostname
+                or record.grant.ca_certificate_path != cfg.ca_certificate_path
+                or record.grant.client_certificate_path != cfg.client_certificate_path
+                or record.grant.client_key_path != cfg.client_key_path
+                or record.grant.spool_directory != journal.root / "usage" / str(record.run_id)
+            ):
+                raise _unavailable()
+            await self._client.heartbeat_runner()
+            await asyncio.to_thread(authority.verify_recovery, record)
+
+        def assert_authority():
+            runtime.create_authority(
+                identity=cfg,
+                control=self._client,
+                runner_sessions=self._sessions,
+                fleet_source=source,
+            )
+
+        executor = ProductionInteractiveExecutor(
+            authorize_model=authorize,
+            grant_for_run=grant,
+            driver=driver,
+            journal=journal,
+            channels=channels,
+            connection_generation=cfg.connection_generation,
+            product_revision=cfg.product_revision,
+            image_digest=cfg.image_digest,
+            assert_authority=assert_authority,
+            verify_recovery=verify_recovery,
+        )
+        self._executor = executor
+        app.state.production_interactive_conversation_store.runtime_status_observer = (
+            driver.observe_runtime_status
+        )
+        app.add_middleware(SessionModelChannelMiddleware, channels=channels)
+        original = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def lifespan(instance):
+            stop = asyncio.Event()
+            try:
+                async with original(instance) as state:
+                    await executor.reconcile_physical_gc(limit=cfg.physical_gc_limit)
+                    await asyncio.to_thread(executor.assert_claimable)
+                    agent = ProductionRunnerAgent(
+                        self._client,
+                        executor,
+                        poll_interval_seconds=cfg.poll_interval_seconds,
+                        heartbeat_interval_seconds=cfg.heartbeat_interval_seconds,
+                        shutdown_timeout_seconds=cfg.shutdown_timeout_seconds,
+                        physical_gc_interval_seconds=cfg.physical_gc_interval_seconds,
+                        physical_gc_limit=cfg.physical_gc_limit,
+                    )
+                    self._task = asyncio.create_task(
+                        agent.run(stop), name="production-interactive-controller"
+                    )
+                    self._bound = True
+                    self._task.add_done_callback(self._finished)
+                    yield state
+            finally:
+                self._bound = False
+                stop.set()
+                try:
+                    if self._task is not None:
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
+                            await asyncio.wait_for(
+                                self._task, timeout=cfg.shutdown_timeout_seconds
+                            )
+                    await executor.shutdown()
+                finally:
+                    self.close()
+
+        app.router.lifespan_context = cast(Any, lifespan)
+
+    @staticmethod
+    def _finished(task):
+        if not task.cancelled() and task.exception() is not None:
+            _LOGGER.error("Interactive controller stopped; readiness is unavailable")
+
+    def close(self) -> None:
+        if self._journal is not None:
+            self._journal.close()
+            self._journal = None
+        self._engine.dispose()
+
+
+def build_production_interactive_controller(*, config) -> ProductionInteractiveControllerAdapter:
+    if os.environ.get("OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED") != "true":
+        raise _unavailable()
+    return ProductionInteractiveControllerAdapter(config=config, source=os.environ)

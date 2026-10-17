@@ -1704,6 +1704,9 @@ def register_events_routes(
                     "external_session_interrupted data.response_id must be a string",
                     code=ErrorCode.INVALID_INPUT,
                 )
+            observer = getattr(conversation_store, "observe_session_runtime_status", None)
+            if observer is not None and _has_runner_created_by_authority(request, conv):
+                await observer(conv, {**body.data, "interrupted": True})
             _publish_interrupted(session_id, response_id=response_id)
             return {"queued": False}
         if body.type == _EXTERNAL_SESSION_SUPERSEDED_TYPE:
@@ -1829,6 +1832,9 @@ def register_events_routes(
             data = await _enrich_terminal_status_with_subagent_output(
                 body.data, status, session_id, conversation_store
             )
+            observer = getattr(conversation_store, "observe_session_runtime_status", None)
+            if observer is not None and _has_runner_created_by_authority(request, conv):
+                await observer(conv, data)
             # Surface the failure reason a native forwarder carries so a
             # top-level session sees it on its own status edge and persisted
             # last_task_error, not only the sub-agent parent-inbox path.

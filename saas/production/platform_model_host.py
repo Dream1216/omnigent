@@ -53,6 +53,12 @@ class PlatformModelHostConfigurationError(ValueError):
 class PlatformModelHostProcess(HostProcess):
     """Official Host that owns one renewable model channel per Runner session."""
 
+    def _hello_capabilities(self) -> list[str]:
+        capabilities = super()._hello_capabilities()
+        if self._controller_bound:
+            capabilities.append("saas.model-channel.v1")
+        return capabilities
+
     def __init__(
         self,
         identity: HostIdentity,

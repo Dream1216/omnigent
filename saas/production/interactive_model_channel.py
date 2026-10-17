@@ -17,6 +17,7 @@ from uuid import UUID
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from omnigent.harness_aliases import canonicalize_harness
 from omnigent.host.frames import HostLaunchRunnerFrame
 from omnigent.inference_config import parse_inference_config, validate_inference_credentials
 from saas.production.platform_model_relay import PlatformModelRelay
@@ -92,6 +93,56 @@ def channel_url(public_origin: str, session_id: UUID) -> str:
     if not isinstance(session_id, UUID) or not session_id.int:
         raise ValueError("interactive_model_channel_session_invalid")
     return f"{model_channel_origin(public_origin)}/internal/v1/model-channels/{session_id}/v1"
+
+
+def model_channel_configuration(
+    *, public_origin: str, session_id: UUID, harness: str, publication: dict[str, Any]
+) -> dict[str, Any]:
+    """Project only the frozen public model and limits, never deployment aliases or prices."""
+    wire = publication.get("wire_api")
+    supported = (
+        {"codex", "codex-native", "openai-agents"}
+        if wire == "openai_responses"
+        else {"qwen", "jcode", "opencode-native", "openai-agents"}
+        if wire == "openai_chat_completions"
+        else set()
+    )
+    name, model, maximum = (
+        canonicalize_harness(harness),
+        publication.get("public_model_id"),
+        publication.get("max_output_tokens"),
+    )
+    if (
+        name not in supported
+        or not isinstance(model, str)
+        or not 1 <= len(model) <= 128
+        or type(maximum) is not int
+        or maximum < 1
+    ):
+        raise ValueError("interactive_model_channel_publication_invalid")
+    return {
+        "providers": {
+            "platform-deepseek": {
+                "kind": "gateway",
+                "openai": {
+                    "base_url": channel_url(public_origin, session_id),
+                    "api_key_ref": "env:" + PLATFORM_MODEL_CREDENTIAL_ENV,
+                    "wire_api": "responses" if wire == "openai_responses" else "chat_completions",
+                    "max_output_tokens": maximum,
+                    "models": {"default": model},
+                },
+            }
+        },
+        "inference": {
+            "harnesses": {
+                harness: {
+                    "provider": "platform-deepseek",
+                    "default_model": model,
+                    "model_allowlist": [model],
+                }
+            }
+        },
+    }
 
 
 def _capability(frame: HostLaunchRunnerFrame, base_url: str) -> str:
@@ -227,7 +278,11 @@ class SessionModelChannels:
         if not isinstance(secret_value, str) or _CAPABILITY.fullmatch(secret_value) is None:
             raise ValueError("interactive_model_channel_capability_invalid")
         if scope.session_id in self._scopes and (
-            self._scopes[scope.session_id] != scope
+            replace(self._scopes[scope.session_id], actor_id=scope.actor_id) != scope
+            or (
+                self._scopes[scope.session_id].actor_id != scope.actor_id
+                and scope.session_id in self._bound
+            )
             or not hmac.compare_digest(self._secrets[scope.session_id], secret_value)
         ):
             raise ValueError("interactive_model_channel_scope_changed")
@@ -246,6 +301,7 @@ class SessionModelChannels:
         run_id: UUID,
         fence_token: int,
         relay: PlatformModelRelay,
+        accepting: bool = True,
     ) -> HostModelChannel:
         async with self._lock:
             if scope.session_id in self._bound:
@@ -264,10 +320,25 @@ class SessionModelChannels:
             channel = self.restore(scope, secret_value)
             lifespan = relay.app.router.lifespan_context(relay.app)
             await lifespan.__aenter__()
-            bound = _BoundRelay(run_id, fence_token, relay, lifespan)
+            bound = _BoundRelay(run_id, fence_token, relay, lifespan, accepting=accepting)
             bound.idle.set()
             self._bound[scope.session_id] = bound
             return channel
+
+    async def activate(self, session_id: UUID, *, run_id: UUID, fence_token: int) -> None:
+        async with self._lock:
+            bound = self._bound.get(session_id)
+            if bound is None or (bound.run_id, bound.fence_token) != (run_id, fence_token):
+                raise ValueError("interactive_model_channel_fence_changed")
+            bound.accepting = True
+
+    async def forget(self, session_id: UUID) -> None:
+        """The Controller calls this only after an exact physical stop acknowledgement."""
+        async with self._lock:
+            if session_id in self._bound:
+                raise ValueError("interactive_model_channel_busy")
+            self._scopes.pop(session_id, None)
+            self._secrets.pop(session_id, None)
 
     async def suspend(
         self, session_id: UUID, *, run_id: UUID, fence_token: int, timeout: float = 10

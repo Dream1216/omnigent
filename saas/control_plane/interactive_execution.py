@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
+from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -85,7 +86,7 @@ class RuntimeSessionRunAdmission:
                 )
             ):
                 raise InteractiveExecutionError("interactive_create_conflict")
-            self._require_publication(runtime, marker)
+            self.publication_configuration(runtime, marker)
             return marker
         return TenantModelCatalog(self._sessions.kw["bind"]).resolve_selection(
             runtime,
@@ -138,7 +139,7 @@ class RuntimeSessionRunAdmission:
         stable_id, title = interactive_message_intent(event.model_dump(mode="json"))
         launch = interactive_conversation_launch(conversation)
         self._authorization.require(request, action="run.create", project_id=project_id)
-        self._require_publication(runtime, marker)
+        self.publication_configuration(runtime, marker)
         session_id = self._session(runtime, request, conversation, project_id, create=True)
         assert session_id is not None
         key = sha256(
@@ -227,11 +228,13 @@ class RuntimeSessionRunAdmission:
             trace_id=runtime.trace_id,
         ), project_id
 
-    def _require_publication(self, runtime: RuntimeContext, marker: dict[str, object]) -> None:
+    def publication_configuration(
+        self, runtime: RuntimeContext, marker: dict[str, object]
+    ) -> dict[str, Any]:
         from saas.control_plane.tenant_model_catalog import TenantModelCatalog
 
         catalog = TenantModelCatalog(self._sessions.kw["bind"])
-        catalog.require_version(runtime, marker)
+        return catalog.require_version(runtime, marker)
 
     def _session(
         self,

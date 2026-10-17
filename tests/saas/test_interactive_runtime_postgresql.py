@@ -13,6 +13,7 @@ from omnigent.server.schemas import SessionEventInput
 from saas.compatibility import bind_runtime_context
 from saas.control_plane.execution import ExecutionControlPlane
 from saas.control_plane.scheduling import SchedulingControlPlane
+from saas.production.interactive_model_channel import ModelChannelScope
 from saas.production.runner_control import (
     ProductionRunnerMachineAuthority,
     RunnerControlClientLease,
@@ -135,9 +136,48 @@ def test_runtime_reads_only_its_real_leased_run_then_uses_separate_app_authority
             assert resolved.actor_id == runtime.actor_id
             assert resolved.project_id == runtime.project_id
             assert resolved.runtime_partition_id == runtime.runtime_partition_id
+            recovery = SimpleNamespace(
+                run_id=lease.run_id,
+                fence_token=lease.fence_token,
+                connection_generation=connection.connection_generation,
+                product_revision="c" * 40,
+                image_digest="sha256:" + "a" * 64,
+                grant=SimpleNamespace(runner_id=connection.runner_id),
+                scope=ModelChannelScope(
+                    runtime.tenant_id,
+                    runtime.space_id,
+                    runtime.project_id,
+                    runtime.actor_id,
+                    run.session_id,
+                    runtime.runtime_partition_id,
+                    fixture.conversation.id,
+                    run.input["execution"]["model_publication"]["snapshot_sha256"],
+                ),
+            )
+            authority.verify_recovery(recovery)
+            control.transition_run(
+                **credentials,
+                run_id=lease.run_id,
+                lease_token=lease.lease_token,
+                fence_token=lease.fence_token,
+                capability_token=lease.capability_token,
+                target_status="succeeded",
+            )
+            control.release_run(
+                **credentials,
+                run_id=lease.run_id,
+                fence_token=lease.fence_token,
+            )
+            authority.verify_recovery(recovery)
+            recovery.fence_token += 1
+            with pytest.raises(RunnerControlError):
+                authority.verify_recovery(recovery)
+            recovery.fence_token -= 1
             with _machine_login(f, uuid4(), 1) as unrelated:
                 wrong = _runtime_authority(
                     scope, connection, runner_sessions=unrelated, app_sessions=f.app_factory
                 )
                 with pytest.raises(RunnerControlError, match="Runtime authority changed"):
                     wrong._read_run(lease)
+                with pytest.raises(RunnerControlError):
+                    wrong.verify_recovery(recovery)

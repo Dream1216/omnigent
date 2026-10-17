@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -343,6 +344,92 @@ class InteractiveRuntimeAuthority:
             authorization=self._authorization,
         )
 
+    def verify_recovery(self, record) -> None:
+        """Historical ownership permits cleanup, never a new execution or model credential."""
+        if self._verify_machine_database is not None:
+            self._verify_machine_database()
+        if (
+            record.grant.runner_id != self._identity.runner_id
+            or record.connection_generation != self._identity.connection_generation
+            or record.product_revision != self._identity.product_revision
+            or record.image_digest != self._identity.image_digest
+        ):
+            _reject()
+        with (
+            query_name_scope("saas.interactive_runtime.verify_recovery_ownership"),
+            self._runner_sessions() as db,
+        ):
+            scope = record.scope
+            if db.get_bind().dialect.name == "postgresql":
+                binding = {
+                    name: str(getattr(scope, name))
+                    for name in (
+                        "tenant_id",
+                        "space_id",
+                        "project_id",
+                        "actor_id",
+                        "session_id",
+                        "partition_id",
+                        "official_session_id",
+                        "publication_sha256",
+                    )
+                }
+                binding["product_revision"] = record.product_revision
+                owned = db.scalar(
+                    sa.text(
+                        "SELECT public.saas_interactive_recovery_owner_v1("
+                        ":run,:fence,:runner,:generation,CAST(:binding AS jsonb))"
+                    ),
+                    {
+                        "run": record.run_id,
+                        "fence": record.fence_token,
+                        "runner": record.grant.runner_id,
+                        "generation": record.connection_generation,
+                        "binding": json.dumps(binding, sort_keys=True),
+                    },
+                )
+                if owned is not True:
+                    _reject()
+                return
+            apply_rls_context(
+                db,
+                RlsContext(
+                    tenant_id=scope.tenant_id, space_id=scope.space_id, project_id=scope.project_id
+                ),
+            )
+            run = db.get(RunRecord, record.run_id)
+            if (
+                run is None
+                or run.fence_token != record.fence_token
+                or run.tenant_id != scope.tenant_id
+                or run.space_id != scope.space_id
+                or run.project_id != scope.project_id
+                or run.session_id != scope.session_id
+                or run.created_by != scope.actor_id
+                or run.product_revision != record.product_revision
+                or run.queue_class != INTERACTIVE_QUEUE_CLASS
+            ):
+                _reject()
+            route = decode_interactive_run_route(run.input)
+            execution = cast(dict[str, Any], run.input["execution"])
+            if (
+                route.session_id != scope.official_session_id
+                or route.partition_id != scope.partition_id
+                or execution["model_publication"]["snapshot_sha256"] != scope.publication_sha256
+            ):
+                _reject()
+            capability = db.execute(
+                sa.select(CapabilityTokenRecord.id).where(
+                    CapabilityTokenRecord.run_id == run.id,
+                    CapabilityTokenRecord.runner_id == record.grant.runner_id,
+                    CapabilityTokenRecord.runner_connection_generation
+                    == record.connection_generation,
+                    CapabilityTokenRecord.fence_token == record.fence_token,
+                )
+            ).first()
+            if capability is None:
+                _reject()
+
     async def authorize(self, lease: RunnerControlClientLease) -> AuthorizedInteractiveInput:
         """Recheck lease, current membership, project, session access and frozen input."""
         if self._permissions is None or self._conversations is None:
@@ -443,7 +530,8 @@ class ProductionInteractiveRuntimeFactory:
             "bind"
         ) is self._app_sessions.kw.get("bind"):
             _reject()
-        authority = self.create_authority(
+        authority = await asyncio.to_thread(
+            self.create_authority,
             identity=identity,
             control=control,
             runner_sessions=runner_sessions,

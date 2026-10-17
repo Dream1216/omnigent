@@ -343,7 +343,7 @@ index 91e05f0..3d8988d 100644
 +                ) from exc
 +            raise
 diff --git a/omnigent/server/app.py b/omnigent/server/app.py
-index affa37df3..163560cca 100644
+index affa37df3..5578b6288 100644
 --- a/omnigent/server/app.py
 +++ b/omnigent/server/app.py
 @@ -15,0 +16 @@ from functools import partial
@@ -358,7 +358,20 @@ index affa37df3..163560cca 100644
 +        rewritten = rewritten.replace(
 +            "<title>Omnigent</title>", f"<title>{escape_html(app_name)}</title>", 1
 +        )
-@@ -4090 +4096,6 @@ def create_app(
+@@ -3622,0 +3629,2 @@ def create_app(
++                        owns_input = getattr(conversation_store, "owns_session_input", None)
++                        managed_input = bool(owns_input and owns_input(conv))
+@@ -3626,0 +3635 @@ def create_app(
++                            suppress_recovery_turn=managed_input,
+@@ -3629,3 +3638,4 @@ def create_app(
+-                        await restore_active_children(
+-                            conv, routed.client, conversation_store, runner_session_initializer
+-                        )
++                        if not managed_input:
++                            await restore_active_children(
++                                conv, routed.client, conversation_store, runner_session_initializer
++                            )
+@@ -4090 +4100,6 @@ def create_app(
 -                _SPAStaticFiles(directory=web_ui_dist, html=True, base_path=resolved_base_path),
 +                _SPAStaticFiles(
 +                    directory=web_ui_dist,
@@ -366,12 +379,12 @@ index affa37df3..163560cca 100644
 +                    base_path=resolved_base_path,
 +                    app_name=branding_snapshot.app_name,
 +                ),
-@@ -4139 +4150,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4139 +4154,3 @@ class _SPAStaticFiles(StaticFiles):
 -    def __init__(self, *args: Any, base_path: str = "", **kwargs: Any) -> None:
 +    def __init__(
 +        self, *args: Any, base_path: str = "", app_name: str | None = None, **kwargs: Any
 +    ) -> None:
-@@ -4145 +4158,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4145 +4162,3 @@ class _SPAStaticFiles(StaticFiles):
 -            html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
 +            html = _rewrite_web_ui_index(
 +                index_file.read_text(encoding="utf-8"), base_path, app_name
@@ -520,7 +533,7 @@ index 9cacaf39d..e725c4aeb 100644
 +            _announce_session_added(user_id, resp.id)
 +            return resp
 diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
-index 2987e8d02..d95a15948 100644
+index 2987e8d02..eb31fc3f1 100644
 --- a/omnigent/server/routes/sessions/routes_events.py
 +++ b/omnigent/server/routes/sessions/routes_events.py
 @@ -221,0 +222 @@ from omnigent.server.routes._sessions.orchestration import (
@@ -552,6 +565,14 @@ index 2987e8d02..d95a15948 100644
 +                runner_router=runner_router,
 +            )
 +
+@@ -1694,0 +1707,3 @@ def register_events_routes(
++            observer = getattr(conversation_store, "observe_session_runtime_status", None)
++            if observer is not None and _has_runner_created_by_authority(request, conv):
++                await observer(conv, {**body.data, "interrupted": True})
+@@ -1819,0 +1835,3 @@ def register_events_routes(
++            observer = getattr(conversation_store, "observe_session_runtime_status", None)
++            if observer is not None and _has_runner_created_by_authority(request, conv):
++                await observer(conv, data)
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
 index 4a4bc5f3c..7a95cc5d4 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py

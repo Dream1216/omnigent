@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "f3807527ee100cb185b84b2ace0aa18cedeb289c87954d51b1cece7422d22f93",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "851062ab220e1ef6ebe99d4d5d8492afcfda5868da4a97c18ef050a27bc4f099",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -450,6 +461,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "6de163caf24361d0982efeff06de7a0a0f02e74acc6d1015b829de6f0761b79a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "a59cd0cffd487aa8c986e049ca2bf6148e84b94c6dbed391ab611f4b1992f30f",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -684,6 +706,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "cb6004e75af03b926828d82263d55fe3f0dccc325b03e5f91ac0619e1dd2bfb8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "4d08f476bc6c9bbd9febf909e77a0b254edc25f5aebfd89c6699c38ce62f33bb",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -888,6 +921,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "321eec703c2079f798d5cd8e76ca906758770f373356f5b2ec19e632e0e9582d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "1511a306fdde0b7f27dce6a6ce57733d9c405b34f35b2706b1e22a925e7f9ce4",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -1087,6 +1131,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "077ff0181284fffba277aac12daf5e516cff722d384f2c0f106e1a0581452568",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "fe51f1433b677ce8c0bb6f2614eabc8e459b90e84551b0a556a509876cf1c982",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -1261,6 +1316,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "118167417a3eebf254f3a27dfd53bfa4fcc5678c23b1b36c1f02f90b60905f64",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "21ee6ca9291f74d925f20d0d48a96cd39f1c486e4b57bb02b0fce5899e40e710",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -1442,6 +1508,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "dfadf1b5dedaca589d14882736a6d79155a3648d17a3302041fefaf6dd1e8fd9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "f158e9796ce1dbc49ecb5ccd93e60c23a33417c8607700130e5ac6beae7812a2",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,
@@ -1588,6 +1665,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "5b0968e98655f5b241eee44f05da8eac41e1a764bda6c4bd3148d1c48e03f18b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "09ee4b7f206f359649c12452f7f8e0266a9a32234a2917fdb1e31380c4888c6b",
     # Restricted source replay; evidence-bound machine customer usage.
     (
         16,

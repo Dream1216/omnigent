@@ -4490,6 +4490,9 @@ class HostProcess:
             _logger.debug("Could not obtain auth token", exc_info=True)
         return None
 
+    def _hello_capabilities(self) -> list[str]:
+        return list(HOST_CAPABILITIES)
+
     async def _serve_frames(self, ws: websockets.asyncio.client.ClientConnection) -> None:
         """Wait for bounded startup discovery, register, then service the connection."""
         self._start_capability_discovery()
@@ -4520,7 +4523,7 @@ class HostProcess:
             interactive_shells=self._interactive_shells,
             telemetry_opt_out=_tel_opt_out,
             installation_id=_tel_install_id,
-            capabilities=list(HOST_CAPABILITIES),
+            capabilities=self._hello_capabilities(),
         )
         try:
             encoded_hello = encode_host_frame(hello)

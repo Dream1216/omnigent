@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from typing import Any
+from uuid import uuid4
 
 from omnigent.db.db_models import uuid_to_bytes
 from omnigent.entities import Conversation
@@ -27,19 +28,34 @@ from saas.control_plane.interactive_launch import (
     MANAGED_LAUNCH_SNAPSHOT_KEY,
     decode_interactive_launch,
 )
-from saas.control_plane.interactive_run_route import InteractiveRunRouteError
+from saas.control_plane.interactive_run_route import (
+    InteractiveRunRouteError,
+    interactive_session_identity,
+)
 from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
+from saas.production.interactive_model_channel import model_channel_configuration
 
 
 class InteractiveConversationStore:
     """Preserve official persistence and intercept only marked execution channels."""
 
     def __init__(
-        self, delegate: Any, admission: RuntimeSessionRunAdmission, *, permission_store: Any
+        self,
+        delegate: Any,
+        admission: RuntimeSessionRunAdmission,
+        *,
+        permission_store: Any,
+        public_origin: str | None = None,
     ) -> None:
         self._delegate = delegate
         self._admission = admission
         self._permissions = permission_store
+        self._public_origin = public_origin
+        self.runtime_status_observer = None
+
+    async def observe_session_runtime_status(self, conversation: Conversation, data: dict) -> None:
+        if self.owns_session_input(conversation) and self.runtime_status_observer is not None:
+            self.runtime_status_observer(conversation, data)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)
@@ -142,9 +158,32 @@ class InteractiveConversationStore:
         elif body.host_id is None:
             raise OmnigentError("interactive_host_required", code=ErrorCode.INVALID_INPUT)
         return {
+            "version": 1,
+            "configuration_revision": revision,
+            "target_id": revision,
             "owner_id": user_id,
             "runtime_config": {},
             "harness": harness,
+            "catalog": {
+                "models": [
+                    {
+                        "id": model_override,
+                        "model": model_override,
+                        "displayName": model_override,
+                        "isDefault": True,
+                        "source": {
+                            "kind": "gateway",
+                            "label": "Platform models",
+                            "name": "platform-deepseek",
+                        },
+                    }
+                ],
+                "configured": True,
+                "configuration_revision": revision,
+                "provider_label": "Platform models",
+                "default_model": model_override,
+                "status": "ready",
+            },
             MANAGED_EXECUTION_SNAPSHOT_KEY: marker,
             MANAGED_LAUNCH_SNAPSHOT_KEY: {
                 "schema_version": 1,
@@ -178,6 +217,23 @@ class InteractiveConversationStore:
                 }
             )
             decode_interactive_launch(launch)
+            if self._public_origin is not None:
+                session_id = uuid_to_bytes(kwargs.get("conversation_id") or uuid4().hex).hex()
+                kwargs["conversation_id"] = session_id
+                runtime = current_runtime_context()
+                snapshot["runtime_config"] = model_channel_configuration(
+                    session_id=interactive_session_identity(
+                        runtime.tenant_id,
+                        runtime.space_id,
+                        runtime.runtime_partition_id,
+                        session_id,
+                    ),
+                    harness=launch["harness"],
+                    publication=self._admission.publication_configuration(
+                        runtime, snapshot[MANAGED_EXECUTION_SNAPSHOT_KEY]
+                    ),
+                    public_origin=self._public_origin,
+                )
             kwargs["inference_snapshot"] = snapshot
         try:
             return self._delegate.create_conversation(**kwargs)

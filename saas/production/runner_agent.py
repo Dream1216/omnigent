@@ -401,7 +401,7 @@ class ProductionRunnerAgent:
                 await heartbeat
 
     async def _run_claim_loop(self, stop: asyncio.Event) -> ProductionRunnerAgentStats:
-        self._executor.assert_production_ready()
+        await asyncio.to_thread(self._executor.assert_production_ready)
         await self._client.heartbeat_runner()
         claims = completed = failed = released = 0
         gc_stop = asyncio.Event()
@@ -411,7 +411,7 @@ class ProductionRunnerAgent:
                 # A timeout leaves an uninterruptible daemon/DB call with an
                 # unknown commit result.  The current lease may be recovered,
                 # but this process incarnation must never claim another Run.
-                self._executor.assert_claimable()
+                await asyncio.to_thread(self._executor.assert_claimable)
                 await self._client.heartbeat_runner()
                 lease = await self._client.claim_run()
                 if lease is None:

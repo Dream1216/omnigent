@@ -1504,6 +1504,7 @@ def build_production_server(
             ),
         ),
         permission_store=app_dependencies["permission_store"],
+        public_origin=config.public_origin,
     )
     # These official lifespan jobs run before request middleware can bind a
     # RuntimeContext. Keep both disabled in production even when a caller
@@ -1549,6 +1550,7 @@ def build_production_server(
         permission_store=official_dependencies.permission_store,
     )
     app.state.production_interactive_runtime = interactive_runtime
+    app.state.production_interactive_conversation_store = app_dependencies["conversation_store"]
     bind_runtime = getattr(external.runner, "bind_runtime", None) if external is not None else None
     if bind_runtime is not None:
         try:

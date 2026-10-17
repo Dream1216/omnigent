@@ -9,7 +9,7 @@ index b1221f7a2..b94cd5e21 100644
 +            HOST_TOKEN_FILE_ENV_VAR,
 +            HOST_WORKSPACE_ID_ENV_VAR,
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
-index e87617a09..0c6dc4e66 100644
+index e87617a09..2cf2d7c2c 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
 @@ -127 +127,5 @@ from omnigent.host.git_worktree import (
@@ -70,11 +70,18 @@ index e87617a09..0c6dc4e66 100644
 @@ -4445 +4475 @@ class HostProcess:
 -        if os.environ.get(HOST_TOKEN_ENV_VAR):
 +        if os.environ.get(HOST_TOKEN_ENV_VAR) or os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
-@@ -4906,0 +4937 @@ def run_host_process(
+@@ -4462,0 +4493,3 @@ class HostProcess:
++    def _hello_capabilities(self) -> list[str]:
++        return list(HOST_CAPABILITIES)
++
+@@ -4493 +4526 @@ class HostProcess:
+-            capabilities=list(HOST_CAPABILITIES),
++            capabilities=self._hello_capabilities(),
+@@ -4906,0 +4940 @@ def run_host_process(
 +    host_factory: Callable[..., HostProcess] = HostProcess,
-@@ -4919,0 +4951 @@ def run_host_process(
+@@ -4919,0 +4954 @@ def run_host_process(
 +    :param host_factory: Downstream-neutral HostProcess construction seam.
-@@ -5012 +5044 @@ def run_host_process(
+@@ -5012 +5047 @@ def run_host_process(
 -    host = HostProcess(
 +    host = host_factory(
 diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py

@@ -3626,15 +3626,19 @@ def create_app(
                     conv.parent_conversation_id in bound_ids and conv.host_id is None
                 ):
                     try:
+                        owns_input = getattr(conversation_store, "owns_session_input", None)
+                        managed_input = bool(owns_input and owns_input(conv))
                         init_response = await runner_session_initializer.initialize(
                             conv,
                             routed.client,
                             timeout=10.0,
+                            suppress_recovery_turn=managed_input,
                         )
                         init_response.raise_for_status()
-                        await restore_active_children(
-                            conv, routed.client, conversation_store, runner_session_initializer
-                        )
+                        if not managed_input:
+                            await restore_active_children(
+                                conv, routed.client, conversation_store, runner_session_initializer
+                            )
                     except Exception:
                         _logger.exception(
                             "Failed to re-assign session %s on reconnect",
