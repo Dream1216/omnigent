@@ -41,6 +41,8 @@ on:
       - saas/production/platform_model_gateway.py
       - saas/production/tenant_model_catalog.py
       - saas/production/interactive_execution.py
+      - saas/production/interactive_runtime.py
+      - saas/production/server.py
       - saas/scripts/*litellm*.py
       - tests/saas/*litellm*.py
       - tests/saas/test_model_protocol_probe.py
@@ -59,6 +61,8 @@ on:
       - tests/saas/test_interactive_run_route.py
       - tests/saas/test_interactive_runner_lease.py
       - tests/saas/test_interactive_runner_postgresql.py
+      - tests/saas/test_interactive_runtime.py
+      - tests/saas/test_interactive_runtime_postgresql.py
       - tests/saas/test_public_api_interactive_boundary.py
       - tests/saas/test_run_dispatch_projection.py
       - tests/saas/test_billing_metering.py
@@ -123,6 +127,7 @@ jobs:
           tests/saas/test_interactive_execution_http.py
           tests/saas/test_interactive_run_route.py
           tests/saas/test_interactive_runner_lease.py
+          tests/saas/test_interactive_runtime.py
           tests/saas/test_public_api_interactive_boundary.py
           tests/saas/test_run_dispatch_projection.py
           tests/saas/test_billing_metering.py

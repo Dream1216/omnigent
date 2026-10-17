@@ -1531,6 +1531,44 @@ def build_production_server(
     app.state.production_saas_readiness = services.readiness
     app.state.production_saas_version = dict(config.version_document)
     app.state.production_saas_services = services
+    from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
+
+    interactive_runtime = ProductionInteractiveRuntimeFactory(
+        product_revision=config.product_revision,
+        image_digest=config.image_digest,
+        app_sessions=sessions.app,
+        compatibility=RuntimeCompatibilityPolicy(
+            runtime_type="omnigent",
+            allowed_runtime_versions=frozenset({config.runtime_version}),
+            allowed_source_revisions=frozenset({config.upstream_revision}),
+            allowed_schema_revisions=frozenset({config.official_schema_revision}),
+            adapter_contract_version=config.adapter_contract_version,
+        ),
+        conversation_store=official_dependencies.conversation_store,
+        permission_store=official_dependencies.permission_store,
+    )
+    app.state.production_interactive_runtime = interactive_runtime
+    bind_runtime = getattr(external.runner, "bind_runtime", None) if external is not None else None
+    if bind_runtime is not None:
+        try:
+            if inspect.iscoroutinefunction(bind_runtime):
+                raise TypeError("Runtime binding must synchronously register its lifespan")
+            bound = bind_runtime(
+                app=app,
+                runtime=interactive_runtime,
+                official=official_dependencies,
+                auth_provider=services.integration.auth_provider,
+            )
+            if bound is not None:
+                if inspect.iscoroutine(bound):
+                    bound.close()
+                raise TypeError("Runtime binding must complete before server startup")
+        except Exception:  # noqa: BLE001 - adapter failures may contain credentials.
+            services.close()
+            official_dependencies.close()
+            raise ProductionServerCompositionError(
+                "production interactive Runtime binding failed"
+            ) from None
     return BuiltProductionServer(
         app=app,
         host=config.host,
