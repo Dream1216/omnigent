@@ -93,7 +93,7 @@ def _application_logins(case):
                 connection.exec_driver_sql(f"DROP ROLE {role}")
 
 
-def _factory_run(case, *, db_uri, tmp_path, monkeypatch):
+def _factory_run(case, *, db_uri, tmp_path, monkeypatch, inference_probe=None):
     with _application_logins(case) as applications, _worker_logins(case) as workers:
         with case.engine.connect() as connection:
             before = connection.exec_driver_sql(
@@ -129,6 +129,10 @@ def _factory_run(case, *, db_uri, tmp_path, monkeypatch):
             runtime_version=manifest["upstream_version"],
         )
         runtime = fixture.runtime
+        if inference_probe is not None:
+            from tests.saas.test_gateway_machine_metering import _customer_prices
+
+            _customer_prices(factory, actor=runtime.actor_id, tenant=runtime.tenant_id)
         dependencies = _official_dependencies(db_uri, tmp_path)
         conversations = dependencies["conversation_store"]
         permissions, projects = SqlAlchemyPermissionStore(db_uri), SqlAlchemyProjectStore(db_uri)
@@ -257,6 +261,29 @@ def _factory_run(case, *, db_uri, tmp_path, monkeypatch):
                 with pytest.raises(RunnerControlError):
                     await factory_runtime.authorize_model(
                         lease=replace(lease, capability_token="x" * 48), **kwargs
+                    )
+                if inference_probe is not None:
+
+                    async def provision():
+                        renewed_authority, credential = await factory_runtime.authorize_model(
+                            lease=lease, **kwargs
+                        )
+                        assert renewed_authority == authorized
+                        return credential
+
+                    await asyncio.to_thread(
+                        inference_probe,
+                        SimpleNamespace(
+                            fixture=fixture,
+                            authorized=authorized,
+                            lease=lease,
+                            credentials=credentials,
+                            provision=provision,
+                            machine={
+                                "runner_id": case.member.runner_id,
+                                "connection_generation": case.member.connection_generation,
+                            },
+                        ),
                     )
                 await client.transition_run(lease, target_status="succeeded")
                 assert not await client.release_run(lease)

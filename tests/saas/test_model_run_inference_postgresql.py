@@ -75,7 +75,7 @@ from tests.saas.test_model_run_inference import _fund_synthetic_gateway_calls, _
 from tests.saas.test_run_customer_pricing_postgresql import priced_execution as priced_execution
 
 
-def _real_litellm(publication):
+def _real_litellm(publication, *, credential_name=None):
     path = os.environ.get("OMNIGENT_SAAS_TEST_LITELLM_RUNTIME_FILE")
     if path is None:
         return None
@@ -93,7 +93,7 @@ def _real_litellm(publication):
             )
         )
         identifier = UUID(publication["deployment_id"])
-        name = "isolated-" + identifier.hex
+        name = credential_name or "isolated-" + identifier.hex
         await management.create_deepseek_credential(name=name, api_key=document["provider_key"])
         await management.create_deepseek_deployment(
             deployment_id=identifier,
@@ -129,35 +129,63 @@ def funded_publication(publication_protocol, monkeypatch):
     monkeypatch.setattr(test_tenant_model_catalog_postgresql, "_fixture", configured)
 
 
-@pytest.mark.parametrize("send", [False, True], ids=["closed-before-send", "inference"])
-def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
-    interactive_postgresql, tmp_path, send
-):
-    f = interactive_postgresql.base
-    with (
-        _worker_logins(f) as workers,
-        _authenticator_login(f) as authentication,
-        _billing_login(f) as billing,
-        _metering_login(f) as metering,
-    ):
+@contextmanager
+def _run_binding(fixture, factory_state):
+    if factory_state is not None:
+        yield factory_state
+        return
+    f = fixture.base
+    with _worker_logins(f) as workers, _authenticator_login(f) as authentication:
         _customer_prices(
             f.factory,
-            actor=interactive_postgresql.runtime.actor_id,
-            tenant=interactive_postgresql.runtime.tenant_id,
+            actor=fixture.runtime.actor_id,
+            tenant=fixture.runtime.tenant_id,
         )
         runtime, authorized, lease, _control, machine = _claim(
-            interactive_postgresql, workers, include_controller=True
+            fixture, workers, include_controller=True
         )
         credentials = ModelRunCredentialService(
             app_sessions=f.app_factory,
             authenticator_sessions=authentication,
             compatibility=runtime._resolver._compatibility_policy,
         )
+
+        async def provision():
+            return await asyncio.to_thread(credentials.issue, authorized, lease)
+
+        from types import SimpleNamespace
+
+        yield SimpleNamespace(
+            authorized=authorized,
+            lease=lease,
+            credentials=credentials,
+            machine=machine,
+            provision=provision,
+        )
+
+
+def _exercise_run_inference(
+    interactive_postgresql, tmp_path, send, *, factory_state=None, configuration_probe=None
+):
+    f = interactive_postgresql.base
+    with (
+        _run_binding(interactive_postgresql, factory_state) as binding,
+        _billing_login(f) as billing,
+        _metering_login(f) as metering,
+    ):
+        authorized, lease = binding.authorized, binding.lease
+        credentials, machine = binding.credentials, binding.machine
         issued = credentials.issue(authorized, lease)
         published = credentials.authorize(credentials.authenticate(issued.value))
-        actual = _real_litellm(published.configuration)
+        actual = (
+            configuration_probe(published.configuration)
+            if configuration_probe is not None
+            else _real_litellm(published.configuration)
+        )
+        metering_path = tmp_path / "metering-pki"
+        metering_path.mkdir()
         certificates, fingerprint = _register_metering_certificate(
-            f.factory, machine["runner_id"], machine["connection_generation"], tmp_path
+            f.factory, machine["runner_id"], machine["connection_generation"], metering_path
         )
         _enable_budget(f.factory)
         with f.factory.begin() as db:
@@ -275,9 +303,6 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
 
             gateway._client_factory = fail_before_send
 
-        async def provision():
-            return await asyncio.to_thread(credentials.issue, authorized, lease)
-
         scope = ModelChannelScope(
             tenant_id=authorized.runtime.tenant_id,
             space_id=authorized.runtime.space_id,
@@ -301,7 +326,7 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
         relay = PlatformModelRelay.for_run(
             run_id=lease.run_id,
             fence_token=lease.fence_token,
-            credential_provider=provision,
+            credential_provider=binding.provision,
             metering=meter,
             capability=channel.secret_value,
             client_factory=lambda: httpx.AsyncClient(transport=httpx.ASGITransport(app=app)),
@@ -368,6 +393,13 @@ def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
             relay.close()
             meter.close(timeout_seconds=0)
             thread.close()
+
+
+@pytest.mark.parametrize("send", [False, True], ids=["closed-before-send", "inference"])
+def test_real_machine_relay_spools_before_egress_and_recovers_committed_ack(
+    interactive_postgresql, tmp_path, send
+):
+    _exercise_run_inference(interactive_postgresql, tmp_path, send)
 
 
 @contextmanager
