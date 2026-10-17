@@ -6,12 +6,18 @@ import asyncio
 import contextlib
 import logging
 import os
+import ssl
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import sqlalchemy as sa
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.control_plane.interactive_run_route import interactive_session_identity
@@ -24,16 +30,55 @@ from saas.production.interactive_model_channel import (
 from saas.production.interactive_recovery import InteractiveRecoveryJournal
 from saas.production.runner_agent import (
     ProductionRunnerAgent,
+    _secure_file,
     build_runner_client,
     load_production_runner_agent_config,
     verify_installed_runner_agent_lineage,
 )
+from saas.production.runner_control import RunnerControlError, runner_identity_from_certificate
 from saas.production.runner_executor import _runner_agent_database_login
 from saas.production.runner_readiness import build_remote_tls_runner_control_readiness
 from saas.production.server_config import load_production_database_url_file
 from saas.runner_adapter.metering import ManagedMeteringGrant
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class InteractiveMeteringCredentials:
+    ca: Path
+    certificate: Path
+    key: Path
+
+
+def load_interactive_metering_credentials(
+    source: Mapping[str, str], *, runner_id: UUID, control_certificate: Path
+) -> InteractiveMeteringCredentials:
+    """Control and Billing require separately registered purpose-bound leaves."""
+    try:
+        ca = _secure_file(source, "OMNIGENT_SAAS_INTERACTIVE_METERING_CA_FILE", secret=False)
+        certificate = _secure_file(
+            source, "OMNIGENT_SAAS_INTERACTIVE_METERING_CLIENT_CERTIFICATE_FILE", secret=False
+        )
+        key = _secure_file(
+            source, "OMNIGENT_SAAS_INTERACTIVE_METERING_CLIENT_KEY_FILE", secret=True
+        )
+        leaf = certificate.read_bytes()
+        fingerprint = x509.load_pem_x509_certificate(leaf).fingerprint(hashes.SHA256())
+        control_fingerprint = x509.load_pem_x509_certificate(
+            control_certificate.read_bytes()
+        ).fingerprint(hashes.SHA256())
+        if (
+            runner_identity_from_certificate(leaf) != runner_id
+            or fingerprint == control_fingerprint
+        ):
+            raise _unavailable()
+        tls = ssl.create_default_context(cafile=str(ca))
+        tls.minimum_version = ssl.TLSVersion.TLSv1_3
+        tls.load_cert_chain(str(certificate), str(key))
+    except (OSError, ValueError, RunnerControlError):
+        raise _unavailable() from None
+    return InteractiveMeteringCredentials(ca, certificate, key)
 
 
 class ProductionInteractiveControllerAdapter:
@@ -110,9 +155,12 @@ class ProductionInteractiveControllerAdapter:
             or not root.is_absolute()
         ):
             raise _unavailable()
+        cfg = self._config
+        metering = load_interactive_metering_credentials(
+            source, runner_id=cfg.runner_id, control_certificate=cfg.client_certificate_path
+        )
         journal = InteractiveRecoveryJournal(root)
         self._journal = journal
-        cfg = self._config
         authority = runtime.create_authority(
             identity=cfg, control=self._client, runner_sessions=self._sessions, fleet_source=source
         )
@@ -145,9 +193,9 @@ class ProductionInteractiveControllerAdapter:
                 expires_at=lease.expires_at,
                 metering_base_url=url,
                 expected_host=parsed.hostname,
-                ca_certificate_path=cfg.ca_certificate_path,
-                client_certificate_path=cfg.client_certificate_path,
-                client_key_path=cfg.client_key_path,
+                ca_certificate_path=metering.ca,
+                client_certificate_path=metering.certificate,
+                client_key_path=metering.key,
                 spool_directory=journal.root / "usage" / str(lease.run_id),
             )
 
@@ -155,9 +203,9 @@ class ProductionInteractiveControllerAdapter:
             if (
                 record.grant.metering_base_url != url
                 or record.grant.expected_host != parsed.hostname
-                or record.grant.ca_certificate_path != cfg.ca_certificate_path
-                or record.grant.client_certificate_path != cfg.client_certificate_path
-                or record.grant.client_key_path != cfg.client_key_path
+                or record.grant.ca_certificate_path != metering.ca
+                or record.grant.client_certificate_path != metering.certificate
+                or record.grant.client_key_path != metering.key
                 or record.grant.spool_directory != journal.root / "usage" / str(record.run_id)
             ):
                 raise _unavailable()
