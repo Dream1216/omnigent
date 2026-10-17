@@ -26,6 +26,7 @@ from saas.control_plane import (
     RuntimePlacementRecord,
 )
 from saas.control_plane.isolation import IsolationControlPlane
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.control_plane.worktrees import WorktreeControlPlane
 from saas.production.runner_control import RunnerControlError
 from saas.production.runner_database_fleet import (
@@ -519,7 +520,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
                 "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
                 "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
-                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "lm1f00000001",
+                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": CONTROL_PLANE_SCHEMA_REVISION,
                 RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
             }
         )
@@ -591,24 +592,76 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     "Runner database fleet admission is unavailable",
                 ) from None
 
-        executor = ProductionHostIsolationExecutor(
-            config=SimpleNamespace(
-                product_revision=product_revision,
-                image_digest=image_digest,
-                runner_id=first_member.runner_id,
-                connection_generation=first_member.connection_generation,
-            ),
-            engine=login_engines[0],
-            sessions=sessionmaker(login_engines[0], expire_on_commit=False, class_=Session),
-            worktrees=cast(WorktreeControlPlane, object()),
-            isolation=cast(IsolationControlPlane, object()),
-            worktree_adapter=cast(RunnerWorktreeAdapter, object()),
-            isolation_adapter=cast(RunnerIsolationAdapter, object()),
-            reserved_bytes=1,
-            worktree_lease_seconds=30,
-            command_timeout_seconds=30,
-            database_fleet_verifier=verify_first_runtime,
+        def build_executor() -> ProductionHostIsolationExecutor:
+            return ProductionHostIsolationExecutor(
+                config=SimpleNamespace(
+                    product_revision=product_revision,
+                    image_digest=image_digest,
+                    runner_id=first_member.runner_id,
+                    connection_generation=first_member.connection_generation,
+                ),
+                engine=login_engines[0],
+                sessions=sessionmaker(login_engines[0], expire_on_commit=False, class_=Session),
+                worktrees=cast(WorktreeControlPlane, object()),
+                isolation=cast(IsolationControlPlane, object()),
+                worktree_adapter=cast(RunnerWorktreeAdapter, object()),
+                isolation_adapter=cast(RunnerIsolationAdapter, object()),
+                reserved_bytes=1,
+                worktree_lease_seconds=30,
+                command_timeout_seconds=30,
+                database_fleet_verifier=verify_first_runtime,
+            )
+
+        recovery_signature = (
+            "public.saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)"
         )
+        with owner_engine.connect() as connection:
+            recovery_definition = str(
+                connection.scalar(
+                    sa.text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
+                    {"signature": recovery_signature},
+                )
+            )
+        for mutation, restoration in (
+            (
+                "CREATE OR REPLACE FUNCTION public.saas_interactive_recovery_owner_v1("
+                "requested_run uuid, expected_fence bigint, expected_runner uuid, "
+                "expected_generation bigint, expected_binding jsonb) RETURNS boolean "
+                "LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog "
+                "AS 'SELECT true'",
+                recovery_definition,
+            ),
+            (
+                f"GRANT EXECUTE ON FUNCTION {recovery_signature} TO PUBLIC",
+                f"REVOKE EXECUTE ON FUNCTION {recovery_signature} FROM PUBLIC",
+            ),
+        ):
+            candidate = build_executor()
+            candidate.assert_claimable()
+            with owner_engine.begin() as connection:
+                connection.exec_driver_sql(mutation)
+            try:
+                for member, login_engine in zip(fleet.runners, login_engines, strict=True):
+                    with pytest.raises(RunnerControlError) as rejected:
+                        _verify_runner_agent_database_authority(
+                            login_engine,
+                            runner_id=member.runner_id,
+                            connection_generation=member.connection_generation,
+                            fleet_members=runtime_members,
+                        )
+                    assert rejected.value.code == "runner_executor_not_ready"
+                with pytest.raises(RunnerControlError) as drifted:
+                    candidate.assert_claimable()
+                assert drifted.value.code == "runner_database_authority_drifted"
+            finally:
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(restoration)
+            with pytest.raises(RunnerControlError) as poisoned:
+                candidate.assert_claimable()
+            assert poisoned.value.code == "runner_database_authority_poisoned"
+            verify_first_runtime()
+
+        executor = build_executor()
         executor.assert_claimable()
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(

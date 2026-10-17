@@ -2918,7 +2918,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                 )
 
         before = current_projection()
-        assert before == (CONTROL_PLANE_SCHEMA_REVISION, 18, 19, 2)
+        assert before == (CONTROL_PLANE_SCHEMA_REVISION, 19, 19, 2)
         with pytest.raises(sa.exc.DBAPIError, match="must be drained before downgrade"):
             with owner_engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")

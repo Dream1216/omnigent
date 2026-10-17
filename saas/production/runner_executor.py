@@ -135,8 +135,8 @@ _RUNNER_AGENT_SUPPORT_POLICY_SHA256_BY_MAJOR = {
     18: "dc0b05ef2b6602113a0158cab27b3e787f39edd8b285ab40bc10aa5fd78bd65e",
 }
 _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR = {
-    16: "43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02",
-    18: "43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02",
+    16: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
+    18: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
 }
 _RUNNER_AGENT_POLICY_COUNT = 36
 _RUNNER_AGENT_POLICY_RELATION_COUNT = 18
@@ -293,6 +293,7 @@ _RUNNER_AGENT_UPDATE_COLUMNS: frozenset[tuple[str, str]] = frozenset()
 _RUNNER_AGENT_API_FUNCTION_SIGNATURES = (
     ("saas_runner_agent_identity_v1", "uuid, bigint"),
     ("saas_runner_agent_registered_v1", "uuid, bigint"),
+    ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb"),
     (
         "saas_runner_allocate_worktree_v1",
         "text, uuid, uuid, uuid, uuid, text, bigint, integer, text, text, uuid",
