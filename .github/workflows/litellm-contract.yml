@@ -20,6 +20,7 @@ on:
       - saas/control_plane/execution.py
       - saas/control_plane/execution_models.py
       - saas/control_plane/interactive_execution.py
+      - saas/control_plane/interactive_launch.py
       - saas/control_plane/interactive_run_route.py
       - saas/control_plane/public_api.py
       - saas/control_plane/run_dispatch_projection.py

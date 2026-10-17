@@ -10,7 +10,7 @@ from saas.control_plane.interactive_run_route import (
     decode_interactive_run_route,
     interactive_session_identity,
 )
-from tests.saas.test_interactive_execution_http import _message
+from tests.saas.test_interactive_execution_http import _launch, _message
 
 
 def _input():
@@ -21,6 +21,7 @@ def _input():
             "runtime_partition_generation": 3,
             "runtime_session_id": uuid4().hex,
             "runtime_project_id": uuid4().hex,
+            "launch": _launch(),
             "model_publication": {
                 "schema_version": 1,
                 "public_model_id": "synthetic-public-id",
@@ -58,6 +59,11 @@ def test_interactive_route_keeps_runtime_and_saas_identities_distinct_and_scope_
         (("runtime_partition_id",), "0" * 32),
         (("runtime_session_id",), "not-a-runtime-id"),
         (("runtime_project_id",), None),
+        (("launch", "host_id"), None),
+        (("launch", "host_type"), {}),
+        (("launch", "workspace"), "relative/path"),
+        (("launch", "workspaces"), ["https://github.com/example/repo.git"]),
+        (("launch", "terminal_launch_args"), {"command": "not-accepted"}),
         (("event", "created_by"), "someone-else"),
         (("event", "tools"), []),
         (("event", "model_override"), {}),
@@ -85,3 +91,10 @@ def test_interactive_route_rejects_undeclared_execution_fields():
     payload["execution"]["argv"] = ["not-an-interactive-command"]
     with pytest.raises(InteractiveRunRouteError):
         decode_interactive_run_route(payload)
+
+
+@pytest.mark.parametrize("workspace", ["/workspace", "C:/workspace", r"\\server\share\repo"])
+def test_interactive_route_preserves_supported_absolute_workspace_formats(workspace):
+    payload = _input()
+    payload["execution"]["launch"]["workspace"] = workspace
+    decode_interactive_run_route(payload)

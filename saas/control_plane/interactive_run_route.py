@@ -90,6 +90,7 @@ def decode_interactive_run_route(input_payload: object) -> InteractiveRunRoute:
             "runtime_session_id",
             "runtime_project_id",
             "model_publication",
+            "launch",
             "event",
         }
         or execution.get("kind") != INTERACTIVE_EXECUTION_KIND
@@ -142,4 +143,7 @@ def decode_interactive_run_route(input_payload: object) -> InteractiveRunRoute:
     ):
         raise InteractiveRunRouteError("interactive_run_route_invalid")
     interactive_message_intent(event)
+    from saas.control_plane.interactive_launch import decode_interactive_launch
+
+    decode_interactive_launch(execution["launch"])
     return InteractiveRunRoute(partition_id, generation, session_id, project_id)

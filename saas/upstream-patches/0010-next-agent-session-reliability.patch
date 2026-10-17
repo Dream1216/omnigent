@@ -552,3 +552,46 @@ index 2987e8d02..d95a15948 100644
 +                runner_router=runner_router,
 +            )
 +
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 4a4bc5f3c..7a95cc5d4 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -10531,15 +10531,30 @@ async def _create_session_from_existing_agent(
+                     code=ErrorCode.INVALID_INPUT,
+                 )
+         if selection_spec is not None:
+-            inference_snapshot, model_override = await prepare_create_inference(
+-                request,
+-                body,
+-                selection_spec,
+-                user_id,
+-                conversation_store,
+-                harness_override=harness_override,
+-                model_override=model_override,
++            prepare_override = getattr(conversation_store, "prepare_session_inference", None)
++            prepared = (
++                await prepare_override(
++                    request,
++                    body,
++                    selection_spec,
++                    user_id,
++                    harness_override=harness_override,
++                    model_override=model_override,
++                )
++                if prepare_override is not None
++                else None
+             )
++            if prepared is None:
++                prepared = await prepare_create_inference(
++                    request,
++                    body,
++                    selection_spec,
++                    user_id,
++                    conversation_store,
++                    harness_override=harness_override,
++                    model_override=model_override,
++                )
++            inference_snapshot, model_override = prepared
+         if (
+             selection_spec is not None
+             and not configured_snapshot(inference_snapshot)

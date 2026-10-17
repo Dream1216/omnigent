@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from typing import Any
 
+from omnigent.db.db_models import uuid_to_bytes
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.harness_aliases import canonicalize_harness
+from omnigent.server.auth import LEVEL_EDIT
+from omnigent.server.routes._auth_helpers import require_access_and_level
+from omnigent.server.routes.sandbox_inference import actual_harness
 from omnigent.server.schemas import SessionEventInput
+from omnigent.stores.conversation_store import ConversationAlreadyExistsError
 from saas.compatibility import current_runtime_context
 from saas.control_plane.authorization import ProjectAuthorizationError
 from saas.control_plane.execution import ExecutionControlPlaneError
@@ -16,6 +23,10 @@ from saas.control_plane.interactive_execution import (
     InteractiveExecutionError,
     RuntimeSessionRunAdmission,
 )
+from saas.control_plane.interactive_launch import (
+    MANAGED_LAUNCH_SNAPSHOT_KEY,
+    decode_interactive_launch,
+)
 from saas.control_plane.interactive_run_route import InteractiveRunRouteError
 from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 
@@ -23,12 +34,173 @@ from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 class InteractiveConversationStore:
     """Preserve official persistence and intercept only marked execution channels."""
 
-    def __init__(self, delegate: Any, admission: RuntimeSessionRunAdmission) -> None:
+    def __init__(
+        self, delegate: Any, admission: RuntimeSessionRunAdmission, *, permission_store: Any
+    ) -> None:
         self._delegate = delegate
         self._admission = admission
+        self._permissions = permission_store
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)
+
+    async def prepare_session_inference(
+        self,
+        request: Any,
+        body: Any,
+        spec: Any,
+        user_id: str | None,
+        *,
+        harness_override: str | None,
+        model_override: str | None,
+    ) -> tuple[dict[str, Any], str] | None:
+        """Freeze an explicitly selected publication without calling a supplier."""
+        revision = body.inference_configuration_revision
+        if not isinstance(revision, str) or not revision.startswith("managed-model:"):
+            return None
+        try:
+            runtime = current_runtime_context()
+        except RuntimeError:
+            raise OmnigentError("interactive_context_required", code=ErrorCode.FORBIDDEN) from None
+        if (
+            user_id != runtime.runtime_user_key
+            or model_override is None
+            or body.parent_session_id is not None
+            or body.sub_agent_name is not None
+            or body.cost_control_mode_override == "on"
+            or harness_override == "auto"
+            or spec.executor.auth is not None
+            or spec.executor.profile
+        ):
+            raise OmnigentError("interactive_selection_invalid", code=ErrorCode.INVALID_INPUT)
+        existing = None
+        create_token = body.labels.get("omnigent.client_create_token")
+        if create_token:
+            candidate = await asyncio.to_thread(self._delegate.get_conversation, create_token)
+            if candidate is not None and self.owns_session_input(candidate):
+                if self._permissions is None:
+                    raise OmnigentError("interactive_context_required", code=ErrorCode.FORBIDDEN)
+                await require_access_and_level(
+                    user_id,
+                    create_token,
+                    LEVEL_EDIT,
+                    self._permissions,
+                    self._delegate,
+                )
+                existing = candidate
+        try:
+            marker = await asyncio.to_thread(
+                self._admission.prepare_selection,
+                runtime,
+                runtime_project_id=body.project_id,
+                model_id=model_override,
+                configuration_revision=revision,
+                existing=existing,
+            )
+        except (InteractiveExecutionError, TenantModelCatalogError):
+            raise OmnigentError(
+                "interactive_selection_unavailable", code=ErrorCode.INVALID_INPUT
+            ) from None
+        except ProjectAuthorizationError:
+            raise OmnigentError(
+                "interactive_selection_not_accessible", code=ErrorCode.FORBIDDEN
+            ) from None
+        harness = actual_harness(spec, harness_override)
+        canonical = canonicalize_harness(harness)
+        supported = (
+            {"codex", "codex-native", "openai-agents"}
+            if marker["wire_api"] == "openai_responses"
+            else {"qwen", "jcode", "opencode-native", "openai-agents"}
+        )
+        if canonical not in supported:
+            raise OmnigentError(
+                "interactive_model_harness_unsupported", code=ErrorCode.INVALID_INPUT
+            )
+        provider = None
+        if body.host_type == "managed":
+            deployment = getattr(request.app.state, "sandbox_config", None)
+            selected_provider = body.sandbox_provider
+            if selected_provider is None and existing is not None:
+                previous_target = decode_interactive_launch(
+                    (existing.inference_snapshot or {}).get(MANAGED_LAUNCH_SNAPSHOT_KEY)
+                )
+                selected_provider = previous_target["sandbox_provider"]
+            target = deployment.for_provider(selected_provider) if deployment else None
+            if deployment is None or target is None or not target.managed_launch_supported:
+                raise OmnigentError(
+                    "interactive_sandbox_unavailable", code=ErrorCode.INVALID_INPUT
+                )
+            provider = target.provider
+            if len(
+                body.managed_repo_workspaces()
+            ) > 1 and not deployment.provider_ui_capabilities().get(provider, {}).get(
+                "multi_repo", False
+            ):
+                raise OmnigentError(
+                    "interactive_sandbox_multi_repo_unsupported", code=ErrorCode.INVALID_INPUT
+                )
+        elif body.host_id is None:
+            raise OmnigentError("interactive_host_required", code=ErrorCode.INVALID_INPUT)
+        return {
+            "runtime_config": {},
+            "harness": harness,
+            MANAGED_EXECUTION_SNAPSHOT_KEY: marker,
+            MANAGED_LAUNCH_SNAPSHOT_KEY: {
+                "schema_version": 1,
+                "host_type": body.host_type,
+                "host_id": body.host_id,
+                "sandbox_provider": provider,
+                "workspaces": body.managed_repo_workspaces()
+                if body.host_type == "managed"
+                else [],
+                "harness": harness,
+            },
+        }, model_override
+
+    def create_conversation(self, **kwargs: Any) -> Conversation:
+        """Complete the target using canonical values accepted by official creation."""
+        snapshot = kwargs.get("inference_snapshot")
+        if isinstance(snapshot, dict) and MANAGED_EXECUTION_SNAPSHOT_KEY in snapshot:
+            snapshot = copy.deepcopy(snapshot)
+            launch = snapshot.get(MANAGED_LAUNCH_SNAPSHOT_KEY)
+            if not isinstance(launch, dict):
+                raise OmnigentError("interactive_launch_invalid", code=ErrorCode.INVALID_INPUT)
+            managed = launch.get("host_type") == "managed"
+            launch.update(
+                {
+                    "host_id": None if managed else uuid_to_bytes(kwargs["host_id"]).hex(),
+                    "agent_id": kwargs.get("agent_id"),
+                    "workspace": None if managed else kwargs.get("workspace"),
+                    "git_branch": None if managed else kwargs.get("git_branch"),
+                    "reasoning_effort": kwargs.get("reasoning_effort"),
+                    "terminal_launch_args": kwargs.get("terminal_launch_args"),
+                }
+            )
+            decode_interactive_launch(launch)
+            kwargs["inference_snapshot"] = snapshot
+        try:
+            return self._delegate.create_conversation(**kwargs)
+        except ConversationAlreadyExistsError:
+            existing = self._delegate.get_conversation(kwargs.get("conversation_id"))
+            previous = existing.inference_snapshot if existing is not None else None
+            if (existing is not None and self.owns_session_input(existing)) or (
+                isinstance(snapshot, dict) and MANAGED_EXECUTION_SNAPSHOT_KEY in snapshot
+            ):
+                if (
+                    existing is None
+                    or not isinstance(previous, dict)
+                    or not isinstance(snapshot, dict)
+                    or previous.get(MANAGED_EXECUTION_SNAPSHOT_KEY)
+                    != snapshot.get(MANAGED_EXECUTION_SNAPSHOT_KEY)
+                    or previous.get(MANAGED_LAUNCH_SNAPSHOT_KEY)
+                    != snapshot.get(MANAGED_LAUNCH_SNAPSHOT_KEY)
+                    or existing.project_id != kwargs.get("project_id")
+                    or existing.model_override != kwargs.get("model_override")
+                ):
+                    raise OmnigentError(
+                        "interactive_create_conflict", code=ErrorCode.CONFLICT
+                    ) from None
+            raise
 
     @staticmethod
     def owns_session_input(conversation: Conversation) -> bool:

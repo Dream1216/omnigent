@@ -52,10 +52,22 @@ def test_actual_app_login_reads_only_active_customer_scope_and_cannot_manage_mod
             "snapshot_sha256": publication.snapshot_sha256,
         }
     catalog.require_version(runtime, reference)
+    selection = catalog.resolve_selection(
+        runtime,
+        model_id=rows[0]["model_id"],
+        configuration_revision=rows[0]["configuration_revision"],
+    )
+    assert selection == {"schema_version": 1, **reference}
     for field in ("tenant_id", "space_id", "actor_id"):
         assert catalog.list(replace(runtime, **{field: uuid4()})) == []
         with pytest.raises(TenantModelCatalogError):
             catalog.require_version(replace(runtime, **{field: uuid4()}), reference)
+        with pytest.raises(TenantModelCatalogError):
+            catalog.resolve_selection(
+                replace(runtime, **{field: uuid4()}),
+                model_id=rows[0]["model_id"],
+                configuration_revision=rows[0]["configuration_revision"],
+            )
     with f.app.connect() as connection:
         assert connection.exec_driver_sql("SELECT current_user=session_user").scalar_one()
         assert (
@@ -84,7 +96,8 @@ def test_actual_app_catalog_rechecks_customer_membership_each_read(
 ):
     f = priced_execution
     catalog, runtime = _published(f, monkeypatch)
-    assert len(catalog.list(runtime)) == 1
+    rows = catalog.list(runtime)
+    assert len(rows) == 1
     with f.factory.begin() as db:
         db.execute(
             sa.update(membership)
@@ -94,3 +107,9 @@ def test_actual_app_catalog_rechecks_customer_membership_each_read(
             .values(status="suspended")
         )
     assert catalog.list(runtime) == []
+    with pytest.raises(TenantModelCatalogError):
+        catalog.resolve_selection(
+            runtime,
+            model_id=rows[0]["model_id"],
+            configuration_revision=rows[0]["configuration_revision"],
+        )

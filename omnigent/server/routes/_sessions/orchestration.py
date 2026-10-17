@@ -10531,15 +10531,30 @@ async def _create_session_from_existing_agent(
                     code=ErrorCode.INVALID_INPUT,
                 )
         if selection_spec is not None:
-            inference_snapshot, model_override = await prepare_create_inference(
-                request,
-                body,
-                selection_spec,
-                user_id,
-                conversation_store,
-                harness_override=harness_override,
-                model_override=model_override,
+            prepare_override = getattr(conversation_store, "prepare_session_inference", None)
+            prepared = (
+                await prepare_override(
+                    request,
+                    body,
+                    selection_spec,
+                    user_id,
+                    harness_override=harness_override,
+                    model_override=model_override,
+                )
+                if prepare_override is not None
+                else None
             )
+            if prepared is None:
+                prepared = await prepare_create_inference(
+                    request,
+                    body,
+                    selection_spec,
+                    user_id,
+                    conversation_store,
+                    harness_override=harness_override,
+                    model_override=model_override,
+                )
+            inference_snapshot, model_override = prepared
         if (
             selection_spec is not None
             and not configured_snapshot(inference_snapshot)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any
@@ -88,6 +89,63 @@ class TenantModelCatalog:
                 raise TenantModelCatalogError("managed model catalog unavailable")
             self._snapshot(row, runtime)
 
+    def resolve_selection(
+        self, runtime: RuntimeContext, *, model_id: str, configuration_revision: str
+    ) -> dict[str, object]:
+        """Resolve a customer reference from stored metadata, never caller snapshots."""
+        match = re.fullmatch(
+            r"managed-model:(openai_chat_completions|openai_responses):([1-9][0-9]{0,9}):([0-9a-f]{64})",
+            configuration_revision,
+        )
+        if match is None:
+            raise TenantModelCatalogError("managed model selection invalid")
+        wire_api, generation, digest = match.groups()
+        with self._session("resolve_create_selection") as db:
+            apply_rls_context(
+                db,
+                RlsContext(
+                    actor_id=runtime.actor_id,
+                    tenant_id=runtime.tenant_id,
+                    space_id=runtime.space_id,
+                    project_id=runtime.project_id,
+                ),
+            )
+            row = (
+                db.execute(
+                    sa.select(
+                        Publication.tenant_id,
+                        Publication.public_model_id,
+                        Publication.wire_api,
+                        Publication.generation,
+                        Publication.canonical_snapshot,
+                        Publication.snapshot_sha256,
+                    )
+                    .where(
+                        Publication.tenant_id == runtime.tenant_id,
+                        Publication.public_model_id == model_id,
+                        Publication.wire_api == wire_api,
+                    )
+                    .order_by(Publication.generation.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                row is None
+                or row["generation"] != int(generation)
+                or row["snapshot_sha256"] != digest
+            ):
+                raise TenantModelCatalogError("managed model selection changed")
+            self._snapshot(row, runtime)
+            return {
+                "schema_version": 1,
+                "public_model_id": model_id,
+                "wire_api": wire_api,
+                "generation": row["generation"],
+                "snapshot_sha256": digest,
+            }
+
     def list(self, runtime: RuntimeContext) -> list[dict[str, object]]:
         """Read candidate metadata without authorizing inference or customer charges."""
 
@@ -144,6 +202,10 @@ class TenantModelCatalog:
                         "transport": "litellm",
                         "wire_api": row["wire_api"],
                         "generation": row["generation"],
+                        "configuration_revision": (
+                            f"managed-model:{row['wire_api']}:{row['generation']}:"
+                            f"{row['snapshot_sha256']}"
+                        ),
                         "available": False,
                         "unavailable_reason": "runtime_not_enabled",
                     }

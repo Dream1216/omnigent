@@ -10,9 +10,12 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from omnigent.errors import OmnigentError
+from omnigent.host.frames import HostHelloFrame, HostStatFrame, decode_host_frame
 from omnigent.server.app import create_app
 from omnigent.server.auth import LEVEL_OWNER
+from omnigent.server.managed_hosts import ManagedSandboxConfig, ManagedSandboxDeployment
 from omnigent.server.schemas import SessionEventInput
+from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from saas.compatibility import bind_runtime_context
@@ -39,6 +42,7 @@ from saas.control_plane.outbox import OutboxClaimRoute, OutboxDispatcher
 from saas.control_plane.run_dispatch_projection import RunQueuedDispatchProjection
 from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
+from saas.control_plane.tenant_model_catalog import TenantModelCatalog
 from saas.production.interactive_execution import InteractiveConversationStore
 from tests.saas import test_model_projection
 from tests.saas.test_agent_catalog import _runtime
@@ -143,6 +147,7 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
         )
     _plan(factory, SimpleNamespace(owner_id=runtime.actor_id, tenant_id=runtime.tenant_id))
     dependencies = _official_dependencies(db_uri, tmp_path)
+    dependencies["host_store"] = HostStore(db_uri)
     permissions = SqlAlchemyPermissionStore(db_uri)
     projects = SqlAlchemyProjectStore(db_uri)
     admission = RuntimeSessionRunAdmission(
@@ -152,16 +157,20 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
         ),
     )
     delegate = dependencies["conversation_store"]
-    store = InteractiveConversationStore(delegate, admission)
+    store = InteractiveConversationStore(delegate, admission, permission_store=permissions)
     with bind_runtime_context(runtime):
         projects.create(runtime_project_id, "Interactive project", runtime.runtime_user_key)
         conversation = delegate.create_conversation(
+            agent_id="b" * 32,
+            host_id="c" * 32,
+            workspace="/workspace",
             project_id=runtime_project_id,
             model_override=marker["public_model_id"],
             inference_snapshot={
                 "runtime_config": {},
                 "harness": "codex",
                 "managed_execution": marker,
+                "managed_launch": _launch(),
             },
         )
         permissions.grant(runtime.runtime_user_key, conversation.id, LEVEL_OWNER)
@@ -191,6 +200,10 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
         permissions=permissions,
         dependencies=dependencies,
         calls=calls,
+        publication_service=service,
+        publication_worker=worker,
+        publication_actor=actor,
+        publication_command=command,
         headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
     )
     client.close()
@@ -205,6 +218,22 @@ def _message(stable_id="a" * 32, text="Build the requested page"):
             "stable_id": stable_id,
             "content": [{"type": "input_text", "text": text}],
         },
+    }
+
+
+def _launch():
+    return {
+        "schema_version": 1,
+        "host_type": "external",
+        "host_id": "c" * 32,
+        "sandbox_provider": None,
+        "workspaces": [],
+        "workspace": "/workspace",
+        "git_branch": None,
+        "agent_id": "b" * 32,
+        "harness": "codex",
+        "reasoning_effort": None,
+        "terminal_launch_args": None,
     }
 
 
@@ -518,11 +547,7 @@ async def test_marked_background_input_cannot_bypass_policy_or_actor_admission(i
         assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 0
 
 
-@pytest.mark.parametrize("recover_failed_admission", [None, "quota", "actor"])
-def test_new_session_initial_items_uses_the_same_admission_contract(
-    interactive_http, monkeypatch, recover_failed_admission
-):
-    f = interactive_http
+def _managed_create(f):
     agent_id = uuid4().hex
     bundle_path = f"{agent_id}/bundle"
     with bind_runtime_context(f.runtime):
@@ -531,26 +556,45 @@ def test_new_session_initial_items_uses_the_same_admission_contract(
         bundle_path,
         build_agent_bundle(
             name="interactive-agent",
-            executor={"type": "omnigent", "config": {"harness": "codex"}},
+            executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
             include_llm=False,
         ),
     )
-    original_create = f.delegate.create_conversation
 
-    def seed_marked_session(**kwargs):
-        # Seed trusted server configuration; production model selection is not enabled.
-        kwargs["inference_snapshot"] = f.conversation.inference_snapshot
-        kwargs["model_override"] = f.marker["public_model_id"]
-        return original_create(**kwargs)
+    def unused_launcher():
+        pytest.fail("admission must not launch a legacy Sandbox")
 
-    monkeypatch.setattr(f.delegate, "create_conversation", seed_marked_session)
-    before_calls = list(f.calls)
-    body = {
+    f.app.state.sandbox_config = ManagedSandboxDeployment.single(
+        ManagedSandboxConfig(
+            server_url="http://isolated.invalid",
+            token_ttl_s=3600,
+            provider="kubernetes",
+            launcher_factory=unused_launcher,
+        )
+    )
+    return {
         "agent_id": agent_id,
         "project_id": f.runtime_project_id,
+        "host_type": "managed",
+        "model_override": f.marker["public_model_id"],
+        "inference_configuration_revision": (
+            f"managed-model:{f.marker['wire_api']}:{f.marker['generation']}:"
+            f"{f.marker['snapshot_sha256']}"
+        ),
+        "workspaces": ["https://github.com/example/synthetic.git#feature"],
         "initial_items": [_message()],
         "labels": {"omnigent.client_create_token": uuid4().hex},
     }
+
+
+@pytest.mark.parametrize("recover_failed_admission", [None, "quota", "actor"])
+def test_new_session_initial_items_uses_the_same_admission_contract(
+    interactive_http, recover_failed_admission
+):
+    f = interactive_http
+    body = _managed_create(f)
+    agent_id = body["agent_id"]
+    before_calls = list(f.calls)
     if recover_failed_admission == "quota":
         with f.factory.begin() as db:
             db.execute(sa.update(AdmissionQuotaRecord).values(limit_units=1, consumed_units=1))
@@ -577,11 +621,219 @@ def test_new_session_initial_items_uses_the_same_admission_contract(
         assert run.status == "queued" and run.queue_class == "managed_interactive"
         assert run.input["execution"]["runtime_session_id"] == session_id
         assert run.input["execution"]["event"]["data"] == _message()["data"]
+        target = run.input["execution"]["launch"]
+        assert target["host_type"] == "managed" and target["sandbox_provider"] == "kubernetes"
+        assert target["workspaces"] == body["workspaces"]
+        assert target["agent_id"] == agent_id and target["harness"] == "openai-agents"
+        assert run.input["execution"]["model_publication"] == f.marker
         assert db.scalar(sa.select(sa.func.count()).select_from(TaskRecord)) == 1
     with bind_runtime_context(f.runtime):
-        assert f.delegate.get_conversation(session_id).runner_id is None
+        stored = f.delegate.get_conversation(session_id)
+        assert stored.runner_id is None
+        assert stored.inference_snapshot["managed_launch"] == target
         assert f.delegate.list_items(session_id).data == []
     assert f.calls == before_calls
+
+
+def test_managed_create_rejects_wrong_publication_project_and_target_before_persistence(
+    interactive_http,
+):
+    f = interactive_http
+    body = _managed_create(f)
+    before_calls = list(f.calls)
+    with bind_runtime_context(f.runtime):
+        before_sessions = len(f.delegate.list_conversations().data)
+    for changed in (
+        {"inference_configuration_revision": body["inference_configuration_revision"] + ":extra"},
+        {
+            "inference_configuration_revision": body["inference_configuration_revision"][:-64]
+            + "0" * 64
+        },
+        {"project_id": uuid4().hex},
+        {"model_override": "unpublished"},
+        {"sandbox_provider": "not-configured"},
+        {"host_type": "external", "workspace": None, "workspaces": None},
+    ):
+        response = f.client.post("/v1/sessions", json={**body, **changed}, headers=f.headers)
+        assert response.status_code in {400, 404}, response.text
+    with bind_runtime_context(f.runtime):
+        assert len(f.delegate.list_conversations().data) == before_sessions
+    with f.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 0
+        assert db.scalar(sa.select(sa.func.count()).select_from(TaskRecord)) == 0
+    assert f.calls == before_calls
+
+
+def test_managed_create_token_cannot_retarget_an_admitted_session(interactive_http):
+    f = interactive_http
+    body = _managed_create(f)
+    first = f.client.post("/v1/sessions", json=body, headers=f.headers)
+    assert first.status_code == 201, first.text
+    changed = {**body, "workspaces": ["https://github.com/example/other.git"]}
+    conflict = f.client.post("/v1/sessions", json=changed, headers=f.headers)
+    assert conflict.status_code == 409, conflict.text
+    with f.factory() as db:
+        run = db.scalars(sa.select(RunRecord)).one()
+        assert run.input["execution"]["launch"]["workspaces"] == body["workspaces"]
+
+
+def test_create_recovery_pins_publication_and_provider_across_configuration_changes(
+    interactive_http,
+):
+    f = interactive_http
+    body = _managed_create(f)
+    with f.factory.begin() as db:
+        db.execute(sa.update(AdmissionQuotaRecord).values(limit_units=1, consumed_units=1))
+    failed = f.client.post("/v1/sessions", json=body, headers=f.headers)
+    assert failed.status_code == 400, failed.text
+    publication = f.publication_service.admit(
+        f.publication_actor,
+        **{
+            **f.publication_command,
+            "expected_generation": 1,
+            "idempotency_key": "next-interactive-publication",
+        },
+    )
+    f.publication_worker.publish(**_envelope(f.factory, publication.id))
+    original = f.app.state.sandbox_config.default
+    f.app.state.sandbox_config = ManagedSandboxDeployment(
+        configs=(
+            replace(original, provider="agent_sandbox"),
+            original,
+        )
+    )
+    with f.factory.begin() as db:
+        db.execute(sa.update(AdmissionQuotaRecord).values(limit_units=100, consumed_units=0))
+    before_calls = list(f.calls)
+    recovered = f.client.post("/v1/sessions", json=body, headers=f.headers)
+    assert recovered.status_code == 201, recovered.text
+    assert recovered.json()["id"] == body["labels"]["omnigent.client_create_token"]
+    with f.factory() as db:
+        run = db.scalars(sa.select(RunRecord)).one()
+        assert run.input["execution"]["model_publication"] == f.marker
+        assert run.input["execution"]["launch"]["sandbox_provider"] == "kubernetes"
+    fresh = {**body, "labels": {"omnigent.client_create_token": uuid4().hex}}
+    stale = f.client.post("/v1/sessions", json=fresh, headers=f.headers)
+    assert stale.status_code == 400, stale.text
+    selected = TenantModelCatalog(f.factory.kw["bind"]).list(f.runtime)[0]
+    fresh["inference_configuration_revision"] = selected["configuration_revision"]
+    created = f.client.post("/v1/sessions", json=fresh, headers=f.headers)
+    assert created.status_code == 201, created.text
+    with f.factory() as db:
+        runs = list(db.scalars(sa.select(RunRecord)))
+        assert len(runs) == 2
+        new_run = next(
+            run
+            for run in runs
+            if run.input["execution"]["runtime_session_id"] == created.json()["id"]
+        )
+        assert new_run.input["execution"]["model_publication"]["generation"] == 2
+        assert new_run.input["execution"]["launch"]["sandbox_provider"] == "agent_sandbox"
+    assert f.calls == before_calls
+
+
+@pytest.mark.parametrize("owned", [False, True])
+def test_fixed_host_creation_freezes_canonical_workspace_after_real_owner_validation(
+    interactive_http, monkeypatch, owned
+):
+    f = interactive_http
+    body = _managed_create(f)
+    host_id = uuid4().hex
+    owner = f.runtime.runtime_user_key if owned else "other-runtime-user"
+    host_store = f.dependencies["host_store"]
+    registry = f.app.state.host_registry
+    with bind_runtime_context(f.runtime):
+        host_store.upsert_on_connect(
+            host_id, "isolated-host", owner, configured_harnesses={"openai-agents": True}
+        )
+        registry.register(
+            host_id=host_id,
+            ws=SimpleNamespace(),
+            owner=owner,
+            hello=HostHelloFrame(
+                version="isolated", frame_protocol_version=1, name="isolated-host"
+            ),
+        )
+    frames = []
+
+    def stat_reply(connection, raw):
+        frame = decode_host_frame(raw)
+        assert isinstance(frame, HostStatFrame), "admission must not launch a Runner"
+        frames.append(frame)
+        connection.pending_stats.pop(frame.request_id).set_result(
+            {
+                "status": "ok",
+                "exists": True,
+                "type": "directory",
+                "canonical_path": "/canonical/workspace",
+                "error": None,
+            }
+        )
+
+    monkeypatch.setattr(registry, "send_text", stat_reply)
+    body.update(
+        host_type="external", host_id=host_id, workspace="/selected/workspace", workspaces=None
+    )
+    response = f.client.post("/v1/sessions", json=body, headers=f.headers)
+    if not owned:
+        assert response.status_code == 403, response.text
+        assert frames == []
+        with f.factory() as db:
+            assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 0
+        return
+    assert response.status_code == 201, response.text
+    with f.factory() as db:
+        run = db.scalars(sa.select(RunRecord)).one()
+        target = run.input["execution"]["launch"]
+        assert target["host_id"] == host_id and target["sandbox_provider"] is None
+        assert target["workspace"] == "/canonical/workspace" and frames
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "host_id",
+        "workspace",
+        "agent_id",
+        "reasoning_effort",
+        "terminal_launch_args",
+        "harness_override",
+    ],
+)
+def test_message_cannot_retarget_the_accepted_launch(interactive_http, change):
+    f = interactive_http
+    updated = {
+        "host_id": uuid4().hex,
+        "agent_id": uuid4().hex,
+        "workspace": "/changed",
+        "reasoning_effort": "high",
+        "terminal_launch_args": ["--yolo"],
+        "harness_override": "openai-agents",
+    }[change]
+    with bind_runtime_context(f.runtime):
+        if change in {"host_id", "workspace"}:
+            f.delegate.set_host_id(
+                f.conversation.id,
+                updated if change == "host_id" else f.conversation.host_id,
+                workspace=updated if change == "workspace" else f.conversation.workspace,
+            )
+        elif change == "agent_id":
+            f.conversation = f.delegate.create_conversation(
+                agent_id=updated,
+                project_id=f.runtime_project_id,
+                host_id=f.conversation.host_id,
+                workspace=f.conversation.workspace,
+                model_override=f.conversation.model_override,
+                inference_snapshot=f.conversation.inference_snapshot,
+            )
+            f.permissions.grant(f.runtime.runtime_user_key, f.conversation.id, LEVEL_OWNER)
+        else:
+            f.delegate.update_conversation(f.conversation.id, **{change: updated})
+    rejected = _post(f, _message())
+    assert rejected.status_code == 400, rejected.text
+    assert "interactive_launch_changed" in rejected.text
+    with f.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 0
 
 
 @pytest.mark.parametrize(

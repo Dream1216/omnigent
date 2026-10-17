@@ -1503,6 +1503,7 @@ def build_production_server(
                 config.adapter_contract_version,
             ),
         ),
+        permission_store=app_dependencies["permission_store"],
     )
     # These official lifespan jobs run before request middleware can bind a
     # RuntimeContext. Keep both disabled in production even when a caller

@@ -23,7 +23,7 @@ from saas.control_plane import (
 from saas.control_plane.execution_models import ExecutionSessionRecord, RunRecord, TaskRecord
 from saas.control_plane.interactive_execution import RuntimeSessionRunAdmission
 from saas.control_plane.model_routing_models import ModelPublicationVersionRecord
-from tests.saas.test_interactive_execution_http import _message
+from tests.saas.test_interactive_execution_http import _launch, _message
 from tests.saas.test_run_customer_pricing import _plan
 from tests.saas.test_run_customer_pricing_postgresql import priced_execution as priced_execution
 from tests.saas.test_tenant_model_catalog_postgresql import _published
@@ -117,8 +117,11 @@ def interactive_postgresql(priced_execution, monkeypatch):
         created_at=1,
         updated_at=1,
         project_id=runtime_project_id,
+        agent_id="b" * 32,
+        host_id="c" * 32,
+        workspace="/workspace",
         model_override=marker["public_model_id"],
-        inference_snapshot={"managed_execution": marker},
+        inference_snapshot={"managed_execution": marker, "managed_launch": _launch()},
     )
     service = RuntimeSessionRunAdmission(
         f.app_factory,

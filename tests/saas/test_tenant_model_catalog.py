@@ -42,6 +42,7 @@ def test_tenant_catalog_reads_only_latest_safe_metadata_without_enabling_inferen
         "transport",
         "wire_api",
         "generation",
+        "configuration_revision",
         "available",
         "unavailable_reason",
     }
@@ -120,6 +121,32 @@ def test_stored_publication_verification_pins_the_exact_immutable_version():
     catalog = TenantModelCatalog(factory.kw["bind"])
     before = list(calls)
     catalog.require_version(runtime, reference)
+    selection = catalog.list(runtime)[0]
+    selected = catalog.resolve_selection(
+        runtime,
+        model_id=selection["model_id"],
+        configuration_revision=selection["configuration_revision"],
+    )
+    assert selected["generation"] == 2 and selected["schema_version"] == 1
+    for invalid_model, invalid_revision in (
+        (
+            selection["model_id"],
+            f"managed-model:{reference['wire_api']}:1:{reference['snapshot_sha256']}",
+        ),
+        ("unpublished", selection["configuration_revision"]),
+        (selection["model_id"], selection["configuration_revision"] + ":extra"),
+        (selection["model_id"], "managed-model:openai_responses:01:" + "a" * 64),
+    ):
+        with pytest.raises(TenantModelCatalogError):
+            catalog.resolve_selection(
+                runtime, model_id=invalid_model, configuration_revision=invalid_revision
+            )
+    with pytest.raises(TenantModelCatalogError):
+        catalog.resolve_selection(
+            replace(runtime, tenant_id=uuid4()),
+            model_id=selection["model_id"],
+            configuration_revision=selection["configuration_revision"],
+        )
     for invalid in (
         {**reference, "generation": True},
         {**reference, "generation": 3},

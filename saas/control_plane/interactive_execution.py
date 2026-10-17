@@ -27,6 +27,7 @@ from saas.control_plane.execution_models import (
     ExecutionSessionRecord,
     RunRecord,
 )
+from saas.control_plane.interactive_launch import interactive_conversation_launch
 from saas.control_plane.interactive_run_route import (
     INTERACTIVE_EXECUTION_KIND,
     INTERACTIVE_QUEUE_CLASS,
@@ -56,6 +57,42 @@ class RuntimeSessionRunAdmission:
         self._authorization = ProjectAuthorizer(sessions)
         self._revisions = revisions
 
+    def prepare_selection(
+        self,
+        runtime: RuntimeContext,
+        *,
+        runtime_project_id: str | None,
+        model_id: str,
+        configuration_revision: str,
+        existing: Conversation | None = None,
+    ) -> dict[str, object]:
+        from saas.control_plane.tenant_model_catalog import TenantModelCatalog
+
+        if current_workspace_id() != runtime.physical_workspace_id:
+            raise InteractiveExecutionError("interactive_workspace_mismatch")
+        request, project_id = self._project(runtime, runtime_project_id)
+        self._authorization.require(request, action="run.create", project_id=project_id)
+        if existing is not None:
+            marker = (existing.inference_snapshot or {}).get(MANAGED_EXECUTION_SNAPSHOT_KEY)
+            if (
+                not isinstance(marker, dict)
+                or existing.project_id != runtime_project_id
+                or existing.model_override != model_id
+                or configuration_revision
+                != (
+                    f"managed-model:{marker.get('wire_api')}:{marker.get('generation')}:"
+                    f"{marker.get('snapshot_sha256')}"
+                )
+            ):
+                raise InteractiveExecutionError("interactive_create_conflict")
+            self._require_publication(runtime, marker)
+            return marker
+        return TenantModelCatalog(self._sessions.kw["bind"]).resolve_selection(
+            runtime,
+            model_id=model_id,
+            configuration_revision=configuration_revision,
+        )
+
     def dispatch(
         self,
         runtime: RuntimeContext,
@@ -74,7 +111,7 @@ class RuntimeSessionRunAdmission:
             raise InteractiveExecutionError("interactive_child_run_not_supported")
         if event.type not in {"message", "interrupt", "retry_session"}:
             raise InteractiveExecutionError("interactive_event_not_supported")
-        request, project_id = self._project(runtime, conversation)
+        request, project_id = self._project(runtime, conversation.project_id)
         if event.type != "message":
             session_id = self._session(runtime, request, conversation, project_id, create=False)
             return self._control(request, project_id, session_id, event.type)
@@ -99,6 +136,7 @@ class RuntimeSessionRunAdmission:
         ):
             raise InteractiveExecutionError("interactive_model_override_denied")
         stable_id, title = interactive_message_intent(event.model_dump(mode="json"))
+        launch = interactive_conversation_launch(conversation)
         self._authorization.require(request, action="run.create", project_id=project_id)
         self._require_publication(runtime, marker)
         session_id = self._session(runtime, request, conversation, project_id, create=True)
@@ -119,6 +157,7 @@ class RuntimeSessionRunAdmission:
                     "runtime_session_id": conversation.id,
                     "runtime_project_id": conversation.project_id,
                     "model_publication": marker,
+                    "launch": launch,
                     "event": event.model_dump(mode="json"),
                 }
             },
@@ -147,9 +186,9 @@ class RuntimeSessionRunAdmission:
         )
 
     def _project(
-        self, runtime: RuntimeContext, conversation: Conversation
+        self, runtime: RuntimeContext, runtime_project_id: str | None
     ) -> tuple[RequestContext, UUID]:
-        if not conversation.project_id:
+        if not runtime_project_id:
             raise InteractiveExecutionError("interactive_project_required")
         with (
             query_name_scope("saas.interactive_execution.resolve_project"),
@@ -163,7 +202,7 @@ class RuntimeSessionRunAdmission:
                     RuntimeResourceBindingRecord.tenant_id == runtime.tenant_id,
                     RuntimeResourceBindingRecord.space_id == runtime.space_id,
                     RuntimeResourceBindingRecord.resource_type == "project",
-                    RuntimeResourceBindingRecord.runtime_resource_id == conversation.project_id,
+                    RuntimeResourceBindingRecord.runtime_resource_id == runtime_project_id,
                     RuntimeResourceBindingRecord.status == "active",
                     RuntimeResourceBindingRecord.partition_generation
                     == runtime.placement_generation,
