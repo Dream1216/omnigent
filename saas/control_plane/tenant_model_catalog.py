@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from hashlib import sha256
+from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, RowMapping
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.compatibility import RuntimeContext
@@ -23,6 +25,68 @@ class TenantModelCatalog:
         self._session = make_named_managed_session_maker(
             engine, query_name_prefix="saas.tenant_model_catalog"
         )
+
+    @staticmethod
+    def _snapshot(row: RowMapping, runtime: RuntimeContext) -> dict[str, Any]:
+        try:
+            raw = row["canonical_snapshot"]
+            if sha256(raw.encode("ascii")).hexdigest() != row["snapshot_sha256"]:
+                raise ValueError
+            snapshot = json.loads(raw)
+            if (
+                snapshot["schema_version"] != 1
+                or snapshot["tenant_id"] != str(runtime.tenant_id)
+                or snapshot["public_model_id"] != row["public_model_id"]
+                or snapshot["wire_api"] != row["wire_api"]
+                or snapshot["generation"] != row["generation"]
+                or snapshot["provider_id"] != "deepseek"
+                or snapshot["channel_id"] != "deepseek"
+                or snapshot["transport"] != "litellm"
+                or not isinstance(snapshot["display_name"], str)
+                or not 1 <= len(snapshot["display_name"]) <= 128
+            ):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, UnicodeError):
+            raise TenantModelCatalogError("managed model catalog unavailable") from None
+        return snapshot
+
+    def require_version(self, runtime: RuntimeContext, reference: Mapping[str, object]) -> None:
+        """Verify a stored reference without granting inference or billing authority."""
+        generation = reference.get("generation")
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+            raise TenantModelCatalogError("managed model catalog unavailable")
+        with self._session("verify_session_publication") as db:
+            apply_rls_context(
+                db,
+                RlsContext(
+                    actor_id=runtime.actor_id,
+                    tenant_id=runtime.tenant_id,
+                    space_id=runtime.space_id,
+                    project_id=runtime.project_id,
+                ),
+            )
+            row = (
+                db.execute(
+                    sa.select(
+                        Publication.tenant_id,
+                        Publication.public_model_id,
+                        Publication.wire_api,
+                        Publication.generation,
+                        Publication.canonical_snapshot,
+                        Publication.snapshot_sha256,
+                    ).where(
+                        Publication.tenant_id == runtime.tenant_id,
+                        Publication.public_model_id == reference.get("public_model_id"),
+                        Publication.wire_api == reference.get("wire_api"),
+                        Publication.generation == generation,
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["snapshot_sha256"] != reference.get("snapshot_sha256"):
+                raise TenantModelCatalogError("managed model catalog unavailable")
+            self._snapshot(row, runtime)
 
     def list(self, runtime: RuntimeContext) -> list[dict[str, object]]:
         """Read candidate metadata without authorizing inference or customer charges."""
@@ -70,26 +134,7 @@ class TenantModelCatalog:
             ).mappings()
             result: list[dict[str, object]] = []
             for row in rows:
-                try:
-                    raw = row["canonical_snapshot"]
-                    if sha256(raw.encode("ascii")).hexdigest() != row["snapshot_sha256"]:
-                        raise ValueError
-                    snapshot = json.loads(raw)
-                    if (
-                        snapshot["schema_version"] != 1
-                        or snapshot["tenant_id"] != str(runtime.tenant_id)
-                        or snapshot["public_model_id"] != row["public_model_id"]
-                        or snapshot["wire_api"] != row["wire_api"]
-                        or snapshot["generation"] != row["generation"]
-                        or snapshot["provider_id"] != "deepseek"
-                        or snapshot["channel_id"] != "deepseek"
-                        or snapshot["transport"] != "litellm"
-                        or not isinstance(snapshot["display_name"], str)
-                        or not 1 <= len(snapshot["display_name"]) <= 128
-                    ):
-                        raise ValueError
-                except (KeyError, TypeError, ValueError, UnicodeError):
-                    raise TenantModelCatalogError("managed model catalog unavailable") from None
+                snapshot = self._snapshot(row, runtime)
                 result.append(
                     {
                         "model_id": row["public_model_id"],

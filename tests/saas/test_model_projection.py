@@ -30,7 +30,11 @@ def _projection(handler):
         actor, command=CreateModelConnection("candidate", _KEY), idempotency_key="project-001"
     )
     with factory() as db:
-        event = db.scalar(sa.select(ControlPlaneOutboxEvent))
+        event = db.scalar(
+            sa.select(ControlPlaneOutboxEvent).where(
+                ControlPlaneOutboxEvent.aggregate_key == str(operation.id)
+            )
+        )
         assert event is not None
         envelope = {
             "event_id": event.id,

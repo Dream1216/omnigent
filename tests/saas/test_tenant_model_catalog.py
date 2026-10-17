@@ -98,3 +98,36 @@ def test_catalog_route_requires_live_runtime_auth_and_does_not_accept_scope_from
             "/v1/managed-model-catalog",
             headers={"x-saas-tenant-id": str(uuid4()), "x-saas-space-id": scope["space_id"]},
         ).status_code in {401, 403}
+
+
+def test_stored_publication_verification_pins_the_exact_immutable_version():
+    service, worker, factory, actor, request, calls = _fixture()
+    first = service.admit(actor, **request)
+    worker.publish(**_envelope(factory, first.id))
+    with factory() as db:
+        row = db.scalars(sa.select(ModelPublicationVersionRecord)).one()
+        reference = {
+            "public_model_id": row.public_model_id,
+            "wire_api": row.wire_api,
+            "generation": row.generation,
+            "snapshot_sha256": row.snapshot_sha256,
+        }
+    later = service.admit(
+        actor, **{**request, "expected_generation": 1, "idempotency_key": "next-publication-001"}
+    )
+    worker.publish(**_envelope(factory, later.id))
+    runtime = replace(_runtime(), tenant_id=request["tenant_id"])
+    catalog = TenantModelCatalog(factory.kw["bind"])
+    before = list(calls)
+    catalog.require_version(runtime, reference)
+    for invalid in (
+        {**reference, "generation": True},
+        {**reference, "generation": 3},
+        {**reference, "wire_api": "other"},
+        {**reference, "snapshot_sha256": "0" * 64},
+    ):
+        with pytest.raises(TenantModelCatalogError):
+            catalog.require_version(runtime, invalid)
+    with pytest.raises(TenantModelCatalogError):
+        catalog.require_version(replace(runtime, tenant_id=uuid4()), reference)
+    assert calls == before

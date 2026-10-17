@@ -7,7 +7,8 @@ import pytest
 import sqlalchemy as sa
 
 from saas.control_plane.db_models import SpaceMembership, TenantMembership
-from saas.control_plane.tenant_model_catalog import TenantModelCatalog
+from saas.control_plane.model_routing_models import ModelPublicationVersionRecord
+from saas.control_plane.tenant_model_catalog import TenantModelCatalog, TenantModelCatalogError
 from tests.saas import test_model_projection
 from tests.saas.test_agent_catalog import _runtime
 from tests.saas.test_model_connections import _fixture as _connections_fixture
@@ -42,8 +43,19 @@ def test_actual_app_login_reads_only_active_customer_scope_and_cannot_manage_mod
     rows = catalog.list(runtime)
     assert len(rows) == 1 and rows[0]["available"] is False
     assert rows[0]["unavailable_reason"] == "runtime_not_enabled"
+    with f.factory() as db:
+        publication = db.scalars(sa.select(ModelPublicationVersionRecord)).one()
+        reference = {
+            "public_model_id": publication.public_model_id,
+            "wire_api": publication.wire_api,
+            "generation": publication.generation,
+            "snapshot_sha256": publication.snapshot_sha256,
+        }
+    catalog.require_version(runtime, reference)
     for field in ("tenant_id", "space_id", "actor_id"):
         assert catalog.list(replace(runtime, **{field: uuid4()})) == []
+        with pytest.raises(TenantModelCatalogError):
+            catalog.require_version(replace(runtime, **{field: uuid4()}), reference)
     with f.app.connect() as connection:
         assert connection.exec_driver_sql("SELECT current_user=session_user").scalar_one()
         assert (

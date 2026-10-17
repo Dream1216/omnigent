@@ -219,6 +219,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _child_session_summaries_from_conversations,
     _codex_side_chat_fork_lost,
     _dispatch_session_event_to_runner,
+    _dispatch_session_input_override,
     _enrich_terminal_status_with_subagent_output,
     _ensure_native_terminal_ready,
     _ensure_runner_relay_ready,
@@ -1049,13 +1050,6 @@ def register_events_routes(
                 "This side chat ended when its runner restarted and can't be continued.",
                 code=ErrorCode.CONFLICT,
             )
-        if body.type == _RETRY_SESSION_TYPE:
-            return await _retry_session_single_flight(
-                request=cast("Request", request),
-                session_id=session_id,
-                conversation_store=conversation_store,
-                runner_router=runner_router,
-            )
         # ── Policy evaluation (path-agnostic) ────────────────
         # Evaluate policies BEFORE persistence/runner forwarding so
         # enforcement fires on both paths. On DENY, persist the
@@ -1224,6 +1218,24 @@ def register_events_routes(
             # persist or relay to the harness (which rejects
             # ``function_call`` as an unknown inbound event type).
             return {"verdict": "allow"}
+
+        managed = await _dispatch_session_input_override(
+            session_id,
+            conv,
+            body,
+            conversation_store,
+            created_by=created_by,
+            input_policy_checked=True,
+        )
+        if managed is not None:
+            return managed
+        if body.type == _RETRY_SESSION_TYPE:
+            return await _retry_session_single_flight(
+                request=cast("Request", request),
+                session_id=session_id,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+            )
 
         async def _wake_bound_runner_for_control(
             wake_conv: Any,

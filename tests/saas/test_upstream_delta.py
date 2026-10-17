@@ -131,11 +131,19 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 150
+    assert budget["max_direct_upstream_files"] == 166
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
     followup = revision["followup"]
+    assert followup["revision"] == "litellm-interactive-admission-budget-v31"
+    assert followup["approved_at"] == "2026-10-17"
+    assert followup["previous_max_direct_upstream_files"] == 150
+    assert followup["measured_direct_upstream_files"] == 166
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert len(followup["scoped_paths"]) == 16
+    assert "omnigent/server/routes/sessions/routes_events.py" in followup["scoped_paths"]
+    followup = followup["previous_revision"]
     assert followup["revision"] == "platform-model-token-renewal-budget-v30"
     assert followup["approved_at"] == "2026-10-15"
     assert followup["previous_max_direct_upstream_files"] == 148

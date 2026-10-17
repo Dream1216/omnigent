@@ -1488,6 +1488,22 @@ def build_production_server(
             onboarding.close()
         raise
     app_dependencies = official_dependencies.as_app_dependencies()
+    from saas.control_plane.execution import ExecutionRevisionSet
+    from saas.control_plane.interactive_execution import RuntimeSessionRunAdmission
+    from saas.production.interactive_execution import InteractiveConversationStore
+
+    app_dependencies["conversation_store"] = InteractiveConversationStore(
+        official_dependencies.conversation_store,
+        RuntimeSessionRunAdmission(
+            sessions.app,
+            revisions=ExecutionRevisionSet(
+                config.product_revision,
+                config.upstream_revision,
+                config.official_schema_revision,
+                config.adapter_contract_version,
+            ),
+        ),
+    )
     # These official lifespan jobs run before request middleware can bind a
     # RuntimeContext. Keep both disabled in production even when a caller
     # injects an otherwise valid official dependency bundle.

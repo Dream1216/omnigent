@@ -161,6 +161,7 @@ from omnigent.server.routes._sessions.helpers import (
     reconcile_orphaned_running_status,
 )
 from omnigent.server.routes._sessions.orchestration import (
+    _admit_initial_session_inputs,
     _best_effort_stop,
     _build_session_list_item,
     _build_session_response,
@@ -744,6 +745,26 @@ def register_core_routes(
                         if exc.code != ErrorCode.NOT_FOUND:
                             raise
                     else:
+                        owns_input = getattr(conversation_store, "owns_session_input", None)
+                        if owns_input is not None and owns_input(existing):
+                            await _require_access_and_level(
+                                user_id,
+                                create_token,
+                                LEVEL_EDIT,
+                                permission_store,
+                                conversation_store,
+                            )
+                            await _admit_initial_session_inputs(
+                                request,
+                                existing,
+                                body,
+                                conversation_store,
+                                agent_store,
+                                runner_router,
+                                user_id=user_id,
+                                file_store=file_store,
+                                artifact_store=artifact_store,
+                            )
                         return await _get_session_snapshot(
                             conversation_store,
                             create_token,
@@ -763,6 +784,30 @@ def register_core_routes(
                 "replay of this request",
                 code=ErrorCode.CONFLICT,
             ) from collision
+        owns_input = getattr(conversation_store, "owns_session_input", None)
+        if conv is not None and owns_input is not None and owns_input(conv):
+            if permission_store is not None and user_id is not None:
+                await asyncio.to_thread(permission_store.ensure_user, user_id)
+                grant = await asyncio.to_thread(
+                    permission_store.grant,
+                    user_id,
+                    resp.id,
+                    LEVEL_OWNER,
+                )
+                resp.permission_level = grant.level
+            await _admit_initial_session_inputs(
+                request,
+                conv,
+                body,
+                conversation_store,
+                agent_store,
+                runner_router,
+                user_id=user_id,
+                file_store=file_store,
+                artifact_store=artifact_store,
+            )
+            _announce_session_added(user_id, resp.id)
+            return resp
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
         # Without this, the runner doesn't know this session exists

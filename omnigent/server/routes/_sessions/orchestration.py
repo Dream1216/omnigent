@@ -230,6 +230,7 @@ from omnigent.server.routes._sessions.helpers import (
     _antigravity_subagent_labels_from_body,
     _antigravity_subagent_title,
     _await_settled_managed_launch,
+    _build_actor,
     _build_new_item,
     _build_policy_engine_from_spec,
     _child_session_summary_from_conversation,
@@ -6950,6 +6951,66 @@ def _list_status_with_starting(
     return status
 
 
+async def _dispatch_session_input_override(
+    session_id: str,
+    conversation: Conversation,
+    body: SessionEventInput,
+    conversation_store: ConversationStore,
+    *,
+    created_by: str | None,
+    input_policy_checked: bool = False,
+) -> dict[str, bool | str] | None:
+    """Allow a managed store composition to own durable input admission."""
+    dispatch = getattr(conversation_store, "dispatch_session_input", None)
+    if dispatch is None:
+        return None
+    return await dispatch(
+        session_id,
+        conversation,
+        body,
+        created_by=created_by,
+        input_policy_checked=input_policy_checked,
+    )
+
+
+async def _admit_initial_session_inputs(
+    request: Request,
+    conv: Conversation,
+    body: SessionCreateInput,
+    conversation_store: ConversationStore,
+    agent_store: AgentStore,
+    runner_router: RunnerRouter | None,
+    *,
+    user_id: str | None,
+    file_store: FileStore | None,
+    artifact_store: ArtifactStore | None,
+) -> None:
+    """Recover marked initial input through the same policy and idempotency path."""
+    for item in body.initial_items or []:
+        verdict = await _evaluate_input_policy(
+            request,
+            conv.id,
+            conv,
+            item,
+            conversation_store,
+            agent_store,
+            runner_router,
+            actor=_build_actor(user_id),
+            file_store=file_store,
+            artifact_store=artifact_store,
+        )
+        if verdict is not None:
+            raise OmnigentError("Initial input denied by policy", code=ErrorCode.FORBIDDEN)
+        await _dispatch_session_input_override(
+            conv.id,
+            conv,
+            item,
+            conversation_store,
+            created_by=_attribution_user(user_id),
+            input_policy_checked=True,
+        )
+
+
 async def _dispatch_session_event_to_runner(*args: Any, **kwargs: Any) -> Any:
     """Call-time proxy so a facade patch of this symbol is honored here."""
     from omnigent.server.routes import sessions as _facade
@@ -7096,6 +7157,15 @@ async def _dispatch_session_event_to_runner_impl(
         persisted item id (non-native) or the pending-input id
         (claude-native message bypass).
     """
+    managed = await _dispatch_session_input_override(
+        session_id,
+        conv,
+        body,
+        conversation_store,
+        created_by=created_by,
+    )
+    if managed is not None:
+        return _SessionEventDispatchResult(item_id=None, pending_id=None)
     if body.type == "message" and conv.kind == "sub_agent" and _is_codex_native_subagent(conv):
         # Codex /side follow-up: drive the child on its own Codex thread via the
         # parent's runner/bridge; do not persist AP-side (the forwarder mirrors
@@ -10922,7 +10992,12 @@ async def _create_session_from_existing_agent(
     except Exception:  # noqa: BLE001
         pass
 
-    if body.initial_items:
+    initial_items = body.initial_items
+    owns_input = getattr(conversation_store, "owns_session_input", None)
+    if initial_items and owns_input is not None and owns_input(conv):
+        # The route grants ownership before durable admission or replay recovery.
+        initial_items = []
+    if initial_items:
         runner_client = await _get_runner_client(
             conv.id,
             runner_router,
@@ -10939,7 +11014,7 @@ async def _create_session_from_existing_agent(
             # this on first turn via a normal append path.
             new_items = [
                 _build_new_item(item, "seed", created_by=_attribution_user(user_id))
-                for item in body.initial_items
+                for item in initial_items
             ]
             await asyncio.to_thread(conversation_store.append, conv.id, new_items)
         else:
@@ -10952,7 +11027,7 @@ async def _create_session_from_existing_agent(
             )
             # Dispatch (not a plain forward) so native-terminal sessions take the
             # single-writer bypass — otherwise the forwarder's echo duplicates the kickoff.
-            for item in body.initial_items:
+            for item in initial_items:
                 pending_background_title = prepare_background_session_title(
                     coordinator=background_title_coordinator,
                     conversation=conv,

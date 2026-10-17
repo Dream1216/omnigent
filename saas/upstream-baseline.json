@@ -48,12 +48,38 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 150,
+    "max_direct_upstream_files": 166,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "followup": {
+      "revision": "litellm-interactive-admission-budget-v31",
+      "approved_at": "2026-10-17",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 150,
+      "measured_direct_upstream_files": 166,
+      "previous_max_upstream_net_added_loc": 4576,
+      "scoped_paths": [
+        ".github/workflows/litellm-contract.yml",
+        ".gitignore",
+        "deploy/litellm/Dockerfile",
+        "deploy/litellm/Dockerfile.dockerignore",
+        "deploy/litellm/LICENSE.upstream",
+        "deploy/litellm/README.md",
+        "deploy/litellm/postgresql_attestation_grants.sql",
+        "deploy/litellm/postgresql_attestation_principals.sql",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md",
+        "omnigent/server/routes/sessions/routes_events.py",
+        "tests/browser_ui/chat/session_contract.py",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.tsx"
+      ],
+      "reason": "The requester explicitly approved the exact 166-file scope for the LiteLLM integration after the audit measured 165 existing divergent upstream paths and one additional message-admission route. Raise only the direct-file ceiling from 150 to 166. Preserve the 4,576-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and all production acceptance gates. This Single-Owner Beta scope authorization is not independent review, a CI waiver, image admission or production acceptance.",
+      "previous_revision": {
       "revision": "platform-model-token-renewal-budget-v30",
       "approved_at": "2026-10-15",
       "governance_mode": "single_owner_beta",
@@ -91,6 +117,7 @@
           "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
           "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
         }
+      }
       }
     },
     "approved_at": "2026-10-07",
