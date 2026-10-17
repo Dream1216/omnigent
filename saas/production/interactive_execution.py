@@ -16,6 +16,7 @@ from saas.control_plane.interactive_execution import (
     InteractiveExecutionError,
     RuntimeSessionRunAdmission,
 )
+from saas.control_plane.interactive_run_route import InteractiveRunRouteError
 from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 
 
@@ -64,6 +65,7 @@ class InteractiveConversationStore:
             )
         except (
             InteractiveExecutionError,
+            InteractiveRunRouteError,
             ExecutionControlPlaneError,
             TenantModelCatalogError,
         ) as error:

@@ -33,6 +33,10 @@ from saas.control_plane.execution_models import (
     SessionTaskRecord,
     TaskRecord,
 )
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+)
 from saas.control_plane.permissions import PERMISSION_CATALOG
 from saas.control_plane.public_api_models import (
     PublicApiMutationReceiptRecord,
@@ -76,6 +80,17 @@ def _text(value: str, field: str, maximum: int) -> str:
     if not cleaned or len(cleaned) > maximum:
         raise PublicApiError(f"{field}_invalid", f"{field} is invalid")
     return cleaned
+
+
+def _require_public_execution_target(queue_class: str, input_payload: dict[str, object]) -> None:
+    execution = input_payload.get("execution")
+    if queue_class == INTERACTIVE_QUEUE_CLASS or (
+        isinstance(execution, dict) and execution.get("kind") == INTERACTIVE_EXECUTION_KIND
+    ):
+        raise PublicApiError(
+            "interactive_execution_requires_human_session",
+            "Interactive execution requires an authenticated Runtime session",
+        )
 
 
 class PublicApiError(RuntimeError):
@@ -399,6 +414,7 @@ class PublicApiExecutionService:
         clean_title = _text(title, "title", 256)
         clean_trace = _text(trace_id, "trace_id", 128)
         clean_queue = _text(queue_class, "queue_class", 64)
+        _require_public_execution_target(clean_queue, input_payload)
         clean_resource = _text(quota_resource, "quota_resource", 64)
         if quota_units <= 0:
             raise PublicApiError("quota_units_invalid", "quota_units must be positive")
@@ -860,6 +876,9 @@ class PublicApiExecutionService:
             if source.status not in TERMINAL_RUN_STATUSES:
                 raise PublicApiError("run_not_terminal", "Only a terminal Run can be retried")
             target_queue = _text(queue_class or source.queue_class, "queue_class", 64)
+            _require_public_execution_target(
+                target_queue, source.input if input_override is None else input_override
+            )
             target_priority = source.priority if priority is None else priority
             quota = self._reserve_quota(
                 db,

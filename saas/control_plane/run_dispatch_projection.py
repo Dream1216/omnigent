@@ -20,6 +20,13 @@ from saas.control_plane.db_models import (
 )
 from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunEventRecord, RunRecord
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+    InteractiveRunRouteError,
+    decode_interactive_run_route,
+    interactive_session_identity,
+)
 from saas.control_plane.isolation_models import EgressPolicyRecord, ExecutionProfileRecord
 from saas.control_plane.outbox import OutboxPublishError
 from saas.control_plane.rls import RlsContext, apply_rls_context
@@ -229,6 +236,11 @@ class RunQueuedDispatchProjection:
                 sorted(
                     {
                         *_REQUIRED_CAPABILITIES,
+                        *(
+                            ("runtime.interactive.v1",)
+                            if run.queue_class == INTERACTIVE_QUEUE_CLASS
+                            else ()
+                        ),
                         f"sandbox.{profile.sandbox_backend}",
                         f"syscall.{profile.syscall_profile_ref}",
                     }
@@ -478,6 +490,30 @@ class RunQueuedDispatchProjection:
     def _resolve_runtime(
         db: Session, run: RunRecord
     ) -> tuple[RuntimePlacementRecord, RuntimePartitionRecord]:
+        route_filters: list[sa.ColumnElement[bool]] = []
+        execution = run.input.get("execution")
+        if run.queue_class == INTERACTIVE_QUEUE_CLASS or (
+            isinstance(execution, dict) and execution.get("kind") == INTERACTIVE_EXECUTION_KIND
+        ):
+            try:
+                route = decode_interactive_run_route(run.input)
+            except InteractiveRunRouteError:
+                _reject("run_dispatch_interactive_route_invalid")
+            if (
+                run.queue_class != INTERACTIVE_QUEUE_CLASS
+                or run.created_by is None
+                or run.created_by_service_account_id is not None
+                or run.session_id
+                != interactive_session_identity(
+                    run.tenant_id, run.space_id, route.partition_id, route.session_id
+                )
+            ):
+                _reject("run_dispatch_interactive_scope_invalid")
+            route_filters = [
+                RuntimePartitionRecord.id == route.partition_id,
+                RuntimePartitionRecord.placement_generation == route.partition_generation,
+                RuntimeResourceBindingRecord.runtime_resource_id == route.project_id,
+            ]
         rows = tuple(
             db.execute(
                 sa.select(RuntimePlacementRecord, RuntimePartitionRecord)
@@ -496,6 +532,7 @@ class RunQueuedDispatchProjection:
                     RuntimePlacementRecord.id == RuntimePartitionRecord.placement_id,
                 )
                 .where(
+                    *route_filters,
                     RuntimeResourceBindingRecord.tenant_id == run.tenant_id,
                     RuntimeResourceBindingRecord.space_id == run.space_id,
                     RuntimeResourceBindingRecord.project_id == run.project_id,

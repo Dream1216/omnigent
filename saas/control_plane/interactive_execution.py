@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from hashlib import sha256
-from uuid import UUID, uuid5
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
@@ -28,13 +27,16 @@ from saas.control_plane.execution_models import (
     ExecutionSessionRecord,
     RunRecord,
 )
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+    interactive_message_intent,
+    interactive_session_identity,
+)
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 
 MANAGED_EXECUTION_SNAPSHOT_KEY = "managed_execution"
-INTERACTIVE_EXECUTION_KIND = "omnigent.interactive.v1"
-_SESSION_NAMESPACE = UUID("bb1402e6-05cb-42a4-9e89-12bfdd0546a8")
-_STABLE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class InteractiveExecutionError(RuntimeError):
@@ -96,7 +98,7 @@ class RuntimeSessionRunAdmission:
             and event.model_override != conversation.model_override
         ):
             raise InteractiveExecutionError("interactive_model_override_denied")
-        stable_id, title = self._message(event)
+        stable_id, title = interactive_message_intent(event.model_dump(mode="json"))
         self._authorization.require(request, action="run.create", project_id=project_id)
         self._require_publication(runtime, marker)
         session_id = self._session(runtime, request, conversation, project_id, create=True)
@@ -113,7 +115,9 @@ class RuntimeSessionRunAdmission:
                 "execution": {
                     "kind": INTERACTIVE_EXECUTION_KIND,
                     "runtime_partition_id": str(runtime.runtime_partition_id),
+                    "runtime_partition_generation": runtime.placement_generation,
                     "runtime_session_id": conversation.id,
+                    "runtime_project_id": conversation.project_id,
                     "model_publication": marker,
                     "event": event.model_dump(mode="json"),
                 }
@@ -122,37 +126,13 @@ class RuntimeSessionRunAdmission:
             quota_units=1,
             idempotency_key=f"interactive-message:{key}",
             revisions=self._revisions,
-            queue_class="managed_interactive",
+            queue_class=INTERACTIVE_QUEUE_CLASS,
         )
         return {
             "queued": admitted.status not in TERMINAL_RUN_STATUSES,
             "run_id": str(admitted.run_id),
             "run_status": admitted.status,
         }
-
-    @staticmethod
-    def _message(event: SessionEventInput) -> tuple[str, str]:
-        stable_id = event.data.get("stable_id")
-        content = event.data.get("content")
-        if (
-            event.data.get("role") != "user"
-            or not isinstance(stable_id, str)
-            or _STABLE_ID.fullmatch(stable_id) is None
-            or not isinstance(content, list)
-            or not content
-            or any(
-                not isinstance(block, dict)
-                or set(block) != {"type", "text"}
-                or block.get("type") != "input_text"
-                or not isinstance(block.get("text"), str)
-                for block in content
-            )
-        ):
-            raise InteractiveExecutionError("interactive_message_invalid")
-        text = "\n".join(block["text"] for block in content).strip()
-        if not text:
-            raise InteractiveExecutionError("interactive_message_invalid")
-        return stable_id, text[:256]
 
     @staticmethod
     def _context(db: Session, runtime: RuntimeContext) -> None:
@@ -224,9 +204,11 @@ class RuntimeSessionRunAdmission:
         create: bool,
     ) -> UUID | None:
         # A stable identity is not authority; recheck scope and placement before use.
-        session_id = uuid5(
-            _SESSION_NAMESPACE,
-            f"{runtime.tenant_id}:{runtime.space_id}:{runtime.runtime_partition_id}:{conversation.id}",
+        session_id = interactive_session_identity(
+            runtime.tenant_id,
+            runtime.space_id,
+            runtime.runtime_partition_id,
+            conversation.id,
         )
         with (
             query_name_scope("saas.interactive_execution.bind_session"),
@@ -329,7 +311,7 @@ class RuntimeSessionRunAdmission:
                     RunRecord.space_id == request.space_id,
                     RunRecord.project_id == project_id,
                     RunRecord.session_id == session_id,
-                    RunRecord.queue_class == "managed_interactive",
+                    RunRecord.queue_class == INTERACTIVE_QUEUE_CLASS,
                 )
                 .order_by(RunRecord.created_at.desc(), RunRecord.id.desc())
             )

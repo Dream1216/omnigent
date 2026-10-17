@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -22,6 +23,7 @@ from saas.control_plane import (
     ProjectRecord,
     RuntimeIdentityAliasRecord,
     RuntimePartitionRecord,
+    RuntimePlacementRecord,
     RuntimeResourceBindingRecord,
 )
 from saas.control_plane.execution_models import (
@@ -31,7 +33,12 @@ from saas.control_plane.execution_models import (
     TaskRecord,
 )
 from saas.control_plane.interactive_execution import RuntimeSessionRunAdmission
+from saas.control_plane.isolation_models import EgressPolicyRecord, ExecutionProfileRecord
 from saas.control_plane.model_routing_models import ModelPublicationVersionRecord
+from saas.control_plane.outbox import OutboxClaimRoute, OutboxDispatcher
+from saas.control_plane.run_dispatch_projection import RunQueuedDispatchProjection
+from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
+from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
 from saas.production.interactive_execution import InteractiveConversationStore
 from tests.saas import test_model_projection
 from tests.saas.test_agent_catalog import _runtime
@@ -139,7 +146,10 @@ def interactive_http(db_uri, tmp_path, monkeypatch):
     permissions = SqlAlchemyPermissionStore(db_uri)
     projects = SqlAlchemyProjectStore(db_uri)
     admission = RuntimeSessionRunAdmission(
-        factory, revisions=ExecutionRevisionSet("candidate", "upstream", "c4d5e6f7a8b9", "0.2.0")
+        factory,
+        revisions=ExecutionRevisionSet(
+            "candidate", runtime.source_revision, "c4d5e6f7a8b9", "0.2.0"
+        ),
     )
     delegate = dependencies["conversation_store"]
     store = InteractiveConversationStore(delegate, admission)
@@ -200,6 +210,207 @@ def _message(stable_id="a" * 32, text="Build the requested page"):
 
 def _post(f, body):
     return f.client.post(f"/v1/sessions/{f.conversation.id}/events", json=body, headers=f.headers)
+
+
+def _scheduling(factory, runtime, project_id):
+    policy_id, profile_id = uuid4(), uuid4()
+    with factory.begin() as db:
+        placement = db.get(RuntimePlacementRecord, runtime.placement_id)
+        schema_revision = placement.official_schema_revision
+        db.add(
+            EgressPolicyRecord(
+                id=policy_id,
+                tenant_id=runtime.tenant_id,
+                space_id=runtime.space_id,
+                project_id=project_id,
+                created_by=runtime.actor_id,
+                name="default-deny",
+                rules=[],
+                rules_hash="1" * 64,
+                allow_private_destinations=False,
+                status="active",
+                version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ExecutionProfileRecord(
+                id=profile_id,
+                tenant_id=runtime.tenant_id,
+                space_id=runtime.space_id,
+                project_id=project_id,
+                egress_policy_id=policy_id,
+                created_by=runtime.actor_id,
+                name="interactive-isolated",
+                sandbox_backend="linux_bwrap",
+                network_mode="proxy_only",
+                root_read_only=True,
+                run_as_uid=10001,
+                run_as_gid=10001,
+                no_new_privileges=True,
+                host_socket_access=False,
+                syscall_profile_ref="default-v1",
+                cpu_millis=1000,
+                memory_bytes=536870912,
+                pids_limit=128,
+                allowed_tools=["shell"],
+                approval_required_tools=[],
+                denied_tools=[],
+                config_hash="2" * 64,
+                status="active",
+                version=1,
+            )
+        )
+    scheduling = SchedulingControlPlane(factory)
+    pool_id = scheduling.create_pool(
+        placement_id=runtime.placement_id,
+        name="managed-interactive",
+        queue_class="managed_interactive",
+        capacity_slots=2,
+        reserved_slots=0,
+        protocol_version=2,
+        source_revision=runtime.source_revision,
+        schema_revision=schema_revision,
+        adapter_contract_version=runtime.adapter_contract_version,
+    )
+    scheduling.configure_tenant_share(
+        tenant_id=runtime.tenant_id,
+        pool_id=pool_id,
+        weight=1,
+        max_concurrent=2,
+        burst_limit=2,
+    )
+    return scheduling, pool_id
+
+
+def _queued_worker(dispatcher_factory, executor_factory):
+    return OutboxDispatcher(
+        dispatcher_factory,
+        RunQueuedDispatchProjection(executor_factory),
+        claim_routes=(OutboxClaimRoute("run", "run.event.persisted", "run.queued"),),
+    )
+
+
+def test_actual_message_advances_through_existing_outbox_to_one_dispatch(interactive_http):
+    f = interactive_http
+    scheduling, pool_id = _scheduling(f.factory, f.runtime, f.project_id)
+    before = list(f.calls)
+    admitted = _post(f, _message())
+    assert admitted.status_code == 202, admitted.text
+    worker = _queued_worker(f.factory, f.factory)
+    result = worker.dispatch_once()
+    assert (result.claimed, result.published, result.failed) == (1, 1, 0)
+    assert worker.dispatch_once().claimed == 0
+    with f.factory() as db:
+        dispatch = db.scalars(sa.select(RunDispatchRecord)).one()
+        run = db.get(RunRecord, dispatch.run_id)
+        assert str(dispatch.run_id) == admitted.json()["run_id"]
+        assert run.status == "queued" and run.fence_token == 0 and run.lease_token is None
+        assert (
+            run.input["execution"]["runtime_partition_generation"]
+            == f.runtime.placement_generation
+        )
+        assert run.input["execution"]["runtime_project_id"] == f.runtime_project_id
+        required = dispatch.required_capabilities
+        placement = db.get(RuntimePlacementRecord, f.runtime.placement_id)
+        failure_domain, schema_revision = (
+            placement.failure_domain,
+            placement.official_schema_revision,
+        )
+    for claims_interactive in (False, True):
+        connection = scheduling.register_runner(
+            pool_id=pool_id,
+            instance_key=f"runtime-support-{claims_interactive}",
+            failure_domain=failure_domain,
+            protocol_version=2,
+            source_revision=f.runtime.source_revision,
+            schema_revision=schema_revision,
+            adapter_contract_version=f.runtime.adapter_contract_version,
+            capabilities=required
+            if claims_interactive
+            else [value for value in required if value != "runtime.interactive.v1"],
+            max_concurrency=1,
+        )
+
+        def claim(connection=connection):
+            return scheduling.claim_fair_run(
+                runner_id=connection.runner_id,
+                connection_generation=connection.connection_generation,
+                connection_token=connection.connection_token,
+                lease_duration=timedelta(seconds=30),
+                capability_actions=["run.execute", "sandbox.launch", "worktree.write"],
+                capability_resource_scope={
+                    "runtime_partition_id": str(f.runtime.runtime_partition_id)
+                },
+                expected_product_revision="candidate",
+                product_image_digest="sha256:" + "a" * 64,
+            )
+
+        if claims_interactive:
+            with pytest.raises(SchedulingError) as rejected:
+                claim()
+            assert rejected.value.code == "run_execution_envelope_invalid"
+        else:
+            assert claim() is None
+    with f.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(CapabilityTokenRecord)) == 0
+        run = db.get(RunRecord, UUID(admitted.json()["run_id"]))
+        assert run.status == "queued" and run.lease_token is None
+    assert f.calls == before
+
+
+@pytest.mark.parametrize(
+    "drift", ["generation", "runtime_project", "runtime_session", "partition", "saas_session"]
+)
+def test_queued_interactive_input_cannot_be_silently_retargeted(interactive_http, drift):
+    f = interactive_http
+    _scheduling(f.factory, f.runtime, f.project_id)
+    admitted = _post(f, _message())
+    assert admitted.status_code == 202, admitted.text
+    with f.factory.begin() as db:
+        if drift == "generation":
+            db.execute(sa.update(RuntimePartitionRecord).values(placement_generation=4))
+            db.execute(sa.update(RuntimeResourceBindingRecord).values(partition_generation=4))
+        elif drift == "runtime_project":
+            db.execute(
+                sa.update(RuntimeResourceBindingRecord).values(runtime_resource_id=uuid4().hex)
+            )
+        elif drift in {"runtime_session", "saas_session"}:
+            run = db.get(RunRecord, UUID(admitted.json()["run_id"]))
+            if drift == "saas_session":
+                run.session_id = None
+            else:
+                run.input = {
+                    "execution": {**run.input["execution"], "runtime_session_id": uuid4().hex}
+                }
+        else:
+            original = db.get(RuntimePartitionRecord, f.runtime.runtime_partition_id)
+            replacement = uuid4()
+            db.add(
+                RuntimePartitionRecord(
+                    id=replacement,
+                    tenant_id=original.tenant_id,
+                    space_id=original.space_id,
+                    placement_id=original.placement_id,
+                    runtime_type=original.runtime_type,
+                    runtime_version=original.runtime_version,
+                    physical_partition_key="42",
+                    placement_generation=original.placement_generation,
+                    source_revision=original.source_revision,
+                    adapter_contract_version=original.adapter_contract_version,
+                    status="active",
+                )
+            )
+            db.flush()
+            db.execute(
+                sa.update(RuntimeResourceBindingRecord).values(runtime_partition_id=replacement)
+            )
+    result = _queued_worker(f.factory, f.factory).dispatch_once()
+    assert result.failed == result.quarantined == 1 and result.published == 0
+    with f.factory() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunDispatchRecord)) == 0
+        run = db.get(RunRecord, UUID(admitted.json()["run_id"]))
+        assert run.status == "queued" and run.lease_token is None and run.fence_token == 0
 
 
 def test_actual_message_route_queues_one_real_run_without_a_runner_or_provider_call(

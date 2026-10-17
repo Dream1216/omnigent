@@ -3,8 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
+from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 
 from omnigent.entities import Conversation
@@ -27,9 +29,8 @@ from tests.saas.test_run_customer_pricing_postgresql import priced_execution as 
 from tests.saas.test_tenant_model_catalog_postgresql import _published
 
 
-def test_actual_app_login_binds_one_session_and_admits_one_run_under_duplicate_race(
-    priced_execution, monkeypatch
-):
+@pytest.fixture
+def interactive_postgresql(priced_execution, monkeypatch):
     f = priced_execution
     _catalog, runtime = _published(f, monkeypatch)
     placement_id, partition_id, runtime_project_id = uuid4(), uuid4(), uuid4().hex
@@ -121,8 +122,19 @@ def test_actual_app_login_binds_one_session_and_admits_one_run_under_duplicate_r
     )
     service = RuntimeSessionRunAdmission(
         f.app_factory,
-        revisions=ExecutionRevisionSet("candidate", "upstream", "test-schema", "0.2.0"),
+        revisions=ExecutionRevisionSet(
+            "candidate", runtime.source_revision, "test-schema", "0.2.0"
+        ),
     )
+    return SimpleNamespace(base=f, runtime=runtime, conversation=conversation, service=service)
+
+
+def test_actual_app_login_binds_one_session_and_admits_one_run_under_duplicate_race(
+    interactive_postgresql,
+):
+    fixture = interactive_postgresql
+    f, runtime = fixture.base, fixture.runtime
+    service, conversation = fixture.service, fixture.conversation
     barrier = Barrier(4)
 
     def admit(_index):
