@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "b6177c7f36b9fee29752645c7f50ed3f7de4c81b7d8d06de7ed3eff19c2c4b1d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "fa4ff004257e6a48e58abb964cda5b0c4536cb1ad23ced3d8f813c01118a03ee",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -461,6 +472,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "8a3d0d539947e7ab4ef179197bcfac7bb19158878cb54b7bce979632163f7ccd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "619b3d66c53cbe04b2e2f098cf12a9489ab3478efdb50a7e8d6891e52460fc25",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -706,6 +728,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "237f203f10a28a9dbbcd4c5b365a2d69e1d7eeaff65f7b31cfc07b805caa619a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "66f80962b9555b3582c4e597c3219944415f58f384fd8fa12a9c8f249254f7bf",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -921,6 +954,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "532ac01dd7e9ceda2f37bb6d82ad81b8d37daac90761518f6dc13fc83d1504cd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "f898dceb8d6768fe830b8f5181addf58170636cc282580b97f4b320f30f46df0",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -1131,6 +1175,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "89bbaffad24c2a7a108ec1f2a5a2f366b3ec4ac9f2f708949fb7088dd0e0b863",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "d7c1f73cf338fbf45e2e2b378da3403c324236bb2e9e4ca1a50a86ed951b5ce4",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -1316,6 +1371,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "fa0a76c2b0aadef284a78e7af687103ec99f293da2b8c3ced3c52a89455fe9b8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "2034aa322141e52b864f18dfda25c1277bcf73e814b159592c64567d8e3f498f",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -1508,6 +1574,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "a8854fadf251cd6f95d7f20ad3359128a1bd63cf702686099093d5a2cc905db0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "41b0f5788660160d5662c816453b8329c88bd3d835ac5c1b9137cf4034574948",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,
@@ -1665,6 +1742,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "5c8d1d2f1a50f5168bf84ba221b65514a759a9c1f77a3f7ce1d98ffe8f181386",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "9e5190917adb60a33a9616a173b970a9698ed4a1ec660d5863bcead1764d12f5",
     # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
     (
         16,

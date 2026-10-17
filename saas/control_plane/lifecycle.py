@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.db.utils import query_name_scope
 from saas.control_plane.db_models import (
     SPACE_ROLES,
     TENANT_ROLES,
@@ -142,6 +143,14 @@ class MembershipLifecycleService:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+
+    def resolve_runner_actor(self, *, workspace_id: int, runtime_user_key: str) -> UUID | None:
+        from saas.control_plane.delegated_runner_identity import resolve_runner_actor
+
+        with query_name_scope("saas.auth.resolve_runner_actor"), self._session_factory() as db:
+            return resolve_runner_actor(
+                db, workspace_id=workspace_id, runtime_user_key=runtime_user_key
+            )
 
     def issue_auth_session(
         self,
