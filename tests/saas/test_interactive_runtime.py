@@ -114,6 +114,30 @@ def _running_lease(f):
 
 
 @pytest.mark.asyncio
+async def test_runtime_reauthorization_binds_official_transaction_initializer(
+    interactive_http, monkeypatch
+):
+    from omnigent.db.utils import _managed_session_initializer
+    from saas.production import interactive_runtime as module
+
+    fixture = interactive_http
+    lease, connection = _running_lease(fixture)
+    original = module.require_access_and_level
+    checked = []
+
+    async def require_initialized_transaction(*args, **kwargs):
+        assert _managed_session_initializer.get() is not None
+        checked.append(current_runtime_context().physical_workspace_id)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "require_access_and_level", require_initialized_transaction)
+    authorized = await _runtime_authority(fixture, connection).authorize(lease)
+    assert checked == [fixture.runtime.physical_workspace_id]
+    assert authorized.session_id == fixture.conversation.id
+    assert _managed_session_initializer.get() is None
+
+
+@pytest.mark.asyncio
 async def test_real_claim_reads_original_input_and_reauthorizes_its_real_user(interactive_http):
     f = interactive_http
     lease, connection = _running_lease(f)

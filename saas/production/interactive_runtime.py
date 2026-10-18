@@ -19,7 +19,7 @@ from omnigent.entities import Conversation
 from omnigent.server.auth import LEVEL_EDIT
 from omnigent.server.routes._auth_helpers import require_access_and_level
 from omnigent.server.schemas import SessionEventInput
-from saas.compatibility import RuntimeContext, bind_runtime_context
+from saas.compatibility import OmnigentStoreAdapter, RuntimeContext
 from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.db_models import RuntimeResourceBindingRecord
 from saas.control_plane.dispatch_binding import dispatch_requirements_hash
@@ -185,6 +185,7 @@ class InteractiveRuntimeAuthority:
             app_sessions, compatibility, project_authorizer=self._authorization
         )
         self._catalog = TenantModelCatalog(app_sessions.kw["bind"])
+        self._store_adapter = OmnigentStoreAdapter(compatibility.adapter_contract_version)
         self._conversations = conversation_store
         self._permissions = permission_store
         self._verify_machine_database = verify_machine_database
@@ -451,7 +452,7 @@ class InteractiveRuntimeAuthority:
         route = decode_interactive_run_route(run.input)
         execution = run.input["execution"]
         assert isinstance(execution, dict)
-        with bind_runtime_context(runtime):
+        with self._store_adapter.bind(runtime):
             access = await require_access_and_level(
                 runtime.runtime_user_key,
                 route.session_id,

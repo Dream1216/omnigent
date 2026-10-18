@@ -37,7 +37,7 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from saas.application import create_omnigent_saas_app
 from saas.billing_metering_transport import MutualTlsBillingMeteringServer
-from saas.compatibility import OmnigentStoreAdapter, bind_runtime_context
+from saas.compatibility import OmnigentStoreAdapter
 from saas.control_plane import (
     IdentityManagementService,
     MembershipLifecycleService,
@@ -91,6 +91,7 @@ from saas.production.runner_control import (
     DurableRunnerControlCertificateAuthorizer,
     MutualTlsRunnerControlServer,
     ProductionRunnerMachineAuthority,
+    RunnerControlError,
     TlsRunnerControlReadinessServer,
 )
 from saas.production.runner_readiness import assert_postgresql_runner_fleet_ready
@@ -398,7 +399,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
             host_store = HostStore(db_uri)
             delegate = dependencies["conversation_store"]
             template = fixture.conversation
-            with bind_runtime_context(runtime):
+            with OmnigentStoreAdapter("0.2.0").bind(runtime):
                 projects.create(
                     template.project_id, "Physical controller", runtime.runtime_user_key
                 )
@@ -714,7 +715,7 @@ def _assert_crash_restart(
                 .values(physical_recovery_fence=None)
             )
     assert immutable.value.orig.sqlstate == "23514"
-    with bind_runtime_context(runtime):
+    with OmnigentStoreAdapter("0.2.0").bind(runtime):
         conversation = delegate.get_conversation(state["conversation_id"])
 
     def denied():
@@ -761,6 +762,26 @@ def _assert_crash_restart(
     )
 
     def completed():
+        if adapter._task.done():
+            error = adapter._task.exception()
+            (exchange / "recovery-failure.json").write_text(
+                json.dumps(
+                    {
+                        "type": type(error).__name__,
+                        "code": getattr(error, "code", None),
+                        "frames": [
+                            {"file": f.filename, "line": f.lineno, "function": f.name}
+                            for f in traceback.extract_tb(error.__traceback__)
+                        ]
+                        if error is not None
+                        else [],
+                        "journal": [
+                            {"phase": r.phase, "outcome": r.outcome, "stopped": r.process_stopped}
+                            for r in adapter._journal.records()
+                        ],
+                    }
+                )
+            )
         assert not adapter._task.done(), "replacement controller exited"
         with factory() as db:
             rows = db.scalars(sa.select(RunRecord)).all()
@@ -772,7 +793,7 @@ def _assert_crash_restart(
 
     _wait(completed, "same-session new input after confirmed recovery without replay", timeout=150)
     denied()
-    with bind_runtime_context(runtime):
+    with OmnigentStoreAdapter("0.2.0").bind(runtime):
         assert delegate.get_conversation(conversation.id).runner_id != state["runner_id"]
         assert "OK" in str(delegate.list_items(conversation.id, limit=100))
     with factory() as db:
@@ -855,6 +876,7 @@ def _assert_crash_restart(
                 "actual_litellm": True,
                 "production_pki": False,
                 "scenario": "controller_crash_recovery",
+                "official_store_backend": delegate._engine.dialect.name,
                 "task_count": 2,
                 "usage_facts": 6,
                 "settled_tokens": 66,
@@ -1001,6 +1023,18 @@ def _serve_controller(
     adapter = None
     try:
         adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
+        request_control = adapter._client._request
+
+        async def observe_control_failure(action, values):
+            try:
+                return await request_control(action, values)
+            except RunnerControlError as error:
+                (exchange / "control-failure.json").write_text(
+                    json.dumps({"action": action, "code": error.code})
+                )
+                raise
+
+        adapter._client._request = observe_control_failure
         adapter.bind_runtime(
             app=app,
             runtime=runtime_factory,
@@ -1089,7 +1123,7 @@ def _serve_controller(
             pending_ready.replace(exchange / "ready.json")
 
             async def connected():
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     return app.state.host_registry.get("c" * 32) is not None
 
             # The HTTP app's lifespan owns the controller task/event loop.
@@ -1160,7 +1194,7 @@ def _serve_controller(
                     headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
                 )
                 assert created.status_code == 201, created.text
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     conversation = delegate.get_conversation(created.json()["id"])
                 assert (
                     conversation.inference_snapshot["managed_launch"]["harness"] == "openai-agents"
@@ -1195,7 +1229,7 @@ def _serve_controller(
                     first = db.scalars(sa.select(RunRecord)).one()
                     assert first.status == "running"
                     run_id = first.id
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     runner_id = delegate.get_conversation(conversation.id).runner_id
                 assert runner_id and len(observed) == 3
                 assert [r["status"] for r in observed] == [200, 200, 200]
@@ -1288,7 +1322,7 @@ def _serve_controller(
                 with factory() as db:
                     first_run = db.scalars(sa.select(RunRecord)).one()
                     assert first_run.status == "running"
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     first_runner = delegate.get_conversation(conversation.id).runner_id
                 assert first_runner
                 try:
@@ -1433,13 +1467,13 @@ def _serve_controller(
                 _wait(
                     released, "fresh input on a replacement Runner after cancellation", timeout=150
                 )
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     assert delegate.get_conversation(conversation.id).runner_id != first_runner
                 deny_cancelled_bearer()
             if scenario == "tools_cross_run":
                 with factory() as db:
                     first_run = db.scalars(sa.select(RunRecord)).one()
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     first_runner = delegate.get_conversation(conversation.id).runner_id
                 assert first_runner
                 assert [r["status"] for r in observed] == [200, 401, 200, 200]
@@ -1484,7 +1518,7 @@ def _serve_controller(
                 )
                 expected_runs = 2
                 _wait(released, "cross-Run reuse and credential rollover", timeout=150)
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     assert delegate.get_conversation(conversation.id).runner_id == first_runner
                 deny_terminal_bearer()
             if scenario == "late_customer_metering":
@@ -1694,12 +1728,12 @@ def _serve_controller(
                     assert monthly.reserved_microusd == hold.admitted_microusd
                     assert daily.reserved_tokens == hold.admitted_tokens
                     assert daily.settled_tokens == 22
-            with bind_runtime_context(runtime):
+            with OmnigentStoreAdapter("0.2.0").bind(runtime):
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
             assert record.phase == "terminal" and record.outcome == "succeeded"
             if cluster is not None:
-                with bind_runtime_context(runtime):
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     managed = delegate.get_conversation(conversation.id)
                     assert managed.host_id == record.host_id != "c" * 32
                     assert managed.workspace == "/home/omnigent/workspace"
@@ -1737,6 +1771,7 @@ def _serve_controller(
                         "actual_litellm": True,
                         "production_pki": False,
                         "scenario": scenario,
+                        "official_store_backend": host_store._engine.dialect.name,
                         "sandbox_provider": cluster["provider"] if cluster is not None else None,
                         "managed_host": cluster is not None,
                         "test_model_token_ttl_seconds": 90
@@ -1806,6 +1841,8 @@ def _delegate(case, tmp_path):
                 "schema_revision": case.schema_revision,
                 "connection_token": case.connection_token,
                 "scenario": os.environ.get("OMNIGENT_SAAS_TEST_CONTROLLER_SCENARIO", "single"),
+                "official_postgresql": os.environ.get("OMNIGENT_SAAS_TEST_OFFICIAL_POSTGRESQL")
+                == "true",
             },
             default=str,
         ),
@@ -1857,7 +1894,13 @@ def test_actual_controller_factory_host_litellm_and_pg18_billing(
             Path.cwd(),
         )
         try:
-            _physical_controller(case, db_uri, tmp_path, monkeypatch)
+            if document.get("official_postgresql", False):
+                from tests.saas.interactive_official_postgresql import official_runtime_database
+
+                with official_runtime_database(case.engine, monkeypatch) as runtime_url:
+                    _physical_controller(case, runtime_url, tmp_path, monkeypatch)
+            else:
+                _physical_controller(case, db_uri, tmp_path, monkeypatch)
         finally:
             case.engine.dispose()
             case.runner_engine.dispose()

@@ -87,7 +87,19 @@ def test_managed_sandbox_controller_litellm_and_pg18_billing(
     def probe(case):
         case.scenario = profile.get("scenario", "single")
         assert case.scenario != "controller_crash_recovery"
-        physical._physical_controller(case, db_uri, tmp_path, monkeypatch, cluster=profile)
+        if profile.get("official_postgresql", False):
+            from tests.saas.interactive_official_postgresql import official_runtime_database
+
+            with official_runtime_database(case.engine, monkeypatch) as runtime_url:
+                physical._physical_controller(
+                    case, runtime_url, tmp_path, monkeypatch, cluster=profile
+                )
+                assert (
+                    json.loads(Path("/exchange/result.json").read_text())["official_store_backend"]
+                    == "postgresql"
+                )
+        else:
+            physical._physical_controller(case, db_uri, tmp_path, monkeypatch, cluster=profile)
 
     physical._signed_fleet(
         isolated_postgres_url,
