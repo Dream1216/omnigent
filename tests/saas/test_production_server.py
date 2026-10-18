@@ -1045,17 +1045,19 @@ def test_production_store_receives_the_frozen_interactive_admission_flag(
 
     def build_store(*args, **kwargs):
         observed.append(kwargs.get("runtime_enabled"))
+        assert kwargs.get("agent_cache") is official.agent_cache
         return original(*args, **kwargs)
 
     monkeypatch.setattr(interactive_execution, "InteractiveConversationStore", build_store)
     monkeypatch.setattr(server_module, "create_omnigent_saas_app", _fake_official_app)
     sessions = _sessions()
+    official = _official()
     built = None
     try:
         built = build_production_server(
             replace(_config(tmp_path), interactive_controller_enabled=enabled),
             sessions,
-            official=_official(),
+            official=official,
         )
         assert observed == [enabled]
     finally:

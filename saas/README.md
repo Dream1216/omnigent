@@ -35,6 +35,40 @@ P0 establishes executable controls that stay independent of feature claims:
    builds twice without publishing; it cannot be mistaken for signed production
    evidence.
 
+## Managed model selection preview
+
+`GET /v1/managed-model-catalog` remains an authenticated, tenant-scoped candidate
+catalog. With no query parameters it keeps every model unavailable; this does
+not change an existing session's frozen model. A new-session preview may supply
+`project_id`, `agent_id`, `harness`, `host_type`, and exactly one target:
+`host_id` for `external`, or `sandbox_provider` (`kubernetes` / `agent_sandbox`)
+for `managed`. Unknown, repeated, oversized or ambiguous parameters are rejected;
+tenant/space/actor scope always comes from the authenticated RuntimeContext.
+
+The production-owned conversation-store composition checks its explicit runtime
+opt-in, live controller readiness, current project `run.create` permission,
+accessible Agent spec, protocol compatibility and target readiness. Fixed Hosts
+must belong to the current runtime user, have a live owner-matching connection
+and report usable harness readiness. Managed native harnesses remain unavailable
+until target-specific binary/readiness evidence exists; the current managed
+preview supports the packaged OpenAI Agents harness only. Missing configuration
+or runtime conditions produce stable unavailable reasons, not a login suggestion.
+
+Current customer subscription/pricing is checked through the existing dedicated
+Billing login, never by granting the App login billing reads. Missing, expired,
+future, overlapping, wrong-plan or incomplete token pricing fails closed.
+Preview returns no credentials, internal deployment aliases, provider costs or
+customer price records and uses `Cache-Control: private, no-store`.
+
+This is an advisory selection preflight, not a reservation or capability. It
+does not provision a sandbox, create a session/Task/Run, reserve quota, call a
+supplier or create customer Usage. The existing project authorizer still records
+its normal immutable decision; this endpoint does not introduce a parallel audit
+ledger. Session creation/message admission and inference retain their independent
+authorization, frozen publication/price, quota and metering checks. Available
+preview metadata is not 17-Agent acceptance or production release evidence;
+production admission remains disabled until the release gates are satisfied.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

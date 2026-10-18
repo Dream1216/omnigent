@@ -252,6 +252,9 @@ class ProductionInteractiveControllerAdapter:
         )
         self._executor = executor
 
+        app.state.production_interactive_conversation_store.runtime_readiness_check = (
+            self.assert_production_ready
+        )
         app.state.production_interactive_conversation_store.session_stop_handler = (
             self.stop_session
         )

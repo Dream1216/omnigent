@@ -1400,6 +1400,7 @@ def build_production_saas_services(
             create_tenant_model_catalog_router(
                 auth_provider=integration.auth_provider,
                 catalog=TenantModelCatalog(sessions.engines["app"]),
+                billing_sessions=sessions.billing,
             )
         )
         integration.runtime_router.include_router(
@@ -1531,6 +1532,7 @@ def build_production_server(
             ),
         ),
         permission_store=app_dependencies["permission_store"],
+        agent_cache=official_dependencies.agent_cache,
         public_origin=config.public_origin,
         runtime_enabled=config.interactive_controller_enabled,
     )

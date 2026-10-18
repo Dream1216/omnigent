@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from typing import Any
-from uuid import uuid4
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
+
+from fastapi import Request
 
 from omnigent.db.db_models import uuid_to_bytes
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
+from omnigent.harness_availability import harness_launch_availability
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER
 from omnigent.server.routes._auth_helpers import require_access_and_level
 from omnigent.server.routes.sandbox_inference import actual_harness
@@ -36,6 +40,9 @@ from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 from saas.production.interactive_model_channel import model_channel_configuration
 from saas.production.runner_control import RunnerControlError
 
+if TYPE_CHECKING:
+    from saas.production.tenant_model_catalog import ModelSelectionTarget
+
 
 class InteractiveConversationStore:
     """Preserve official persistence and intercept only marked execution channels."""
@@ -46,16 +53,134 @@ class InteractiveConversationStore:
         admission: RuntimeSessionRunAdmission,
         *,
         permission_store: Any,
+        agent_cache: Any = None,
         public_origin: str | None = None,
         runtime_enabled: bool = False,
     ) -> None:
         self._delegate = delegate
         self._admission = admission
         self._permissions = permission_store
+        self._agent_cache = agent_cache
         self._public_origin = public_origin
         self._runtime_enabled = runtime_enabled
         self.runtime_status_observer = None
         self.session_stop_handler = None
+        self.runtime_readiness_check: Callable[[], None] | None = None
+
+    async def preview_model_selection(
+        self,
+        request: Request,
+        models: list[dict[str, Any]],
+        target: ModelSelectionTarget,
+        *,
+        check_pricing: Callable[[UUID], None] | None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Explain selection readiness, never authorize a Run or provision a target."""
+        runtime = current_runtime_context()
+
+        def unavailable(reason: str) -> tuple[list[dict[str, Any]], bool]:
+            return [
+                {**model, "available": False, "unavailable_reason": reason} for model in models
+            ], self._runtime_enabled
+
+        if not self._runtime_enabled:
+            return unavailable("runtime_not_enabled")
+        if self.runtime_readiness_check is None:
+            return unavailable("runtime_unavailable")
+        try:
+            await asyncio.to_thread(self.runtime_readiness_check)
+        except Exception:  # noqa: BLE001 - controller details are not customer metadata.
+            return unavailable("runtime_unavailable")
+        if not target.project_id:
+            return unavailable("project_required")
+        try:
+            await asyncio.to_thread(
+                self._admission.require_selection_project, runtime, target.project_id
+            )
+        except (InteractiveExecutionError, ProjectAuthorizationError):
+            return unavailable("project_not_accessible")
+        state = request.app.state
+        agent = await asyncio.to_thread(state.agent_store.get, target.agent_id)
+        if agent is None or self._agent_cache is None:
+            return unavailable("model_harness_unsupported")
+        if agent.session_id:
+            try:
+                await require_access_and_level(
+                    runtime.runtime_user_key,
+                    agent.session_id,
+                    LEVEL_EDIT,
+                    self._permissions,
+                    self._delegate,
+                )
+            except OmnigentError:
+                return unavailable("model_harness_unsupported")
+        try:
+            spec = (
+                await asyncio.to_thread(
+                    self._agent_cache.load,
+                    agent.id,
+                    agent.bundle_location,
+                    expand_env=agent.session_id is None,
+                )
+            ).spec
+        except (KeyError, ValueError):
+            return unavailable("model_harness_unsupported")
+        harness = canonicalize_harness(actual_harness(spec, target.harness))
+        if spec.executor.auth is not None or spec.executor.profile or harness == "auto":
+            return unavailable("model_harness_unsupported")
+        if target.host_type == "external":
+            host = await asyncio.to_thread(state.host_store.get_host, target.host_id)
+            connection = state.host_registry.get(host.host_id) if host is not None else None
+            if (
+                host is None
+                or host.user_id != runtime.runtime_user_key
+                or connection is None
+                or connection.owner != runtime.runtime_user_key
+            ):
+                return unavailable("host_unavailable")
+            ready, reason = harness_launch_availability(harness, host.configured_harnesses)
+            if ready is not True and reason != "needs-auth":
+                return unavailable("host_unavailable")
+        else:
+            deployment = getattr(state, "sandbox_config", None)
+            configured = deployment.for_provider(target.sandbox_provider) if deployment else None
+            if (
+                configured is None
+                or not configured.managed_launch_supported
+                or configured.provider not in {"kubernetes", "agent_sandbox"}
+                or harness != "openai-agents"
+            ):
+                # Native harnesses need a target-specific binary/readiness proof.
+                return unavailable("sandbox_unavailable")
+        if check_pricing is None:
+            return unavailable("pricing_unavailable")
+        from saas.control_plane.billing_metering import BillingMeteringError
+
+        try:
+            await asyncio.to_thread(check_pricing, runtime.tenant_id)
+        except BillingMeteringError:
+            return unavailable("pricing_unavailable")
+        return [
+            {
+                **model,
+                "available": self._supports_model_harness(model["wire_api"], harness),
+                "unavailable_reason": None
+                if self._supports_model_harness(model["wire_api"], harness)
+                else "model_harness_unsupported",
+            }
+            for model in models
+        ], True
+
+    @staticmethod
+    def _supports_model_harness(wire_api: object, harness: str | None) -> bool:
+        if wire_api == "openai_responses":
+            return harness in {"codex", "codex-native", "openai-agents"}
+        return wire_api == "openai_chat_completions" and harness in {
+            "qwen",
+            "jcode",
+            "opencode-native",
+            "openai-agents",
+        }
 
     async def stop_archived_session(self, conversation: Conversation) -> bool:
         if not self.owns_session_input(conversation):
@@ -141,12 +266,7 @@ class InteractiveConversationStore:
             ) from None
         harness = actual_harness(spec, harness_override)
         canonical = canonicalize_harness(harness)
-        supported = (
-            {"codex", "codex-native", "openai-agents"}
-            if marker["wire_api"] == "openai_responses"
-            else {"qwen", "jcode", "opencode-native", "openai-agents"}
-        )
-        if canonical not in supported:
+        if not self._supports_model_harness(marker["wire_api"], canonical):
             raise OmnigentError(
                 "interactive_model_harness_unsupported", code=ErrorCode.INVALID_INPUT
             )

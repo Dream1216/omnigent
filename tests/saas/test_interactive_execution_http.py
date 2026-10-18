@@ -44,6 +44,7 @@ from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingErro
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
 from saas.control_plane.tenant_model_catalog import TenantModelCatalog
 from saas.production.interactive_execution import InteractiveConversationStore
+from saas.production.tenant_model_catalog import create_tenant_model_catalog_router
 from tests.saas import test_model_projection
 from tests.saas.test_agent_catalog import _runtime
 from tests.saas.test_http_cookie_auth import _build_fastapi_app, _login
@@ -64,8 +65,10 @@ def interactive_http(db_uri, tmp_path, monkeypatch, request):
     monkeypatch.setattr(
         test_model_projection, "_fixture", lambda: _connections_fixture(engine=engine)
     )
+    case = getattr(request, "param", False)
+    options = case if isinstance(case, dict) else {"responses": case}
     service, worker, _, actor, command, calls = _publication_fixture(
-        responses=getattr(request, "param", False)
+        responses=options.get("responses", False)
     )
     command["tenant_id"] = UUID(scope["tenant_id"])
     operation = service.admit(actor, **command)
@@ -158,7 +161,11 @@ def interactive_http(db_uri, tmp_path, monkeypatch, request):
     )
     delegate = dependencies["conversation_store"]
     store = InteractiveConversationStore(
-        delegate, admission, permission_store=permissions, runtime_enabled=True
+        delegate,
+        admission,
+        permission_store=permissions,
+        agent_cache=dependencies["agent_cache"],
+        runtime_enabled=True,
     )
     with bind_runtime_context(runtime):
         projects.create(runtime_project_id, "Interactive project", runtime.runtime_user_key)
@@ -177,6 +184,14 @@ def interactive_http(db_uri, tmp_path, monkeypatch, request):
         )
         permissions.grant(runtime.runtime_user_key, conversation.id, LEVEL_OWNER)
     dependencies["conversation_store"] = store
+    base.include_router(
+        create_tenant_model_catalog_router(
+            auth_provider=base.state.saas_test_auth,
+            catalog=TenantModelCatalog(engine),
+            billing_sessions=factory if options.get("catalog_billing", True) else None,
+        ),
+        prefix="/v1",
+    )
     app = create_app(
         **dependencies,
         auth_provider=base.state.saas_test_auth,

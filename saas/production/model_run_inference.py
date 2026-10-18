@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +20,50 @@ from saas.control_plane.model_gateway_metering import GATEWAY_METERS
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.production.model_run_credentials import AuthorizedModelRun
 from saas.production.onboarding import _read_bytes, _regular_file
+
+
+def require_current_customer_pricing(
+    billing_sessions: sessionmaker[Session], tenant_id: UUID
+) -> None:
+    """Read-only picker hint; actual Runs still freeze and recheck their own price."""
+    with (
+        query_name_scope("saas.model_run_inference.preview_customer_pricing"),
+        billing_sessions.begin() as db,
+    ):
+        apply_rls_context(db, RlsContext(tenant_id=tenant_id))
+        subscription = db.scalar(
+            sa.select(BillingSubscriptionRecord).where(
+                BillingSubscriptionRecord.tenant_id == tenant_id
+            )
+        )
+        if subscription is None or subscription.status not in {"active", "trialing"}:
+            raise BillingMeteringError(
+                "metering_subscription_unavailable", "Customer billing is unavailable"
+            )
+        now = datetime.now(timezone.utc)
+        prices = list(
+            db.scalars(
+                sa.select(PricingSnapshotRecord)
+                .where(
+                    PricingSnapshotRecord.tenant_id == tenant_id,
+                    PricingSnapshotRecord.plan_key == subscription.plan_key,
+                    PricingSnapshotRecord.effective_from <= now,
+                    sa.or_(
+                        PricingSnapshotRecord.effective_until.is_(None),
+                        PricingSnapshotRecord.effective_until > now,
+                    ),
+                )
+                .limit(2)
+            )
+        )
+        if len(prices) != 1:
+            raise BillingMeteringError(
+                "metering_subscription_unavailable", "Customer billing is unavailable"
+            )
+        for meter in GATEWAY_METERS:
+            BillingMeteringAuthority._charge(
+                pricing=prices[0], meter=meter, quantity=Decimal(1), unit="tokens"
+            )
 
 
 @dataclass(frozen=True, slots=True)

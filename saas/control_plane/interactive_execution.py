@@ -69,10 +69,7 @@ class RuntimeSessionRunAdmission:
     ) -> dict[str, object]:
         from saas.control_plane.tenant_model_catalog import TenantModelCatalog
 
-        if current_workspace_id() != runtime.physical_workspace_id:
-            raise InteractiveExecutionError("interactive_workspace_mismatch")
-        request, project_id = self._project(runtime, runtime_project_id)
-        self._authorization.require(request, action="run.create", project_id=project_id)
+        self.require_selection_project(runtime, runtime_project_id)
         if existing is not None:
             marker = (existing.inference_snapshot or {}).get(MANAGED_EXECUTION_SNAPSHOT_KEY)
             if (
@@ -93,6 +90,15 @@ class RuntimeSessionRunAdmission:
             model_id=model_id,
             configuration_revision=configuration_revision,
         )
+
+    def require_selection_project(
+        self, runtime: RuntimeContext, runtime_project_id: str | None
+    ) -> None:
+        """Read current project authority without creating or reserving execution intent."""
+        if current_workspace_id() != runtime.physical_workspace_id:
+            raise InteractiveExecutionError("interactive_workspace_mismatch")
+        request, project_id = self._project(runtime, runtime_project_id)
+        self._authorization.require(request, action="run.create", project_id=project_id)
 
     def dispatch(
         self,
