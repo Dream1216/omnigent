@@ -458,7 +458,11 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 runtime_store_adapter=OmnigentStoreAdapter("0.2.0"),
             )
             store = InteractiveConversationStore(
-                delegate, fixture.service, permission_store=permissions, public_origin=ORIGIN
+                delegate,
+                fixture.service,
+                permission_store=permissions,
+                public_origin=ORIGIN,
+                runtime_enabled=True,
             )
             from omnigent.server.managed_hosts import parse_sandbox_config
 
