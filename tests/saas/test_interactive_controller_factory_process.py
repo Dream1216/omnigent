@@ -122,11 +122,11 @@ ORIGIN = "https://next.test"
 
 
 @contextmanager
-def _listener(app, *, port=0, certificate=None, key=None):
+def _listener(app, *, port=0, certificate=None, key=None, host="0.0.0.0"):
     server = uvicorn.Server(
         uvicorn.Config(
             app,
-            host="0.0.0.0",
+            host=host,
             port=port,
             ssl_certfile=str(certificate) if certificate else None,
             ssl_keyfile=str(key) if key else None,
@@ -325,7 +325,7 @@ class _MeteringDeliveryGate:
         return result
 
 
-def _physical_controller(case, db_uri, tmp_path, monkeypatch):
+def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     exchange = Path(os.environ["OMNIGENT_SAAS_PHYSICAL_TEST_EXCHANGE"])
     assert exchange == Path("/exchange")
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
@@ -382,6 +382,12 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                 runtime_version=manifest["upstream_version"],
             )
             runtime = fixture.runtime
+            if cluster is not None:
+                monkeypatch.setenv(
+                    "OMNIGENT_HOST_WORKSPACE_ID", str(runtime.physical_workspace_id)
+                )
+                monkeypatch.setenv("OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND", "true")
+                monkeypatch.setenv("SSL_CERT_FILE", "/sandbox-public/server.pem")
             _customer_prices(factory, actor=runtime.actor_id, tenant=runtime.tenant_id)
             _scheduling(factory, runtime, runtime.project_id, pool_id=case.pool_id)
             dependencies = _official_dependencies(db_uri, tmp_path)
@@ -427,15 +433,16 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     else None,
                 ),
             )
-            host_token = secrets.token_urlsafe(32)
-            arm_external_host_credential(
-                host_store._engine,
-                workspace_id=runtime.physical_workspace_id,
-                host_id="c" * 32,
-                token=host_token,
-                ttl_seconds=3600,
-            )
-            _private(exchange / "host-token", host_token)
+            if cluster is None:
+                host_token = secrets.token_urlsafe(32)
+                arm_external_host_credential(
+                    host_store._engine,
+                    workspace_id=runtime.physical_workspace_id,
+                    host_id="c" * 32,
+                    token=host_token,
+                    ttl_seconds=3600,
+                )
+                _private(exchange / "host-token", host_token)
             authentication = sessionmaker(applications["authenticator"], expire_on_commit=False)
             compatibility = load_runtime_compatibility_policy(
                 case.root / "saas/upstream-baseline.json"
@@ -452,6 +459,8 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
             store = InteractiveConversationStore(
                 delegate, fixture.service, permission_store=permissions, public_origin=ORIGIN
             )
+            from omnigent.server.managed_hosts import parse_sandbox_config
+
             app = create_omnigent_saas_app(
                 integration=integration,
                 suppress_context_free_builtin_seed=True,
@@ -459,6 +468,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                 host_store=host_store,
                 permission_store=permissions,
                 project_store=projects,
+                sandbox_config=parse_sandbox_config(cluster["sandbox"])
+                if cluster is not None
+                else None,
             )
             app.state.production_interactive_conversation_store = store
             runtime_factory = ProductionInteractiveRuntimeFactory(
@@ -575,6 +587,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                         monkeypatch,
                         delivery=delivery,
                         scenario=scenario,
+                        cluster=cluster,
                         **recovery_options,
                     )
                 finally:
@@ -894,6 +907,7 @@ def _serve_controller(
     control_ports=None,
     tls_material=None,
     ready_material=None,
+    cluster=None,
 ):
     cancelling = scenario in {
         "cancel_before_admission",
@@ -993,7 +1007,11 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
-        certificate, key = tls_material or _tls(tmp_path)
+        certificate, key = tls_material or (
+            (Path(cluster["certificate"]), Path(cluster["key"]))
+            if cluster is not None
+            else _tls(tmp_path)
+        )
         (exchange / "ca.pem").write_bytes(certificate.read_bytes())
         issued = lifecycle.issue_auth_session(
             user_id=runtime.actor_id,
@@ -1050,7 +1068,13 @@ def _serve_controller(
 
         with (
             _listener(gateway_app, port=8090),
-            _listener(app, port=443, certificate=certificate, key=key),
+            _listener(
+                app,
+                port=443,
+                certificate=certificate,
+                key=key,
+                host=cluster["bind_host"] if cluster is not None else "0.0.0.0",
+            ),
         ):
             pending_ready = exchange / "ready.pending"
             pending_ready.write_text(
@@ -1070,10 +1094,13 @@ def _serve_controller(
 
             # The HTTP app's lifespan owns the controller task/event loop.
             app_loop = adapter._task.get_loop()
-            _wait(
-                lambda: asyncio.run_coroutine_threadsafe(connected(), app_loop).result(5),
-                "owned Host WebSocket",
-            )
+            if cluster is None:
+                _wait(
+                    lambda: asyncio.run_coroutine_threadsafe(connected(), app_loop).result(5),
+                    "owned Host WebSocket",
+                )
+            else:
+                _wait(lambda: adapter._bound or adapter._task.done(), "managed controller startup")
             if restarted:
                 _wait(lambda: adapter._bound or adapter._task.done(), "cold controller recovery")
                 adapter.assert_production_ready()
@@ -1110,9 +1137,19 @@ def _serve_controller(
                     json={
                         "agent_id": "b" * 32,
                         "project_id": conversation.project_id,
-                        "host_type": "external",
-                        "host_id": "c" * 32,
-                        "workspace": "/workspace",
+                        **(
+                            {
+                                "host_type": "managed",
+                                "sandbox_provider": cluster["provider"],
+                                "workspaces": [],
+                            }
+                            if cluster is not None
+                            else {
+                                "host_type": "external",
+                                "host_id": "c" * 32,
+                                "workspace": "/workspace",
+                            }
+                        ),
                         "model_override": marker["public_model_id"],
                         "inference_configuration_revision": (
                             f"managed-model:{marker['wire_api']}:{marker['generation']}:"
@@ -1661,6 +1698,15 @@ def _serve_controller(
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
             assert record.phase == "terminal" and record.outcome == "succeeded"
+            if cluster is not None:
+                with bind_runtime_context(runtime):
+                    managed = delegate.get_conversation(conversation.id)
+                    assert managed.host_id == record.host_id != "c" * 32
+                    assert managed.workspace == "/home/omnigent/workspace"
+                    assert (
+                        managed.inference_snapshot["managed_launch"]["sandbox_provider"]
+                        == cluster["provider"]
+                    )
             if scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
                     base_url=ORIGIN,
@@ -1691,6 +1737,8 @@ def _serve_controller(
                         "actual_litellm": True,
                         "production_pki": False,
                         "scenario": scenario,
+                        "sandbox_provider": cluster["provider"] if cluster is not None else None,
+                        "managed_host": cluster is not None,
                         "test_model_token_ttl_seconds": 90
                         if scenario == "tools_cross_run"
                         else 28800,

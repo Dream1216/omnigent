@@ -214,7 +214,7 @@ class OfficialInteractiveDriver:
                 ):
                     raise _unavailable()
             if authorized.launch["host_type"] == "managed" and conversation.host_id is None:
-                tracker = state.managed_launch_tracker
+                tracker = state.managed_launches
                 if tracker.get(authorized.session_id) is not None:
                     raise _unavailable()
                 tracker.begin(authorized.session_id)

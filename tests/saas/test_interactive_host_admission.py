@@ -17,7 +17,7 @@ from omnigent.db.utils import get_or_create_engine
 from omnigent.errors import OmnigentError
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
-from saas.production.interactive_driver import _LaunchRegistry
+from saas.production.interactive_driver import OfficialInteractiveDriver, _LaunchRegistry
 from saas.production.runner_control import RunnerControlError
 
 
@@ -123,3 +123,49 @@ async def test_managed_host_keeps_official_admission_without_external_profile_ov
     a.delegate.admit_launch.assert_awaited_once_with(
         a.connection, a.conversation.id, allow_unbound=False, transfer_from_host_id=None
     )
+
+
+@pytest.mark.asyncio
+async def test_managed_driver_uses_the_official_app_tracker_before_provisioning(
+    admission, monkeypatch
+):
+    from fastapi import FastAPI
+
+    from omnigent.server.managed_hosts import ManagedLaunchTracker
+    from saas.production import interactive_driver as module
+
+    a = admission
+    with workspace_scope(41):
+        conversation = a.conversations.create_conversation(host_id=None)
+    a.authorized.session_id = conversation.id
+    a.authorized.runtime.runtime_user_key = "alice"
+    a.authorized.launch = {
+        "host_type": "managed",
+        "workspaces": [],
+        "sandbox_provider": "kubernetes",
+    }
+    app = FastAPI()
+    tracker = ManagedLaunchTracker()
+    app.state.managed_launches = tracker
+    app.state.host_registry, app.state.runner_router, app.state.tunnel_registry = (
+        object(),
+        object(),
+        object(),
+    )
+    app.state.sandbox_config = object()
+    official = SimpleNamespace(
+        conversation_store=a.conversations, host_store=a.hosts, agent_store=object()
+    )
+    driver = OfficialInteractiveDriver(app=app, dependencies=official, contract_version="0.2.0")
+    driver._adapter = SimpleNamespace(bind=lambda _: workspace_scope(41))
+
+    class ProvisionReached(Exception):
+        pass
+
+    provision = AsyncMock(side_effect=ProvisionReached)
+    monkeypatch.setattr(module.official, "_run_managed_launch", provision)
+    with pytest.raises(ProvisionReached):
+        await driver.prepare(a.authorized, previous=None, on_launch=None)
+    provision.assert_awaited_once()
+    assert provision.call_args.kwargs["tracker"] is tracker
+    assert tracker.get(conversation.id) is not None

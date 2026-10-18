@@ -86,8 +86,17 @@ from tests.saas.test_scheduling_postgresql import _migrate
 
 
 def _write_0400(path: Path, value: str) -> None:
-    path.write_text(value, encoding="ascii")
-    path.chmod(0o400)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.temporary")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o400)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _capabilities_sha256(capabilities: tuple[str, ...]) -> str:
