@@ -64,6 +64,22 @@ overwrite referenced files or revoke them before the recovery/rotation policy
 has reconciled pending records. This configuration change is not a rotation or
 retention acceptance receipt.
 
+## Private volume ownership
+
+Use a dedicated trusted-Server PVC, a stable owner UID and
+`fsGroupChangePolicy: OnRootMismatch`. The default `Always` can recursively
+widen a journal from 0600 to 0660 and credential files from 0400 to 0660 when
+a replacement Pod mounts the volume. The controller intentionally rejects
+that state; do not make it group-readable to restore service.
+
+On a new directory only, the journal removes an inherited setgid bit after
+checking ownership and the opened directory's identity. An existing unsafe
+directory is never repaired silently. Verify replacement-Pod mounts with the
+selected storage driver: retain journal directories at 0700, records at 0600,
+and original credential files at 0400, with identical hashes and exclusive
+locking. This is not a credential rotation policy or cross-node HA guarantee;
+`local-path` volumes remain node-affine.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

@@ -216,8 +216,34 @@ class InteractiveRecoveryJournal:
     def __init__(self, root: Path):
         if not root.is_absolute() or root.is_symlink():
             raise InteractiveRecoveryError()
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            root.mkdir(mode=0o700, parents=True)
+        except FileExistsError:
+            created = False
+        else:
+            created = True
         info = root.lstat()
+        if (
+            created
+            and stat.S_ISDIR(info.st_mode)
+            and info.st_uid == os.geteuid()
+            and stat.S_IMODE(info.st_mode) == 0o2700
+        ):
+            # fsGroup volumes can pass setgid to a newly created private directory.
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                opened = os.fstat(descriptor)
+                if (opened.st_ino, opened.st_dev, opened.st_uid, opened.st_mode) != (
+                    info.st_ino,
+                    info.st_dev,
+                    info.st_uid,
+                    info.st_mode,
+                ):
+                    raise InteractiveRecoveryError()
+                os.fchmod(descriptor, 0o700)
+            finally:
+                os.close(descriptor)
+            info = root.lstat()
         if (
             not stat.S_ISDIR(info.st_mode)
             or info.st_uid != os.geteuid()
