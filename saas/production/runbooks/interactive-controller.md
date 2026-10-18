@@ -5,6 +5,32 @@ The controller remains opt-in with
 configuration, not production admission. Do not enable tenant models until the
 reviewed Fleet/database, PKI, physical runtime, billing, and release gates pass.
 
+## Sandbox authority profile
+
+Enable the controller with the reviewed Runner adapter factory
+`saas.production.interactive_controller_adapter:build_production_interactive_controller`
+and `OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND=true`. The production loader
+freezes the controller selection; ambiguous flags or a different factory fail
+startup. Fixed Hosts must receive the same controller-bound setting.
+
+For **both** `agent_sandbox` and `kubernetes`, the reviewed `sandbox:` profile
+changes only these authority inputs when the controller is enabled:
+
+- `server_url`: the exact release's `OMNIGENT_SAAS_PUBLIC_ORIGIN`, using HTTPS
+  on port 443. The legacy HTTP callback cannot carry the model channel.
+- `host_config: {}`: no static provider configuration. Each Run receives its
+  frozen publication through the scoped model channel.
+- `kubernetes.env`: exactly `OMNIGENT_HOST_WORKSPACE_ID` and
+  `OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND`.
+- `kubernetes.secret_mounts: []`: no legacy model signing-key projection.
+
+Keep the reviewed digest-pinned image, namespace, powerless ServiceAccount,
+Host entrypoint, resource bounds, node policy and reaper unchanged. Neither
+`secret_name`/envFrom nor extra environment names are admitted. Selecting the
+controller does not relax image verification or network policy. With the
+controller disabled, the existing legacy profile remains the only admitted
+Sandbox profile; do not mix these profiles during a rollout.
+
 ## Separate control and billing credentials
 
 Runner Control and Billing Metering use distinct purpose-bound client leaves

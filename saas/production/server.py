@@ -648,7 +648,9 @@ def load_external_adapters(config: ProductionServerConfig) -> ProductionExternal
     )
 
 
-def _load_official_config(path: Path | None) -> dict[str, Any]:
+def _load_official_config(
+    path: Path | None, *, controller_origin: str | None = None
+) -> dict[str, Any]:
     if path is None:
         return {}
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -693,7 +695,9 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
         raise ProductionServerCompositionError(
             "official server LLM config contains an unsupported production field"
         )
-    _validate_production_sandbox_config(document.get("sandbox"))
+    _validate_production_sandbox_config(
+        document.get("sandbox"), controller_origin=controller_origin
+    )
     # ``sandbox`` is checked against a closed production profile above.  It
     # deliberately contains Secret *references* and provider authority; the
     # generic recursive guard is for the remaining secret-free official config.
@@ -704,13 +708,15 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
     return cast(dict[str, Any], document)
 
 
-def _validate_production_sandbox_config(value: object) -> None:
+def _validate_production_sandbox_config(
+    value: object, *, controller_origin: str | None = None
+) -> None:
     """Admit only the reviewed dual Kubernetes runtime profile.
 
     The OSS parser intentionally supports many providers and operator knobs.
     The hosted production entrypoint is narrower: both supported runtimes share
     one pinned Host image, one powerless runner ServiceAccount, one execution
-    namespace, and one file-mounted model signing authority.  A typo or an
+    namespace, and an explicitly selected model authority profile. A typo or an
     attempted expansion therefore stops startup instead of silently widening
     the deployment's authority.
     """
@@ -732,7 +738,18 @@ def _validate_production_sandbox_config(value: object) -> None:
         raise ProductionServerCompositionError(
             "official server sandbox providers are not the reviewed production profile"
         )
-    if value.get("server_url") != _PRODUCTION_SANDBOX_SERVER_URL:
+    controller_bound = controller_origin is not None
+    if controller_origin is not None:
+        from saas.production.interactive_model_channel import model_channel_origin
+
+        try:
+            model_channel_origin(controller_origin)
+        except ValueError:
+            raise ProductionServerCompositionError(
+                "official server sandbox controller origin must use HTTPS"
+            ) from None
+    callback = controller_origin if controller_bound else _PRODUCTION_SANDBOX_SERVER_URL
+    if value.get("server_url") != callback:
         raise ProductionServerCompositionError(
             "official server sandbox callback is not the reviewed production service"
         )
@@ -755,7 +772,7 @@ def _validate_production_sandbox_config(value: object) -> None:
     openai_config = provider_config.get("openai") if isinstance(provider_config, dict) else None
     models = openai_config.get("models") if isinstance(openai_config, dict) else None
     default_model = models.get("default") if isinstance(models, dict) else None
-    if (
+    legacy_host_invalid = (
         not isinstance(host_config, dict)
         or set(host_config) != {"providers"}
         or not isinstance(providers_config, dict)
@@ -784,7 +801,9 @@ def _validate_production_sandbox_config(value: object) -> None:
         or not isinstance(default_model, str)
         or _PRODUCTION_SANDBOX_MODEL_RE.fullmatch(default_model) is None
         or models.get("allowed-1") != default_model
-    ):
+    )
+    invalid_host = host_config != {} if controller_bound else legacy_host_invalid
+    if invalid_host:
         raise ProductionServerCompositionError(
             "official server sandbox Host config is not the reviewed production profile"
         )
@@ -801,11 +820,16 @@ def _validate_production_sandbox_config(value: object) -> None:
         or kubernetes.get("env")
         != [
             "OMNIGENT_HOST_WORKSPACE_ID",
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID",
+            (
+                "OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND"
+                if controller_bound
+                else "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
+            ),
         ]
         or kubernetes.get("node_selector") != _PRODUCTION_SANDBOX_NODE_SELECTOR
         or kubernetes.get("tolerations") != _PRODUCTION_SANDBOX_TOLERATIONS
-        or kubernetes.get("secret_mounts") != _PRODUCTION_SANDBOX_SECRET_MOUNTS
+        or kubernetes.get("secret_mounts")
+        != ([] if controller_bound else _PRODUCTION_SANDBOX_SECRET_MOUNTS)
         or kubernetes.get("host_command") != _PRODUCTION_SANDBOX_HOST_COMMAND
         or kubernetes.get("pod_ready_timeout_s") != 180
         or kubernetes.get("home_size_limit") != "20Gi"
@@ -1117,7 +1141,10 @@ def build_official_runtime_dependencies(
     from saas.production.artifact_store import build_production_s3_artifact_store
 
     database_url = config.secrets.database_urls.runtime
-    official_config = _load_official_config(config.official_config_path)
+    official_config = _load_official_config(
+        config.official_config_path,
+        controller_origin=config.public_origin if config.interactive_controller_enabled else None,
+    )
     cache = open_private_artifact_cache_directory(
         config.artifact_cache_dir,
         product_revision=config.product_revision,
