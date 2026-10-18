@@ -56,8 +56,11 @@ from saas.control_plane.model_routing_models import (
     ModelRunTokenRecord,
 )
 from saas.control_plane.platform_models import (
+    ModelGatewayEvidenceRecord,
     ModelProviderBudgetReservationRecord,
     ModelProviderConfigurationRecord,
+    ModelProviderMonthlyBudgetRecord,
+    ModelProviderTenantDailyUsageRecord,
 )
 from saas.control_plane.resolver import load_runtime_compatibility_policy
 from saas.control_plane.scheduling import SchedulingControlPlane
@@ -175,7 +178,12 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
     assert exchange == Path("/exchange")
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
     scenario = getattr(case, "scenario", "single")
-    assert scenario in {"single", "tools_cross_run", "cancel_before_admission"}
+    assert scenario in {
+        "single",
+        "tools_cross_run",
+        "cancel_before_admission",
+        "cancel_unknown_stream",
+    }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
         monkeypatch.setattr(
@@ -408,7 +416,11 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     actual["upstream_url"] + "/evidence", trust_env=False
                 ).json()
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
-                    4 if scenario == "tools_cross_run" else 1
+                    4
+                    if scenario == "tools_cross_run"
+                    else 2
+                    if scenario == "cancel_unknown_stream"
+                    else 1
                 )
                 if scenario == "tools_cross_run":
                     assert [r["mode"] for r in after_calls["requests"]] == [
@@ -417,6 +429,12 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                         "text",
                         "text",
                     ]
+                if scenario == "cancel_unknown_stream":
+                    assert [r["mode"] for r in after_calls["requests"]] == [
+                        "partial-stream",
+                        "text",
+                    ]
+                    assert after_calls["requests"][0]["stream_started"]
             finally:
                 metering_thread.close()
                 attestation_engine.dispose()
@@ -444,6 +462,11 @@ def _serve_controller(
     *,
     scenario="single",
 ):
+    cancelling = scenario in {"cancel_before_admission", "cancel_unknown_stream"}
+    initial_text = {
+        "tools_cross_run": "P0_MANAGED_TOOL: write one unique marker",
+        "cancel_unknown_stream": "P0_CANCEL_STREAM: cancel after the stream starts",
+    }.get(scenario, "Build the requested page")
     control = MutualTlsRunnerControlServer(
         ProductionRunnerMachineAuthority(
             SchedulingControlPlane(workers["executor"]),
@@ -568,6 +591,9 @@ def _serve_controller(
                     assert await asyncio.to_thread(admission_released.wait, 40)
                 response = await call_next(request)
                 row["status"] = response.status_code
+                if scenario == "cancel_unknown_stream" and len(observed) == 1:
+                    assert response.status_code == 200
+                    request_waiting.set()
                 return response
 
         with (
@@ -630,11 +656,7 @@ def _serve_controller(
                 )
                 result = client.post(
                     f"/v1/sessions/{conversation.id}/events",
-                    json=_message(
-                        text="P0_MANAGED_TOOL: write one unique marker"
-                        if scenario == "tools_cross_run"
-                        else "Build the requested page"
-                    ),
+                    json=_message(text=initial_text),
                     headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
                 )
                 assert result.status_code in {200, 202}, result.text
@@ -697,7 +719,7 @@ def _serve_controller(
                 with factory() as db:
                     statuses = db.scalars(sa.select(RunRecord.status)).all()
                     forbidden = {"failed", "orphaned"}
-                    if scenario != "cancel_before_admission":
+                    if not cancelling:
                         forbidden.add("cancelled")
                     assert all(s not in forbidden for s in statuses), statuses
                     dispatches = db.scalars(sa.select(RunDispatchRecord.status)).all()
@@ -705,8 +727,8 @@ def _serve_controller(
                         s == "released" for s in dispatches
                     )
 
-            if scenario == "cancel_before_admission":
-                _wait(request_waiting.is_set, "actual Runner model request before admission")
+            if cancelling:
+                _wait(request_waiting.is_set, "actual Runner model request cancellation point")
                 with factory() as db:
                     first_run = db.scalars(sa.select(RunRecord)).one()
                     assert first_run.status == "running"
@@ -734,16 +756,14 @@ def _serve_controller(
                             db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord))
                             == 0
                         )
-                        assert (
-                            db.scalar(
-                                sa.select(sa.func.count())
-                                .select_from(ModelProviderBudgetReservationRecord)
-                                .where(
-                                    ModelProviderBudgetReservationRecord.purpose == "tenant_run"
-                                )
+                        holds = db.scalars(
+                            sa.select(ModelProviderBudgetReservationRecord).where(
+                                ModelProviderBudgetReservationRecord.purpose == "tenant_run"
                             )
-                            == 0
-                        )
+                        ).all()
+                        assert len(holds) == (1 if scenario == "cancel_unknown_stream" else 0)
+                        if holds:
+                            assert holds[0].status in {"in_flight", "uncertain"}
                     _wait(
                         lambda: adapter._journal.read(first_run.id).process_stopped,
                         "automatic cancellation and exact physical Host stop acknowledgement",
@@ -752,11 +772,15 @@ def _serve_controller(
                 finally:
                     admission_released.set()
             _wait(released, "actual controller Run completion", timeout=150)
-            if scenario == "cancel_before_admission":
+            if cancelling:
                 cancelled = adapter._journal.read(first_run.id)
                 assert cancelled.phase == "terminal" and cancelled.outcome == "cancelled"
                 assert cancelled.process_stopped
-                assert [r["status"] for r in observed] == [403]
+                assert [r["status"] for r in observed] == (
+                    [200] if scenario == "cancel_unknown_stream" else [403]
+                )
+                if scenario == "cancel_unknown_stream":
+                    assert len(list(cancelled.grant.spool_directory.glob("*.pending.json"))) == 1
                 old_bearer = private_bearers[0]
 
                 def deny_cancelled_bearer():
@@ -781,7 +805,7 @@ def _serve_controller(
                 ) as client:
                     replay = client.post(
                         f"/v1/sessions/{conversation.id}/events",
-                        json=_message(text="Build the requested page"),
+                        json=_message(text=initial_text),
                         headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
                     )
                     assert replay.status_code == 202
@@ -869,9 +893,7 @@ def _serve_controller(
                 runs = db.scalars(sa.select(RunRecord)).all()
                 assert len(runs) == expected_runs
                 assert {r.status for r in runs} == (
-                    {"cancelled", "succeeded"}
-                    if scenario == "cancel_before_admission"
-                    else {"succeeded"}
+                    {"cancelled", "succeeded"} if cancelling else {"succeeded"}
                 )
                 run = next(r for r in runs if scenario == "single" or r.id != first_run.id)
                 assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
@@ -880,11 +902,7 @@ def _serve_controller(
                     (TaskRecord, expected_runs),
                     (
                         ModelRunTokenRecord,
-                        3
-                        if scenario == "tools_cross_run"
-                        else 2
-                        if scenario == "cancel_before_admission"
-                        else 1,
+                        3 if scenario == "tools_cross_run" else 2 if cancelling else 1,
                     ),
                     (UsageEventRecord, 2 * calls),
                     (BillingMeteringReceiptRecord, 2 * calls),
@@ -899,9 +917,25 @@ def _serve_controller(
                         ModelProviderBudgetReservationRecord.purpose == "tenant_run"
                     )
                 ).all()
-                assert len(budgets) == calls and all(
-                    b.status == "settled" and b.settled_tokens == 22 for b in budgets
-                )
+                uncertain = [b for b in budgets if b.status == "uncertain"]
+                settled = [b for b in budgets if b.status == "settled"]
+                assert len(settled) == calls and all(b.settled_tokens == 22 for b in settled)
+                if scenario == "cancel_unknown_stream":
+                    assert len(budgets) == 2 and len(uncertain) == 1
+                    hold = uncertain[0]
+                    assert hold.run_id == first_run.id and hold.admitted_microusd > 0
+                    assert hold.admitted_tokens > 0
+                    assert hold.settled_tokens == hold.settled_microusd == 0
+                    assert hold.released_tokens == hold.released_microusd == 0
+                    assert set(
+                        db.scalars(
+                            sa.select(ModelGatewayEvidenceRecord.phase).where(
+                                ModelGatewayEvidenceRecord.reservation_id == hold.id
+                            )
+                        )
+                    ) == {"request", "in_flight", "uncertain"}
+                else:
+                    assert len(budgets) == calls
                 if scenario == "tools_cross_run":
                     tokens = db.scalars(sa.select(ModelRunTokenRecord)).all()
                     assert (
@@ -911,10 +945,37 @@ def _serve_controller(
                     assert sorted(t.generation for t in tokens) == [0, 0, 1]
                     assert all(t.expires_at - t.issued_at == timedelta(seconds=90) for t in tokens)
                     assert [r["status"] for r in observed] == [200, 401, 200, 200, 403, 200, 403]
-                if scenario == "cancel_before_admission":
-                    assert [r["status"] for r in observed] == [403, 403, 200, 403]
+                if cancelling:
+                    assert [r["status"] for r in observed] == (
+                        [200, 403, 200, 403]
+                        if scenario == "cancel_unknown_stream"
+                        else [403, 403, 200, 403]
+                    )
                     assert len({r["bearer_sha256"] for r in observed}) == 2
                     assert db.get(RunRecord, first_run.id).status == "cancelled"
+            if scenario == "cancel_unknown_stream":
+                asyncio.run_coroutine_threadsafe(
+                    adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                ).result(20)
+                assert (
+                    gateway._budgets.recover_expired(now=hold.expires_at + timedelta(days=1)) == ()
+                )
+                assert len(list(cancelled.grant.spool_directory.glob("*.pending.json"))) == 1
+                with factory() as db:
+                    assert (
+                        db.get(ModelProviderBudgetReservationRecord, hold.id).status == "uncertain"
+                    )
+                    assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 2
+                    monthly = db.get(
+                        ModelProviderMonthlyBudgetRecord, (hold.provider_id, hold.period_start)
+                    )
+                    daily = db.get(
+                        ModelProviderTenantDailyUsageRecord,
+                        (hold.tenant_id, hold.provider_id, hold.usage_date),
+                    )
+                    assert monthly.reserved_microusd == hold.admitted_microusd
+                    assert daily.reserved_tokens == hold.admitted_tokens
+                    assert daily.settled_tokens == 22
             with bind_runtime_context(runtime):
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
@@ -939,14 +1000,23 @@ def _serve_controller(
                         "task_count": expected_runs,
                         "usage_facts": 2 * calls,
                         "settled_tokens": 22 * calls,
-                        "supplier_calls": calls,
+                        "supplier_calls": calls + (scenario == "cancel_unknown_stream"),
                         "controlled_expiry_restored": scenario == "tools_cross_run",
                         "gateway_request_statuses": [r["status"] for r in observed],
                         "same_runner_cross_run": scenario == "tools_cross_run",
-                        "public_interrupt_accepted": scenario == "cancel_before_admission",
-                        "cancelled_message_replay_did_not_restart": scenario
-                        == "cancel_before_admission",
-                        "replacement_runner_after_cancel": scenario == "cancel_before_admission",
+                        "public_interrupt_accepted": cancelling,
+                        "cancelled_message_replay_did_not_restart": cancelling,
+                        "replacement_runner_after_cancel": cancelling,
+                        "unknown_usage_hold_and_reference_retained": scenario
+                        == "cancel_unknown_stream",
+                        "pending_provider_budget": {
+                            "status": "uncertain",
+                            "admitted_microusd": hold.admitted_microusd,
+                            "admitted_tokens": hold.admitted_tokens,
+                            "not_auto_expired": True,
+                        }
+                        if scenario == "cancel_unknown_stream"
+                        else None,
                         "host_stop_acknowledged": True,
                         "manual_run_heartbeat": False,
                     }

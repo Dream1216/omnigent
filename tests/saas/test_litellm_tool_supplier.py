@@ -51,3 +51,17 @@ def test_managed_supplier_never_guesses_an_undeclared_tool(supplier):
     document["tools"] = []
     with pytest.raises(ValueError, match="managed_probe_terminal_tool_missing"):
         supplier(document)
+
+
+def test_partial_stream_requires_streaming_and_does_not_leak_into_the_next_turn(monkeypatch):
+    monkeypatch.setenv("PROBE_PROVIDER_KEY", "isolated-not-a-provider-key")
+    requested = runpy.run_path(str(Path(__file__).parent / "fixtures/litellm/upstream.py"))[
+        "partial_stream_requested"
+    ]
+    document = {"stream": True, "messages": [{"role": "user", "content": "P0_CANCEL_STREAM"}]}
+    assert requested(document)
+    document["stream"] = False
+    with pytest.raises(ValueError, match="managed_probe_streaming_required"):
+        requested(document)
+    document["messages"].append({"role": "user", "content": "A fresh turn"})
+    assert not requested(document)

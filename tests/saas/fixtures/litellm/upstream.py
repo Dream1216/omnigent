@@ -15,6 +15,17 @@ _LOCK = threading.Lock()
 _KEY = os.environ["PROBE_PROVIDER_KEY"]
 
 
+def partial_stream_requested(document):
+    latest = next(
+        (r for r in reversed(document.get("messages", [])) if r.get("role") == "user"), {}
+    )
+    if "P0_CANCEL_STREAM" not in str(latest.get("content", "")):
+        return False
+    if document.get("stream") is not True:
+        raise ValueError("managed_probe_streaming_required")
+    return True
+
+
 def managed_terminal_tool(document):
     messages = document.get("messages", [])
     latest = next((r for r in reversed(messages) if r.get("role") == "user"), {})
@@ -86,27 +97,29 @@ class Handler(BaseHTTPRequestHandler):
         )
         try:
             managed_tool = managed_terminal_tool(document)
+            partial_stream = partial_stream_requested(document)
         except ValueError:
             self._send(422, b'{"error":{"message":"managed_probe_terminal_tool_missing"}}')
             return
         if managed_tool is not None:
             mode = "tool"
+        if partial_stream:
+            mode = "partial-stream"
         with _LOCK:
-            _REQUESTS.append(
-                {
-                    "path": self.path,
-                    "model": document.get("model"),
-                    "stream": document.get("stream"),
-                    "max_tokens": document.get("max_tokens"),
-                    "mode": mode,
-                    "tool_names": [
-                        r.get("function", {}).get("name") for r in document.get("tools") or []
-                    ],
-                    "tool_result_ids": [
-                        r.get("tool_call_id") for r in messages if r.get("role") == "tool"
-                    ],
-                }
-            )
+            record = {
+                "path": self.path,
+                "model": document.get("model"),
+                "stream": document.get("stream"),
+                "max_tokens": document.get("max_tokens"),
+                "mode": mode,
+                "tool_names": [
+                    r.get("function", {}).get("name") for r in document.get("tools") or []
+                ],
+                "tool_result_ids": [
+                    r.get("tool_call_id") for r in messages if r.get("role") == "tool"
+                ],
+            }
+            _REQUESTS.append(record)
         if mode == "rate-limit":
             self._send(429, b'{"error":{"message":"probe rate limit","type":"rate_limit_error"}}')
             return
@@ -181,6 +194,19 @@ class Handler(BaseHTTPRequestHandler):
             },
             {**common, "choices": [], "usage": usage},
         ]
+        if partial_stream:
+            prefix = "".join("data: " + json.dumps(event) + "\n\n" for event in events[:2])
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(prefix.encode())
+            self.wfile.flush()
+            with _LOCK:
+                record["stream_started"] = True
+            time.sleep(30)
+            self.close_connection = True
+            return
         body = "".join("data: " + json.dumps(event) + "\n\n" for event in events)
         self._send(200, (body + "data: [DONE]\n\n").encode(), "text/event-stream")
 
