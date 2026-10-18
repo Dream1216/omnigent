@@ -525,40 +525,47 @@ class ProductionInteractiveExecutor:
                 or any(row.grant.spool_directory.glob("*.pending.json"))
                 or (row.outcome == "orphaned" and row.run_id not in self._confirmed_recoveries)
             ]
-            for record in candidates[:limit]:
+            for candidate in candidates[:limit]:
+                record = self._journal.read(candidate.run_id)
                 if record.run_id in self._active:
                     continue
                 await self._verify_recovery(record)
-                if (
-                    record.connection_generation != self._generation
-                    or record.product_revision != self._revision
-                    or record.image_digest != self._image
-                    or certificate_sha256(record.grant) != record.certificate_sha256
-                ):
-                    raise _unavailable()
-                if record.phase != "terminal" or (
-                    record.outcome == "orphaned"
-                    and record.run_id not in self._confirmed_recoveries
-                ):
-                    stopped = (
-                        record.process_stopped
-                        or (record.phase == "prepared" and record.official_runner_id is None)
-                        or await self._driver.stop(record)
-                    )
-                    if not stopped:
+                async with self._lifecycle:
+                    if (
+                        record.run_id in self._active
+                        or self._journal.read(record.run_id) != record
+                    ):
                         continue
-                    if not record.process_stopped:
-                        record = replace(record, process_stopped=True)
+                    if (
+                        record.connection_generation != self._generation
+                        or record.product_revision != self._revision
+                        or record.image_digest != self._image
+                        or certificate_sha256(record.grant) != record.certificate_sha256
+                    ):
+                        raise _unavailable()
+                    if record.phase != "terminal" or (
+                        record.outcome == "orphaned"
+                        and record.run_id not in self._confirmed_recoveries
+                    ):
+                        stopped = (
+                            record.process_stopped
+                            or (record.phase == "prepared" and record.official_runner_id is None)
+                            or await self._driver.stop(record)
+                        )
+                        if not stopped:
+                            continue
+                        if not record.process_stopped:
+                            record = replace(record, process_stopped=True)
+                            self._journal.put(record)
+                        await self._confirm_recovery(record)
+                        record = replace(
+                            record,
+                            phase="terminal",
+                            process_stopped=True,
+                            outcome="orphaned",
+                        )
                         self._journal.put(record)
-                    await self._confirm_recovery(record)
-                    record = replace(
-                        record,
-                        phase="terminal",
-                        process_stopped=True,
-                        outcome="orphaned",
-                    )
-                    self._journal.put(record)
-                    self._confirmed_recoveries.add(record.run_id)
+                        self._confirmed_recoveries.add(record.run_id)
                 meter = self._meter_factory(record.grant)
                 try:
                     await asyncio.to_thread(meter.flush, 0)

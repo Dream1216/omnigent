@@ -877,6 +877,7 @@ def _assert_crash_restart(
                 "production_pki": False,
                 "scenario": "controller_crash_recovery",
                 "official_store_backend": delegate._engine.dialect.name,
+                "physical_gc_interval_seconds": adapter._config.physical_gc_interval_seconds,
                 "task_count": 2,
                 "usage_facts": 6,
                 "settled_tokens": 66,
@@ -1006,6 +1007,9 @@ def _serve_controller(
         "OMNIGENT_SAAS_INTERACTIVE_RECOVERY_DIRECTORY": str(tmp_path / "controller-journal"),
         "OMNIGENT_SAAS_RUNNER_POLL_SECONDS": "0.1",
         "OMNIGENT_SAAS_RUNNER_HEARTBEAT_SECONDS": "5",
+        "OMNIGENT_SAAS_RUNNER_PHYSICAL_GC_INTERVAL_SECONDS": os.environ.get(
+            "OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS", "30"
+        ),
     }
     for name, value in {
         "OMNIGENT_SAAS_RUNNER_READINESS_HOST": "readiness.svc",
@@ -1040,6 +1044,39 @@ def _serve_controller(
             runtime=runtime_factory,
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
+        )
+        stop_handler = app.state.production_interactive_conversation_store.session_stop_handler
+
+        async def observe_stop_failure(*args):
+            try:
+                return await stop_handler(*args)
+            except RunnerControlError as error:
+                task = adapter._task
+                stopped = task is not None and task.done()
+                task_error = task.exception() if stopped and not task.cancelled() else None
+                (exchange / "failure.json").write_text(
+                    json.dumps(
+                        {
+                            "stop_code": error.code,
+                            "stop_frames": [
+                                {"file": f.filename, "line": f.lineno, "function": f.name}
+                                for f in traceback.extract_tb(error.__traceback__)
+                            ],
+                            "controller_stopped": stopped,
+                            "controller_code": getattr(task_error, "code", None),
+                            "controller_frames": [
+                                {"file": f.filename, "line": f.lineno, "function": f.name}
+                                for f in traceback.extract_tb(task_error.__traceback__)
+                            ]
+                            if task_error is not None
+                            else [],
+                        }
+                    )
+                )
+                raise
+
+        app.state.production_interactive_conversation_store.session_stop_handler = (
+            observe_stop_failure
         )
         certificate, key = tls_material or (
             (Path(cluster["certificate"]), Path(cluster["key"]))
@@ -1761,6 +1798,7 @@ def _serve_controller(
                     adapter._executor._driver.stop(record), app_loop
                 ).result(20)
             adapter.assert_production_ready()
+            gc_interval = adapter._config.physical_gc_interval_seconds
             (exchange / "result.json").write_text(
                 json.dumps(
                     {
@@ -1772,6 +1810,7 @@ def _serve_controller(
                         "production_pki": False,
                         "scenario": scenario,
                         "official_store_backend": host_store._engine.dialect.name,
+                        "physical_gc_interval_seconds": gc_interval,
                         "sandbox_provider": cluster["provider"] if cluster is not None else None,
                         "managed_host": cluster is not None,
                         "test_model_token_ttl_seconds": 90
@@ -1843,6 +1882,9 @@ def _delegate(case, tmp_path):
                 "scenario": os.environ.get("OMNIGENT_SAAS_TEST_CONTROLLER_SCENARIO", "single"),
                 "official_postgresql": os.environ.get("OMNIGENT_SAAS_TEST_OFFICIAL_POSTGRESQL")
                 == "true",
+                "gc_interval_seconds": float(
+                    os.environ.get("OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS", "30")
+                ),
             },
             default=str,
         ),
@@ -1882,6 +1924,9 @@ def test_actual_controller_factory_host_litellm_and_pg18_billing(
             }
         )
         case.scenario = document.get("scenario", "single")
+        monkeypatch.setenv(
+            "OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS", str(document.get("gc_interval_seconds", 30))
+        )
         case.engine, case.runner_engine = (
             engine(document["database_url"]),
             engine(document["runner_url"]),

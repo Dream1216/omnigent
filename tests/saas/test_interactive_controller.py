@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import threading
 from dataclasses import fields, replace
 from types import SimpleNamespace
 
@@ -199,6 +200,126 @@ async def controller_case(interactive_http, tmp_path):
         await executor._seal(active)
         active.meter.close(timeout_seconds=0)
     journal.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_usage_flush_does_not_hold_the_public_stop_lifecycle(controller_case):
+    c = controller_case
+    c.controls.unknown_fee = True
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    assert await c.executor.prepare_finalization(c.lease, result="succeeded") == "succeeded"
+    await c.executor.finalize(c.lease, result="succeeded")
+    entered, resume = threading.Event(), threading.Event()
+
+    class PausedMeter:
+        def flush(self, _timeout):
+            entered.set()
+            assert resume.wait(5)
+
+        def close(self, _timeout):
+            pass
+
+    c.executor._meter_factory = lambda _grant: PausedMeter()
+    collecting = asyncio.create_task(c.executor.reconcile_physical_gc(limit=32))
+
+    async def cancel_inputs():
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        await asyncio.wait_for(
+            c.executor.stop_session(
+                c.context,
+                c.authorized.session_id,
+                c.journal.read(c.lease.run_id).official_runner_id,
+                cancel_inputs,
+            ),
+            1,
+        )
+        record = c.journal.read(c.lease.run_id)
+        assert record.process_stopped and record.outcome == "succeeded"
+        assert list(record.grant.spool_directory.glob("*.pending.json"))
+    finally:
+        resume.set()
+        await asyncio.wait_for(collecting, 2)
+    assert len(c.stops) == 1 and len(c.inputs) == 1
+
+
+@pytest.mark.asyncio
+async def test_gc_rechecks_a_later_candidate_after_an_earlier_pending_record_waits(
+    controller_case, monkeypatch
+):
+    c = controller_case
+    c.controls.unknown_fee = True
+    control = ProductionRunnerMachineAuthority(
+        SchedulingControlPlane(c.f.factory),
+        ExecutionControlPlane(c.f.factory),
+        product_revision="c" * 40,
+        image_digest="sha256:" + "a" * 64,
+    )
+    machine = {
+        "runner_id": c.connection.runner_id,
+        "connection_generation": c.connection.connection_generation,
+        "connection_token": c.connection.connection_token,
+    }
+
+    async def finish(lease):
+        assert await c.executor.prepare_finalization(lease, result="succeeded") == "succeeded"
+        control.transition_run(
+            **machine,
+            run_id=lease.run_id,
+            lease_token=lease.lease_token,
+            fence_token=lease.fence_token,
+            capability_token=lease.capability_token,
+            target_status="succeeded",
+        )
+        await c.executor.finalize(lease, result="succeeded")
+        control.release_run(**machine, run_id=lease.run_id, fence_token=lease.fence_token)
+
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    await finish(c.lease)
+    first = c.journal.read(c.lease.run_id)
+    assert list(first.grant.spool_directory.glob("*.pending.json"))
+    second_id = _admit(c.f, "b" * 32, text="Continue without replay")
+    claimed = control.claim_run(**machine)
+    assert claimed is not None and claimed.run_id == second_id
+    second = RunnerControlClientLease(
+        **{field.name: getattr(claimed, field.name) for field in fields(RunnerControlClientLease)}
+    )
+    for target in ("starting", "running"):
+        control.transition_run(
+            **machine,
+            run_id=second.run_id,
+            lease_token=second.lease_token,
+            fence_token=second.fence_token,
+            capability_token=second.capability_token,
+            target_status=target,
+        )
+    assert await c.executor.execute(second, cancellation=asyncio.Event()) == "succeeded"
+    records = c.journal.records
+    monkeypatch.setattr(
+        c.journal, "records", lambda: sorted(records(), key=lambda row: row.run_id != first.run_id)
+    )
+    entered, resume = asyncio.Event(), asyncio.Event()
+    verify = c.executor._verify_recovery
+
+    async def pause_first(record):
+        await verify(record)
+        if record.run_id == first.run_id:
+            entered.set()
+            await resume.wait()
+
+    monkeypatch.setattr(c.executor, "_verify_recovery", pause_first)
+    collecting = asyncio.create_task(c.executor.reconcile_physical_gc(limit=32))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await finish(second)
+    finally:
+        resume.set()
+    assert await asyncio.wait_for(collecting, 2) == 2
+    assert c.journal.read(second.run_id).outcome == "succeeded"
+    assert not c.stops and not c.confirmed
+    assert len(c.inputs) == len(c.gateway_calls) == 2
 
 
 @pytest.mark.asyncio

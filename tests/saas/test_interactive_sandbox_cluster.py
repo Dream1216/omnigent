@@ -86,6 +86,9 @@ def test_managed_sandbox_controller_litellm_and_pg18_billing(
 
     def probe(case):
         case.scenario = profile.get("scenario", "single")
+        monkeypatch.setenv(
+            "OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS", str(profile.get("gc_interval_seconds", 30))
+        )
         assert case.scenario != "controller_crash_recovery"
         if profile.get("official_postgresql", False):
             from tests.saas.interactive_official_postgresql import official_runtime_database
