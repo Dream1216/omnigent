@@ -136,7 +136,10 @@ class ProductionInteractiveExecutor:
             record.phase != "terminal" and record.run_id not in self._active
             for record in self._journal.records()
         ):
-            raise _unavailable()
+            raise RunnerControlError(
+                "interactive_controller_recovery_pending",
+                "Interactive execution is unavailable until recovery completes",
+            )
 
     def bind_preview_runtime(self, supervisor: object) -> None:
         del supervisor

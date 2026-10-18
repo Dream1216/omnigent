@@ -1,16 +1,114 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import FastAPI
 
 from saas.production.interactive_controller_adapter import load_interactive_metering_credentials
 from saas.production.runner_control import RunnerControlError
 from tests.saas.test_billing_metering_transport import _certificate_fixture
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_recovery", [False, True])
+async def test_recovery_allows_host_ingress_without_claiming_before_exact_stop(
+    credentials, tmp_path, monkeypatch, invalid_recovery
+):
+    from saas.production import interactive_controller_adapter as module
+
+    runner_id, control, _, source, _ = credentials
+    source.update(
+        OMNIGENT_SAAS_INTERACTIVE_METERING_URL="https://billing-metering.internal",
+        OMNIGENT_SAAS_INTERACTIVE_RECOVERY_DIRECTORY=str(tmp_path / "private-journal"),
+    )
+    host_connected, recovered, claimed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    recovery_attempted = asyncio.Event()
+
+    class Executor:
+        def __init__(self, **kwargs):
+            pass
+
+        async def reconcile_physical_gc(self, *, limit):
+            recovery_attempted.set()
+            if invalid_recovery:
+                raise RunnerControlError("isolated_bad_recovery_certificate", "Unavailable")
+            if host_connected.is_set():
+                recovered.set()
+            return int(recovered.is_set())
+
+        def assert_claimable(self):
+            if not recovered.is_set():
+                raise RunnerControlError("interactive_controller_recovery_pending", "Unavailable")
+
+        async def shutdown(self):
+            pass
+
+    class Agent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, stop):
+            assert recovered.is_set()
+            claimed.set()
+            await stop.wait()
+
+    monkeypatch.setattr(module, "ProductionInteractiveExecutor", Executor)
+    monkeypatch.setattr(module, "ProductionRunnerAgent", Agent)
+    monkeypatch.setattr(
+        module,
+        "OfficialInteractiveDriver",
+        lambda **_: SimpleNamespace(observe_runtime_status=lambda *args: None),
+    )
+    adapter = object.__new__(module.ProductionInteractiveControllerAdapter)
+    adapter._source, adapter._bound, adapter._task = source, False, None
+    adapter._release = SimpleNamespace(
+        public_origin="https://next.test", adapter_contract_version="0.2.0"
+    )
+    adapter._config = SimpleNamespace(
+        runner_id=runner_id,
+        client_certificate_path=control.certificate,
+        connection_generation=1,
+        product_revision="c" * 40,
+        image_digest="sha256:" + "a" * 64,
+        physical_gc_limit=32,
+        poll_interval_seconds=0.1,
+        heartbeat_interval_seconds=5,
+        shutdown_timeout_seconds=2,
+        physical_gc_interval_seconds=30,
+    )
+    adapter._client, adapter._sessions = object(), object()
+    adapter._engine = SimpleNamespace(dispose=lambda: None)
+    runtime = SimpleNamespace(create_authority=lambda **_: object())
+    app = FastAPI()
+    app.state.production_interactive_conversation_store = SimpleNamespace()
+
+    @app.post("/isolated-host-ready")
+    async def ready():
+        host_connected.set()
+        return {"connected": True}
+
+    adapter._bind_runtime(app=app, runtime=runtime, official=object())
+    async with app.router.lifespan_context(app):
+        assert not adapter._bound and not claimed.is_set()
+        await asyncio.wait_for(recovery_attempted.wait(), 2)
+        assert not adapter._bound and not claimed.is_set()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="https://next.test"
+        ) as client:
+            assert (await client.post("/isolated-host-ready")).status_code == 200
+        if invalid_recovery:
+            with pytest.raises(RunnerControlError, match="Unavailable"):
+                await asyncio.wait_for(asyncio.shield(adapter._task), 2)
+            assert not adapter._bound and not claimed.is_set()
+        else:
+            await asyncio.wait_for(claimed.wait(), 2)
+            assert recovered.is_set() and adapter._bound
 
 
 @pytest.fixture

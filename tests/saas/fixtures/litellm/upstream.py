@@ -19,7 +19,12 @@ def partial_stream_requested(document):
     latest = next(
         (r for r in reversed(document.get("messages", [])) if r.get("role") == "user"), {}
     )
-    if "P0_CANCEL_STREAM" not in str(latest.get("content", "")):
+    content = str(latest.get("content", ""))
+    crash_ready = "P0_CRASH_RECOVERY" in content and any(
+        row.get("role") == "tool" and row.get("tool_call_id") == "call_managed_send"
+        for row in document.get("messages", [])
+    )
+    if "P0_CANCEL_STREAM" not in content and not crash_ready:
         return False
     if document.get("stream") is not True:
         raise ValueError("managed_probe_streaming_required")

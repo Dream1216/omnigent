@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import os
 import secrets
+import signal
+import socket
 import ssl
 import subprocess
 import threading
@@ -179,6 +182,117 @@ def _private(path, value):
     return str(path)
 
 
+def _supervise_controller_crash(drive, *, factory, workers, tmp_path, exchange, metering_server):
+    """Own two Server processes and one real SIGKILL; the Host remains separate."""
+    assert os.name == "posix" and Path("/trusted").is_dir()
+    assert tmp_path.is_relative_to("/trusted")
+    assert threading.active_count() == 1
+    ports = []
+    for _ in range(3):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            ports.append(sock.getsockname()[1])
+    assert len(set(ports)) == 3
+    start_meter = metering_server.start
+
+    async def fixed_meter():
+        await start_meter(port=ports[0])
+
+    metering_server.start = fixed_meter
+    tls_material, ready_material = _tls(tmp_path), _readiness_tls(tmp_path)
+    private_state = tmp_path / "crash-state.json"
+    children = set()
+
+    def fork_phase(restarted):
+        # No active threads or inherited pooled database sockets enter either Server.
+        assert threading.active_count() == 1
+        for value in gc.get_objects():
+            if type(value) is sa.Engine:
+                value.dispose()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                drive(
+                    restarted=restarted,
+                    crash_state=private_state,
+                    control_ports=ports[1:],
+                    tls_material=tls_material,
+                    ready_material=ready_material,
+                )
+            except BaseException:
+                traceback.print_exc()
+                os._exit(1)
+            os._exit(0)
+        children.add(pid)
+        return pid
+
+    def exited(pid):
+        found, status = os.waitpid(pid, os.WNOHANG)
+        if found:
+            children.remove(pid)
+            return status
+        return None
+
+    try:
+        first = fork_phase(False)
+
+        def crash_ready():
+            status = exited(first)
+            assert status is None, f"First owned Server exited before crash point: {status}"
+            return (exchange / "crash-ready.json").is_file()
+
+        _wait(crash_ready, "tools completed and actual stream started before SIGKILL", timeout=180)
+        os.kill(first, signal.SIGKILL)
+        found, killed = os.waitpid(first, 0)
+        children.remove(first)
+        assert found == first and os.WIFSIGNALED(killed) and os.WTERMSIG(killed) == signal.SIGKILL
+        state = json.loads(private_state.read_text())
+        with factory() as db:
+            run = db.get(RunRecord, UUID(state["run_id"]))
+            assert run.status == "running"
+            expiry = run.lease_expires_at
+        _wait(
+            lambda: datetime.now(timezone.utc) > expiry,
+            "natural expiry of crashed controller Run lease",
+            timeout=70,
+        )
+        recovered = SchedulingControlPlane(workers["executor"]).recover_expired_dispatches()
+        assert UUID(state["run_id"]) in recovered
+        with factory() as db:
+            assert db.get(RunRecord, UUID(state["run_id"])).status == "orphaned"
+            assert db.get(RunDispatchRecord, UUID(state["run_id"])).status == "released"
+        second = fork_phase(True)
+        completion = {}
+
+        def finished():
+            status = exited(second)
+            if status is None:
+                return False
+            completion["status"] = status
+            return True
+
+        _wait(finished, "replacement Server recovery and fresh input", timeout=180)
+        assert os.WIFEXITED(completion["status"]) and os.WEXITSTATUS(completion["status"]) == 0
+        (exchange / "crash-supervisor-result.json").write_text(
+            json.dumps(
+                {
+                    "passed": True,
+                    "first_server_sigkill": True,
+                    "two_distinct_server_processes": first != second,
+                    "natural_lease_expiry_and_production_sweeper": True,
+                    "same_private_volume_reopened": True,
+                    "cross_pod_volume_remount_tested": False,
+                }
+            )
+        )
+    finally:
+        for pid in tuple(children):
+            if exited(pid) is None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+                children.remove(pid)
+
+
 class _MeteringDeliveryGate:
     """Test-only failures around the real authority; never supplies usage or identity."""
 
@@ -222,6 +336,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
         "public_stop",
         "public_archive",
         "late_customer_metering",
+        "controller_crash_recovery",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -292,7 +407,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     name="controller-agent",
                     executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
                     include_llm=False,
-                    max_iterations=8 if scenario == "tools_cross_run" else None,
+                    max_iterations=8
+                    if scenario in {"tools_cross_run", "controller_crash_recovery"}
+                    else None,
                     terminals={
                         "shell": {
                             "command": "bash",
@@ -304,7 +421,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                             },
                         }
                     }
-                    if scenario == "tools_cross_run"
+                    if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else None,
                 ),
             )
@@ -430,31 +547,49 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                 RunnerCertificateAuthority(metering, accepted_trust_bundle_versions=("test-v1",)),
                 expected_host="localhost",
             )
-            metering_thread = _ServerThread(metering_server)
-            metering_thread.start()
+
+            def drive(**recovery_options):
+                metering_thread = _ServerThread(metering_server)
+                metering_thread.start()
+                try:
+                    _serve_controller(
+                        case,
+                        workers,
+                        app,
+                        runtime_factory,
+                        dependencies,
+                        host_store,
+                        control_certificates,
+                        meter_certificates,
+                        metering_server,
+                        lifecycle,
+                        runtime,
+                        template,
+                        delegate,
+                        factory,
+                        gateway,
+                        tmp_path,
+                        exchange,
+                        monkeypatch,
+                        delivery=delivery,
+                        scenario=scenario,
+                        **recovery_options,
+                    )
+                finally:
+                    metering_thread.close()
+
             try:
-                _serve_controller(
-                    case,
-                    workers,
-                    app,
-                    runtime_factory,
-                    dependencies,
-                    host_store,
-                    control_certificates,
-                    meter_certificates,
-                    metering_server,
-                    lifecycle,
-                    runtime,
-                    template,
-                    delegate,
-                    factory,
-                    gateway,
-                    tmp_path,
-                    exchange,
-                    monkeypatch,
-                    delivery=delivery,
-                    scenario=scenario,
-                )
+                if scenario == "controller_crash_recovery":
+                    _supervise_controller_crash(
+                        drive,
+                        factory=factory,
+                        workers=workers,
+                        tmp_path=tmp_path,
+                        exchange=exchange,
+                        metering_server=metering_server,
+                    )
+                else:
+                    drive()
                 attestor.attest(
                     draft=draft, credential_name=credential_name, expected_api_key=_KEY
                 )
@@ -463,7 +598,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                 ).json()
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
                     4
-                    if scenario == "tools_cross_run"
+                    if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else 2
                     if scenario == "cancel_unknown_stream"
                     else 1
@@ -481,9 +616,225 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                         "text",
                     ]
                     assert after_calls["requests"][0]["stream_started"]
+                if scenario == "controller_crash_recovery":
+                    assert [r["mode"] for r in after_calls["requests"]] == [
+                        "tool",
+                        "tool",
+                        "partial-stream",
+                        "text",
+                    ]
+                    assert after_calls["requests"][2]["stream_started"]
             finally:
-                metering_thread.close()
                 attestation_engine.dispose()
+
+
+def _assert_crash_restart(
+    *,
+    adapter,
+    app_loop,
+    state,
+    app,
+    certificate,
+    issued,
+    runtime,
+    delegate,
+    factory,
+    workers,
+    gateway,
+    observed,
+    exchange,
+    meter_certificates,
+):
+    old_id = UUID(state["run_id"])
+    assert (
+        sha256(meter_certificates["runner-0"].certificate.read_bytes()).hexdigest()
+        == state["meter_leaf_sha256"]
+    )
+    old = adapter._journal.read(old_id)
+    assert old.phase == "terminal" and old.outcome == "orphaned" and old.process_stopped
+    assert len(list(old.grant.spool_directory.glob("*.pending.json"))) == 1
+    with bind_runtime_context(runtime):
+        conversation = delegate.get_conversation(state["conversation_id"])
+
+    def denied():
+        response = httpx.post(
+            "http://127.0.0.1:8090/v1/chat/completions",
+            trust_env=False,
+            headers={"Authorization": "Bearer " + state["old_bearer"]},
+            json=_document(conversation.model_override, limit=32),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "platform_model_run_authority_unavailable"
+
+    denied()
+    with httpx.Client(
+        base_url=ORIGIN,
+        trust_env=False,
+        verify=ssl.create_default_context(cafile=str(certificate)),
+        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+        timeout=60,
+    ) as client:
+        headers = {"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token}
+        replay = client.post(
+            f"/v1/sessions/{conversation.id}/events",
+            json=_message(text=state["initial_text"]),
+            headers=headers,
+        )
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["run_id"] == str(old_id)
+        assert replay.json()["run_status"] == "orphaned" and not replay.json()["queued"]
+        retried = client.post(
+            f"/v1/sessions/{conversation.id}/events",
+            json={"type": "retry_session", "data": {}},
+            headers=headers,
+        )
+        assert retried.status_code == 202 and not retried.json()["queued"]
+        # The orphaned-session scheduling barrier is intentionally not bypassed.
+        marker = conversation.inference_snapshot["managed_execution"]
+        created = client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": "b" * 32,
+                "project_id": conversation.project_id,
+                "host_type": "external",
+                "host_id": "c" * 32,
+                "workspace": "/workspace",
+                "model_override": marker["public_model_id"],
+                "inference_configuration_revision": (
+                    f"managed-model:{marker['wire_api']}:{marker['generation']}:"
+                    f"{marker['snapshot_sha256']}"
+                ),
+                "initial_items": [],
+            },
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        with bind_runtime_context(runtime):
+            conversation = delegate.get_conversation(created.json()["id"])
+        fresh = client.post(
+            f"/v1/sessions/{conversation.id}/events",
+            json=_message("d" * 32, "Continue without writing the marker again"),
+            headers=headers,
+        )
+        assert fresh.status_code == 202, fresh.text
+    assert (
+        _queued_worker(workers["dispatcher"], workers["executor"]).dispatch_once().published == 1
+    )
+
+    def completed():
+        assert not adapter._task.done(), "replacement controller exited"
+        with factory() as db:
+            rows = db.scalars(sa.select(RunRecord)).all()
+            assert db.get(RunRecord, old_id).status == "orphaned"
+            assert all(r.status not in {"failed", "cancelled"} for r in rows)
+            return len(rows) == 2 and all(
+                db.get(RunDispatchRecord, r.id).status == "released" for r in rows
+            )
+
+    _wait(completed, "independent session after cold recovery without replay", timeout=150)
+    denied()
+    with bind_runtime_context(runtime):
+        assert delegate.get_conversation(conversation.id).runner_id != state["runner_id"]
+        assert "OK" in str(delegate.list_items(conversation.id, limit=100))
+    with factory() as db:
+        runs = db.scalars(sa.select(RunRecord)).all()
+        assert {r.status for r in runs} == {"orphaned", "succeeded"}
+        fresh_run = next(r for r in runs if r.id != old_id)
+        assert db.get(RunnerRegistrationRecord, adapter._config.runner_id).active_leases == 0
+        for model, count in (
+            (TaskRecord, 2),
+            (ModelRunTokenRecord, 2),
+            (UsageEventRecord, 6),
+            (BillingMeteringReceiptRecord, 6),
+        ):
+            assert db.scalar(sa.select(sa.func.count()).select_from(model)) == count
+        assert db.scalar(sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))) == 6
+        tokens = db.scalars(sa.select(ModelRunTokenRecord)).all()
+        assert all(t.expires_at - t.issued_at == timedelta(hours=8) for t in tokens)
+        budgets = db.scalars(
+            sa.select(ModelProviderBudgetReservationRecord).where(
+                ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+            )
+        ).all()
+        settled = [b for b in budgets if b.status == "settled"]
+        unresolved = [b for b in budgets if b.status in {"in_flight", "uncertain"}]
+        assert len(budgets) == 4 and len(settled) == 3 and len(unresolved) == 1
+        assert all(b.settled_tokens == 22 for b in settled)
+        hold = unresolved[0]
+        assert hold.run_id == old_id and hold.admitted_tokens > 0 and hold.admitted_microusd > 0
+        assert hold.settled_tokens == hold.settled_microusd == 0
+        assert hold.released_tokens == hold.released_microusd == 0
+        phases = set(
+            db.scalars(
+                sa.select(ModelGatewayEvidenceRecord.phase).where(
+                    ModelGatewayEvidenceRecord.reservation_id == hold.id
+                )
+            )
+        )
+        assert {"request", "in_flight"} <= phases and "settled" not in phases
+        receipts = db.scalars(
+            sa.select(BillingMeteringReceiptRecord).where(
+                BillingMeteringReceiptRecord.run_id == old_id
+            )
+        ).all()
+        assert len(receipts) == 4
+        fingerprint = (
+            x509.load_pem_x509_certificate(meter_certificates["runner-0"].certificate.read_bytes())
+            .fingerprint(hashes.SHA256())
+            .hex()
+        )
+        assert {r.certificate_fingerprint_sha256 for r in receipts} == {fingerprint}
+    asyncio.run_coroutine_threadsafe(
+        adapter._executor.reconcile_physical_gc(limit=10), app_loop
+    ).result(20)
+    assert gateway._budgets.recover_expired(now=hold.expires_at + timedelta(days=1)) == ()
+    assert len(list(old.grant.spool_directory.glob("*.pending.json"))) == 1
+    with factory() as db:
+        assert db.get(ModelProviderBudgetReservationRecord, hold.id).status == hold.status
+        assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 6
+        monthly = db.get(ModelProviderMonthlyBudgetRecord, (hold.provider_id, hold.period_start))
+        daily = db.get(
+            ModelProviderTenantDailyUsageRecord,
+            (hold.tenant_id, hold.provider_id, hold.usage_date),
+        )
+        assert monthly.reserved_microusd == hold.admitted_microusd
+        assert daily.reserved_tokens == hold.admitted_tokens and daily.settled_tokens == 66
+    record = adapter._journal.read(fresh_run.id)
+    assert record.phase == "terminal" and record.outcome == "succeeded"
+    assert asyncio.run_coroutine_threadsafe(
+        adapter._executor._driver.stop(record), app_loop
+    ).result(20)
+    assert [r["status"] for r in observed] == [403, 200, 403]
+    adapter.assert_production_ready()
+    (exchange / "result.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "production_factory": True,
+                "controller_adapter": True,
+                "physical_host": True,
+                "actual_litellm": True,
+                "production_pki": False,
+                "scenario": "controller_crash_recovery",
+                "task_count": 2,
+                "usage_facts": 6,
+                "settled_tokens": 66,
+                "supplier_calls": 4,
+                "gateway_request_statuses": [200, 200, 200, *[r["status"] for r in observed]],
+                "original_metering_leaf_preserved": True,
+                "old_run_orphaned_not_replayed": True,
+                "replacement_runner_after_recovery": True,
+                "fresh_independent_session": True,
+                "same_orphaned_session_resume_proven": False,
+                "same_private_volume_reopened": True,
+                "cross_pod_volume_remount_tested": False,
+                "unknown_usage_hold_and_reference_retained": True,
+                "pending_provider_budget": {"status": hold.status, "not_auto_expired": True},
+                "host_stop_acknowledged": True,
+                "manual_run_heartbeat": False,
+            }
+        )
+    )
 
 
 def _serve_controller(
@@ -508,6 +859,11 @@ def _serve_controller(
     *,
     delivery,
     scenario="single",
+    restarted=False,
+    crash_state=None,
+    control_ports=None,
+    tls_material=None,
+    ready_material=None,
 ):
     cancelling = scenario in {
         "cancel_before_admission",
@@ -518,6 +874,7 @@ def _serve_controller(
     initial_text = {
         "tools_cross_run": "P0_MANAGED_TOOL: write one unique marker",
         "cancel_unknown_stream": "P0_CANCEL_STREAM: cancel after the stream starts",
+        "controller_crash_recovery": "P0_MANAGED_TOOL P0_CRASH_RECOVERY: write one unique marker",
     }.get(scenario, "Build the requested page")
     control = MutualTlsRunnerControlServer(
         ProductionRunnerMachineAuthority(
@@ -534,7 +891,7 @@ def _serve_controller(
         ),
     )
     # The task-owned listener thread exposes both protocol servers on one event loop.
-    ready_context, ready_ca = _readiness_tls(tmp_path)
+    ready_context, ready_ca = ready_material or _readiness_tls(tmp_path)
     readiness = TlsRunnerControlReadinessServer(
         ready_context,
         lambda: assert_postgresql_runner_fleet_ready(
@@ -547,8 +904,11 @@ def _serve_controller(
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    asyncio.run_coroutine_threadsafe(control.start(), loop).result(10)
-    asyncio.run_coroutine_threadsafe(readiness.start(host="0.0.0.0"), loop).result(10)
+    control_ports = control_ports or (0, 0)
+    asyncio.run_coroutine_threadsafe(control.start(port=control_ports[0]), loop).result(10)
+    asyncio.run_coroutine_threadsafe(
+        readiness.start(host="0.0.0.0", port=control_ports[1]), loop
+    ).result(10)
     source = {
         **case.source,
         "OMNIGENT_SAAS_RUNNER_ID": str(case.member.runner_id),
@@ -603,7 +963,7 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
-        certificate, key = _tls(tmp_path)
+        certificate, key = tls_material or _tls(tmp_path)
         (exchange / "ca.pem").write_bytes(certificate.read_bytes())
         issued = lifecycle.issue_auth_session(
             user_id=runtime.actor_id,
@@ -649,6 +1009,13 @@ def _serve_controller(
                 if scenario == "cancel_unknown_stream" and len(observed) == 1:
                     assert response.status_code == 200
                     request_waiting.set()
+                if (
+                    scenario == "controller_crash_recovery"
+                    and not restarted
+                    and len(observed) == 3
+                ):
+                    assert response.status_code == 200
+                    request_waiting.set()
                 return response
 
         with (
@@ -677,6 +1044,26 @@ def _serve_controller(
                 lambda: asyncio.run_coroutine_threadsafe(connected(), app_loop).result(5),
                 "owned Host WebSocket",
             )
+            if restarted:
+                _wait(lambda: adapter._bound or adapter._task.done(), "cold controller recovery")
+                adapter.assert_production_ready()
+                _assert_crash_restart(
+                    adapter=adapter,
+                    app_loop=app_loop,
+                    state=json.loads(crash_state.read_text()),
+                    app=app,
+                    certificate=certificate,
+                    issued=issued,
+                    runtime=runtime,
+                    delegate=delegate,
+                    factory=factory,
+                    workers=workers,
+                    gateway=gateway,
+                    observed=observed,
+                    exchange=exchange,
+                    meter_certificates=meter_certificates,
+                )
+                return
             adapter.assert_production_ready()
             with httpx.Client(
                 base_url=ORIGIN,
@@ -723,6 +1110,51 @@ def _serve_controller(
             )
 
             expected_runs = 1
+
+            if scenario == "controller_crash_recovery":
+                _wait(request_waiting.is_set, "third request actual partial stream")
+
+                def first_usage_committed():
+                    with factory() as db:
+                        return (
+                            db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord))
+                            == 4
+                        )
+
+                _wait(first_usage_committed, "two real tool-call usage receipts before crash")
+                with factory() as db:
+                    first = db.scalars(sa.select(RunRecord)).one()
+                    assert first.status == "running"
+                    run_id = first.id
+                with bind_runtime_context(runtime):
+                    runner_id = delegate.get_conversation(conversation.id).runner_id
+                assert runner_id and len(observed) == 3
+                assert [r["status"] for r in observed] == [200, 200, 200]
+                _private(
+                    crash_state,
+                    json.dumps(
+                        {
+                            "conversation_id": conversation.id,
+                            "run_id": str(run_id),
+                            "runner_id": runner_id,
+                            "old_bearer": private_bearers[-1],
+                            "initial_text": initial_text,
+                            "meter_leaf_sha256": sha256(
+                                meter_certificates["runner-0"].certificate.read_bytes()
+                            ).hexdigest(),
+                        }
+                    ),
+                )
+                with crash_state.open("rb") as checkpoint:
+                    os.fsync(checkpoint.fileno())
+                directory = os.open(tmp_path, os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+                (exchange / "crash-ready.json").write_text('{"ready": true}')
+                assert not threading.Event().wait(240), "supervisor did not SIGKILL owned Server"
+                pytest.fail("owned Server was not killed")
 
             def released():
                 if adapter._task.done():

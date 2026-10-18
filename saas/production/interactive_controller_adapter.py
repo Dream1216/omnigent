@@ -249,26 +249,48 @@ class ProductionInteractiveControllerAdapter:
         app.add_middleware(SessionModelChannelMiddleware, channels=channels)
         original = app.router.lifespan_context
 
+        async def recover_and_run(stop):
+            # Host ingress must be listening before stranded processes can be stopped.
+            while not stop.is_set():
+                await executor.reconcile_physical_gc(limit=cfg.physical_gc_limit)
+                try:
+                    await asyncio.to_thread(executor.assert_claimable)
+                except RunnerControlError as error:
+                    if error.code != "interactive_controller_recovery_pending":
+                        raise
+                    try:
+                        await asyncio.wait_for(
+                            stop.wait(), timeout=max(1, cfg.poll_interval_seconds)
+                        )
+                    except TimeoutError:
+                        continue
+                    return
+                break
+            if stop.is_set():
+                return
+            agent = ProductionRunnerAgent(
+                self._client,
+                executor,
+                poll_interval_seconds=cfg.poll_interval_seconds,
+                heartbeat_interval_seconds=cfg.heartbeat_interval_seconds,
+                shutdown_timeout_seconds=cfg.shutdown_timeout_seconds,
+                physical_gc_interval_seconds=cfg.physical_gc_interval_seconds,
+                physical_gc_limit=cfg.physical_gc_limit,
+            )
+            self._bound = True
+            try:
+                await agent.run(stop)
+            finally:
+                self._bound = False
+
         @asynccontextmanager
         async def lifespan(instance):
             stop = asyncio.Event()
             try:
                 async with original(instance) as state:
-                    await executor.reconcile_physical_gc(limit=cfg.physical_gc_limit)
-                    await asyncio.to_thread(executor.assert_claimable)
-                    agent = ProductionRunnerAgent(
-                        self._client,
-                        executor,
-                        poll_interval_seconds=cfg.poll_interval_seconds,
-                        heartbeat_interval_seconds=cfg.heartbeat_interval_seconds,
-                        shutdown_timeout_seconds=cfg.shutdown_timeout_seconds,
-                        physical_gc_interval_seconds=cfg.physical_gc_interval_seconds,
-                        physical_gc_limit=cfg.physical_gc_limit,
-                    )
                     self._task = asyncio.create_task(
-                        agent.run(stop), name="production-interactive-controller"
+                        recover_and_run(stop), name="production-interactive-controller"
                     )
-                    self._bound = True
                     self._task.add_done_callback(self._finished)
                     yield state
             finally:

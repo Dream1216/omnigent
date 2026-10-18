@@ -65,3 +65,20 @@ def test_partial_stream_requires_streaming_and_does_not_leak_into_the_next_turn(
         requested(document)
     document["messages"].append({"role": "user", "content": "A fresh turn"})
     assert not requested(document)
+
+
+def test_crash_stream_waits_for_the_real_marker_tool_return(monkeypatch):
+    monkeypatch.setenv("PROBE_PROVIDER_KEY", "isolated-not-a-provider-key")
+    requested = runpy.run_path(str(Path(__file__).parent / "fixtures/litellm/upstream.py"))[
+        "partial_stream_requested"
+    ]
+    document = _document("call_managed_launch")
+    document["stream"] = True
+    document["messages"][0]["content"] += " P0_CRASH_RECOVERY"
+    assert not requested(document)
+    document["messages"].append(
+        {"role": "tool", "tool_call_id": "call_managed_send", "content": "OK"}
+    )
+    assert requested(document)
+    document["messages"].append({"role": "user", "content": "A fresh turn"})
+    assert not requested(document)
