@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import stat
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, cast
@@ -53,6 +53,11 @@ from saas.production.model_run_credentials import (
     ModelRunCredentialService,
 )
 from saas.production.model_run_inference import LiteLLMRunInference, load_litellm_run_inference
+from saas.production.model_run_watch import (
+    GuardedModelRunResponse,
+    ModelRunAuthorityLost,
+    ModelRunAuthorityWatch,
+)
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import _inspect_service_login
 from saas.production.server_config import (
@@ -72,6 +77,8 @@ from saas.runner_adapter.platform_models import PLATFORM_MODEL_MAX_OUTPUT_TOKENS
 
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024
 _MAX_SSE_LINE_BYTES = 256 * 1024
+_RUN_AUTHORITY_POLL_SECONDS = 1.0
+_RUN_AUTHORITY_TIMEOUT_SECONDS = 5.0
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _TOKEN_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
@@ -459,22 +466,55 @@ class PlatformModelGateway:
             await self._release(reservation)
             await self._close_transport(client)
             return _error(503, "platform_model_budget_attempt_unavailable")
+        watch = ModelRunAuthorityWatch(
+            lambda: credentials.require_in_flight(claims, now=self._clock()),
+            interval=_RUN_AUTHORITY_POLL_SECONDS,
+            timeout=_RUN_AUTHORITY_TIMEOUT_SECONDS,
+        )
         try:
-            upstream = await client.send(outbound_request, stream=True)
+            upstream = await watch.wait(client.send(outbound_request, stream=True))
+        except ModelRunAuthorityLost as exc:
+            await watch.close()
+            await self._retain_uncertain(reservation)
+            await self._close_transport(client)
+            return _error(exc.status_code, exc.code)
         except httpx.HTTPError:
+            await watch.close()
             await self._retain_uncertain(reservation, reason="provider_unreachable")
             await self._close_transport(client)
             return _error(502, "platform_model_provider_unreachable")
         except BaseException:
             with anyio.CancelScope(shield=True):
+                await watch.close()
                 await self._retain_uncertain(reservation)
                 await self._close_transport(client)
             raise
         if upstream.status_code != 200:
+            await watch.close()
             await self._retain_uncertain(reservation, reason="provider_rejected")
             await self._close_transport(client, upstream)
             return _error(502, "platform_model_provider_rejected")
-        return StreamingResponse(
+        finalized, finish_lock = False, asyncio.Lock()
+
+        async def finalize(usage: ModelTokenUsage | None = None) -> None:
+            nonlocal finalized
+            with anyio.CancelScope(shield=True):
+                async with finish_lock:
+                    if finalized:
+                        return
+                    try:
+                        await watch.close()
+                        if usage is None:
+                            await self._retain_uncertain(reservation, reason="stream_incomplete")
+                        else:
+                            await self._resolve_usage(
+                                reservation, usage, price=evidence.model_price, requested_at=now
+                            )
+                    finally:
+                        await self._close_transport(client, upstream)
+                        finalized = True
+
+        return GuardedModelRunResponse(
             self._stream_and_settle(
                 client=client,
                 upstream=upstream,
@@ -482,7 +522,10 @@ class PlatformModelGateway:
                 price=evidence.model_price,
                 requested_at=now,
                 responses=responses,
+                watch=watch,
+                finalize=finalize,
             ),
+            cleanup=finalize,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
@@ -496,19 +539,25 @@ class PlatformModelGateway:
         price: PlatformModelPrice,
         requested_at: datetime,
         responses: bool,
+        watch: ModelRunAuthorityWatch | None = None,
+        finalize: Callable[[ModelTokenUsage | None], Awaitable[None]] | None = None,
     ) -> AsyncIterator[bytes]:
         parser = _UsageParser(responses=responses)
         try:
-            async for chunk in upstream.aiter_bytes():
+            source = upstream.aiter_bytes()
+            async for chunk in source if watch is None else watch.stream(source):
                 if chunk:
                     parser.feed(chunk)
                     yield chunk
-            parser.finish()
+            if watch is None or not watch.interrupted:
+                parser.finish()
         finally:
             with anyio.CancelScope(shield=True):
                 try:
                     usage = parser.final_usage
-                    if usage is None:
+                    if finalize is not None:
+                        await finalize(usage)
+                    elif usage is None:
                         await self._retain_uncertain(reservation, reason="stream_incomplete")
                     else:
                         await self._resolve_usage(
@@ -518,7 +567,8 @@ class PlatformModelGateway:
                             requested_at=requested_at,
                         )
                 finally:
-                    await self._close_transport(client, upstream)
+                    if finalize is None:
+                        await self._close_transport(client, upstream)
 
     async def _resolve_usage(
         self,

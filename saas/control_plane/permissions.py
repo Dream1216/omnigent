@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-10-16.p2-model-publication"
+POLICY_VERSION: Final = "2026-10-19.p2-model-disablement"
 
 
 class PermissionScope(StrEnum):
@@ -379,12 +379,16 @@ _DEFINITIONS = (
         api_surfaces=(
             "GET /v2/platform-admin/model-provider",
             "GET /v2/platform-admin/model-connections",
+            "GET /v2/platform-admin/model-connections/{connection_id}/credential-versions",
+            "GET /v2/platform-admin/model-deployments",
             "GET /v2/platform-admin/model-operations",
             "GET /v2/platform-admin/model-operations/{operation_id}",
             "GET /v2/platform-admin/model-test-funding",
             "GET /v2/platform-admin/model-operations/{operation_id}/verification",
             "GET /v2/platform-admin/model-publications",
             "GET /v2/platform-admin/model-operations/{operation_id}/publication",
+            "GET /v2/platform-admin/model-publication-disablements",
+            "GET /v2/platform-admin/model-publication-disablements/{disablement_id}",
         ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.read",
@@ -398,6 +402,7 @@ _DEFINITIONS = (
             "PUT /v2/platform-admin/model-provider",
             "POST /v2/platform-admin/model-connections",
             "POST /v2/platform-admin/model-connections/{connection_id}/credential-versions",
+            "POST /v2/platform-admin/model-deployments",
             "PUT /v2/platform-admin/model-test-funding",
         ),
         ui_surface="model-provider",
@@ -420,7 +425,10 @@ _DEFINITIONS = (
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
-        api_surfaces=("POST /v2/platform-admin/model-deployments/{deployment_id}/publish",),
+        api_surfaces=(
+            "POST /v2/platform-admin/model-deployments/{deployment_id}/publish",
+            "POST /v2/platform-admin/model-publications/{publication_id}/disable",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.published",
     ),

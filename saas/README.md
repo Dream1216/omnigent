@@ -118,6 +118,24 @@ hold. User interruption/cancellation remains available. This is ordinary
 disablement, not a claim that security revocation actively stops an in-flight
 stream or physical Agent; that lifecycle still requires separate acceptance.
 
+Accepted Run inference now observes its current Run status, fence, lease and
+capability while waiting for supplier headers or stream chunks. A durable user
+cancel or authority loss closes that transport; the default check interval is
+one second with a five-second authority-check deadline. An authority failure
+before response headers returns a redacted unavailable error. This does not
+replay inference, refresh a revoked capability, or guarantee that a supplier has
+stopped billing. Without authoritative final usage the full hold remains
+unknown, never a zero-cost settlement. Known final usage is settled once even
+if the downstream client disconnects. Ordinary publication cutoff does not
+interrupt accepted calls, and legacy-only inference keeps its prior behavior.
+Per-model active security revocation and physical Agent stop acknowledgement
+remain separate unfinished rollout gates.
+
+The Staff permission catalog declares all registered managed-model routes,
+including credential history, drafts and synchronous disablement receipts.
+Its version advances without changing roles, risk, fresh authentication,
+service-account restrictions or the existing permission keys.
+
 PostgreSQL requires the matching audit Outbox intent in the same transaction,
 rejects changed/deleted cutoff rows, and refuses schema downgrade while cutoffs
 are retained. Receipt time is read from PostgreSQL, independent of the API

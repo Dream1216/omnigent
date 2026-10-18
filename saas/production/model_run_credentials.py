@@ -285,6 +285,15 @@ class ModelRunCredentialService:
             raise PlatformModelGatewayTokenError("model Run authority is unavailable")
         return run
 
+    def require_in_flight(self, claims: ModelRunClaims, *, now: datetime | None = None) -> None:
+        """Recheck Run/control authority without applying ordinary model cutoffs."""
+        at = _aware(now or datetime.now(timezone.utc))
+        with (
+            query_name_scope("saas.model_run_credentials.check_in_flight_run"),
+            self._app.begin() as db,
+        ):
+            self._run(db, claims, at)
+
     def authorize(
         self, claims: ModelRunClaims, *, now: datetime | None = None
     ) -> AuthorizedModelRun:
