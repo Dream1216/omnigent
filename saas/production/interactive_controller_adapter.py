@@ -126,6 +126,14 @@ class ProductionInteractiveControllerAdapter:
             raise _unavailable()
         self._executor.assert_production_ready()
 
+    async def stop_session(self, conversation, context, cancel_inputs):
+        # Stopping owned work must not require spare admission capacity.
+        if not self._bound or self._executor is None or self._task is None or self._task.done():
+            raise _unavailable()
+        return await self._executor.stop_session(
+            context, conversation.id, conversation.runner_id, cancel_inputs
+        )
+
     def bind_runtime(self, *, app, runtime, official, auth_provider) -> None:
         del auth_provider
         if self._installed:
@@ -231,6 +239,10 @@ class ProductionInteractiveControllerAdapter:
             verify_recovery=verify_recovery,
         )
         self._executor = executor
+
+        app.state.production_interactive_conversation_store.session_stop_handler = (
+            self.stop_session
+        )
         app.state.production_interactive_conversation_store.runtime_status_observer = (
             driver.observe_runtime_status
         )

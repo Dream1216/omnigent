@@ -907,8 +907,11 @@ async def _archive_stop(
     # stop marker below, which would exclude the session from child recovery.
     _pending_archive_stops.pop(session_id, None)
 
-    await _facade._best_effort_stop(session_id, conversation_store, runner_router)
-    if conv.host_id and conv.runner_id:
+    managed_stop = getattr(conversation_store, "stop_archived_session", None)
+    managed_stopped = managed_stop is not None and await managed_stop(conv)
+    if not managed_stopped:
+        await _facade._best_effort_stop(session_id, conversation_store, runner_router)
+    if not managed_stopped and conv.host_id and conv.runner_id:
         try:
             await _stop_host_runner_intentionally(
                 session_id,

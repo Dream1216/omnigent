@@ -357,6 +357,9 @@ class RuntimeSessionRunAdmission:
                 )
                 .order_by(RunRecord.created_at.desc(), RunRecord.id.desc())
             )
+            physical_run_id = db.scalar(
+                query.with_only_columns(RunRecord.id).where(RunRecord.fence_token > 0).limit(1)
+            )
             if event_type == "interrupt":
                 query = query.where(RunRecord.status.not_in(TERMINAL_RUN_STATUSES))
             else:
@@ -365,10 +368,16 @@ class RuntimeSessionRunAdmission:
         if event_type == "interrupt":
             # Cancel every outstanding input, not only the newest queued message.
             for run in runs:
-                self._execution.request_cancel(
+                mutation = self._execution.request_cancel(
                     request,
                     project_id=project_id,
                     run_id=run.id,
                     reason="User interrupted the interactive session",
                 )
-        return {"queued": False, **({"run_id": str(runs[0].id)} if runs else {})}
+                if mutation.status == "cancelling":
+                    physical_run_id = run.id
+        return {
+            "queued": False,
+            **({"physical_run_id": str(physical_run_id)} if physical_run_id else {}),
+            **({"run_id": str(runs[0].id)} if runs else {}),
+        }

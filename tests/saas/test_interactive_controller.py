@@ -36,7 +36,7 @@ from saas.production.runner_control import (
 )
 from saas.runner_adapter.metering import ManagedMeteringGrant, ProviderUsageMeter
 from tests.saas.test_gateway_usage_delivery import ReferenceClient
-from tests.saas.test_interactive_execution_http import _managed_create
+from tests.saas.test_interactive_execution_http import _managed_create, _post
 from tests.saas.test_interactive_execution_http import interactive_http as interactive_http
 from tests.saas.test_interactive_model_channel import ORIGIN
 from tests.saas.test_interactive_runner_lease import _admit
@@ -294,8 +294,7 @@ async def test_cancelling_unknown_preparation_cannot_invent_a_stop_ack(controlle
     await asyncio.wait_for(c.prepared.wait(), 2)
     cancellation.set()
     await c.executor.cancel(c.lease)
-    with pytest.raises(asyncio.CancelledError):
-        await execution
+    assert await execution == "orphaned"
     assert await c.executor.prepare_finalization(c.lease, result="cancelled") == "orphaned"
     with pytest.raises(RunnerControlError):
         await c.executor.finalize(c.lease, result="orphaned")
@@ -313,6 +312,153 @@ async def test_cancellation_cannot_forget_an_existing_idle_runner(controller_cas
     await c.executor.cancel(c.lease)
     assert not active.stopped and not active.record.process_stopped
     assert c.stops == [active.record.official_runner_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack", [False, True])
+async def test_public_idle_stop_updates_recovery_only_after_exact_ack(controller_case, ack):
+    c = controller_case
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    assert await c.executor.prepare_finalization(c.lease, result="succeeded") == "succeeded"
+    await c.executor.finalize(c.lease, result="succeeded")
+    c.controls.stop_ack = ack
+    cancellations = []
+
+    async def cancel_inputs():
+        cancellations.append(True)
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    stop = c.executor.stop_session(
+        c.context,
+        c.authorized.session_id,
+        c.journal.read(c.lease.run_id).official_runner_id,
+        cancel_inputs,
+    )
+    if ack:
+        await stop
+    else:
+        with pytest.raises(RunnerControlError):
+            await stop
+    record = c.journal.read(c.lease.run_id)
+    assert record.phase == "terminal" and record.outcome == "succeeded"
+    assert record.process_stopped is ack
+    assert len(cancellations) == len(c.stops) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_active_stop_wakes_execution_without_task_replay(controller_case):
+    c = controller_case
+    c.controls.auto_complete = False
+    execution = asyncio.create_task(c.executor.execute(c.lease, cancellation=asyncio.Event()))
+    await asyncio.wait_for(c.prepared.wait(), 2)
+    while not c.inputs:
+        await asyncio.sleep(0)
+
+    async def cancel_inputs():
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    await c.executor.stop_session(
+        c.context,
+        c.authorized.session_id,
+        c.journal.read(c.lease.run_id).official_runner_id,
+        cancel_inputs,
+    )
+    assert await asyncio.wait_for(execution, 2) == "cancelled"
+    assert await c.executor.prepare_finalization(c.lease, result="cancelled") == "cancelled"
+    await c.executor.finalize(c.lease, result="cancelled")
+    assert len(c.inputs) == len(c.stops) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_stop_waits_for_completed_run_then_stops_idle_runner(controller_case):
+    c = controller_case
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+
+    async def cancel_inputs():
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    stopping = asyncio.create_task(
+        c.executor.stop_session(
+            c.context,
+            c.authorized.session_id,
+            c.journal.read(c.lease.run_id).official_runner_id,
+            cancel_inputs,
+        )
+    )
+    await asyncio.sleep(0)
+    assert not stopping.done() and not c.stops
+    assert await c.executor.prepare_finalization(c.lease, result="succeeded") == "succeeded"
+    await c.executor.prepare_terminal_transition(c.lease)
+    await c.executor.finalize(c.lease, result="succeeded")
+    await asyncio.wait_for(stopping, 2)
+    record = c.journal.read(c.lease.run_id)
+    assert record.process_stopped and record.outcome == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_public_stop_does_not_wait_for_a_wedged_dispatch(controller_case):
+    c = controller_case
+    c.controls.pause_gateway = True
+    execution = asyncio.create_task(c.executor.execute(c.lease, cancellation=asyncio.Event()))
+    await asyncio.wait_for(c.gateway_started.wait(), 2)
+
+    async def cancel_inputs():
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    await asyncio.wait_for(
+        c.executor.stop_session(
+            c.context,
+            c.authorized.session_id,
+            c.journal.read(c.lease.run_id).official_runner_id,
+            cancel_inputs,
+        ),
+        1,
+    )
+    assert await asyncio.wait_for(execution, 2) == "cancelled"
+    assert c.journal.read(c.lease.run_id).process_stopped
+    assert len(c.inputs) == len(c.stops) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runner_id,required", [(None, True), ("foreign-runner", False)])
+async def test_public_stop_cannot_confirm_an_unowned_physical_process(
+    controller_case, runner_id, required
+):
+    c = controller_case
+
+    async def cancel_inputs():
+        return {"queued": False, **({"physical_run_id": str(c.lease.run_id)} if required else {})}
+
+    with pytest.raises(RunnerControlError):
+        await c.executor.stop_session(c.context, c.authorized.session_id, runner_id, cancel_inputs)
+    assert not c.stops
+
+
+@pytest.mark.asyncio
+async def test_exact_runner_cancellation_ack_is_idempotent_after_public_cancel(controller_case):
+    from saas.control_plane.execution import ExecutionControlPlaneError
+
+    c = controller_case
+    assert _post(c.f, {"type": "interrupt", "data": {}}).status_code == 202
+    authority = ProductionRunnerMachineAuthority(
+        SchedulingControlPlane(c.f.factory), ExecutionControlPlane(c.f.factory)
+    )
+    command = {
+        "runner_id": c.connection.runner_id,
+        "connection_generation": c.connection.connection_generation,
+        "connection_token": c.connection.connection_token,
+        "run_id": c.lease.run_id,
+        "lease_token": c.lease.lease_token,
+        "fence_token": c.lease.fence_token,
+        "capability_token": c.lease.capability_token,
+        "target_status": "cancelling",
+    }
+    first = authority.transition_run(**command)
+    again = authority.transition_run(**command)
+    assert first.replayed and again.replayed and first == again
+    for drift in ({"fence_token": c.lease.fence_token + 1}, {"target_status": "running"}):
+        with pytest.raises(ExecutionControlPlaneError):
+            authority.transition_run(**{**command, **drift})
 
 
 @pytest.mark.asyncio
@@ -582,6 +728,35 @@ async def test_binding_and_lifespan_readiness_are_distinct_from_dependency_prefl
     adapter._task.set_result(None)
     with pytest.raises(RunnerControlError):
         adapter.assert_production_ready()
+
+
+@pytest.mark.asyncio
+async def test_stop_uses_live_controller_not_spare_admission_capacity():
+    from saas.production.interactive_controller_adapter import (
+        ProductionInteractiveControllerAdapter,
+    )
+
+    adapter = object.__new__(ProductionInteractiveControllerAdapter)
+    calls = []
+
+    def no_capacity():
+        pytest.fail("Stopping cannot require a spare Runner slot")
+
+    async def stop(*args):
+        calls.append(args)
+        return {"queued": False}
+
+    adapter._readiness = SimpleNamespace(assert_production_ready=no_capacity)
+    adapter._bound = True
+    adapter._task = asyncio.get_running_loop().create_future()
+    adapter._executor = SimpleNamespace(stop_session=stop)
+    conversation = SimpleNamespace(id="a" * 32, runner_id="owned-runner")
+    assert await adapter.stop_session(conversation, "context", "cancel") == {"queued": False}
+    assert calls == [("context", conversation.id, conversation.runner_id, "cancel")]
+    adapter._task.set_result(None)
+    with pytest.raises(RunnerControlError):
+        await adapter.stop_session(conversation, "context", "cancel")
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio

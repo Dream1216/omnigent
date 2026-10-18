@@ -511,6 +511,102 @@ def test_cancelled_message_replay_does_not_revive_execution(interactive_http):
         assert db.scalar(sa.select(AdmissionQuotaRecord.reserved_units)) == 0
 
 
+@pytest.mark.parametrize("owner", [False, True])
+def test_public_stop_requires_owner_before_cancelling_inputs(interactive_http, owner):
+    from omnigent.server.auth import LEVEL_EDIT
+
+    f = interactive_http
+    assert _post(f, _message()).status_code == 202
+    calls = []
+
+    async def stop(conversation, runtime, cancel_inputs):
+        calls.append((conversation.id, runtime.actor_id))
+        return await cancel_inputs()
+
+    f.store.session_stop_handler = stop
+    if not owner:
+        with bind_runtime_context(f.runtime):
+            f.permissions.grant(f.runtime.runtime_user_key, f.conversation.id, LEVEL_EDIT)
+    response = _post(f, {"type": "stop_session", "data": {}})
+    assert response.status_code == (202 if owner else 403), response.text
+    assert len(calls) == int(owner)
+    with f.factory() as db:
+        assert db.scalar(sa.select(RunRecord.status)) == ("cancelled" if owner else "queued")
+
+
+def test_public_stop_without_a_trusted_controller_fails_closed(interactive_http):
+    f = interactive_http
+    assert _post(f, _message()).status_code == 202
+    response = _post(f, {"type": "stop_session", "data": {}})
+    assert response.status_code == 503, response.text
+    with f.factory() as db:
+        assert db.scalar(sa.select(RunRecord.status)) == "queued"
+
+
+def test_interrupt_uses_cancel_receipt_when_queued_input_is_claimed_concurrently(
+    interactive_http, monkeypatch
+):
+    from tests.saas.test_interactive_runtime import _running_lease
+
+    f = interactive_http
+    first = _post(f, _message())
+    assert first.status_code == 202
+    execution = f.store._admission._execution
+    cancel = execution.request_cancel
+    claimed = []
+
+    def claim_before_cancel(*args, **kwargs):
+        lease, _ = _running_lease(f)
+        claimed.append(lease.run_id)
+        return cancel(*args, **kwargs)
+
+    monkeypatch.setattr(execution, "request_cancel", claim_before_cancel)
+    response = _post(f, {"type": "interrupt", "data": {}})
+    assert response.status_code == 202, response.text
+    assert response.json()["physical_run_id"] == first.json()["run_id"] == str(claimed[0])
+    with f.factory() as db:
+        assert db.scalar(sa.select(RunRecord.status)) == "cancelling"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("undone", [False, True])
+async def test_managed_archive_honors_persisted_undo_before_controller_stop(
+    interactive_http, monkeypatch, undone
+):
+    from omnigent.server.routes import sessions
+    from omnigent.server.routes._sessions.orchestration import _archive_stop
+
+    f = interactive_http
+    contexts = []
+    dispatch = f.store._admission.dispatch
+
+    def capture(runtime, *args, **kwargs):
+        contexts.append(runtime)
+        return dispatch(runtime, *args, **kwargs)
+
+    monkeypatch.setattr(f.store._admission, "dispatch", capture)
+    assert _post(f, _message()).status_code == 202
+    calls = []
+
+    async def stop(conversation, runtime, cancel_inputs):
+        calls.append(conversation.id)
+        return await cancel_inputs()
+
+    async def unexpected(*args, **kwargs):
+        pytest.fail("Managed archive must not bypass the controller")
+
+    f.store.session_stop_handler = stop
+    monkeypatch.setattr(sessions, "_best_effort_stop", unexpected)
+    with bind_runtime_context(contexts[0]):
+        f.delegate.update_conversation(f.conversation.id, archived=True)
+        if undone:
+            f.delegate.update_conversation(f.conversation.id, archived=False)
+        await _archive_stop(f.conversation.id, f.store, None, None)
+    assert len(calls) == int(not undone)
+    with f.factory() as db:
+        assert db.scalar(sa.select(RunRecord.status)) == ("queued" if undone else "cancelled")
+
+
 @pytest.mark.parametrize("revoked", ["project", "alias", "partition", "quota"])
 def test_message_admission_rechecks_live_scope_and_quota(interactive_http, revoked):
     f = interactive_http

@@ -9,6 +9,7 @@ import secrets
 import ssl
 import subprocess
 import threading
+import time
 import traceback
 from contextlib import contextmanager
 from dataclasses import asdict, replace
@@ -183,6 +184,8 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
         "tools_cross_run",
         "cancel_before_admission",
         "cancel_unknown_stream",
+        "public_stop",
+        "public_archive",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -462,7 +465,12 @@ def _serve_controller(
     *,
     scenario="single",
 ):
-    cancelling = scenario in {"cancel_before_admission", "cancel_unknown_stream"}
+    cancelling = scenario in {
+        "cancel_before_admission",
+        "cancel_unknown_stream",
+        "public_stop",
+        "public_archive",
+    }
     initial_text = {
         "tools_cross_run": "P0_MANAGED_TOOL: write one unique marker",
         "cancel_unknown_stream": "P0_CANCEL_STREAM: cancel after the stream starts",
@@ -586,7 +594,10 @@ def _serve_controller(
                     await asyncio.sleep(
                         max(0, (expires_at - datetime.now(timezone.utc)).total_seconds()) + 0.1
                     )
-                if scenario == "cancel_before_admission" and len(observed) == 1:
+                if (
+                    scenario in {"cancel_before_admission", "public_stop", "public_archive"}
+                    and len(observed) == 1
+                ):
                     request_waiting.set()
                     assert await asyncio.to_thread(admission_released.wait, 40)
                 response = await call_next(request)
@@ -743,15 +754,50 @@ def _serve_controller(
                         cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
                         timeout=60,
                     ) as client:
-                        for _ in range(2):
-                            interrupted = client.post(
-                                f"/v1/sessions/{conversation.id}/events",
-                                json={"type": "interrupt", "data": {}},
-                                headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                        headers = {"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token}
+                        if scenario == "public_archive":
+                            from omnigent.server.routes import sessions
+
+                            for archived in (True, False):
+                                response = client.patch(
+                                    f"/v1/sessions/{conversation.id}",
+                                    json={"archived": archived},
+                                    headers=headers,
+                                )
+                                assert response.status_code == 200, response.text
+                            time.sleep(sessions._ARCHIVE_STOP_UNDO_GRACE_S + 0.5)
+                            assert not adapter._journal.read(first_run.id).process_stopped
+                            with factory() as db:
+                                assert db.get(RunRecord, first_run.id).status == "running"
+                            response = client.patch(
+                                f"/v1/sessions/{conversation.id}",
+                                json={"archived": True},
+                                headers=headers,
                             )
-                            assert interrupted.status_code == 202, interrupted.text
+                            assert response.status_code == 200, response.text
+                            _wait(
+                                lambda: adapter._journal.read(first_run.id).process_stopped,
+                                "deferred public archive physical stop",
+                                timeout=35,
+                            )
+                        else:
+                            for _ in range(2):
+                                interrupted = client.post(
+                                    f"/v1/sessions/{conversation.id}/events",
+                                    json={
+                                        "type": "stop_session"
+                                        if scenario == "public_stop"
+                                        else "interrupt",
+                                        "data": {},
+                                    },
+                                    headers=headers,
+                                )
+                                assert interrupted.status_code == 202, interrupted.text
                     with factory() as db:
-                        assert db.get(RunRecord, first_run.id).status == "cancelling"
+                        assert db.get(RunRecord, first_run.id).status in {
+                            "cancelling",
+                            "cancelled",
+                        }
                         assert (
                             db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord))
                             == 0
@@ -803,6 +849,13 @@ def _serve_controller(
                     cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
                     timeout=60,
                 ) as client:
+                    if scenario == "public_archive":
+                        response = client.patch(
+                            f"/v1/sessions/{conversation.id}",
+                            json={"archived": False},
+                            headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                        )
+                        assert response.status_code == 200, response.text
                     replay = client.post(
                         f"/v1/sessions/{conversation.id}/events",
                         json=_message(text=initial_text),
@@ -980,9 +1033,25 @@ def _serve_controller(
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
             assert record.phase == "terminal" and record.outcome == "succeeded"
-            assert asyncio.run_coroutine_threadsafe(
-                adapter._executor._driver.stop(record), app_loop
-            ).result(20)
+            if scenario in {"public_stop", "public_archive"}:
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    response = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json={"type": "stop_session", "data": {}},
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert response.status_code == 202, response.text
+                assert adapter._journal.read(run.id).process_stopped
+            else:
+                assert asyncio.run_coroutine_threadsafe(
+                    adapter._executor._driver.stop(record), app_loop
+                ).result(20)
             adapter.assert_production_ready()
             (exchange / "result.json").write_text(
                 json.dumps(
@@ -1004,7 +1073,11 @@ def _serve_controller(
                         "controlled_expiry_restored": scenario == "tools_cross_run",
                         "gateway_request_statuses": [r["status"] for r in observed],
                         "same_runner_cross_run": scenario == "tools_cross_run",
-                        "public_interrupt_accepted": cancelling,
+                        "public_interrupt_accepted": scenario
+                        in {"cancel_before_admission", "cancel_unknown_stream"},
+                        "public_stop_active_and_idle": scenario
+                        in {"public_stop", "public_archive"},
+                        "public_archive_and_undo": scenario == "public_archive",
                         "cancelled_message_replay_did_not_restart": cancelling,
                         "replacement_runner_after_cancel": cancelling,
                         "unknown_usage_hold_and_reference_retained": scenario

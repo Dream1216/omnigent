@@ -11,7 +11,7 @@ from omnigent.db.db_models import uuid_to_bytes
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
-from omnigent.server.auth import LEVEL_EDIT
+from omnigent.server.auth import LEVEL_EDIT, LEVEL_OWNER
 from omnigent.server.routes._auth_helpers import require_access_and_level
 from omnigent.server.routes.sandbox_inference import actual_harness
 from omnigent.server.schemas import SessionEventInput
@@ -34,6 +34,7 @@ from saas.control_plane.interactive_run_route import (
 )
 from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
 from saas.production.interactive_model_channel import model_channel_configuration
+from saas.production.runner_control import RunnerControlError
 
 
 class InteractiveConversationStore:
@@ -52,6 +53,19 @@ class InteractiveConversationStore:
         self._permissions = permission_store
         self._public_origin = public_origin
         self.runtime_status_observer = None
+        self.session_stop_handler = None
+
+    async def stop_archived_session(self, conversation: Conversation) -> bool:
+        if not self.owns_session_input(conversation):
+            return False
+        await self.dispatch_session_input(
+            conversation.id,
+            conversation,
+            SessionEventInput(type="stop_session", data={}),
+            created_by=current_runtime_context().runtime_user_key,
+            input_policy_checked=True,
+        )
+        return True
 
     async def observe_session_runtime_status(self, conversation: Conversation, data: dict) -> None:
         if self.owns_session_input(conversation) and self.runtime_status_observer is not None:
@@ -285,6 +299,31 @@ class InteractiveConversationStore:
                 "Interactive input requires an authenticated context", code=ErrorCode.FORBIDDEN
             ) from None
         try:
+            if event.type == "stop_session":
+                if self._permissions is None:
+                    raise OmnigentError("interactive_owner_required", code=ErrorCode.FORBIDDEN)
+                await require_access_and_level(
+                    runtime.runtime_user_key,
+                    conversation.id,
+                    LEVEL_OWNER,
+                    self._permissions,
+                    self._delegate,
+                )
+                if created_by != runtime.runtime_user_key or event.created_by is not None:
+                    raise OmnigentError("interactive_actor_required", code=ErrorCode.FORBIDDEN)
+                if self.session_stop_handler is None:
+                    raise RunnerControlError("interactive_stop_unavailable", "Stop unavailable")
+
+                async def cancel_inputs():
+                    return await asyncio.to_thread(
+                        self._admission.dispatch,
+                        runtime,
+                        conversation,
+                        SessionEventInput(type="interrupt", data={}),
+                        created_by=created_by,
+                    )
+
+                return await self.session_stop_handler(conversation, runtime, cancel_inputs)
             return await asyncio.to_thread(
                 self._admission.dispatch,
                 runtime,
@@ -292,6 +331,10 @@ class InteractiveConversationStore:
                 event,
                 created_by=created_by,
             )
+        except RunnerControlError:
+            raise OmnigentError(
+                "interactive_stop_unavailable", code=ErrorCode.RUNNER_UNAVAILABLE
+            ) from None
         except (
             InteractiveExecutionError,
             InteractiveRunRouteError,

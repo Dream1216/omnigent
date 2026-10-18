@@ -626,3 +626,15 @@ index e725c4aeb..f278c8b71 100644
 +            raise OmnigentError(
 +                "interactive_fork_requires_managed_lifecycle", code=ErrorCode.INVALID_INPUT
 +            )
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 7a95cc5d4..9c4b3be13 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -910,2 +910,5 @@ async def _archive_stop(
+-    await _facade._best_effort_stop(session_id, conversation_store, runner_router)
+-    if conv.host_id and conv.runner_id:
++    managed_stop = getattr(conversation_store, "stop_archived_session", None)
++    managed_stopped = managed_stop is not None and await managed_stop(conv)
++    if not managed_stopped:
++        await _facade._best_effort_stop(session_id, conversation_store, runner_router)
++    if not managed_stopped and conv.host_id and conv.runner_id:

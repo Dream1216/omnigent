@@ -862,6 +862,8 @@ class ExecutionControlPlane:
         trace = _validate_text(trace_id, field="trace_id", maximum=128)
         run = self._run(db, run_id, lock=True)
         self._require_lease(run, lease_token, fence_token, now)
+        if target_status == run.status == "cancelling" and not payload:
+            return RunMutation(run.id, run.status, run.version, run.event_sequence, replayed=True)
         if target_status not in _ALLOWED_TRANSITIONS[run.status]:
             raise ExecutionControlPlaneError(
                 "run_transition_invalid", f"cannot transition {run.status} to {target_status}"

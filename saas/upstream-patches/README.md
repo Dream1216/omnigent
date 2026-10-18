@@ -19,6 +19,13 @@ Patch 0010 preserves host ownership and workspace validation order. An Agent
 whose bundle is absent is rejected as invalid input rather than returning a
 server error. This stays in an existing direct upstream file.
 
+Patch 0010 also lets a composed conversation store own archived-session teardown
+after the persisted Undo guard. The managed controller preserves Owner checks,
+durable cancellation and exact physical stop receipts; ordinary stores keep the
+official path and worktree cleanup. Downstream controller and authenticated HTTP
+tests cover refusal, active/idle stops and Undo. This adds three net upstream
+lines in an already-divergent file, not a new patch or a production waiver.
+
 The session-model renewal change extends patch 0006 with a generic Host-owned
 loopback transport override at provider-family resolution. Saved inference
 profiles and their launch hashes stay unchanged. Issuance, eight-hour lifetime,

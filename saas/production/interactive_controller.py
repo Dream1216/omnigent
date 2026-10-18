@@ -14,6 +14,7 @@ from uuid import UUID
 import httpx
 
 from omnigent.host.frames import HostLaunchRunnerFrame
+from saas.compatibility import RuntimeContext
 from saas.control_plane.interactive_run_route import interactive_session_identity
 from saas.production.interactive_model_channel import (
     HostModelChannel,
@@ -66,12 +67,15 @@ class _Active:
     lease: RunnerControlClientLease
     record: InteractiveRecoveryRecord
     meter: ProviderUsageMeter = field(repr=False)
+    cancellation: asyncio.Event = field(repr=False)
     preparation: asyncio.Task | None = field(default=None, repr=False)
+    dispatching: asyncio.Task | None = field(default=None, repr=False)
     handle: object | None = None
     bound: bool = False
     drained: bool = False
     stopped: bool = False
     cancellation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    finished: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
 
 def _unavailable() -> RunnerControlError:
@@ -120,6 +124,7 @@ class ProductionInteractiveExecutor:
         )
         self._active: dict[UUID, _Active] = {}
         self._recovering = asyncio.Lock()
+        self._lifecycle = asyncio.Lock()
 
     def assert_production_ready(self) -> None:
         self._assert_authority()
@@ -173,9 +178,9 @@ class ProductionInteractiveExecutor:
         )
         active.bound = True
 
-    async def execute(
+    async def _prepare_active(
         self, lease: RunnerControlClientLease, *, cancellation: asyncio.Event
-    ) -> str:
+    ) -> tuple[_Active, InteractiveRecoveryRecord | None]:
         if (
             lease.run_id in self._active
             or lease.execution_envelope is None
@@ -233,13 +238,26 @@ class ProductionInteractiveExecutor:
             authorized.runtime,
             grant,
             certificate_sha256(grant),
+            channel_value=previous.channel_value if previous else None,
+            host_id=previous.host_id if previous else None,
+            official_runner_id=previous.official_runner_id if previous else None,
+            host_owner=previous.host_owner if previous else None,
+            host_account_generation=previous.host_account_generation if previous else None,
         )
         self._journal.put(record)
-        active = _Active(authorized, lease, record, self._meter_factory(grant))
+        active = _Active(authorized, lease, record, self._meter_factory(grant), cancellation)
         self._active[lease.run_id] = active
+        return active, previous
+
+    async def execute(
+        self, lease: RunnerControlClientLease, *, cancellation: asyncio.Event
+    ) -> str:
+        async with self._lifecycle:
+            active, previous = await self._prepare_active(lease, cancellation=cancellation)
+        authorized, scope = active.authorized, active.record.scope
 
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
-            if active.bound:
+            if active.bound or cancellation.is_set():
                 raise _unavailable()
             channel = host_model_channel(
                 frame, scope=scope, public_origin=self._channels.public_origin
@@ -259,38 +277,61 @@ class ProductionInteractiveExecutor:
             return prepare_host_model_channel(frame, channel=channel)
 
         try:
-            if previous is not None:
-                assert previous.channel_value is not None
-                self._put(
-                    active,
-                    channel_value=previous.channel_value,
-                    host_id=previous.host_id,
-                    official_runner_id=previous.official_runner_id,
-                    host_owner=previous.host_owner,
-                    host_account_generation=previous.host_account_generation,
+            async with self._lifecycle:
+                if cancellation.is_set():
+                    return "cancelled" if active.stopped else "orphaned"
+                if previous is not None:
+                    assert previous.channel_value is not None
+                    self._put(
+                        active,
+                        channel_value=previous.channel_value,
+                        host_id=previous.host_id,
+                        official_runner_id=previous.official_runner_id,
+                        host_owner=previous.host_owner,
+                        host_account_generation=previous.host_account_generation,
+                    )
+                    await self._bind(
+                        active,
+                        HostModelChannel(
+                            authorized.session_id,
+                            self._channels.restore(scope, previous.channel_value).base_url,
+                            previous.channel_value,
+                        ),
+                    )
+                self._put(active, phase="preparing")
+                active.preparation = asyncio.create_task(
+                    self._driver.prepare(authorized, previous=previous, on_launch=launch),
+                    name="interactive-prepare",
                 )
-                await self._bind(
-                    active,
-                    HostModelChannel(
-                        authorized.session_id,
-                        self._channels.restore(scope, previous.channel_value).base_url,
-                        previous.channel_value,
-                    ),
+            try:
+                active.handle = await active.preparation
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if not cancellation.is_set() or (task is not None and task.cancelling()):
+                    raise
+                await self.cancel(lease)
+                return "cancelled" if active.stopped else "orphaned"
+            async with self._lifecycle:
+                if cancellation.is_set():
+                    return "cancelled" if active.stopped else "orphaned"
+                if not active.bound:
+                    return "failed"
+                await self._authorize(lease)
+                self._put(active, phase="dispatching")
+                await self._channels.activate(
+                    scope.session_id, run_id=lease.run_id, fence_token=lease.fence_token
                 )
-            self._put(active, phase="preparing")
-            active.preparation = asyncio.create_task(
-                self._driver.prepare(authorized, previous=previous, on_launch=launch),
-                name="interactive-prepare",
-            )
-            active.handle = await active.preparation
-            if not active.bound or cancellation.is_set():
-                return "cancelled" if cancellation.is_set() else "failed"
-            await self._authorize(lease)
-            self._put(active, phase="dispatching")
-            await self._channels.activate(
-                scope.session_id, run_id=lease.run_id, fence_token=lease.fence_token
-            )
-            await self._driver.dispatch(authorized, active.handle)
+                active.dispatching = asyncio.create_task(
+                    self._driver.dispatch(authorized, active.handle), name="interactive-dispatch"
+                )
+            try:
+                await active.dispatching
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if not cancellation.is_set() or (task is not None and task.cancelling()):
+                    raise
+                await self.cancel(lease)
+                return "cancelled" if active.stopped else "orphaned"
             result = asyncio.create_task(self._driver.outcome(authorized, active.handle))
             cancelled = asyncio.create_task(cancellation.wait())
             try:
@@ -303,7 +344,10 @@ class ProductionInteractiveExecutor:
                 outcome = await result
                 if outcome not in {"succeeded", "failed", "cancelled"}:
                     return "orphaned"
-                self._put(active, phase="draining", outcome=outcome)
+                async with self._lifecycle:
+                    if cancellation.is_set():
+                        return "cancelled" if active.stopped else "orphaned"
+                    self._put(active, phase="draining", outcome=outcome)
                 return outcome
             finally:
                 for task in (result, cancelled):
@@ -328,11 +372,83 @@ class ProductionInteractiveExecutor:
             active.drained = True
         return active.drained
 
+    async def stop_session(
+        self,
+        runtime: RuntimeContext,
+        session_id: str,
+        runner_id: str | None,
+        cancel_inputs: Callable[[], Awaitable[dict[str, bool | str]]],
+    ) -> dict[str, bool | str]:
+        deadline = asyncio.get_running_loop().time() + 10
+        while True:
+            async with self._lifecycle:
+                records = [
+                    row
+                    for row in self._journal.records()
+                    if row.scope.tenant_id == runtime.tenant_id
+                    and row.scope.space_id == runtime.space_id
+                    and row.scope.partition_id == runtime.runtime_partition_id
+                    and row.scope.official_session_id == session_id
+                    and row.runtime.physical_workspace_id == runtime.physical_workspace_id
+                ]
+                active = [
+                    self._active[row.run_id] for row in records if row.run_id in self._active
+                ]
+                finishing = [row.finished for row in active if row.record.phase == "draining"]
+                if not finishing:
+                    return await self._stop_owned_session(
+                        records, active, runner_id, cancel_inputs
+                    )
+            try:
+                # Preserve an observed completed turn; stop its idle Runner after finalization.
+                await asyncio.wait_for(
+                    asyncio.gather(*(event.wait() for event in finishing)),
+                    max(0, deadline - asyncio.get_running_loop().time()),
+                )
+            except TimeoutError:
+                raise _unavailable() from None
+
+    async def _stop_owned_session(self, records, active, runner_id, cancel_inputs):
+        self.assert_production_ready()
+        control = await cancel_inputs()
+        if control.get("physical_run_id") and not any(
+            str(row.run_id) == control["physical_run_id"] for row in records
+        ):
+            raise _unavailable()
+        if any(row.phase != "terminal" and row.run_id not in self._active for row in records):
+            raise _unavailable()
+        if active:
+            for current in active:
+                current.cancellation.set()
+                await self.cancel(current.lease)
+                if not current.stopped:
+                    raise _unavailable()
+        else:
+            latest = max(records, key=lambda row: row.updated_at) if records else None
+            if latest is None:
+                if runner_id is not None:
+                    raise _unavailable()
+            else:
+                if runner_id is not None and runner_id != latest.official_runner_id:
+                    raise _unavailable()
+                if not latest.process_stopped:
+                    await self._verify_recovery(latest)
+                    if not await self._driver.stop(latest):
+                        raise _unavailable()
+                    self._journal.put(
+                        replace(
+                            latest, process_stopped=True, updated_at=datetime.now(timezone.utc)
+                        )
+                    )
+                    await self._channels.forget(latest.scope.session_id)
+        return {"queued": False}
+
     async def cancel(self, lease: RunnerControlClientLease) -> None:
         active = self._active.get(lease.run_id)
         if active is None:
             return
         async with active.cancellation_lock:
+            active.cancellation.set()
             if active.stopped:
                 return
             if active.preparation is not None and not active.preparation.done():
@@ -352,6 +468,9 @@ class ProductionInteractiveExecutor:
             )
             if active.stopped:
                 self._put(active, process_stopped=True)
+            if active.dispatching is not None and not active.dispatching.done():
+                active.dispatching.cancel()
+                await asyncio.gather(active.dispatching, return_exceptions=True)
 
     async def prepare_finalization(self, lease: RunnerControlClientLease, *, result: str) -> str:
         active = self._active.get(lease.run_id)
@@ -371,6 +490,10 @@ class ProductionInteractiveExecutor:
             raise _unavailable()
 
     async def finalize(self, lease: RunnerControlClientLease, *, result: str) -> None:
+        async with self._lifecycle:
+            await self._finalize(lease, result=result)
+
+    async def _finalize(self, lease: RunnerControlClientLease, *, result: str) -> None:
         active = self._active.get(lease.run_id)
         if active is None:
             return
@@ -381,6 +504,7 @@ class ProductionInteractiveExecutor:
             await self._driver.release(active.handle)
         if active.stopped:
             await self._channels.forget(active.record.scope.session_id)
+        active.finished.set()
         del self._active[lease.run_id]
 
     async def reconcile_physical_gc(self, *, limit: int) -> int:
