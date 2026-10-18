@@ -79,6 +79,25 @@ The synchronous reply contains a `disablement_id`; retrying the same command
 under the same Staff identity/key returns its original receipt. A changed body,
 stale generation or already-disabled cutoff under a different key is rejected.
 
+In `/platform-admin#model-connections`, first inspect the tenant catalog, then
+use **普通停用** on the exact publication/model/protocol and confirm `DISABLE`.
+Changing the tenant invalidates that scope, including a late catalog response.
+The catalog and original publication receipt show the current cutoff as a
+separate projection; the immutable publication snapshot is not rewritten.
+Readonly Staff auditors can inspect the cutoff receipt but cannot disable a
+model. The console preserves its existing visual and permission conventions.
+
+Recover an uncertain reply with the existing Staff identity through
+`GET /v2/platform-admin/model-publication-disablements?idempotency_key=...`,
+which returns only that principal's original command, or inspect a known
+`GET /v2/platform-admin/model-publication-disablements/{disablement_id}` under
+normal Staff model-read authority. Recovery performs no write, inference or
+projection operation. The UI stores only opaque command/receipt references,
+never the request body, and never automatically repeats the POST. A malformed
+success response remains unconfirmed; a valid cutoff receipt remains confirmed
+even if the following catalog refresh fails. Audit intent being queued is not
+shown as proof that the event has reached the shared audit chain.
+
 The append-only cutoff covers this tenant/model/protocol through the current
 generation. It removes those versions from customer choices and rejects saved
 session authorization, model bearer reuse and renewal. A later verified

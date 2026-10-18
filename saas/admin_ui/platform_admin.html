@@ -446,6 +446,10 @@
             </form>
             <div class="record-list" id="model-publication-list" aria-live="polite"><div class="empty-record">尚未核对发布范围。</div></div>
             <dl id="model-publication-detail" aria-live="polite"><div class="empty-record">尚无发布回执。运行时保持关闭。</div></dl>
+            <div class="panel-heading"><span>09 / 普通停用回执</span><small id="model-disablement-status" role="status">NO DISABLEMENT</small></div>
+            <p class="model-connection-help">普通停用覆盖已核对租户的指定模型／协议及截止代际，禁止未受理的新推理与旧令牌续签。已受理调用仍可完成和结算；这不是主动中止在途流或物理 Agent 的安全撤销。结果不确定时只核对回执，不自动重发。</p>
+            <dl id="model-disablement-detail" aria-live="polite"><div class="empty-record">尚无停用回执。审计入队不等于实际投递已验收。</div></dl>
+            <button class="quiet-button" id="model-disablement-refresh" type="button" disabled>核对停用回执 ↻</button>
           </section>
         </section>
 

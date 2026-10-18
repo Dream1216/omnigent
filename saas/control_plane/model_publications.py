@@ -222,9 +222,16 @@ class ModelPublicationView:
     channel_id: str = "deepseek"
     transport: str = "litellm"
     runtime_enabled: bool = False
+    disabled: bool = False
+    disablement_id: UUID | None = None
+    disabled_through_generation: int | None = None
+    disabled_at: datetime | None = None
 
 
-def publication_view(row: ModelPublicationVersionRecord) -> ModelPublicationView:
+def publication_view(
+    row: ModelPublicationVersionRecord,
+    disablement: ModelPublicationDisablementRecord | None = None,
+) -> ModelPublicationView:
     snapshot = json.loads(row.canonical_snapshot)
     if sha256(row.canonical_snapshot.encode("ascii")).hexdigest() != row.snapshot_sha256:
         raise _error()
@@ -240,6 +247,16 @@ def publication_view(row: ModelPublicationVersionRecord) -> ModelPublicationView
         row.configuration_sha256,
         snapshot["provider_cost"]["pricing_revision"],
         row.created_at,
+        disabled=disablement is not None,
+        disablement_id=None if disablement is None else disablement.id,
+        disabled_through_generation=None
+        if disablement is None
+        else disablement.through_generation,
+        disabled_at=None
+        if disablement is None
+        else disablement.created_at.replace(tzinfo=timezone.utc)
+        if disablement.created_at.tzinfo is None
+        else disablement.created_at.astimezone(timezone.utc),
     )
 
 
@@ -489,6 +506,39 @@ class ModelPublicationService:
             )
             return _operation_view(operation)
 
+    def find_disablement(self, actor: ValidatedPlatformPrincipal, *, idempotency_key: str):
+        if not isinstance(idempotency_key, str) or _IDEMPOTENCY.fullmatch(idempotency_key) is None:
+            raise _error("platform_model_disablement_invalid")
+        with self._session("find_model_disablement_receipt") as db:
+            authorize_platform_model_operation(
+                db,
+                self._authorization,
+                actor,
+                "platform.model_provider.read",
+                datetime.now(timezone.utc),
+            )
+            row = db.scalar(
+                sa.select(ModelPublicationDisablementRecord).where(
+                    ModelPublicationDisablementRecord.principal_id == actor.principal_id,
+                    ModelPublicationDisablementRecord.idempotency_key == idempotency_key,
+                )
+            )
+            return None if row is None else self._disablement_view(row)
+
+    def disablement_receipt(self, actor: ValidatedPlatformPrincipal, disablement_id: UUID):
+        with self._session("read_model_disablement_receipt") as db:
+            authorize_platform_model_operation(
+                db,
+                self._authorization,
+                actor,
+                "platform.model_provider.read",
+                datetime.now(timezone.utc),
+            )
+            row = db.get(ModelPublicationDisablementRecord, disablement_id)
+            if row is None:
+                raise _error("platform_model_disablement_not_found")
+            return self._disablement_view(row)
+
     def list(self, actor: ValidatedPlatformPrincipal, *, tenant_id: UUID | None = None):
         with self._session("list_tenant_model_publications") as db:
             authorize_platform_model_operation(
@@ -512,20 +562,35 @@ class ModelPublicationService:
                 )
                 .subquery()
             )
-            query = sa.select(ModelPublicationVersionRecord).join(
-                latest,
-                sa.and_(
-                    *(
-                        getattr(ModelPublicationVersionRecord, name) == getattr(latest.c, name)
-                        for name in ("tenant_id", "public_model_id", "wire_api", "generation")
-                    )
-                ),
+            query = (
+                sa.select(ModelPublicationVersionRecord, ModelPublicationDisablementRecord)
+                .join(
+                    latest,
+                    sa.and_(
+                        *(
+                            getattr(ModelPublicationVersionRecord, name) == getattr(latest.c, name)
+                            for name in ("tenant_id", "public_model_id", "wire_api", "generation")
+                        )
+                    ),
+                )
+                .outerjoin(
+                    ModelPublicationDisablementRecord,
+                    sa.and_(
+                        *(
+                            getattr(ModelPublicationDisablementRecord, name)
+                            == getattr(ModelPublicationVersionRecord, name)
+                            for name in ("tenant_id", "public_model_id", "wire_api")
+                        ),
+                        ModelPublicationDisablementRecord.through_generation
+                        == ModelPublicationVersionRecord.generation,
+                    ),
+                )
             )
             if tenant_id is not None:
                 query = query.where(ModelPublicationVersionRecord.tenant_id == tenant_id)
             return tuple(
-                publication_view(row)
-                for row in db.scalars(
+                publication_view(row, cutoff)
+                for row, cutoff in db.execute(
                     query.order_by(ModelPublicationVersionRecord.created_at.desc()).limit(100)
                 )
             )
@@ -552,6 +617,25 @@ class ModelPublicationService:
                 "operation": asdict(_operation_view(operation)),
                 "tenant_id": command.tenant_id,
                 "expected_generation": command.expected_generation,
-                "publication": None if row is None else asdict(publication_view(row)),
+                "publication": None
+                if row is None
+                else asdict(
+                    publication_view(
+                        row,
+                        db.scalar(
+                            sa.select(ModelPublicationDisablementRecord)
+                            .where(
+                                ModelPublicationDisablementRecord.tenant_id == row.tenant_id,
+                                ModelPublicationDisablementRecord.public_model_id
+                                == row.public_model_id,
+                                ModelPublicationDisablementRecord.wire_api == row.wire_api,
+                                ModelPublicationDisablementRecord.through_generation
+                                >= row.generation,
+                            )
+                            .order_by(ModelPublicationDisablementRecord.through_generation.desc())
+                            .limit(1)
+                        ),
+                    )
+                ),
                 "runtime_enabled": False,
             }

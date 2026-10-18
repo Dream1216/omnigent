@@ -27,6 +27,9 @@
     modelVerificationId: null,
     modelPublications: [],
     modelPublicationTenant: null,
+    modelPublicationEpoch: 0,
+    modelDisablementReceipt: null,
+    modelDisablementChecked: false,
     modelRotation: null,
     cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
     loaded: new Set(),
@@ -435,13 +438,14 @@
   function configureModelConnectionButtons() {
     const disabled = !mutationReady("platform.model_provider.manage") ||
       state.modelCommandBusy || Boolean(state.modelCommand?.operationId) ||
-      ["verify_deployment", "publish_deployment"].includes(state.modelCommand?.kind);
+      ["verify_deployment", "publish_deployment", "disable_publication"].includes(state.modelCommand?.kind);
     $("#model-connection-submit").disabled = disabled;
     $("#model-connection-rotation-submit").disabled = disabled;
     for (const selector of ["#model-connection-name", "#model-connection-key", "#model-connection-rotation-key"]) {
       $(selector).disabled = disabled;
     }
-    $("#model-connection-new-command").disabled = state.modelCommandBusy;
+    $("#model-connection-new-command").disabled = state.modelCommandBusy ||
+      (state.modelCommand?.kind === "disable_publication" && !state.modelDisablementChecked);
     $("#model-connections-refresh").disabled = state.modelCommandBusy;
     document.querySelectorAll('[data-testid="model-draft-select"]').forEach((button) => {
       button.disabled = !mutationReady("platform.model_provider.manage") || state.modelCommandBusy;
@@ -468,6 +472,14 @@
         !state.modelPublicationTenant || state.modelCommandBusy || Boolean(state.modelCommand) ||
         item?.verification_status !== "verified";
     });
+    document.querySelectorAll('[data-testid="model-publication-disable"]').forEach((button) => {
+      const item = state.modelPublications.find((row) => row.id === button.dataset.publicationId);
+      button.disabled = !mutationReady("platform.model_provider.publish") ||
+        !state.modelPublicationTenant || item?.tenant_id !== state.modelPublicationTenant ||
+        !item || item.disabled || state.modelCommandBusy || Boolean(state.modelCommand);
+    });
+    $("#model-disablement-refresh").disabled = state.modelCommandBusy ||
+      (!state.modelDisablementReceipt && state.modelCommand?.kind !== "disable_publication");
   }
 
   function showModelOperation(operation) {
@@ -513,6 +525,7 @@
 
   async function recoverModelCommand() {
     if (!state.modelCommand) return null;
+    if (state.modelCommand.kind === "disable_publication") return recoverModelDisablement();
     let operation;
     if (state.modelCommand.operationId) {
       operation = await api(`/v2/platform-admin/model-operations/${encodeURIComponent(state.modelCommand.operationId)}`);
@@ -593,7 +606,10 @@
         try {
           const stored = JSON.parse(sessionStorage.getItem(modelCommandStorageKey()) || "null");
           if (stored && /^[a-zA-Z0-9_.:-]{1,128}$/.test(stored.idempotencyKey)) {
-            state.modelCommand = {
+            state.modelCommand = stored.kind === "disable_publication" ? {
+              kind: stored.kind, idempotencyKey: stored.idempotencyKey,
+              disablementId: /^[a-f0-9-]{36}$/.test(stored.disablementId) ? stored.disablementId : null,
+            } : {
               idempotencyKey: stored.idempotencyKey,
               operationId: /^[a-f0-9-]{36}$/.test(stored.operationId) ? stored.operationId : null,
               ...(["verify_deployment", "publish_deployment"].includes(stored.kind) && /^[a-f0-9-]{36}$/.test(stored.deploymentId)
@@ -703,26 +719,141 @@
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(tenantId)) {
       throw new Error("请输入有效的租户 UUID");
     }
+    const epoch = ++state.modelPublicationEpoch;
     state.modelPublicationTenant = null;
     state.modelPublications = [];
+    $("#model-publication-tenant").value = tenantId;
+    $("#model-publication-list").replaceChildren(emptyRecord("正在核对目录；停用操作暂不可用。"));
     configureModelConnectionButtons();
     $("#model-publication-status").textContent = "LOADING";
     try {
       const value = await api(`/v2/platform-admin/model-publications?tenant_id=${encodeURIComponent(tenantId)}`);
+      if (epoch !== state.modelPublicationEpoch) return false;
       state.modelPublications = value.items;
       state.modelPublicationTenant = tenantId;
       $("#model-publication-tenant").value = tenantId;
       $("#model-publication-status").textContent = "SCOPE CHECKED";
       const list = $("#model-publication-list");
-      list.replaceChildren(...(value.items.length ? value.items.map((item) => recordRow({
-        title: item.display_name, identifier: item.public_model_id, status: "runtime_off",
-        meta: [`目录 V${item.generation}`, item.wire_api, `租户 ${item.tenant_id}`, "DeepSeek · LiteLLM · 运行时未启用"], actions: [],
-      })) : [emptyRecord("该租户尚无候选目录版本。运行时未启用。") ]));
+      list.replaceChildren(...(value.items.length ? value.items.map((item) => {
+        const disable = actionButton("普通停用", () => runModelCommand(() => startModelDisablement(item)), {
+          danger: true, testId: "model-publication-disable",
+        });
+        disable.dataset.publicationId = item.id;
+        return recordRow({
+          title: item.display_name, identifier: item.public_model_id, status: item.disabled ? "disabled" : "runtime_off",
+          meta: [`目录 V${item.generation}`, item.wire_api, `租户 ${item.tenant_id}`, "DeepSeek · LiteLLM · 运行时未启用",
+            item.disabled ? `已停用至 V${item.disabled_through_generation}` : "候选版本未停用"],
+          actions: [disable, ...(item.disablement_id ? [actionButton("查看停用回执", () => runModelCommand(() => readModelDisablement(item.disablement_id)), {
+            testId: "model-disablement-read",
+          })] : [])],
+        });
+      }) : [emptyRecord("该租户尚无候选目录版本。运行时未启用。") ]));
+      return true;
     } catch (error) {
+      if (epoch !== state.modelPublicationEpoch) return false;
       $("#model-publication-status").textContent = "SCOPE UNAVAILABLE";
       $("#model-publication-list").replaceChildren(emptyRecord("目录查询失败，发布保持禁用。"));
       throw error;
     } finally {
+      configureModelConnectionButtons();
+    }
+  }
+
+  function showModelDisablement(value, command = false) {
+    if (!value || value.disabled !== true ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.disablement_id) ||
+      !Number.isInteger(value.through_generation) || value.through_generation < 1 ||
+      typeof value.tenant_id !== "string" || typeof value.public_model_id !== "string" ||
+      !["openai_chat_completions", "openai_responses"].includes(value.wire_api) ||
+      typeof value.created_at !== "string" ||
+      Number.isNaN(new Date(value.created_at).getTime())) {
+      throw new Error("platform_model_disablement_receipt_invalid: 停用回执不完整，请只读核对原命令。");
+    }
+    state.modelDisablementReceipt = value;
+    $("#model-disablement-status").textContent = "DISABLED";
+    const fields = [
+      ["停用回执", value.disablement_id], ["目标租户", value.tenant_id],
+      ["模型 / 协议", `${value.public_model_id} / ${value.wire_api}`],
+      ["代际截止", `至 V${value.through_generation}（含）`],
+      ["记录时间", formatDate(value.created_at)],
+      ["审计", "已写入 Outbox；实际投递请在共享审计链核对。"],
+    ];
+    $("#model-disablement-detail").replaceChildren(...fields.map(([label, content]) => {
+      const row = node("div", "model-verification-field");
+      row.append(node("dt", "", label), node("dd", "", content));
+      return row;
+    }));
+    if (command) {
+      state.modelCommandNotice?.remove();
+      state.modelCommandNotice = null;
+      state.modelCommand.disablementId = value.disablement_id;
+      state.modelDisablementChecked = true;
+      $("#model-connection-operation-status").textContent = "DISABLED";
+      $("#model-connection-operation-id").textContent = value.disablement_id;
+      $("#model-connection-operation-detail").textContent = "普通停用已记录；已受理调用仍可结算，不代表已主动中止在途请求或 Agent。";
+      saveModelCommand();
+    }
+    configureModelConnectionButtons();
+  }
+
+  async function readModelDisablement(id) {
+    const value = await api(`/v2/platform-admin/model-publication-disablements/${encodeURIComponent(id)}`);
+    showModelDisablement(value);
+    return value;
+  }
+
+  async function recoverModelDisablement() {
+    const command = state.modelCommand;
+    const value = command.disablementId ? await readModelDisablement(command.disablementId) :
+      (await api(`/v2/platform-admin/model-publication-disablements?idempotency_key=${encodeURIComponent(command.idempotencyKey)}`)).disablement;
+    if (state.modelCommand !== command) return null;
+    if (value) {
+      showModelDisablement(value, true);
+      await loadModelPublicationCatalog(value.tenant_id);
+    } else {
+      state.modelDisablementChecked = true;
+      $("#model-disablement-status").textContent = "NOT FOUND";
+      $("#model-connection-operation-status").textContent = "NOT FOUND";
+      $("#model-connection-operation-id").textContent = command.idempotencyKey;
+      $("#model-connection-operation-detail").textContent = "当前身份下未发现停用回执。不会自动重发；先核对目录，再开始新的独立命令。";
+      configureModelConnectionButtons();
+    }
+    return value;
+  }
+
+  async function startModelDisablement(item) {
+    const eligible = () => !state.modelCommandBusy && !state.modelCommand &&
+      mutationReady("platform.model_provider.publish") && state.modelPublicationTenant === item.tenant_id &&
+      state.modelPublications.some((row) => row.id === item.id && row.generation === item.generation && !row.disabled);
+    if (!eligible()) return;
+    const approved = await openAction({
+      title: "普通停用模型", risk: "HIGH", confirm: "DISABLE", fields: [],
+      summary: `${item.display_name} / ${item.wire_api} · 租户 ${item.tenant_id} · 至目录 V${item.generation}（含）。停止未受理的新推理及旧令牌续签；已受理调用仍可完成结算。不会主动中止在途流或物理 Agent，也不删除历史。`,
+    });
+    if (!approved || !eligible()) return;
+    state.modelCommand = { kind: "disable_publication", idempotencyKey: idempotency("model-disable") };
+    state.modelDisablementChecked = false;
+    state.modelCommandBusy = true;
+    saveModelCommand();
+    configureModelConnectionButtons();
+    try {
+      const value = await api(`/v2/platform-admin/model-publications/${encodeURIComponent(item.id)}/disable`, {
+        method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey },
+        body: { expected_generation: item.generation },
+      });
+      showModelDisablement(value, true);
+      await loadModelPublicationCatalog(item.tenant_id);
+    } catch (error) {
+      if (!state.modelDisablementChecked) {
+        $("#model-disablement-status").textContent = "CHECK RECEIPT";
+        $("#model-connection-operation-status").textContent = "CHECK RECEIPT";
+        $("#model-connection-operation-detail").textContent = "停用结果未确认或被拒绝。请核对原停用回执，不自动重发或另建命令。";
+      } else {
+        $("#model-connection-operation-detail").textContent = "停用回执已确认，目录刷新暂不可用。请只读核对目录和回执，不重复停用。";
+      }
+      throw error;
+    } finally {
+      state.modelCommandBusy = false;
       configureModelConnectionButtons();
     }
   }
@@ -1697,11 +1828,19 @@
     void runModelCommand(() => loadModelPublicationCatalog($("#model-publication-tenant").value.trim().toLowerCase()));
   });
   $("#model-publication-tenant").addEventListener("input", () => {
+    state.modelPublicationEpoch += 1;
     state.modelPublicationTenant = null;
+    state.modelPublications = [];
+    $("#model-publication-status").textContent = "NEEDS CHECK";
+    $("#model-publication-list").replaceChildren(emptyRecord("范围已更改，请重新核对目录。"));
     configureModelConnectionButtons();
   });
+  $("#model-disablement-refresh").addEventListener("click", () => void runModelCommand(() =>
+    state.modelCommand?.kind === "disable_publication" ? recoverModelDisablement() :
+      readModelDisablement(state.modelDisablementReceipt.disablement_id)));
   $("#model-connection-new-command").addEventListener("click", () => {
     state.modelCommand = null;
+    state.modelDisablementChecked = false;
     state.modelCommandNotice?.remove();
     state.modelCommandNotice = null;
     saveModelCommand();

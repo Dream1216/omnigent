@@ -49,11 +49,11 @@
 #model-test-funding-form .model-provider-enable input { width: 1.1rem; height: 1.1rem; margin: 0; flex: 0 0 auto; }
 #model-test-funding-form .model-provider-enable > span { color: var(--paper); }
 #model-verification-panel, #model-publication-panel { margin-top: 1.5rem; min-height: 0; border: 1px solid var(--line); border-top: 2px solid var(--cyan); }
-#model-verification-detail, #model-publication-detail { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
+#model-verification-detail, #model-publication-detail, #model-disablement-detail { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); }
 .model-verification-field { min-width: 0; padding: .85rem 1rem; background: var(--night-raised); }
 .model-verification-field dt { color: var(--muted); font-size: .72rem; margin-bottom: .5rem; }
 .model-verification-field dd { color: var(--paper); margin: 0; overflow-wrap: anywhere; font: .78rem/1.65 var(--mono); }
-@media (max-width: 900px) { #model-verification-detail, #model-publication-detail { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { #model-verification-detail, #model-publication-detail, #model-disablement-detail { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .model-test-funding-fields { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .model-connections-layout { grid-template-columns: 1fr; } }
 
@@ -492,7 +492,7 @@ label > span { color: var(--muted); font: 700 7px var(--mono); letter-spacing: .
 .record-actions button:disabled { cursor: not-allowed; opacity: .28; }
 .status-chip { width: max-content; padding: 5px 6px; border: 1px solid currentColor; color: var(--amber); font: 700 7px var(--mono); letter-spacing: .06em; }
 .status-chip[data-status="active"], .status-chip[data-status="completed"] { color: var(--green); }
-.status-chip[data-status="suspended"], .status-chip[data-status="revoked"], .status-chip[data-status="failed"] { color: var(--red); }
+.status-chip[data-status="suspended"], .status-chip[data-status="revoked"], .status-chip[data-status="failed"], .status-chip[data-status="disabled"] { color: var(--red); }
 .empty-record { padding: 34px 18px; border: 1px dashed var(--line); color: var(--muted); font: 8px/1.6 var(--mono); text-align: center; }
 .load-more { display: block; width: 100%; margin-top: 18px; border: 1px solid var(--line); color: var(--muted); background: transparent; }
 .load-more:hover { border-color: var(--cyan); color: var(--cyan); }

@@ -81,6 +81,11 @@ def test_real_staff_disablement_and_customer_column_authority(
             clock.setattr(model_publications, "datetime", AheadClock)
             result = service.disable(actor, **args)
             assert service.disable(actor, **args) == result
+        assert service.find_disablement(actor, idempotency_key=args["idempotency_key"]) == result
+        assert service.disablement_receipt(actor, result["disablement_id"]) == result
+        assert service.find_disablement(actor, idempotency_key="unknown-command-001") is None
+        assert service.list(actor)[0].disabled is True
+        assert service.receipt(actor, publication.operation_id)["publication"]["disabled"] is True
         assert result["created_at"] <= datetime.now(timezone.utc)
         assert customer.list(runtime) == []
         assert calls == before

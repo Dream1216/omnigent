@@ -13,6 +13,8 @@ The independent Staff console manages encrypted connections, immutable model dra
 - `verification-recovery`: recover a lost admission response under the original opaque command reference; an uncertain supplier response remains unknown rather than zero-cost or an instruction to log into a CLI.
 - `tenant-publication`: select and inspect one tenant scope, confirm a verified model and expected catalog generation, and inspect the immutable publication receipt; runtime remains disabled.
 - `publication-recovery`: recover the original publication after a lost response or reload without submitting another command or sending inference.
+- `ordinary-disablement`: confirm a checked tenant/model/protocol cutoff, then inspect its receipt and current catalog state without rewriting the publication or actively stopping in-flight work.
+- `disablement-recovery`: recover a synchronous cutoff receipt after response loss or reload by read-only lookup; do not fabricate a projection operation or repeat the write.
 - `staff-authority`: a current fresh Staff operator can mutate; a security auditor can read but cannot edit.
 - `small-screen`: the same console entry remains usable on a narrow viewport without horizontal overflow.
 - `tenant-candidate-discovery`: customers can inspect their scoped candidate metadata in existing-session and landing model menus, including mobile; candidates remain disabled until runtime authorization is implemented.
@@ -21,6 +23,7 @@ The independent Staff console manages encrypted connections, immutable model dra
 
 - Open `/platform-admin`, authenticate in the independent Staff realm, then select the managed-model connections navigation item. The page contains connection creation, credential rotation, operation receipts, model drafts, test funding, verification, and tenant candidate catalogs when their capabilities are configured. Start a test from its draft row; inspect the latest receipt from the same row or refresh the current command. For publication, inspect the target tenant catalog, start a new independent command, then confirm publication from the verified draft row.
 - Open `/platform-admin#model-connections` after Staff authentication, including after a page reload. This reaches the same view directly.
+- In the checked tenant catalog, use Ordinary disablement, confirm or cancel, and inspect the cutoff receipt. A readonly auditor can inspect but cannot stop models. Editing the tenant invalidates the old scope, including late responses.
 - Use either route on desktop or mobile. The Tenant Owner Beta model-provider console is a separate legacy entry, not an alternative Staff login.
 - As a customer in the SaaS app, open an existing conversation's model pill, then its configuration submenu; or open New session, choose a harness, then Edit. The Platform models section shows tenant candidate names, DeepSeek as the channel, LiteLLM as the transport, and the unavailable reason. A candidate cannot be selected. Ordinary OSS servers retain their host-owned catalogs without probing the SaaS API.
 
@@ -33,6 +36,7 @@ Preconditions: these Staff console tests own their HTTPS server, disposable SQLi
 - Funding configuration, exact monetary units, lost receipt recovery, direct-view reload, readonly auditor, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_platform_test_funding_and_lost_receipt_recovery`.
 - Bounded verification, cost confirmation and cancellation, lost-response recovery, explicit unknown costs, readonly receipt inspection, direct-view reload, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_model_verification_recovery_cost_and_readonly_receipt`.
 - Tenant scope, publication confirmation and cancellation, lost-response/reload recovery, readonly catalog, disabled runtime, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_tenant_model_publication_lost_receipt_and_readonly_catalog`.
+- Ordinary disablement, tenant-scope race, cancellation, lost response/reload with one write, readonly receipts and desktop/mobile: `tests/saas/test_model_disablement_browser.py::test_real_chromium_model_disablement_scope_recovery_readonly_and_mobile`.
 - Independent realm, navigation, and role/page/action boundaries: `tests/saas/test_platform_admin_browser.py::test_real_chromium_platform_console_role_page_and_action_matrix`.
 
 Run the selected test directly with `.venv/bin/pytest -q`. Each journey drives the visible controls and cross-checks the control-plane API. Real PostgreSQL budget/role checks and real LiteLLM/provider protocol checks are separate acceptance lanes, not supplied by these browser tests.
@@ -45,5 +49,6 @@ Customer menu discovery uses the separately built SPA and explicit browser-only 
 - Credential inputs are cleared after submission. Only opaque operation references may survive reload in session storage; raw credentials and request bodies must not.
 - After an uncertain save, read the original operation or funding policy. Do not fabricate success from a name collision or resubmit under a new idempotency key.
 - A disabled capability, unavailable Staff identity, stale authentication, or missing real runtime prerequisite is unavailable, not a passed acceptance check.
+- Ordinary disablement blocks unstarted calls and old authorization/renewal, not accepted streams or physical Agents. Audit intent being queued is not proof of delivery; production security revocation remains a separate gate.
 - Browser projection calls use a synthetic management endpoint. Never present these screenshots as proof of real supplier billing, OIDC signing, production rollout, or end-to-end Agent availability.
 - VERIFIED on the bounded test means protocol and budget settlement, not full capability acceptance, masked-credential attestation, or runtime publication. A visible configuration readback cannot attest a hidden provider key.

@@ -1022,6 +1022,26 @@ def create_platform_admin_app(
             "runtime_enabled": False,
         }
 
+    @app.get("/v2/platform-admin/model-publication-disablements")
+    def find_model_disablement(request: Request, idempotency_key: str):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "disablement": model_publication_service().find_disablement(
+                principal, idempotency_key=idempotency_key
+            ),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-disablements/{disablement_id}")
+    def get_model_disablement(request: Request, disablement_id: UUID):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().disablement_receipt(principal, disablement_id),
+        }
+
     @app.post("/v2/platform-admin/model-publications/{publication_id}/disable")
     async def disable_model_publication(request: Request, publication_id: UUID):
         principal, _token = authenticate(request)
