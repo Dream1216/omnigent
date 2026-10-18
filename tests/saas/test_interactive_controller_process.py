@@ -56,6 +56,7 @@ from saas.production.runner_control import (
     MutualTlsRunnerControlClient,
     MutualTlsRunnerControlServer,
     ProductionRunnerMachineAuthority,
+    RunnerControlError,
 )
 from saas.runner_adapter.metering import (
     ManagedMeteringGrant,
@@ -513,6 +514,9 @@ def _physical_execution(f, physical, tmp_path, *, full_agent):
                 )
                 raise
 
+    async def confirm_recovery(_record):
+        raise RunnerControlError("isolated_recovery_unavailable", "Recovery is unavailable")
+
     executor = ProductionInteractiveExecutor(
         authorize_model=authorize,
         grant_for_run=grant,
@@ -526,6 +530,7 @@ def _physical_execution(f, physical, tmp_path, *, full_agent):
             None
         ),  # Domain/physical test, not production factory or fleet proof.
         verify_recovery=lambda record: asyncio.to_thread(p.authority.verify_recovery, record),
+        confirm_recovery=confirm_recovery,
         client_factory=lambda: httpx.AsyncClient(transport=httpx.ASGITransport(gateway_app)),
         meter_factory=lambda value: ObservedMeter(
             grant=value,

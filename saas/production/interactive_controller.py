@@ -105,6 +105,7 @@ class ProductionInteractiveExecutor:
         image_digest: str,
         assert_authority: Callable[[], None],
         verify_recovery: Callable[[InteractiveRecoveryRecord], Awaitable[None]],
+        confirm_recovery: Callable[[InteractiveRecoveryRecord], Awaitable[None]],
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         meter_factory: Callable[[ManagedMeteringGrant], ProviderUsageMeter] | None = None,
     ):
@@ -116,6 +117,7 @@ class ProductionInteractiveExecutor:
             image_digest,
         )
         self._assert_authority, self._verify_recovery = assert_authority, verify_recovery
+        self._confirm_recovery = confirm_recovery
         self._client_factory = client_factory
         self._meter_factory = meter_factory or (
             lambda grant: ProviderUsageMeter(
@@ -124,6 +126,7 @@ class ProductionInteractiveExecutor:
         )
         self._active: dict[UUID, _Active] = {}
         self._recovering = asyncio.Lock()
+        self._confirmed_recoveries: set[UUID] = set()
         self._lifecycle = asyncio.Lock()
 
     def assert_production_ready(self) -> None:
@@ -518,7 +521,9 @@ class ProductionInteractiveExecutor:
             candidates = [
                 row
                 for row in self._journal.records()
-                if row.phase != "terminal" or any(row.grant.spool_directory.glob("*.pending.json"))
+                if row.phase != "terminal"
+                or any(row.grant.spool_directory.glob("*.pending.json"))
+                or (row.outcome == "orphaned" and row.run_id not in self._confirmed_recoveries)
             ]
             for record in candidates[:limit]:
                 if record.run_id in self._active:
@@ -531,7 +536,10 @@ class ProductionInteractiveExecutor:
                     or certificate_sha256(record.grant) != record.certificate_sha256
                 ):
                     raise _unavailable()
-                if record.phase != "terminal":
+                if record.phase != "terminal" or (
+                    record.outcome == "orphaned"
+                    and record.run_id not in self._confirmed_recoveries
+                ):
                     stopped = (
                         record.process_stopped
                         or (record.phase == "prepared" and record.official_runner_id is None)
@@ -539,10 +547,18 @@ class ProductionInteractiveExecutor:
                     )
                     if not stopped:
                         continue
+                    if not record.process_stopped:
+                        record = replace(record, process_stopped=True)
+                        self._journal.put(record)
+                    await self._confirm_recovery(record)
                     record = replace(
-                        record, phase="terminal", process_stopped=True, outcome="orphaned"
+                        record,
+                        phase="terminal",
+                        process_stopped=True,
+                        outcome="orphaned",
                     )
                     self._journal.put(record)
+                    self._confirmed_recoveries.add(record.run_id)
                 meter = self._meter_factory(record.grant)
                 try:
                     await asyncio.to_thread(meter.flush, 0)

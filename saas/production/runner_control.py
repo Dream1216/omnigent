@@ -234,6 +234,19 @@ class RunnerMachineAuthority(Protocol):
         fence_token: int,
     ) -> bool: ...
 
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+    ) -> bool: ...
+
     def mint_preview_tunnel(
         self,
         *,
@@ -245,6 +258,22 @@ class RunnerMachineAuthority(Protocol):
 
 
 class _SchedulingAuthority(Protocol):
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+        now: datetime | None = None,
+    ) -> bool: ...
+
     def heartbeat_runner(
         self,
         *,
@@ -493,6 +522,35 @@ class ProductionRunnerMachineAuthority:
             requeue=False,
         )
 
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+    ) -> bool:
+        if self._product_revision is None or self._image_digest is None:
+            raise RunnerControlError(
+                "runner_control_interactive_recovery_unavailable", "Recovery is unavailable"
+            )
+        return self._scheduling.confirm_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            run_id=run_id,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            proof_sha256=proof_sha256,
+            certificate_fingerprint_sha256=certificate_fingerprint_sha256,
+            expected_product_revision=self._product_revision,
+            product_image_digest=self._image_digest,
+        )
+
     def mint_preview_tunnel(
         self,
         *,
@@ -635,6 +693,8 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         _exact(document, fields)
     elif action == "release_run":
         _exact(document, common | {"fence_token", "run_id"})
+    elif action == "confirm_interactive_recovery":
+        _exact(document, common | {"fence_token", "run_id", "capability_token", "proof_sha256"})
     else:
         raise ValueError("action is invalid")
     values: dict[str, object] = {
@@ -654,6 +714,11 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         if not isinstance(target, str) or target not in _RUNNER_TRANSITIONS:
             raise ValueError("target status is invalid")
         values["target_status"] = target
+    if "proof_sha256" in document:
+        proof = document["proof_sha256"]
+        if not isinstance(proof, str) or re.fullmatch(r"[0-9a-f]{64}", proof) is None:
+            raise ValueError("proof digest is invalid")
+        values["proof_sha256"] = proof
     return cast(str, action), values
 
 
@@ -772,6 +837,9 @@ def _dispatch(
     if action == "release_run":
         replayed = authority.release_run(**kwargs)  # type: ignore[arg-type]
         return {"replayed": replayed, "version": _PROTOCOL_VERSION}
+    if action == "confirm_interactive_recovery":
+        replayed = authority.confirm_interactive_recovery(**kwargs)  # type: ignore[arg-type]
+        return {"replayed": replayed, "version": _PROTOCOL_VERSION}
     raise AssertionError("unreachable Runner control action")
 
 
@@ -865,7 +933,7 @@ class MutualTlsRunnerControlServer:
                 raise RunnerControlError(
                     "runner_control_request_invalid", "Runner control request is invalid"
                 ) from error
-            if action == "mint_preview_tunnel":
+            if action in {"mint_preview_tunnel", "confirm_interactive_recovery"}:
                 values["certificate_fingerprint_sha256"] = hashlib.sha256(
                     certificate_der
                 ).hexdigest()
@@ -1095,6 +1163,29 @@ class MutualTlsRunnerControlClient:
                 "runner_control_response_invalid", "Runner control response is invalid"
             )
         return cast(str, response["status"])
+
+    async def confirm_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+    ) -> bool:
+        response = await self._request(
+            "confirm_interactive_recovery",
+            {
+                "run_id": str(run_id),
+                "fence_token": fence_token,
+                "capability_token": capability_token,
+                "proof_sha256": proof_sha256,
+            },
+        )
+        if set(response) != {"replayed", "version"} or type(response["replayed"]) is not bool:
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        return response["replayed"]
 
     async def claim_run(self) -> RunnerControlClientLease | None:
         response = await self._request("claim_run", {})

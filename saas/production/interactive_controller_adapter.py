@@ -27,7 +27,10 @@ from saas.production.interactive_model_channel import (
     SessionModelChannelMiddleware,
     SessionModelChannels,
 )
-from saas.production.interactive_recovery import InteractiveRecoveryJournal
+from saas.production.interactive_recovery import (
+    InteractiveRecoveryJournal,
+    physical_recovery_proof_sha256,
+)
 from saas.production.runner_agent import (
     ProductionRunnerAgent,
     _secure_file,
@@ -226,6 +229,14 @@ class ProductionInteractiveControllerAdapter:
                 fleet_source=source,
             )
 
+        async def confirm_recovery(record):
+            await self._client.confirm_interactive_recovery(
+                run_id=record.run_id,
+                fence_token=record.fence_token,
+                capability_token=record.grant.capability_token,
+                proof_sha256=physical_recovery_proof_sha256(record),
+            )
+
         executor = ProductionInteractiveExecutor(
             authorize_model=authorize,
             grant_for_run=grant,
@@ -237,6 +248,7 @@ class ProductionInteractiveControllerAdapter:
             image_digest=cfg.image_digest,
             assert_authority=assert_authority,
             verify_recovery=verify_recovery,
+            confirm_recovery=confirm_recovery,
         )
         self._executor = executor
 
@@ -252,8 +264,8 @@ class ProductionInteractiveControllerAdapter:
         async def recover_and_run(stop):
             # Host ingress must be listening before stranded processes can be stopped.
             while not stop.is_set():
-                await executor.reconcile_physical_gc(limit=cfg.physical_gc_limit)
                 try:
+                    await executor.reconcile_physical_gc(limit=cfg.physical_gc_limit)
                     await asyncio.to_thread(executor.assert_claimable)
                 except RunnerControlError as error:
                     if error.code != "interactive_controller_recovery_pending":

@@ -981,6 +981,134 @@ class SchedulingControlPlane:
             _aware(capability.expires_at),
         )
 
+    def confirm_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """Record historical physical cleanup, never execution or model authority."""
+        confirmed_at = now or _utcnow()
+        _validate_time(confirmed_at)
+        if (
+            type(fence_token) is not int
+            or fence_token < 1
+            or any(
+                not isinstance(value, str) or len(value) != 64 or set(value) - _HASH_ALPHABET
+                for value in (proof_sha256, certificate_fingerprint_sha256)
+            )
+            or not isinstance(expected_product_revision, str)
+            or len(expected_product_revision) != 40
+            or set(expected_product_revision) - _HASH_ALPHABET
+            or not isinstance(product_image_digest, str)
+            or not product_image_digest.startswith("sha256:")
+            or len(product_image_digest) != 71
+            or set(product_image_digest[7:]) - _HASH_ALPHABET
+        ):
+            raise SchedulingError(
+                "interactive_recovery_binding_invalid", "Recovery is unavailable"
+            )
+        with self._session_factory.begin() as db:
+            pool, runner = self._lock_pool_then_runner(db, runner_id)
+            self._require_runner_connection(
+                runner,
+                connection_generation=connection_generation,
+                connection_token=connection_token,
+            )
+            dispatch = db.scalar(
+                sa.select(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == run_id)
+                .with_for_update()
+            )
+            if (
+                dispatch is None
+                or dispatch.pool_id != pool.id
+                or dispatch.selected_runner_id != runner_id
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            run = self._run(db, run_id, lock=True)
+            self._apply_run_context(db, run)
+            capability = db.scalar(
+                sa.select(CapabilityTokenRecord).where(
+                    CapabilityTokenRecord.token_hash == _token_hash(capability_token)
+                )
+            )
+            if (
+                dispatch is None
+                or capability is None
+                or run.queue_class != INTERACTIVE_QUEUE_CLASS
+                or pool.queue_class != INTERACTIVE_QUEUE_CLASS
+                or run.product_revision != expected_product_revision
+                or pool.source_revision != expected_product_revision
+                or run.fence_token != fence_token
+                or runner.status not in {"online", "draining"}
+                or dispatch.pool_id != pool.id
+                or dispatch.selected_runner_id != runner_id
+                or capability.run_id != run_id
+                or capability.runner_id != runner_id
+                or capability.runner_connection_generation != connection_generation
+                or capability.fence_token != fence_token
+                or capability.dispatch_generation != dispatch.dispatch_generation
+                or (capability.tenant_id, capability.space_id, capability.project_id)
+                != (run.tenant_id, run.space_id, run.project_id)
+                or set(capability.allowed_actions)
+                != {"run.execute", "runtime.interactive.execute"}
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            if run.status != "orphaned" or dispatch.status != "released":
+                raise SchedulingError(
+                    "interactive_controller_recovery_pending", "Recovery is pending"
+                )
+            spec = production_run_execution_spec(run.input)
+            route = decode_interactive_run_route(run.input)
+            if (
+                spec.kind != INTERACTIVE_EXECUTION_KIND
+                or capability.resource_scope.get("execution_spec_hash") != spec.spec_hash
+                or capability.resource_scope.get("runtime_session_id") != route.session_id
+                or capability.resource_scope.get("session_id") != str(run.session_id)
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            if dispatch.physical_recovery_fence is not None:
+                if dispatch.physical_recovery_fence != fence_token:
+                    raise SchedulingError(
+                        "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                    )
+                return True
+            dispatch.physical_recovery_fence = fence_token
+            ExecutionControlPlane._append_event(
+                db,
+                run,
+                event_type="run.interactive_physical_recovered",
+                payload={
+                    "fence_token": fence_token,
+                    "runner_id": str(runner_id),
+                    "runner_connection_generation": connection_generation,
+                    "dispatch_generation": dispatch.dispatch_generation,
+                    "proof_sha256": proof_sha256,
+                    "certificate_fingerprint_sha256": certificate_fingerprint_sha256,
+                    "product_revision": expected_product_revision,
+                    "image_digest": product_image_digest,
+                    "confirmed_at": confirmed_at.isoformat(),
+                },
+                trace_id=f"runner:{runner_id}",
+            )
+            return False
+
     def release_dispatch(
         self,
         *,
@@ -1660,7 +1788,19 @@ class SchedulingControlPlane:
                 RunRecord.session_id == run.session_id,
                 RunRecord.id != run.id,
                 sa.or_(
-                    RunRecord.status.in_((*_ACTIVE_RUN_STATUSES, "orphaned")),
+                    RunRecord.status.in_(_ACTIVE_RUN_STATUSES),
+                    sa.and_(
+                        RunRecord.status == "orphaned",
+                        ~sa.exists(
+                            sa.select(1)
+                            .select_from(RunDispatchRecord)
+                            .where(
+                                RunDispatchRecord.run_id == RunRecord.id,
+                                RunDispatchRecord.status == "released",
+                                RunDispatchRecord.physical_recovery_fence == RunRecord.fence_token,
+                            )
+                        ),
+                    ),
                     sa.and_(RunRecord.status == "queued", older),
                 ),
             )

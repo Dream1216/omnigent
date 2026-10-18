@@ -212,7 +212,7 @@ BEGIN
         'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -683,6 +683,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'lm2j00000001' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'lm2k00000001' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -769,7 +771,7 @@ BEGIN
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
               'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-              'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+              'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1144,14 +1146,14 @@ BEGIN
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         IF schema_revision IN (
-            'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+            'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
         ) THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
     IF schema_revision NOT IN (
-        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     )
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
@@ -1207,7 +1209,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF to_regclass('public.saas_platform_password_credentials') IS NULL THEN
             RAISE EXCEPTION 'P0S14 Staff password authority object contract rejected';
         END IF;
@@ -1300,7 +1302,7 @@ BEGIN
         'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -4151,7 +4153,7 @@ BEGIN
     IF schema_revision NOT IN (
         'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
@@ -4674,7 +4676,7 @@ BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
     IF schema_revision IN (
-        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     ) THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
@@ -4707,7 +4709,7 @@ BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
     IF schema_revision IN (
-        'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001'
+        'p0s000000013', 'p0s000000014', 'p0s000000015', 'lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001'
     ) THEN
         IF to_regclass('public.saas_model_provider_configurations') IS NULL
            OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
@@ -4774,7 +4776,7 @@ BEGIN
         'saas_model_connections', 'saas_model_credential_versions',
         'saas_model_projection_operations'
     );
-    IF schema_revision NOT IN ('lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm1a00000001', 'lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF present_count <> 0 THEN
             RAISE EXCEPTION 'model connection revision/object contract rejected';
         END IF;
@@ -4809,7 +4811,7 @@ DECLARE
     receipt_table oid := to_regclass('public.saas_model_projection_transitions');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm1b00000001', 'lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF receipt_table IS NOT NULL THEN
             RAISE EXCEPTION 'model projection revision/object contract rejected';
         END IF;
@@ -4844,7 +4846,7 @@ DECLARE
     draft_table oid := to_regclass('public.saas_model_deployment_versions');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm1c00000001', 'lm1d00000001', 'lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF draft_table IS NOT NULL THEN
             RAISE EXCEPTION 'model deployment revision/object contract rejected';
         END IF;
@@ -4869,7 +4871,7 @@ DECLARE
     funding_table oid := to_regclass('public.saas_model_test_funding_policies');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm1e00000001', 'lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF funding_table IS NOT NULL THEN
             RAISE EXCEPTION 'model test funding revision/object contract rejected';
         END IF;
@@ -4897,7 +4899,7 @@ BEGIN
     WHERE relation.relnamespace = 'public'::regnamespace
     AND relation.relname IN ('saas_model_verification_commands',
         'saas_model_verification_budget_bindings', 'saas_model_verification_receipts');
-    IF schema_revision NOT IN ('lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm1f00000001', 'lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF present_count <> 0 THEN
             RAISE EXCEPTION 'model verification revision/object contract rejected';
         END IF;
@@ -4932,7 +4934,7 @@ BEGIN
     SELECT count(*) INTO present_count FROM pg_class relation
     WHERE relation.relnamespace = 'public'::regnamespace
     AND relation.relname IN ('saas_model_publication_commands', 'saas_model_publication_versions');
-    IF schema_revision NOT IN ('lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2a00000001', 'lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF present_count <> 0 THEN
             RAISE EXCEPTION 'model publication revision/object contract rejected';
         END IF;
@@ -4964,7 +4966,7 @@ DECLARE
     schema_revision text;
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2b00000001', 'lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF to_regclass('public.saas_model_gateway_evidence') IS NOT NULL THEN
             RAISE EXCEPTION 'gateway evidence revision/object contract rejected';
         END IF;
@@ -4988,7 +4990,7 @@ DECLARE
     audit_function oid := to_regprocedure('public.saas_audit_model_gateway_evidence_v1(uuid,jsonb)');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2c00000001', 'lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF audit_function IS NOT NULL THEN
             RAISE EXCEPTION 'gateway audit revision/object contract rejected';
         END IF;
@@ -5020,7 +5022,7 @@ DECLARE
     price_guard oid := to_regprocedure('public.saas_execution_customer_price_guard_v1()');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2d00000001', 'lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF price_guard IS NOT NULL THEN
             RAISE EXCEPTION 'execution customer pricing revision/object contract rejected';
         END IF;
@@ -5051,7 +5053,7 @@ DECLARE
     schema_revision text;
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2e00000001', 'lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF EXISTS (SELECT 1 FROM pg_policy WHERE polrelid=
             to_regclass('public.saas_model_publication_versions')
             AND polname='rls_model_catalog_customer_read') THEN
@@ -5071,7 +5073,7 @@ DECLARE
     capability regprocedure := to_regprocedure('public.saas_model_run_capability_v1(uuid,uuid)');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2f00000001', 'lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF guard IS NOT NULL OR capability IS NOT NULL
             OR to_regclass('public.saas_model_run_tokens') IS NOT NULL THEN
             RAISE EXCEPTION 'model Run credential revision/object contract rejected';
@@ -5128,7 +5130,7 @@ DECLARE
     guard regprocedure := to_regprocedure('public.saas_gateway_run_evidence_guard_v2()');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2g00000001', 'lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF binding IS NOT NULL OR guard IS NOT NULL THEN
             RAISE EXCEPTION 'gateway Run evidence revision/object contract rejected';
         END IF;
@@ -5174,7 +5176,7 @@ DECLARE
     guard regprocedure := to_regprocedure('public.saas_gateway_customer_usage_guard_v1()');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2h00000001', 'lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2h00000001', 'lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF guard IS NOT NULL THEN
             RAISE EXCEPTION 'gateway machine metering revision/object contract rejected';
         END IF;
@@ -5208,7 +5210,7 @@ DECLARE
         'public.saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)');
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision NOT IN ('lm2i00000001', 'lm2j00000001') THEN
+    IF schema_revision NOT IN ('lm2i00000001', 'lm2j00000001', 'lm2k00000001') THEN
         IF ownership IS NOT NULL THEN
             RAISE EXCEPTION 'interactive recovery revision/object contract rejected';
         END IF;
@@ -5242,7 +5244,7 @@ DECLARE
     schema_revision text;
 BEGIN
     SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
-    IF schema_revision <> 'lm2j00000001' THEN
+    IF schema_revision NOT IN ('lm2j00000001', 'lm2k00000001') THEN
         IF lookup IS NOT NULL THEN
             RAISE EXCEPTION 'delegated Runner identity revision/object contract rejected';
         END IF;
@@ -5272,5 +5274,51 @@ BEGIN
     END IF;
     GRANT EXECUTE ON FUNCTION public.saas_delegated_runner_actor_v1(bigint,text)
         TO saas_authenticator;
+END
+$$;
+
+DO $$
+DECLARE
+    schema_revision text;
+    recovery_guard regprocedure := to_regprocedure(
+        'public.saas_interactive_physical_recovery_guard_v1()');
+BEGIN
+    SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
+    IF schema_revision <> 'lm2k00000001' THEN
+        IF recovery_guard IS NOT NULL OR EXISTS (
+            SELECT 1 FROM pg_attribute WHERE attrelid='public.saas_run_dispatches'::regclass
+              AND attname='physical_recovery_fence' AND NOT attisdropped
+        ) THEN
+            RAISE EXCEPTION 'physical recovery revision/object contract rejected';
+        END IF;
+        RETURN;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_proc routine JOIN pg_language language ON language.oid=routine.prolang
+        WHERE routine.oid=recovery_guard AND routine.prokind='f' AND NOT routine.prosecdef
+          AND NOT routine.proisstrict AND NOT routine.proleakproof AND NOT routine.proretset
+          AND routine.provolatile='v' AND routine.proparallel='u' AND language.lanname='plpgsql'
+          AND routine.prorettype='trigger'::regtype
+          AND routine.proconfig=ARRAY['search_path=pg_catalog']::text[]
+          AND routine.proowner=(SELECT relowner FROM pg_class
+              WHERE oid='public.saas_run_dispatches'::regclass)
+          AND encode(sha256(convert_to(routine.prosrc,'UTF8')),'hex')=
+              '2ed17f0d0946d090235dd5bad75bdec99e189f1260012acea7c4d600bbcd3e48'
+          AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(routine.proacl,
+              acldefault('f',routine.proowner))) acl WHERE acl.grantee<>routine.proowner)
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgrelid='public.saas_run_dispatches'::regclass
+          AND tgname='interactive_physical_recovery' AND tgfoid=recovery_guard
+          AND tgtype=23 AND tgenabled='O' AND NOT tgisinternal AND tgqual IS NULL
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_attribute WHERE attrelid='public.saas_run_dispatches'::regclass
+          AND attname='physical_recovery_fence' AND atttypid='bigint'::regtype
+          AND NOT attnotnull AND NOT atthasdef AND NOT attisdropped
+    ) OR has_column_privilege('saas_app','public.saas_run_dispatches',
+        'physical_recovery_fence','UPDATE')
+      OR has_column_privilege('saas_public_api','public.saas_run_dispatches',
+        'physical_recovery_fence','UPDATE') THEN
+        RAISE EXCEPTION 'physical recovery guard contract rejected';
+    END IF;
 END
 $$;

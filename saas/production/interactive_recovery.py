@@ -92,6 +92,35 @@ class InteractiveRecoveryRecord:
             raise InteractiveRecoveryError()
 
 
+def physical_recovery_proof_sha256(record: InteractiveRecoveryRecord) -> str:
+    if (
+        not record.process_stopped
+        or (record.official_runner_id is None and record.phase != "prepared")
+        or (
+            record.official_runner_id is not None and (not record.host_id or not record.host_owner)
+        )
+    ):
+        raise InteractiveRecoveryError()
+    return sha256(
+        json.dumps(
+            {
+                "run_id": str(record.run_id),
+                "fence_token": record.fence_token,
+                "connection_generation": record.connection_generation,
+                "official_session_id": record.scope.official_session_id,
+                "partition_id": str(record.scope.partition_id),
+                "host_id": record.host_id,
+                "official_runner_id": record.official_runner_id,
+                "host_owner": record.host_owner,
+                "host_account_generation": record.host_account_generation,
+                "certificate_sha256": record.certificate_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
 def certificate_sha256(grant: ManagedMeteringGrant) -> str:
     # Pin the exact certificate file; rotation cannot silently rebind an old Run's receipts.
     return sha256(grant.client_certificate_path.read_bytes()).hexdigest()

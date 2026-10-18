@@ -51,7 +51,7 @@ from saas.control_plane.billing_models import BillingMeteringReceiptRecord, Usag
 from saas.control_plane.certificates import RunnerCertificateAuthority
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.execution import ExecutionControlPlane
-from saas.control_plane.execution_models import RunRecord, TaskRecord
+from saas.control_plane.execution_models import RunEventRecord, RunRecord, TaskRecord
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_deployments import compile_stored_model_deployment
 from saas.control_plane.model_routing_models import (
@@ -68,6 +68,7 @@ from saas.control_plane.platform_models import (
     ModelProviderTenantDailyUsageRecord,
 )
 from saas.control_plane.resolver import load_runtime_compatibility_policy
+from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
@@ -77,6 +78,7 @@ from saas.control_plane.scheduling_models import (
 from saas.production.external_host_credential import arm_external_host_credential
 from saas.production.interactive_controller_adapter import ProductionInteractiveControllerAdapter
 from saas.production.interactive_execution import InteractiveConversationStore
+from saas.production.interactive_recovery import physical_recovery_proof_sha256
 from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
 from saas.production.litellm_configuration_attestation import LiteLLMConfigurationAttestor
 from saas.production.model_run_credentials import ModelRunCredentialService
@@ -644,6 +646,8 @@ def _assert_crash_restart(
     observed,
     exchange,
     meter_certificates,
+    control_certificates,
+    app_sessions,
 ):
     old_id = UUID(state["run_id"])
     assert (
@@ -653,6 +657,50 @@ def _assert_crash_restart(
     old = adapter._journal.read(old_id)
     assert old.phase == "terminal" and old.outcome == "orphaned" and old.process_stopped
     assert len(list(old.grant.spool_directory.glob("*.pending.json"))) == 1
+    for _ in range(2):
+        asyncio.run_coroutine_threadsafe(
+            adapter._executor._confirm_recovery(old), app_loop
+        ).result(20)
+    with factory() as db:
+        assert db.get(RunDispatchRecord, old_id).physical_recovery_fence == old.fence_token
+        events = db.scalars(
+            sa.select(RunEventRecord).where(
+                RunEventRecord.run_id == old_id,
+                RunEventRecord.event_type == "run.interactive_physical_recovered",
+            )
+        ).all()
+        assert len(events) == 1
+        assert events[0].payload["proof_sha256"] == physical_recovery_proof_sha256(old)
+        fingerprint = sha256(
+            x509.load_pem_x509_certificate(
+                control_certificates["runner"].certificate.read_bytes()
+            ).public_bytes(serialization.Encoding.DER)
+        ).hexdigest()
+        assert events[0].payload["certificate_fingerprint_sha256"] == fingerprint
+    with pytest.raises(sa.exc.DBAPIError) as denied:
+        with app_sessions.begin() as db:
+            db.execute(
+                sa.update(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == old_id)
+                .values(physical_recovery_fence=None)
+            )
+    assert denied.value.orig.sqlstate == "42501"
+    with pytest.raises(sa.exc.IntegrityError) as immutable:
+        with workers["executor"].begin() as db:
+            apply_rls_context(
+                db,
+                RlsContext(
+                    tenant_id=runtime.tenant_id,
+                    space_id=runtime.space_id,
+                    project_id=runtime.project_id,
+                ),
+            )
+            db.execute(
+                sa.update(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == old_id)
+                .values(physical_recovery_fence=None)
+            )
+    assert immutable.value.orig.sqlstate == "23514"
     with bind_runtime_context(runtime):
         conversation = delegate.get_conversation(state["conversation_id"])
 
@@ -689,28 +737,6 @@ def _assert_crash_restart(
             headers=headers,
         )
         assert retried.status_code == 202 and not retried.json()["queued"]
-        # The orphaned-session scheduling barrier is intentionally not bypassed.
-        marker = conversation.inference_snapshot["managed_execution"]
-        created = client.post(
-            "/v1/sessions",
-            json={
-                "agent_id": "b" * 32,
-                "project_id": conversation.project_id,
-                "host_type": "external",
-                "host_id": "c" * 32,
-                "workspace": "/workspace",
-                "model_override": marker["public_model_id"],
-                "inference_configuration_revision": (
-                    f"managed-model:{marker['wire_api']}:{marker['generation']}:"
-                    f"{marker['snapshot_sha256']}"
-                ),
-                "initial_items": [],
-            },
-            headers=headers,
-        )
-        assert created.status_code == 201, created.text
-        with bind_runtime_context(runtime):
-            conversation = delegate.get_conversation(created.json()["id"])
         fresh = client.post(
             f"/v1/sessions/{conversation.id}/events",
             json=_message("d" * 32, "Continue without writing the marker again"),
@@ -731,7 +757,7 @@ def _assert_crash_restart(
                 db.get(RunDispatchRecord, r.id).status == "released" for r in rows
             )
 
-    _wait(completed, "independent session after cold recovery without replay", timeout=150)
+    _wait(completed, "same-session new input after confirmed recovery without replay", timeout=150)
     denied()
     with bind_runtime_context(runtime):
         assert delegate.get_conversation(conversation.id).runner_id != state["runner_id"]
@@ -824,8 +850,12 @@ def _assert_crash_restart(
                 "original_metering_leaf_preserved": True,
                 "old_run_orphaned_not_replayed": True,
                 "replacement_runner_after_recovery": True,
-                "fresh_independent_session": True,
-                "same_orphaned_session_resume_proven": False,
+                "fresh_independent_session": False,
+                "same_orphaned_session_resume_proven": True,
+                "durable_physical_recovery_fence_confirmed": True,
+                "recovery_receipt_replayed_without_new_event": True,
+                "app_cannot_forge_recovery_fence": True,
+                "recovery_fence_immutable": True,
                 "same_private_volume_reopened": True,
                 "cross_pod_volume_remount_tested": False,
                 "unknown_usage_hold_and_reference_retained": True,
@@ -1062,6 +1092,8 @@ def _serve_controller(
                     observed=observed,
                     exchange=exchange,
                     meter_certificates=meter_certificates,
+                    control_certificates=control_certificates,
+                    app_sessions=runtime_factory._app_sessions,
                 )
                 return
             adapter.assert_production_ready()

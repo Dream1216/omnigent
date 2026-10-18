@@ -28,6 +28,7 @@ from saas.production.interactive_model_channel import (
 from saas.production.interactive_recovery import (
     InteractiveRecoveryError,
     InteractiveRecoveryJournal,
+    physical_recovery_proof_sha256,
 )
 from saas.production.runner_control import (
     ProductionRunnerMachineAuthority,
@@ -165,11 +166,15 @@ async def controller_case(interactive_http, tmp_path):
             pass
 
     physical = Physical()
-    recovered = []
+    recovered, confirmed = [], []
 
     async def verify(record):
         authority.verify_recovery(record)
         recovered.append(record.run_id)
+
+    async def confirm(record):
+        assert record.process_stopped
+        confirmed.append(record.run_id)
 
     executor = ProductionInteractiveExecutor(
         authorize_model=authorize,
@@ -182,6 +187,7 @@ async def controller_case(interactive_http, tmp_path):
         image_digest="sha256:" + "a" * 64,
         assert_authority=lambda: None,
         verify_recovery=verify,
+        confirm_recovery=confirm,
         client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(supplier)),
         meter_factory=lambda value: ProviderUsageMeter(
             grant=value, client=references, gateway_managed=True, retry_interval_seconds=0.05
@@ -568,6 +574,7 @@ async def test_restart_reconciles_original_usage_and_never_dispatches_old_input(
         image_digest="sha256:" + "a" * 64,
         assert_authority=lambda: None,
         verify_recovery=c.executor._verify_recovery,
+        confirm_recovery=c.executor._confirm_recovery,
         meter_factory=c.executor._meter_factory,
     )
     try:
@@ -578,6 +585,44 @@ async def test_restart_reconciles_original_usage_and_never_dispatches_old_input(
     assert len(c.inputs) == len(c.gateway_calls) == 1
     assert not list(record.grant.spool_directory.glob("*.pending.json"))
     assert all(call["capability_token"] == c.lease.capability_token for call in c.references.calls)
+
+
+@pytest.mark.asyncio
+async def test_recovery_receipt_follows_physical_ack_and_retains_pending_confirmation(
+    controller_case,
+):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="succeeded")
+    active = c.executor._active.pop(c.lease.run_id)
+    active.meter.close(timeout_seconds=0)
+    c.controls.stop_ack = False
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
+    assert not c.confirmed
+    with pytest.raises(InteractiveRecoveryError):
+        physical_recovery_proof_sha256(c.journal.read(c.lease.run_id))
+    c.controls.stop_ack = True
+
+    async def pending_confirmation(record):
+        assert record.process_stopped
+        assert len(physical_recovery_proof_sha256(record)) == 64
+        raise RunnerControlError("interactive_controller_recovery_pending", "Unavailable")
+
+    c.executor._confirm_recovery = pending_confirmation
+    with pytest.raises(RunnerControlError):
+        await c.executor.reconcile_physical_gc(limit=32)
+    pending = c.journal.read(c.lease.run_id)
+    assert pending.process_stopped and pending.phase != "terminal"
+    assert c.lease.run_id not in c.executor._confirmed_recoveries
+    stop_count = len(c.stops)
+    c.executor._confirm_recovery = c.confirm
+    assert await c.executor.reconcile_physical_gc(limit=32) == 1
+    assert len(c.stops) == stop_count and c.confirmed == [c.lease.run_id]
+    done = c.journal.read(c.lease.run_id)
+    assert done.phase == "terminal" and done.outcome == "orphaned"
+    assert c.lease.run_id in c.executor._confirmed_recoveries
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
+    assert len(c.inputs) == len(c.gateway_calls) == 1
 
 
 def test_http_creation_persists_only_frozen_model_channel_references(interactive_http):
