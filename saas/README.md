@@ -110,6 +110,24 @@ not implement cutoff checks; it must retain cutoff and settlement evidence.
 Migration, restore, physical security-revocation and production rollout remain
 independent gates, not consequences of a green component test.
 
+The generic Outbox process installs the model disablement audit publisher ahead
+of external sinks. It accepts only the original cutoff reference and calls the
+source-pinned `saas_audit_model_disablement_v1` through the existing non-bypass
+dispatcher login. The database verifies the immutable cutoff and its exact
+Outbox envelope, then appends the initiating Staff identity and tenant/model
+cutoff metadata to the existing platform audit chain. It does not read provider
+credentials, change a budget or create customer charges. The dispatcher still
+has no direct cutoff/audit-table access or general Staff database authority.
+
+Delivery commits before Outbox acknowledgement. Repeated, concurrent or
+out-of-order delivery uses the source event UUID to retain one audit fact;
+ambiguous commit/reply loss retries without synthesizing a second action.
+Storage failure leaves the event unacknowledged for existing bounded retry and
+quarantine handling. Audit receipt time is the original database cutoff time,
+not the worker clock. Downgrade refuses to drop this delivery authority while
+cutoffs or their audit facts are retained. This is an audit-delivery contract,
+not proof of production worker deployment or completed active revocation.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

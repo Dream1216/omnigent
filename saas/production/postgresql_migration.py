@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "9a314621db760a5a4baebe196279d4cdff342487f1b5f3d31afce1ab5070375f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "92f43e3925208a144e917e3339f4fe88d885f09990aa110fb706eebbdc908e06",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -494,6 +505,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "156fe167a016c4c31b862535827b8695e9cfd6d651e4cfae51efbed9817d0785",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "c05da6ac5669c11ec01b7d66942791d4f66f3efa666cb9a6bf746d0c43ddd78a",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -772,6 +794,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "87bf6dd2bc0eae1d68761318ba4d2bd947362de3df175cae42948003955b2e42",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "2bc9b34fd510e09198744ec33b6be4cbb963cc569f8d436986ecaf1f48a08f98",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -1020,6 +1053,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "f8148de1bf2949f967b123a76f3ef3f2b2bf52d54f74a5edcfd41c808542b99e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "9ff5fa78b025fccce9112bf7f5f24e386eae32ff9b86204184754a2bbf37f329",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -1263,6 +1307,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "ec0a2cc594f64ac2a3c0aa358a9b8f3b688950df7c23aaf8ecd40e4b77fdec5b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "0c4599247d1392dbf5608cb09f87406cf2c621b8418b606687708b644a9b5333",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -1481,6 +1536,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "18bdce62958c07da06001dd4edc4aca848060bdd55c102c7c323cc854ec5c7eb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "86c432ca678e97a64f8e6008f45cb72eba2be3e7a6d96f52517d8bff6f9d0210",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -1706,6 +1772,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "72da0d0ce9d4581d59fff795a399094a394d7f77b5d533a2700b4e6e818f0cad",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "4fecafdd1d909c49551a4432c508b854a6e8b1c7fe48fd1bf823cd570166631e",
     # Source-derived immutable model cutoff authority.
     (
         16,
@@ -1896,6 +1973,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "2967cc61791fb7ae953703bff13303586603d68ccb72d675f70d5e6426a28cd5",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "b978d0898e5cff9de97f42e2cff2846999f5e5e514341b8ebf53efe3798f5ca5",
     # Source-derived immutable model cutoff authority.
     (
         16,

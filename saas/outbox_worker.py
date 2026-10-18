@@ -16,6 +16,10 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.model_disablement_audit import (
+    ModelDisablementAuditPublisher,
+    verify_disablement_audit_function,
+)
 from saas.control_plane.model_gateway_audit import (
     ModelGatewayAuditPublisher,
     verify_gateway_audit_function,
@@ -162,6 +166,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
         raise RuntimeError("the production Outbox worker requires PostgreSQL")
     with engine.connect() as connection:
         gateway_audit_oid = verify_gateway_audit_function(connection)
+        disablement_audit_oid = verify_disablement_audit_function(connection)
         schema_facts = connection.execute(
             sa.text(
                 "SELECT current_database(), current_schema(), current_schemas(false), "
@@ -371,7 +376,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "JOIN dispatcher ON acl.grantee = dispatcher.oid "
                 "WHERE namespace.nspname !~ '^pg_' "
                 "AND namespace.nspname <> 'information_schema' "
-                "AND object.oid <> :gateway_audit_oid UNION ALL "
+                "AND object.oid NOT IN (:gateway_audit_oid,:disablement_audit_oid) UNION ALL "
                 "SELECT 1 FROM pg_type object "
                 "JOIN pg_namespace namespace ON namespace.oid = object.typnamespace "
                 "CROSS JOIN LATERAL aclexplode(object.typacl) acl "
@@ -406,7 +411,10 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "ON object.datdba = dispatcher.oid) "
                 "SELECT count(*) FROM unexpected"
             ),
-            {"gateway_audit_oid": gateway_audit_oid or 0},
+            {
+                "gateway_audit_oid": gateway_audit_oid or 0,
+                "disablement_audit_oid": disablement_audit_oid or 0,
+            },
         ).scalar_one()
         owned_tables = connection.execute(
             sa.text(
@@ -749,7 +757,8 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     if (
         owned_tables
         or forbidden_table_privileges
-        or executable_security_definers != int(gateway_audit_oid is not None)
+        or executable_security_definers
+        != int(gateway_audit_oid is not None) + int(disablement_audit_oid is not None)
         or forbidden_schema_privileges
     ):
         raise RuntimeError(
@@ -919,6 +928,8 @@ def main() -> int:
             raise RuntimeError("OMNIGENT_SAAS_OUTBOX_MAX_ATTEMPTS must not exceed 32")
         publisher = _load_publisher(publisher_reference)
         publisher = ModelGatewayAuditPublisher(engine, publisher)
+        publisher.validate_outbox_configuration()
+        publisher = ModelDisablementAuditPublisher(engine, publisher)
         publisher.validate_outbox_configuration()
         dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
         stop = threading.Event()

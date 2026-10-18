@@ -25,6 +25,19 @@ _KEYS = {"event_type", "tenant_id", "reservation_id", "evidence_id", "evidence_s
 def verify_gateway_audit_function(connection: Connection) -> int | None:
     """Allow only this source-pinned definer; older schemas have no such authority."""
 
+    return verify_source_audit_function(
+        connection,
+        signature=GATEWAY_AUDIT_SIGNATURE,
+        expected_source_hash=GATEWAY_AUDIT_SOURCE_SHA256,
+        source_table="public.saas_model_gateway_evidence",
+    )
+
+
+def verify_source_audit_function(
+    connection: Connection, *, signature: str, expected_source_hash: str, source_table: str
+) -> int | None:
+    """Verify source, owner and exact dispatcher-only authority for one audit RPC."""
+
     row = connection.execute(
         sa.text(
             "SELECT routine.oid,routine.prosecdef,routine.prokind,language.lanname,"
@@ -32,7 +45,7 @@ def verify_gateway_audit_function(connection: Connection) -> int | None:
             "encode(sha256(convert_to(routine.prosrc,'UTF8')),'hex'),"
             "pg_get_userbyid(routine.proowner),(SELECT count(*)=4 "
             "AND bool_and(relowner=routine.proowner) FROM pg_class WHERE oid IN ("
-            "to_regclass('public.saas_model_gateway_evidence'),"
+            "to_regclass(:source_table),"
             "to_regclass('public.saas_control_plane_outbox'),"
             "to_regclass('public.saas_platform_audit_events'),"
             "to_regclass('public.saas_platform_audit_chain_heads'))),"
@@ -40,7 +53,7 @@ def verify_gateway_audit_function(connection: Connection) -> int | None:
             "FROM pg_proc routine JOIN pg_language language ON language.oid=routine.prolang "
             "WHERE routine.oid=to_regprocedure(:signature)"
         ),
-        {"signature": GATEWAY_AUDIT_SIGNATURE},
+        {"signature": signature, "source_table": source_table},
     ).one_or_none()
     if row is None:
         return None
@@ -60,7 +73,7 @@ def verify_gateway_audit_function(connection: Connection) -> int | None:
         or language != "plpgsql"
         or config != ["search_path=pg_catalog, pg_temp"]
         or result != "boolean"
-        or source_hash != GATEWAY_AUDIT_SOURCE_SHA256
+        or source_hash != expected_source_hash
         or not same_owner
         or flags != ["v", "u", False, False]
         or set(map(tuple, acls))

@@ -120,6 +120,7 @@ def test_gateway_audit_classifies_database_failures_without_exposing_bind_values
 
 def test_generic_outbox_process_installs_gateway_audit_before_claiming(monkeypatch):
     from saas import outbox_worker
+    from saas.control_plane.model_disablement_audit import ModelDisablementAuditPublisher
 
     _, engine, fallback, _ = _fixture()
     captured = []
@@ -133,6 +134,10 @@ def test_generic_outbox_process_installs_gateway_audit_before_claiming(monkeypat
     monkeypatch.setattr(
         "saas.control_plane.model_gateway_audit.verify_gateway_audit_function", lambda _db: 1
     )
+    monkeypatch.setattr(
+        "saas.control_plane.model_disablement_audit.verify_disablement_audit_function",
+        lambda _db: 2,
+    )
 
     class Worker:
         def __init__(self, dispatcher, **_kwargs):
@@ -143,7 +148,8 @@ def test_generic_outbox_process_installs_gateway_audit_before_claiming(monkeypat
 
     monkeypatch.setattr(outbox_worker, "OutboxWorker", Worker)
     assert outbox_worker.main() == 0
-    assert len(captured) == 1 and isinstance(captured[0], ModelGatewayAuditPublisher)
-    assert captured[0]._fallback is fallback
+    assert len(captured) == 1 and isinstance(captured[0], ModelDisablementAuditPublisher)
+    assert isinstance(captured[0]._fallback, ModelGatewayAuditPublisher)
+    assert captured[0]._fallback._fallback is fallback
     fallback.close.assert_called_once_with()
     engine.dispose.assert_called_once_with()
