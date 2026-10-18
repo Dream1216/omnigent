@@ -408,7 +408,9 @@ class ProductionInteractiveExecutor:
             except TimeoutError:
                 raise _unavailable() from None
 
-    async def _stop_owned_session(self, records, active, runner_id, cancel_inputs):
+    async def _stop_owned_session(
+        self, records, active, runner_id, cancel_inputs
+    ) -> dict[str, bool | str]:
         self.assert_production_ready()
         control = await cancel_inputs()
         if control.get("physical_run_id") and not any(
