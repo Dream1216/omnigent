@@ -193,6 +193,8 @@ class PlatformModelGateway:
             return await self._managed_run_request(
                 request, bearer=bearer, responses=upstream_path == "responses"
             )
+        if self._run_inference is not None:
+            return _error(403, "platform_model_legacy_inference_disabled")
         claims = self._tokens.validate(bearer)
         raw = await request.body()
         try:
@@ -445,6 +447,14 @@ class PlatformModelGateway:
             )
             if attempt.status != "in_flight" or attempt.id != reservation.id:
                 raise ValueError
+        except ModelProviderBudgetError as exc:
+            await self._release(reservation)
+            await self._close_transport(client)
+            return (
+                _error(403, exc.code)
+                if exc.code == "platform_model_disabled"
+                else _error(503, "platform_model_budget_attempt_unavailable")
+            )
         except Exception:  # noqa: BLE001 - lost acknowledgement must not authorize another send.
             await self._release(reservation)
             await self._close_transport(client)

@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "08f1821ffaf7fcf2b908b3931e6dc265ed97daf7d9a7d35e62c33ce295c790e2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "e70aabdaeba80706f198962945c968e56e76b805fc2766f756e48ae800eaac91",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -483,6 +494,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "1d648b6318e09ada40220b69a077f71939bc1bb162ec6f0b3f59e164667cae17",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "5b42d57b26e593ab2f7eb93bb30f84569dea2c71d34a0c21d3c33e345638954d",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -750,6 +772,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "5ce7f73cf1a8e3d94cf63b1ffb9494a392d971b798c795d31c4d047e71559555",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "92f9824717abbcec82932613f4705e5f9590456883d876feaff64b96642eeaa7",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -987,6 +1020,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "0ff60966d27af80fd9c3883a415d64fa698985cef309eaca2bc1134a4f544d51",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "1311fb551a3b388fa30e13fdad8afc0b3ebf4790055b701ff8b95d49683ff648",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -1219,6 +1263,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "94f9e94cd866c938c2fe192fa6323942d8c86fbc8cc938a2c3dafba0c78fd021",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "06866b31c02dcb67733b8c3e271e0f084e68bad34f7c00c345eb69bef03a9802",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -1426,6 +1481,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "029cee8a43921289d55f1eaa595557f0871a104383e83364b77cb29c6a67f6b0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "d6d4ba7afa365f4837c917f3d2b20296d47762e109fbb386b9e5eb4e4ce3d8f0",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -1640,6 +1706,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "728b9900a505bd08e98a127f280e4dab25eecb2d3563e361c7335466a0691e0d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "0723a043b0df2b2cbe286acb9982f06747925deee53d5bc05ea2c8d4c6d2a3ed",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,
@@ -1819,6 +1896,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "a58f0a002e74add57de8afab5dd19315ce97eca8e7fb6760936857e84b46fb32",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "910582a1328f91b5a0044a79889a1cf1a9002dfba763e9d44db80e48b4fb1b68",
     # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
     (
         16,

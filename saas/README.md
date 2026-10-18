@@ -69,6 +69,47 @@ authorization, frozen publication/price, quota and metering checks. Available
 preview metadata is not 17-Agent acceptance or production release evidence;
 production admission remains disabled until the release gates are satisfied.
 
+### Model publication disablement
+
+Staff with fresh `platform.model_provider.publish` authority may call
+`POST /v2/platform-admin/model-publications/{publication_id}/disable` with
+`{"expected_generation": n}` and `Idempotency-Key`. The target is the actual
+immutable publication UUID, not a caller-provided tenant or LiteLLM alias.
+The synchronous reply contains a `disablement_id`; retrying the same command
+under the same Staff identity/key returns its original receipt. A changed body,
+stale generation or already-disabled cutoff under a different key is rejected.
+
+The append-only cutoff covers this tenant/model/protocol through the current
+generation. It removes those versions from customer choices and rejects saved
+session authorization, model bearer reuse and renewal. A later verified
+publication may enable a new generation, never an older disabled one. Original
+publication snapshots, prices and receipts are not rewritten.
+
+After Run inference is explicitly enabled, the gateway rejects legacy session
+bearers before consulting legacy credentials or provider configuration. Existing
+legacy-only deployments retain their prior behavior until that opt-in. Consumer
+migration and removal of obsolete signing-key mounts are still rollout gates;
+this request guard is not proof that production credentials have been removed.
+
+Disablement and the existing budget single-send fence share the same transaction
+lock. A cutoff committed before that fence prevents the send and releases only
+the unstarted reservation. An already-accepted call may finish and settle its
+known usage against the original frozen price; an unknown outcome retains its
+hold. User interruption/cancellation remains available. This is ordinary
+disablement, not a claim that security revocation actively stops an in-flight
+stream or physical Agent; that lifecycle still requires separate acceptance.
+
+PostgreSQL requires the matching audit Outbox intent in the same transaction,
+rejects changed/deleted cutoff rows, and refuses schema downgrade while cutoffs
+are retained. Receipt time is read from PostgreSQL, independent of the API
+host's clock. Staff can read only their own session's non-secret freshness
+metadata for this guard, not bearer hashes; customer and Billing cutoff reads
+expose only tenant/model/protocol/generation, not Staff identities or keys.
+Rollback must stop managed admission before using an older gateway that does
+not implement cutoff checks; it must retain cutoff and settlement evidence.
+Migration, restore, physical security-revocation and production rollout remain
+independent gates, not consequences of a green component test.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

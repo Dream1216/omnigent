@@ -301,6 +301,12 @@ class _ModelPublicationCommand(BaseModel):
     expected_generation: int = Field(ge=0, lt=(1 << 31) - 1)
 
 
+class _ModelDisablementCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_generation: int = Field(ge=1, lt=(1 << 31))
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -1014,6 +1020,23 @@ def create_platform_admin_app(
                 for value in model_publication_service().list(principal, tenant_id=tenant_id)
             ],
             "runtime_enabled": False,
+        }
+
+    @app.post("/v2/platform-admin/model-publications/{publication_id}/disable")
+    async def disable_model_publication(request: Request, publication_id: UUID):
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelDisablementCommand
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().disable(
+                principal,
+                publication_id=publication_id,
+                **command.model_dump(),
+                idempotency_key=request.headers.get("Idempotency-Key", ""),
+            ),
         }
 
     @app.post("/v2/platform-admin/model-deployments/{deployment_id}/publish", status_code=202)

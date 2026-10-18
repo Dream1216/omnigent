@@ -476,6 +476,56 @@ class ModelPublicationVersionRecord(SaasBase):
     )
 
 
+class ModelPublicationDisablementRecord(SaasBase):
+    """Append-only cutoff; republishing never restores an older model authority."""
+
+    __tablename__ = "saas_model_publication_disablements"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    through_generation: Mapped[int] = mapped_column(nullable=False)
+    principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
+    )
+    staff_session_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    staff_security_version: Mapped[int] = mapped_column(nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["tenant_id", "public_model_id", "wire_api", "through_generation"],
+            [
+                "saas_model_publication_versions." + name
+                for name in ("tenant_id", "public_model_id", "wire_api", "generation")
+            ],
+            ondelete="RESTRICT",
+            name="fk_model_disablement_publication",
+        ),
+        sa.UniqueConstraint("principal_id", "idempotency_key", name="uq_model_disablement_key"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "public_model_id",
+            "wire_api",
+            "through_generation",
+            name="uq_model_disablement_cutoff",
+        ),
+        sa.CheckConstraint(
+            "through_generation > 0 AND staff_security_version > 0",
+            name="ck_model_disablement_generation",
+        ),
+        sa.CheckConstraint(_hex64("request_hash"), name="ck_model_disablement_hash"),
+        sa.CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 128", name="ck_model_disablement_key"
+        ),
+    )
+
+
 class ModelRunTokenRecord(SaasBase):
     """Hashed model credential; identity and financial authority stay on the real Run."""
 

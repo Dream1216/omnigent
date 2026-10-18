@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine, RowMapping
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.compatibility import RuntimeContext
+from saas.control_plane.model_disablement import disabled_publication, publication_is_disabled
 from saas.control_plane.model_routing_models import ModelPublicationVersionRecord as Publication
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
@@ -89,6 +90,14 @@ class TenantModelCatalog:
             )
             if row is None or row["snapshot_sha256"] != reference.get("snapshot_sha256"):
                 raise TenantModelCatalogError("managed model catalog unavailable")
+            if publication_is_disabled(
+                db,
+                tenant_id=runtime.tenant_id,
+                public_model_id=row["public_model_id"],
+                wire_api=row["wire_api"],
+                generation=row["generation"],
+            ):
+                raise TenantModelCatalogError("managed model disabled")
             return self._snapshot(row, runtime)
 
     def resolve_selection(
@@ -126,6 +135,12 @@ class TenantModelCatalog:
                         Publication.tenant_id == runtime.tenant_id,
                         Publication.public_model_id == model_id,
                         Publication.wire_api == wire_api,
+                        ~disabled_publication(
+                            runtime.tenant_id,
+                            Publication.public_model_id,
+                            Publication.wire_api,
+                            Publication.generation,
+                        ),
                     )
                     .order_by(Publication.generation.desc())
                     .limit(1)
@@ -167,7 +182,15 @@ class TenantModelCatalog:
                     Publication.wire_api,
                     sa.func.max(Publication.generation).label("generation"),
                 )
-                .where(Publication.tenant_id == runtime.tenant_id)
+                .where(
+                    Publication.tenant_id == runtime.tenant_id,
+                    ~disabled_publication(
+                        runtime.tenant_id,
+                        Publication.public_model_id,
+                        Publication.wire_api,
+                        Publication.generation,
+                    ),
+                )
                 .group_by(Publication.public_model_id, Publication.wire_api)
                 .subquery()
             )

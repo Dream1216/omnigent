@@ -558,6 +558,24 @@ class ModelProviderBudgetAdmissionService:
                     "platform_model_budget_reservation_inactive",
                     "Model budget reservation is not active",
                 )
+            request_row = gateway_request_record(db, record.id)
+            if request_row is not None:
+                from saas.control_plane.model_disablement import publication_is_disabled
+
+                bound = retained_gateway_request(request_row, record)
+                if isinstance(bound, GatewayRunRequestEvidence) and (
+                    record.tenant_id is None
+                    or publication_is_disabled(
+                        db,
+                        tenant_id=record.tenant_id,
+                        public_model_id=bound.public_model_id,
+                        wire_api=bound.wire_api,
+                        generation=bound.run_binding.publication_generation,
+                    )
+                ):
+                    raise ModelProviderBudgetError(
+                        "platform_model_disabled", "Model authority changed before inference"
+                    )
             record.status, record.updated_at = "in_flight", at
             record.version += 1
             retain_gateway_evidence(db, record, at=at)

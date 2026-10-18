@@ -24,6 +24,7 @@ from saas.control_plane.model_deployments import (
     CompiledModelDeploymentDraft,
     compile_stored_model_deployment,
 )
+from saas.control_plane.model_disablement import DISABLEMENT_EVENT, publication_is_disabled
 from saas.control_plane.model_pricing import PlatformModelPricingPolicy
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
@@ -31,6 +32,7 @@ from saas.control_plane.model_routing_models import (
     ModelDeploymentVersionRecord,
     ModelProjectionOperationRecord,
     ModelPublicationCommandRecord,
+    ModelPublicationDisablementRecord,
     ModelPublicationVersionRecord,
     ModelVerificationCommandRecord,
     ModelVerificationReceiptRecord,
@@ -78,12 +80,14 @@ def lock_publication_scope(
     db: Session, tenant_id: UUID, draft: CompiledModelDeploymentDraft
 ) -> None:
     if db.get_bind().dialect.name == "postgresql":
-        digest = sha256(
-            f"model-publication:{tenant_id}:{draft.public_model_id}:{draft.wire_api}".encode()
-        ).digest()
         db.execute(
-            sa.text("SELECT pg_advisory_xact_lock(:key)"),
-            {"key": int.from_bytes(digest[:8], "big", signed=True)},
+            sa.select(
+                sa.func.pg_advisory_xact_lock(
+                    sa.func.hashtextextended(
+                        f"{tenant_id}:{draft.public_model_id}:{draft.wire_api}", 0
+                    )
+                )
+            )
         )
 
 
@@ -251,6 +255,126 @@ class ModelPublicationService:
             engine, query_name_prefix="saas.model_publications", immediate=True
         )
         self._authorization, self._pricing = authorization, pricing
+
+    def disable(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        publication_id: UUID,
+        expected_generation: int,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        """Stop unstarted calls through this generation without rewriting history."""
+        from saas.control_plane.model_budget import lock_model_provider_budget
+
+        if (
+            not isinstance(publication_id, UUID)
+            or not publication_id.int
+            or type(expected_generation) is not int
+            or not 1 <= expected_generation < 2**31
+            or not isinstance(idempotency_key, str)
+            or _IDEMPOTENCY.fullmatch(idempotency_key) is None
+        ):
+            raise _error("platform_model_disablement_invalid")
+        request_hash = sha256(
+            canonical_verification_document(
+                {
+                    "publication_id": str(publication_id),
+                    "expected_generation": expected_generation,
+                    "action": "disable_publication",
+                }
+            ).encode("ascii")
+        ).hexdigest()
+        now = datetime.now(timezone.utc)
+        with self._session("disable_model_publication") as db:
+            authorize_platform_model_operation(
+                db, self._authorization, actor, "platform.model_provider.publish", now
+            )
+            lock_model_operation_idempotency(db, actor.principal_id)
+            prior = db.scalar(
+                sa.select(ModelPublicationDisablementRecord).where(
+                    ModelPublicationDisablementRecord.principal_id == actor.principal_id,
+                    ModelPublicationDisablementRecord.idempotency_key == idempotency_key,
+                )
+            )
+            if prior is not None:
+                if prior.request_hash != request_hash:
+                    raise _error("platform_model_disablement_conflict")
+                return self._disablement_view(prior)
+            row = db.get(ModelPublicationVersionRecord, publication_id)
+            if row is None:
+                raise _error("platform_model_publication_not_found")
+            stored_draft = db.get(ModelDeploymentVersionRecord, row.deployment_version_id)
+            if stored_draft is None:
+                raise _error("platform_model_publication_not_found")
+            draft = compile_stored_model_deployment(stored_draft)
+            # Match the existing single-send fence before changing its model authority.
+            lock_model_provider_budget(db)
+            lock_publication_scope(db, row.tenant_id, draft)
+            if (
+                row.generation != expected_generation
+                or current_publication_generation(db, row.tenant_id, draft) != expected_generation
+                or publication_is_disabled(
+                    db,
+                    tenant_id=row.tenant_id,
+                    public_model_id=row.public_model_id,
+                    wire_api=row.wire_api,
+                    generation=row.generation,
+                )
+            ):
+                raise _error("platform_model_disablement_conflict")
+            recorded_at = (
+                db.execute(sa.select(sa.func.clock_timestamp())).scalar_one()
+                if db.get_bind().dialect.name == "postgresql"
+                else now
+            )
+            record = ModelPublicationDisablementRecord(
+                id=uuid4(),
+                tenant_id=row.tenant_id,
+                public_model_id=row.public_model_id,
+                wire_api=row.wire_api,
+                through_generation=row.generation,
+                principal_id=actor.principal_id,
+                staff_session_id=actor.session_id,
+                staff_security_version=actor.security_version,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                created_at=recorded_at,
+            )
+            db.add(record)
+            db.flush()
+            db.add(
+                ControlPlaneOutboxEvent(
+                    id=uuid4(),
+                    tenant_id=None,
+                    aggregate_type="platform_model",
+                    aggregate_key=str(record.id),
+                    event_type=DISABLEMENT_EVENT,
+                    idempotency_key="model-disablement:" + str(record.id),
+                    request_hash=request_hash,
+                    payload={
+                        "event_type": DISABLEMENT_EVENT,
+                        "schema_version": 1,
+                        "disablement_id": str(record.id),
+                    },
+                )
+            )
+            return self._disablement_view(record)
+
+    @staticmethod
+    def _disablement_view(record: ModelPublicationDisablementRecord) -> dict[str, object]:
+        return {
+            "disablement_id": record.id,
+            "tenant_id": record.tenant_id,
+            "public_model_id": record.public_model_id,
+            "wire_api": record.wire_api,
+            "through_generation": record.through_generation,
+            "disabled": True,
+            "created_at": record.created_at.replace(tzinfo=timezone.utc)
+            if record.created_at.tzinfo is None
+            else record.created_at.astimezone(timezone.utc),
+            "runtime_enabled": False,
+        }
 
     def admit(
         self,
