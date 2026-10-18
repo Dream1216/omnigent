@@ -43,9 +43,10 @@ from saas.control_plane import (
     SqlAlchemyContextResolver,
     create_saas_http_integration,
 )
-from saas.control_plane.billing_metering import BillingMeteringAuthority
+from saas.control_plane.billing_metering import BillingMeteringAuthority, BillingMeteringError
 from saas.control_plane.billing_models import BillingMeteringReceiptRecord, UsageEventRecord
 from saas.control_plane.certificates import RunnerCertificateAuthority
+from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.execution import ExecutionControlPlane
 from saas.control_plane.execution_models import RunRecord, TaskRecord
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
@@ -65,7 +66,11 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.resolver import load_runtime_compatibility_policy
 from saas.control_plane.scheduling import SchedulingControlPlane
-from saas.control_plane.scheduling_models import RunDispatchRecord, RunnerRegistrationRecord
+from saas.control_plane.scheduling_models import (
+    CapabilityTokenRecord,
+    RunDispatchRecord,
+    RunnerRegistrationRecord,
+)
 from saas.production.external_host_credential import arm_external_host_credential
 from saas.production.interactive_controller_adapter import ProductionInteractiveControllerAdapter
 from saas.production.interactive_execution import InteractiveConversationStore
@@ -174,6 +179,36 @@ def _private(path, value):
     return str(path)
 
 
+class _MeteringDeliveryGate:
+    """Test-only failures around the real authority; never supplies usage or identity."""
+
+    def __init__(self, authority, *, paused):
+        self._forward = authority.gateway_usage
+        self.write_available, self.ack_available = threading.Event(), threading.Event()
+        self._lock = threading.Lock()
+        self.blocked = 0
+        self.receipt_sets = set()
+        self.ack_lost = threading.Event()
+        if not paused:
+            self.write_available.set()
+            self.ack_available.set()
+
+    def forward(self, **values):
+        if values["action"] != "settle":
+            return self._forward(**values)
+        if not self.write_available.is_set():
+            with self._lock:
+                self.blocked += 1
+            raise BillingMeteringError("isolated_delivery_outage", "Isolated delivery outage")
+        result = self._forward(**values)
+        with self._lock:
+            self.receipt_sets.add(tuple(result["receipt_ids"]))
+        if not self.ack_available.is_set():
+            self.ack_lost.set()
+            raise BillingMeteringError("isolated_receipt_ack_lost", "Isolated receipt ack lost")
+        return result
+
+
 def _physical_controller(case, db_uri, tmp_path, monkeypatch):
     exchange = Path(os.environ["OMNIGENT_SAAS_PHYSICAL_TEST_EXCHANGE"])
     assert exchange == Path("/exchange")
@@ -186,6 +221,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
         "cancel_unknown_stream",
         "public_stop",
         "public_archive",
+        "late_customer_metering",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -382,8 +418,14 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     ("127.0.0.1",),
                 ),
             )
+            metering_authority = BillingMeteringAuthority(metering)
+            delivery = _MeteringDeliveryGate(
+                metering_authority, paused=scenario == "late_customer_metering"
+            )
+            if scenario == "late_customer_metering":
+                monkeypatch.setattr(metering_authority, "gateway_usage", delivery.forward)
             metering_server = MutualTlsBillingMeteringServer(
-                BillingMeteringAuthority(metering),
+                metering_authority,
                 _server_context(meter_certificates["server"]),
                 RunnerCertificateAuthority(metering, accepted_trust_bundle_versions=("test-v1",)),
                 expected_host="localhost",
@@ -410,6 +452,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
                     tmp_path,
                     exchange,
                     monkeypatch,
+                    delivery=delivery,
                     scenario=scenario,
                 )
                 attestor.attest(
@@ -463,6 +506,7 @@ def _serve_controller(
     exchange,
     monkeypatch,
     *,
+    delivery,
     scenario="single",
 ):
     cancelling = scenario in {
@@ -942,13 +986,133 @@ def _serve_controller(
                 with bind_runtime_context(runtime):
                     assert delegate.get_conversation(conversation.id).runner_id == first_runner
                 deny_terminal_bearer()
+            if scenario == "late_customer_metering":
+                with factory() as db:
+                    completed_run = db.scalars(sa.select(RunRecord)).one()
+                    assert completed_run.status == "succeeded"
+                    original_price = completed_run.customer_pricing_snapshot_id
+                    original_capability = db.scalars(
+                        sa.select(CapabilityTokenRecord).where(
+                            CapabilityTokenRecord.run_id == completed_run.id
+                        )
+                    ).one()
+                    assert original_capability.revoked_at is not None
+                    original_capability_id = original_capability.id
+                    budget = db.scalars(
+                        sa.select(ModelProviderBudgetReservationRecord).where(
+                            ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                        )
+                    ).one()
+                    assert budget.status == "settled" and budget.settled_tokens == 22
+                    provider_settled = db.scalar(
+                        sa.select(ModelProviderMonthlyBudgetRecord.settled_microusd)
+                    )
+                    assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 0
+                    assert (
+                        db.scalar(
+                            sa.select(sa.func.count()).select_from(BillingMeteringReceiptRecord)
+                        )
+                        == 0
+                    )
+                retained = adapter._journal.read(completed_run.id)
+                assert retained.phase == "terminal"
+                assert len(list(retained.grant.spool_directory.glob("*.pending.json"))) == 1
+                assert delivery.blocked > 0
+                old_bearer = private_bearers[0]
+
+                def deny_completed_bearer():
+                    result = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + old_bearer},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert result.status_code == 403
+
+                deny_completed_bearer()
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    stopped = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json={"type": "stop_session", "data": {}},
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert stopped.status_code == 202, stopped.text
+                assert adapter._journal.read(completed_run.id).process_stopped
+                changed_price = _customer_prices(
+                    factory, actor=runtime.actor_id, tenant=runtime.tenant_id, rate=2500
+                )
+                assert changed_price != original_price
+                delivery.write_available.set()
+
+                def recover():
+                    return asyncio.run_coroutine_threadsafe(
+                        adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                    ).result(20)
+
+                recover()
+                assert delivery.ack_lost.is_set()
+                assert len(list(retained.grant.spool_directory.glob("*.pending.json"))) == 1
+                fingerprint = (
+                    x509.load_pem_x509_certificate(
+                        meter_certificates["runner-0"].certificate.read_bytes()
+                    )
+                    .fingerprint(hashes.SHA256())
+                    .hex()
+                )
+
+                def assert_unique_late_receipts():
+                    with factory() as db:
+                        usage = db.scalars(sa.select(UsageEventRecord)).all()
+                        receipts = db.scalars(sa.select(BillingMeteringReceiptRecord)).all()
+                        assert len(usage) == len(receipts) == 2
+                        assert {u.pricing_snapshot_id for u in usage} == {original_price}
+                        assert all(
+                            u.run_id == completed_run.id and u.customer_charge_minor == 1
+                            for u in usage
+                        )
+                        assert {r.capability_id for r in receipts} == {original_capability_id}
+                        assert {r.certificate_fingerprint_sha256 for r in receipts} == {
+                            fingerprint
+                        }
+                        assert (
+                            db.scalar(
+                                sa.select(sa.func.count())
+                                .select_from(ControlPlaneOutboxEvent)
+                                .where(
+                                    ControlPlaneOutboxEvent.event_type == "billing.usage.recorded"
+                                )
+                            )
+                            == 2
+                        )
+                        assert (
+                            db.scalar(sa.select(ModelProviderMonthlyBudgetRecord.settled_microusd))
+                            == provider_settled
+                        )
+                        assert db.get(RunRecord, completed_run.id).status == "succeeded"
+                        return {str(r.id) for r in receipts}
+
+                original_receipts = assert_unique_late_receipts()
+                delivery.ack_available.set()
+                recover()
+                assert not list(retained.grant.spool_directory.glob("*.pending.json"))
+                recover()
+                assert assert_unique_late_receipts() == original_receipts
+                assert len(delivery.receipt_sets) == 1
+                assert set(next(iter(delivery.receipt_sets))) == original_receipts
+                deny_completed_bearer()
             with factory() as db:
                 runs = db.scalars(sa.select(RunRecord)).all()
                 assert len(runs) == expected_runs
                 assert {r.status for r in runs} == (
                     {"cancelled", "succeeded"} if cancelling else {"succeeded"}
                 )
-                run = next(r for r in runs if scenario == "single" or r.id != first_run.id)
+                run = next(r for r in runs if expected_runs == 1 or r.id != first_run.id)
                 assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
                 calls = 4 if scenario == "tools_cross_run" else 1
                 for model, count in (
@@ -1048,7 +1212,7 @@ def _serve_controller(
                     )
                     assert response.status_code == 202, response.text
                 assert adapter._journal.read(run.id).process_stopped
-            else:
+            elif not record.process_stopped:
                 assert asyncio.run_coroutine_threadsafe(
                     adapter._executor._driver.stop(record), app_loop
                 ).result(20)
@@ -1078,6 +1242,13 @@ def _serve_controller(
                         "public_stop_active_and_idle": scenario
                         in {"public_stop", "public_archive"},
                         "public_archive_and_undo": scenario == "public_archive",
+                        "known_usage_first_metered_after_terminal": scenario
+                        == "late_customer_metering",
+                        "late_usage_original_price_and_machine_preserved": scenario
+                        == "late_customer_metering",
+                        "late_usage_ack_error_replayed_same_receipts": scenario
+                        == "late_customer_metering",
+                        "late_usage_outbox_exactly_once": scenario == "late_customer_metering",
                         "cancelled_message_replay_did_not_restart": cancelling,
                         "replacement_runner_after_cancel": cancelling,
                         "unknown_usage_hold_and_reference_retained": scenario
