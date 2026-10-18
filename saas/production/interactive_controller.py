@@ -71,6 +71,7 @@ class _Active:
     bound: bool = False
     drained: bool = False
     stopped: bool = False
+    cancellation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
 def _unavailable() -> RunnerControlError:
@@ -315,12 +316,13 @@ class ProductionInteractiveExecutor:
             self._put(active, phase="draining", outcome="failed")
             raise _unavailable() from None
 
-    async def _seal(self, active: _Active) -> bool:
+    async def _seal(self, active: _Active, *, timeout: float = 10) -> bool:
         if active.bound:
             active.drained = await self._channels.suspend(
                 active.record.scope.session_id,
                 run_id=active.lease.run_id,
                 fence_token=active.lease.fence_token,
+                timeout=timeout,
             )
         else:
             active.drained = True
@@ -330,22 +332,26 @@ class ProductionInteractiveExecutor:
         active = self._active.get(lease.run_id)
         if active is None:
             return
-        if active.preparation is not None and not active.preparation.done():
-            active.preparation.cancel()
-            await asyncio.gather(active.preparation, return_exceptions=True)
-        await self._driver.quiesce_preparation(active.authorized)
-        await self._seal(active)
-        active.stopped = (
-            active.record.process_stopped
-            or (
-                active.record.phase == "prepared"
-                and active.preparation is None
-                and active.record.official_runner_id is None
+        async with active.cancellation_lock:
+            if active.stopped:
+                return
+            if active.preparation is not None and not active.preparation.done():
+                active.preparation.cancel()
+                await asyncio.gather(active.preparation, return_exceptions=True)
+            await self._driver.quiesce_preparation(active.authorized)
+            # Fence new inference before stopping; finalization drains existing requests.
+            await self._seal(active, timeout=0)
+            active.stopped = (
+                active.record.process_stopped
+                or (
+                    active.record.phase == "prepared"
+                    and active.preparation is None
+                    and active.record.official_runner_id is None
+                )
+                or await self._driver.stop(active.record)
             )
-            or await self._driver.stop(active.record)
-        )
-        if active.stopped:
-            self._put(active, process_stopped=True)
+            if active.stopped:
+                self._put(active, process_stopped=True)
 
     async def prepare_finalization(self, lease: RunnerControlClientLease, *, result: str) -> str:
         active = self._active.get(lease.run_id)

@@ -9,6 +9,7 @@ import secrets
 import ssl
 import subprocess
 import threading
+import traceback
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
@@ -174,7 +175,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch):
     assert exchange == Path("/exchange")
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
     scenario = getattr(case, "scenario", "single")
-    assert scenario in {"single", "tools_cross_run"}
+    assert scenario in {"single", "tools_cross_run", "cancel_before_admission"}
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
         monkeypatch.setattr(
@@ -536,7 +537,8 @@ def _serve_controller(
         )
         gateway_app = create_platform_model_gateway_app(gateway)
         observed, private_bearers = [], []
-        if scenario == "tools_cross_run":
+        request_waiting, admission_released = threading.Event(), threading.Event()
+        if scenario != "single":
 
             @gateway_app.middleware("http")
             async def observe_model_request(request, call_next):
@@ -549,7 +551,7 @@ def _serve_controller(
                 }
                 observed.append(row)
                 private_bearers.append(bearer)
-                if len(observed) == 2:
+                if scenario == "tools_cross_run" and len(observed) == 2:
                     with factory() as db:
                         token = db.scalars(
                             sa.select(ModelRunTokenRecord).where(
@@ -561,6 +563,9 @@ def _serve_controller(
                     await asyncio.sleep(
                         max(0, (expires_at - datetime.now(timezone.utc)).total_seconds()) + 0.1
                     )
+                if scenario == "cancel_before_admission" and len(observed) == 1:
+                    request_waiting.set()
+                    assert await asyncio.to_thread(admission_released.wait, 40)
                 response = await call_next(request)
                 row["status"] = response.status_code
                 return response
@@ -645,21 +650,170 @@ def _serve_controller(
             def released():
                 if adapter._task.done():
                     error = adapter._task.exception()
+                    chain, cursor = [], error
+                    for _ in range(8):
+                        if cursor is None:
+                            break
+                        chain.append(
+                            {
+                                "type": type(cursor).__name__,
+                                "code": getattr(cursor, "code", None),
+                                "frames": [
+                                    {"file": f.filename, "line": f.lineno, "function": f.name}
+                                    for f in traceback.extract_tb(cursor.__traceback__)
+                                ],
+                            }
+                        )
+                        cursor = cursor.__cause__ or cursor.__context__
+                    with factory() as db:
+                        run_states = [
+                            {"id": str(r.id), "status": r.status}
+                            for r in db.scalars(sa.select(RunRecord))
+                        ]
+                    (exchange / "failure.json").write_text(
+                        json.dumps(
+                            {
+                                "errors": chain,
+                                "runs": run_states,
+                                "gateway_statuses": [r.get("status") for r in observed],
+                                "journal": [
+                                    {
+                                        "phase": r.phase,
+                                        "outcome": r.outcome,
+                                        "process_stopped": r.process_stopped,
+                                        "pending_gateway_references": len(
+                                            list(r.grant.spool_directory.glob("*.pending.json"))
+                                        ),
+                                    }
+                                    for r in adapter._journal.records()
+                                ],
+                            }
+                        )
+                    )
                     pytest.fail(
                         f"Controller exited: {type(error).__name__}, "
                         f"code={getattr(error, 'code', None)}"
                     )
                 with factory() as db:
                     statuses = db.scalars(sa.select(RunRecord.status)).all()
-                    assert all(s not in {"failed", "orphaned", "cancelled"} for s in statuses), (
-                        statuses
-                    )
+                    forbidden = {"failed", "orphaned"}
+                    if scenario != "cancel_before_admission":
+                        forbidden.add("cancelled")
+                    assert all(s not in forbidden for s in statuses), statuses
                     dispatches = db.scalars(sa.select(RunDispatchRecord.status)).all()
                     return len(dispatches) == expected_runs and all(
                         s == "released" for s in dispatches
                     )
 
+            if scenario == "cancel_before_admission":
+                _wait(request_waiting.is_set, "actual Runner model request before admission")
+                with factory() as db:
+                    first_run = db.scalars(sa.select(RunRecord)).one()
+                    assert first_run.status == "running"
+                with bind_runtime_context(runtime):
+                    first_runner = delegate.get_conversation(conversation.id).runner_id
+                assert first_runner
+                try:
+                    with httpx.Client(
+                        base_url=ORIGIN,
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                        timeout=60,
+                    ) as client:
+                        for _ in range(2):
+                            interrupted = client.post(
+                                f"/v1/sessions/{conversation.id}/events",
+                                json={"type": "interrupt", "data": {}},
+                                headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                            )
+                            assert interrupted.status_code == 202, interrupted.text
+                    with factory() as db:
+                        assert db.get(RunRecord, first_run.id).status == "cancelling"
+                        assert (
+                            db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord))
+                            == 0
+                        )
+                        assert (
+                            db.scalar(
+                                sa.select(sa.func.count())
+                                .select_from(ModelProviderBudgetReservationRecord)
+                                .where(
+                                    ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                                )
+                            )
+                            == 0
+                        )
+                    _wait(
+                        lambda: adapter._journal.read(first_run.id).process_stopped,
+                        "automatic cancellation and exact physical Host stop acknowledgement",
+                        timeout=35,
+                    )
+                finally:
+                    admission_released.set()
             _wait(released, "actual controller Run completion", timeout=150)
+            if scenario == "cancel_before_admission":
+                cancelled = adapter._journal.read(first_run.id)
+                assert cancelled.phase == "terminal" and cancelled.outcome == "cancelled"
+                assert cancelled.process_stopped
+                assert [r["status"] for r in observed] == [403]
+                old_bearer = private_bearers[0]
+
+                def deny_cancelled_bearer():
+                    denied = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + old_bearer},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert denied.status_code == 403
+                    assert denied.json()["error"]["code"] == (
+                        "platform_model_run_authority_unavailable"
+                    )
+
+                deny_cancelled_bearer()
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    replay = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json=_message(text="Build the requested page"),
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert replay.status_code == 202
+                    assert replay.json()["run_id"] == str(first_run.id)
+                    assert (
+                        replay.json()["run_status"] == "cancelled" and not replay.json()["queued"]
+                    )
+                    retried = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json={"type": "retry_session", "data": {}},
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert retried.status_code == 202 and not retried.json()["queued"]
+                    resumed = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json=_message("d" * 32, "Start a new turn after cancellation"),
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert resumed.status_code == 202, resumed.text
+                assert (
+                    _queued_worker(workers["dispatcher"], workers["executor"])
+                    .dispatch_once()
+                    .published
+                    == 1
+                )
+                expected_runs = 2
+                _wait(
+                    released, "fresh input on a replacement Runner after cancellation", timeout=150
+                )
+                with bind_runtime_context(runtime):
+                    assert delegate.get_conversation(conversation.id).runner_id != first_runner
+                deny_cancelled_bearer()
             if scenario == "tools_cross_run":
                 with factory() as db:
                     first_run = db.scalars(sa.select(RunRecord)).one()
@@ -713,13 +867,25 @@ def _serve_controller(
                 deny_terminal_bearer()
             with factory() as db:
                 runs = db.scalars(sa.select(RunRecord)).all()
-                assert len(runs) == expected_runs and all(r.status == "succeeded" for r in runs)
+                assert len(runs) == expected_runs
+                assert {r.status for r in runs} == (
+                    {"cancelled", "succeeded"}
+                    if scenario == "cancel_before_admission"
+                    else {"succeeded"}
+                )
                 run = next(r for r in runs if scenario == "single" or r.id != first_run.id)
                 assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
                 calls = 4 if scenario == "tools_cross_run" else 1
                 for model, count in (
                     (TaskRecord, expected_runs),
-                    (ModelRunTokenRecord, 3 if scenario == "tools_cross_run" else 1),
+                    (
+                        ModelRunTokenRecord,
+                        3
+                        if scenario == "tools_cross_run"
+                        else 2
+                        if scenario == "cancel_before_admission"
+                        else 1,
+                    ),
                     (UsageEventRecord, 2 * calls),
                     (BillingMeteringReceiptRecord, 2 * calls),
                 ):
@@ -745,6 +911,10 @@ def _serve_controller(
                     assert sorted(t.generation for t in tokens) == [0, 0, 1]
                     assert all(t.expires_at - t.issued_at == timedelta(seconds=90) for t in tokens)
                     assert [r["status"] for r in observed] == [200, 401, 200, 200, 403, 200, 403]
+                if scenario == "cancel_before_admission":
+                    assert [r["status"] for r in observed] == [403, 403, 200, 403]
+                    assert len({r["bearer_sha256"] for r in observed}) == 2
+                    assert db.get(RunRecord, first_run.id).status == "cancelled"
             with bind_runtime_context(runtime):
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
@@ -773,6 +943,10 @@ def _serve_controller(
                         "controlled_expiry_restored": scenario == "tools_cross_run",
                         "gateway_request_statuses": [r["status"] for r in observed],
                         "same_runner_cross_run": scenario == "tools_cross_run",
+                        "public_interrupt_accepted": scenario == "cancel_before_admission",
+                        "cancelled_message_replay_did_not_restart": scenario
+                        == "cancel_before_admission",
+                        "replacement_runner_after_cancel": scenario == "cancel_before_admission",
                         "host_stop_acknowledged": True,
                         "manual_run_heartbeat": False,
                     }

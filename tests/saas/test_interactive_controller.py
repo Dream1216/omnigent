@@ -63,7 +63,10 @@ async def controller_case(interactive_http, tmp_path):
     references = ReferenceClient()
     gateway_calls, inputs, stops = [], [], []
     done, prepared = asyncio.Event(), asyncio.Event()
-    controls = SimpleNamespace(stop_ack=True, auto_complete=True, unknown_fee=False)
+    gateway_started, gateway_release = asyncio.Event(), asyncio.Event()
+    controls = SimpleNamespace(
+        stop_ack=True, auto_complete=True, unknown_fee=False, pause_gateway=False
+    )
 
     async def authorize(current):
         actual = await authority.authorize(current)
@@ -84,10 +87,13 @@ async def controller_case(interactive_http, tmp_path):
             journal.root / "usage" / str(current.run_id),
         )
 
-    def supplier(request):
+    async def supplier(request):
         gateway_calls.append(request)
         assert request.headers["Authorization"].startswith("Bearer mrt_")
         assert lease.capability_token not in str(request.headers)
+        if controls.pause_gateway:
+            gateway_started.set()
+            await gateway_release.wait()
         references.available = not controls.unknown_fee
         return httpx.Response(200, stream=httpx.ByteStream(b'data: {"done":true}\n\n'))
 
@@ -335,6 +341,62 @@ async def test_cancellation_needs_exact_physical_stop_before_terminal_release(
         assert c.lease.run_id in c.executor._active
     assert len(c.inputs) == 1
     assert set(c.stops) == {token_bound_runner_id("x" * 43)}
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_physical_runner_before_waiting_for_an_inflight_model_request(
+    controller_case,
+):
+    c = controller_case
+    c.controls.pause_gateway = True
+    cancellation = asyncio.Event()
+    execution = asyncio.create_task(c.executor.execute(c.lease, cancellation=cancellation))
+    await asyncio.wait_for(c.gateway_started.wait(), 2)
+    try:
+        await asyncio.wait_for(c.executor.cancel(c.lease), 0.5)
+        active = c.executor._active[c.lease.run_id]
+        assert active.stopped and active.record.process_stopped and not active.drained
+        app = SessionModelChannelMiddleware(FastAPI(), channels=c.channels)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app)) as client:
+            denied = await client.post(
+                c.physical.channel.base_url + "/responses",
+                headers={"Authorization": "Bearer " + c.physical.channel.secret_value},
+                json={},
+            )
+        assert denied.status_code == 503 and len(c.gateway_calls) == 1
+    finally:
+        c.gateway_release.set()
+        cancellation.set()
+        outcome = await asyncio.wait_for(execution, 5)
+    assert outcome == "cancelled"
+    assert await c.executor.prepare_finalization(c.lease, result=outcome) == "cancelled"
+    await c.executor.prepare_terminal_transition(c.lease)
+    await c.executor.finalize(c.lease, result=outcome)
+    assert c.journal.read(c.lease.run_id).process_stopped
+    assert len(c.inputs) == len(c.gateway_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cancellation_keeps_the_first_exact_stop_acknowledgement(
+    controller_case, monkeypatch
+):
+    c = controller_case
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    stop_calls = []
+
+    async def stop(record):
+        ordinal = len(stop_calls) + 1
+        stop_calls.append(record.official_runner_id)
+        await asyncio.sleep(0.02 * ordinal)
+        return ordinal == 1
+
+    monkeypatch.setattr(c.physical, "stop", stop)
+    await asyncio.gather(c.executor.cancel(c.lease), c.executor.cancel(c.lease))
+    active = c.executor._active[c.lease.run_id]
+    assert stop_calls == [active.record.official_runner_id]
+    assert active.stopped and active.record.process_stopped
+    assert await c.executor.prepare_finalization(c.lease, result="cancelled") == "cancelled"
+    await c.executor.finalize(c.lease, result="cancelled")
 
 
 @pytest.mark.asyncio
