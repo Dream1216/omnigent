@@ -4,6 +4,10 @@ The controller remains opt-in with
 `OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED=true`. This runbook describes
 configuration, not production admission. Do not enable tenant models until the
 reviewed Fleet/database, PKI, physical runtime, billing, and release gates pass.
+The frozen flag also controls managed-session creation and message admission.
+When disabled, those paths return `interactive_runtime_disabled` without creating
+a session, Task, or Run. Cancellation of previously admitted input remains
+available; physical Stop still requires the trusted controller and its receipt.
 
 ## Sandbox authority profile
 

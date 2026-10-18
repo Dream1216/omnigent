@@ -1035,6 +1035,37 @@ def test_controller_sandbox_rejects_legacy_or_expanded_authority(
 
 
 @pytest.mark.parametrize("enabled", (False, True))
+def test_production_store_receives_the_frozen_interactive_admission_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from saas.production import interactive_execution
+
+    original = interactive_execution.InteractiveConversationStore
+    observed = []
+
+    def build_store(*args, **kwargs):
+        observed.append(kwargs.get("runtime_enabled"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interactive_execution, "InteractiveConversationStore", build_store)
+    monkeypatch.setattr(server_module, "create_omnigent_saas_app", _fake_official_app)
+    sessions = _sessions()
+    built = None
+    try:
+        built = build_production_server(
+            replace(_config(tmp_path), interactive_controller_enabled=enabled),
+            sessions,
+            official=_official(),
+        )
+        assert observed == [enabled]
+    finally:
+        if built is not None:
+            built.close()
+        else:
+            sessions.close()
+
+
+@pytest.mark.parametrize("enabled", (False, True))
 def test_production_dependency_loader_passes_frozen_controller_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
 ) -> None:

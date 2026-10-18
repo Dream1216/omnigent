@@ -1532,6 +1532,7 @@ def build_production_server(
         ),
         permission_store=app_dependencies["permission_store"],
         public_origin=config.public_origin,
+        runtime_enabled=config.interactive_controller_enabled,
     )
     # These official lifespan jobs run before request middleware can bind a
     # RuntimeContext. Keep both disabled in production even when a caller

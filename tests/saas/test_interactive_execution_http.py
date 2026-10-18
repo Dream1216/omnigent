@@ -157,7 +157,9 @@ def interactive_http(db_uri, tmp_path, monkeypatch, request):
         revisions=ExecutionRevisionSet("c" * 40, runtime.source_revision, "c4d5e6f7a8b9", "0.2.0"),
     )
     delegate = dependencies["conversation_store"]
-    store = InteractiveConversationStore(delegate, admission, permission_store=permissions)
+    store = InteractiveConversationStore(
+        delegate, admission, permission_store=permissions, runtime_enabled=True
+    )
     with bind_runtime_context(runtime):
         projects.create(runtime_project_id, "Interactive project", runtime.runtime_user_key)
         conversation = delegate.create_conversation(
@@ -239,6 +241,60 @@ def _launch():
 
 def _post(f, body):
     return f.client.post(f"/v1/sessions/{f.conversation.id}/events", json=body, headers=f.headers)
+
+
+@pytest.mark.parametrize("entry", ["new_session", "message"])
+def test_default_disabled_runtime_rejects_managed_input_without_persistent_admission(
+    interactive_http, entry
+):
+    f = interactive_http
+    f.store.__init__(f.delegate, f.store._admission, permission_store=f.permissions)
+    before_calls = list(f.calls)
+    if entry == "new_session":
+        body = _managed_create(f)
+        response = f.client.post("/v1/sessions", json=body, headers=f.headers)
+        with bind_runtime_context(f.runtime):
+            assert (
+                f.delegate.get_conversation(body["labels"]["omnigent.client_create_token"]) is None
+            )
+    else:
+        response = _post(f, _message())
+    assert response.status_code == 503, response.text
+    assert "interactive_runtime_disabled" in response.text
+    with f.factory() as db:
+        for record in (TaskRecord, RunRecord, ExecutionSessionRecord):
+            assert db.scalar(sa.select(sa.func.count()).select_from(record)) == 0
+        assert db.scalar(sa.select(AdmissionQuotaRecord.reserved_units)) == 0
+    assert f.calls == before_calls
+
+
+def test_disabling_runtime_preserves_interrupt_of_already_admitted_input(interactive_http):
+    f = interactive_http
+    admitted = _post(f, _message())
+    assert admitted.status_code == 202, admitted.text
+    f.store.__init__(f.delegate, f.store._admission, permission_store=f.permissions)
+    stopped = _post(f, {"type": "interrupt", "data": {}})
+    assert stopped.status_code == 202, stopped.text
+    assert stopped.json()["queued"] is False
+    with f.factory() as db:
+        assert db.scalar(sa.select(RunRecord.status)) == "cancelled"
+        assert db.scalar(sa.select(AdmissionQuotaRecord.reserved_units)) == 0
+
+
+@pytest.mark.asyncio
+async def test_disabled_runtime_does_not_intercept_an_ordinary_session_creation():
+    store = InteractiveConversationStore(object(), object(), permission_store=None)
+    assert (
+        await store.prepare_session_inference(
+            None,
+            SimpleNamespace(inference_configuration_revision=None),
+            None,
+            None,
+            harness_override=None,
+            model_override=None,
+        )
+        is None
+    )
 
 
 def _scheduling(factory, runtime, project_id, *, pool_id=None):

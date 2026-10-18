@@ -47,11 +47,13 @@ class InteractiveConversationStore:
         *,
         permission_store: Any,
         public_origin: str | None = None,
+        runtime_enabled: bool = False,
     ) -> None:
         self._delegate = delegate
         self._admission = admission
         self._permissions = permission_store
         self._public_origin = public_origin
+        self._runtime_enabled = runtime_enabled
         self.runtime_status_observer = None
         self.session_stop_handler = None
 
@@ -88,6 +90,8 @@ class InteractiveConversationStore:
         revision = body.inference_configuration_revision
         if not isinstance(revision, str) or not revision.startswith("managed-model:"):
             return None
+        if not self._runtime_enabled:
+            raise OmnigentError("interactive_runtime_disabled", code=ErrorCode.RUNNER_UNAVAILABLE)
         try:
             runtime = current_runtime_context()
         except RuntimeError:
@@ -292,6 +296,8 @@ class InteractiveConversationStore:
             raise OmnigentError(
                 "Interactive input requires policy admission", code=ErrorCode.FORBIDDEN
             )
+        if event.type == "message" and not self._runtime_enabled:
+            raise OmnigentError("interactive_runtime_disabled", code=ErrorCode.RUNNER_UNAVAILABLE)
         try:
             runtime = current_runtime_context()
         except RuntimeError:
